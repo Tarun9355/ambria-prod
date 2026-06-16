@@ -11,6 +11,8 @@ import AdminTab from "./AdminTab.jsx";
 import SupplyTab from "./SupplyTab.jsx";
 import PlanningTab from "./PlanningTab.jsx";
 import FinanceTab from "./FinanceTab.jsx";
+import CalendarTab from "./CalendarTab.jsx";
+import { syncLmsContracts } from "../../lib/ims/lms";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -59,6 +61,9 @@ export default function IMS() {
   const [overheads, setOverheadsState] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
+  const [lmsContracts, setLmsContracts] = useState([]);
+  // Studio's LMS date-category cache comes from the Studio app (later phase); stub for now.
+  const studioLmsCache = null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -129,6 +134,17 @@ export default function IMS() {
 
     return () => { active = false; supabase.removeChannel(channel); };
   }, []);
+
+  // ── LMS / ERP contract sync on mount (lights up once the `lms` Edge Function is
+  // deployed with ERP creds; degrades to [] otherwise). ──
+  useEffect(() => {
+    let active = true;
+    syncLmsContracts([]).then((contracts) => { if (active) setLmsContracts(contracts || []); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  // Studio LMS date-category refresh comes from the Studio app (later phase) — no-op for now.
+  const refreshStudioLmsCache = useCallback(async () => {}, []);
 
   // Persist only the rows that actually changed (CLAUDE.md rule #1 — never re-save the whole table).
   const persistInventory = useCallback(async (prev, next, deletedIds) => {
@@ -326,6 +342,11 @@ export default function IMS() {
             projects={projects} functions={functions} inventory={items} purchase={purchase}
             settings={settings} setSettings={setSettings}
             overheads={overheads} setOverheads={setOverheads} authUser={user}
+          />
+        ) : tab === "calendar" ? (
+          <CalendarTab
+            lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
+            onRefreshCategories={refreshStudioLmsCache} settings={settings} setSettings={setSettings}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">

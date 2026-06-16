@@ -2,9 +2,21 @@
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
 export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
 
-// Minimal default settings so finance math (buffer / min-profit) works before the
-// Settings phase populates the real settings table. Faithful to INIT_SETTINGS.
-export const SETTINGS_DEFAULTS = { bufferPct: 5, minProfitPct: 30 };
+// Minimal default settings so finance math (buffer / min-profit) + date pricing work
+// before the Settings phase populates the real settings table. Faithful to INIT_SETTINGS.
+export const SETTINGS_DEFAULTS = {
+  bufferPct: 5,
+  minProfitPct: 30,
+  datePricing: {
+    lastMinuteDays: 10,
+    categories: {
+      heavy_saya: { label: "🔴 Heavy Saya", multiplier: 1.4, color: "red" },
+      competition: { label: "🟡 Perfect Competition", multiplier: 1.0, color: "yellow" },
+      non_saya: { label: "🟢 Non-Saya", multiplier: 0.75, color: "green" },
+    },
+    markedDates: {},
+  },
+};
 
 // Seed price-intelligence data shown in the Purchase "Log Purchase" modal.
 export const PRICE_HISTORY = {
