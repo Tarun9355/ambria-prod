@@ -5,6 +5,7 @@ import { Tabs } from "../../components/ui";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { SETTINGS_DEFAULTS } from "../../lib/ims/constants";
+import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
 import AdminTab from "./AdminTab.jsx";
@@ -68,6 +69,7 @@ export default function IMS() {
   const [supervisors, setSupervisorsState] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
+  const [studioRcItems, setStudioRcItems] = useState([]);
   const [lmsContracts, setLmsContracts] = useState([]);
   const [lmsSyncing, setLmsSyncing] = useState(false);
   // Season date-categories ({ "YYYY-MM-DD": "Heavy Saya"|... }) — auto-synced from the
@@ -76,9 +78,24 @@ export default function IMS() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Studio cross-app sync (rate-card cats/subcats) arrives in a later phase. Stub for now —
-  // InventoryTab degrades to INV_CATS + a flat (empty) sub-cat list.
-  const studio = useMemo(() => ({ subcats: [], catLabels: [], subcatsByCat: {}, loading: false }), []);
+  // Studio cross-app sync: derive cat labels / sub-cats / florals from the shared
+  // rate_card table (the Studio Rate Card). Powers Inventory categories, the Admin
+  // Sub-Categories viewer, and Flowers → Recipes.
+  const studio = useMemo(() => {
+    const catById = Object.fromEntries(RC_CATS_DEFAULT.map((c) => [c.id, c.l]));
+    const byCat = {};
+    const flat = new Set();
+    for (const it of studioRcItems) {
+      const label = catById[it.cat] || it.cat;
+      if (!label) continue;
+      if (!byCat[label]) byCat[label] = new Set();
+      if (it.sub) { byCat[label].add(it.sub); flat.add(it.sub); }
+    }
+    const subcatsByCat = Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, [...v]]));
+    const floralsItems = studioRcItems.filter((i) => i.cat === "florals").map((i) => ({ name: i.name, sub: i.sub, unit: i.unit, inhouseMode: i.inhouseMode }));
+    const floralsSubcats = [...new Set(floralsItems.map((i) => i.sub).filter(Boolean))];
+    return { subcats: [...flat], catLabels: RC_CATS_DEFAULT.map((c) => c.l), subcatsByCat, floralsItems, floralsSubcats, loading: false };
+  }, [studioRcItems]);
 
   const itemsRef = useRef([]);
   const fnsRef = useRef([]);
@@ -102,7 +119,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, rcRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -111,6 +128,7 @@ export default function IMS() {
           fetchAll("boxes").catch(() => []),
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
+          fetchAll("rate_card").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -123,6 +141,7 @@ export default function IMS() {
         setBoxesState(boxRows.map(rowToBox));
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
+        setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = { ...SETTINGS_DEFAULTS };
         for (const r of setRows) settingsObj[r.key] = r.value;
