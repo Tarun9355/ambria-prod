@@ -5,6 +5,7 @@ import { Tabs } from "../../components/ui";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import InventoryTab from "./InventoryTab.jsx";
+import DashboardTab from "./DashboardTab.jsx";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -25,14 +26,16 @@ const TABS = [
 const rowToFn = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, date: row.date ?? row.data?.date, items: row.data?.items || [] });
 const fnToRow = (fn) => ({ id: fn.id, project_id: fn.projectId ?? fn.project_id ?? null, name: fn.name ?? null, date: fn.date ?? null, venue: fn.venue ?? null, status: fn.status ?? "pending", data: fn });
 
+const rowToProject = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, status: row.status ?? row.data?.status, functions: row.data?.functions || [] });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  // Production defaults to "dashboard"; Phase 1 only ships Inventory, so we land there.
-  const [tab, setTab] = useState("inventory");
+  const [tab, setTab] = useState("dashboard");
 
   const [items, setItems] = useState([]);
   const [functions, setFns] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -52,15 +55,17 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
+          fetchAll("projects").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
         if (!active) return;
         setItems(invRows.map(rowToItem));
         setFns(fnRows.map(rowToFn));
+        setProjects(projRows.map(rowToProject));
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = {};
         for (const r of setRows) settingsObj[r.key] = r.value;
@@ -170,6 +175,8 @@ export default function IMS() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {loading ? (
           <div className="text-center text-gray-400 py-20"><div className="text-3xl mb-2">⏳</div>Loading Ambria IMS…</div>
+        ) : tab === "dashboard" ? (
+          <DashboardTab projects={projects} functions={functions} inventory={items} />
         ) : tab === "inventory" ? (
           <InventoryTab
             inventory={items} setInventory={setInventory}
