@@ -16,6 +16,28 @@ export const SETTINGS_DEFAULTS = {
     },
     markedDates: {},
   },
+  synonymDictionary: [
+    { id: "SYN1", words: ["Flower", "Floral", "Phool"] },
+    { id: "SYN2", words: ["Arch", "Gate", "Entrance", "Dwar"] },
+    { id: "SYN3", words: ["Mandap", "Stage", "Platform", "Manch"] },
+    { id: "SYN4", words: ["Sofa", "Couch", "Settee"] },
+    { id: "SYN5", words: ["Light", "Lamp", "Chandelier", "Jhumar"] },
+    { id: "SYN6", words: ["Curtain", "Drape", "Parda"] },
+    { id: "SYN7", words: ["Carpet", "Rug", "Dari"] },
+    { id: "SYN8", words: ["Table", "Counter", "Desk"] },
+    { id: "SYN9", words: ["Backdrop", "Background", "Panel"] },
+    { id: "SYN10", words: ["Pillar", "Column", "Khamba"] },
+    { id: "SYN11", words: ["Pot", "Vase", "Gamla"] },
+    { id: "SYN12", words: ["Marigold", "Genda", "Gainda"] },
+    { id: "SYN13", words: ["Rose", "Gulab"] },
+    { id: "SYN14", words: ["Jasmine", "Mogra", "Chameli"] },
+    { id: "SYN15", words: ["Tuberose", "Rajnigandha"] },
+    { id: "SYN16", words: ["Chair", "Kursi", "Seat"] },
+    { id: "SYN17", words: ["Ceiling", "Top", "Chaddar"] },
+    { id: "SYN18", words: ["Hanging", "Latkane", "Suspension"] },
+    { id: "SYN19", words: ["Fabric", "Cloth", "Kapda"] },
+    { id: "SYN20", words: ["Frame", "Structure", "Dhaancha"] },
+  ],
 };
 
 // Seed price-intelligence data shown in the Purchase "Log Purchase" modal.

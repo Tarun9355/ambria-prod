@@ -49,6 +49,9 @@ const boxToRow = (b) => ({ id: b.id, name: b.label ?? null, items: [], data: b }
 const rowToOverhead = (row) => ({ ...(row.data || {}), id: row.id, amount: row.amount ?? row.data?.amount ?? 0, category: row.category ?? row.data?.category });
 const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o.amount ?? 0, category: o.category ?? null, data: o });
 
+const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active });
+const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -61,6 +64,7 @@ export default function IMS() {
   const [purchase, setPurchaseState] = useState([]);
   const [boxes, setBoxesState] = useState([]);
   const [overheads, setOverheadsState] = useState([]);
+  const [supervisors, setSupervisorsState] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [lmsContracts, setLmsContracts] = useState([]);
@@ -81,6 +85,7 @@ export default function IMS() {
   const purchaseRef = useRef([]);
   const boxesRef = useRef([]);
   const overheadsRef = useRef([]);
+  const supervisorsRef = useRef([]);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
@@ -88,6 +93,7 @@ export default function IMS() {
   useEffect(() => { purchaseRef.current = purchase; }, [purchase]);
   useEffect(() => { boxesRef.current = boxes; }, [boxes]);
   useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
+  useEffect(() => { supervisorsRef.current = supervisors; }, [supervisors]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // ── Initial load + inventory Realtime subscription ──
@@ -95,7 +101,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -103,6 +109,7 @@ export default function IMS() {
           fetchAll("purchase_orders").catch(() => []),
           fetchAll("boxes").catch(() => []),
           fetchAll("overheads").catch(() => []),
+          fetchAll("supervisors").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -114,6 +121,7 @@ export default function IMS() {
         setPurchaseState(poRows.map(rowToPurchase));
         setBoxesState(boxRows.map(rowToBox));
         setOverheadsState(ohRows.map(rowToOverhead));
+        setSupervisorsState(supRows.map(rowToSupervisor));
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = { ...SETTINGS_DEFAULTS };
         for (const r of setRows) settingsObj[r.key] = r.value;
@@ -296,6 +304,27 @@ export default function IMS() {
     })();
   }, []);
 
+  const setSupervisors = useCallback((updater) => {
+    const prev = supervisorsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    supervisorsRef.current = next;
+    setSupervisorsState(next);
+    const prevMap = new Map(prev.map((s) => [s.id, s]));
+    const nextIds = new Set(next.map((s) => s.id));
+    (async () => {
+      for (const s of next) {
+        const before = prevMap.get(s.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(s)) {
+          const { error: e } = await supabase.from("supervisors").upsert(supervisorToRow(s), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+      for (const id of prevMap.keys()) {
+        if (!nextIds.has(id)) await supabase.from("supervisors").delete().eq("id", id);
+      }
+    })();
+  }, []);
+
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
@@ -349,7 +378,11 @@ export default function IMS() {
             settings={settings} studio={studio}
           />
         ) : tab === "admin" ? (
-          <AdminTab vendors={vendors} setVendors={setVendors} functions={functions} settings={settings} />
+          <AdminTab
+            vendors={vendors} setVendors={setVendors} functions={functions}
+            settings={settings} setSettings={setSettings}
+            supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
+          />
         ) : tab === "supply" ? (
           <SupplyTab
             purchase={purchase} setPurchase={setPurchase}
