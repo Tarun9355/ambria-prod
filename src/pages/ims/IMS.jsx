@@ -8,6 +8,7 @@ import InventoryTab from "./InventoryTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
 import AdminTab from "./AdminTab.jsx";
 import SupplyTab from "./SupplyTab.jsx";
+import PlanningTab from "./PlanningTab.jsx";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -36,6 +37,9 @@ const vendorToRow = (v) => ({ id: v.id, name: v.name ?? null, type: v.type ?? nu
 const rowToPurchase = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
 const purchaseToRow = (p) => ({ id: p.id, vendor_id: p.vendorSnapshot?.vendorId ?? null, amount: p.actualCost ?? p.estimatedCost ?? 0, status: p.status ?? "Pending", items: [], data: p });
 
+const rowToBox = (row) => ({ ...(row.data || {}), id: row.id });
+const boxToRow = (b) => ({ id: b.id, name: b.label ?? null, items: [], data: b });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -46,6 +50,7 @@ export default function IMS() {
   const [projects, setProjects] = useState([]);
   const [vendors, setVendorsState] = useState([]);
   const [purchase, setPurchaseState] = useState([]);
+  const [boxes, setBoxesState] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -59,22 +64,25 @@ export default function IMS() {
   const fnsRef = useRef([]);
   const vendorsRef = useRef([]);
   const purchaseRef = useRef([]);
+  const boxesRef = useRef([]);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
   useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
   useEffect(() => { purchaseRef.current = purchase; }, [purchase]);
+  useEffect(() => { boxesRef.current = boxes; }, [boxes]);
 
   // ── Initial load + inventory Realtime subscription ──
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
           fetchAll("vendors").catch(() => []),
           fetchAll("purchase_orders").catch(() => []),
+          fetchAll("boxes").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -84,6 +92,7 @@ export default function IMS() {
         setProjects(projRows.map(rowToProject));
         setVendorsState(venRows.map(rowToVendor));
         setPurchaseState(poRows.map(rowToPurchase));
+        setBoxesState(boxRows.map(rowToBox));
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = {};
         for (const r of setRows) settingsObj[r.key] = r.value;
@@ -184,6 +193,23 @@ export default function IMS() {
     })();
   }, []);
 
+  const setBoxes = useCallback((updater) => {
+    const prev = boxesRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    boxesRef.current = next;
+    setBoxesState(next);
+    const prevMap = new Map(prev.map((b) => [b.id, b]));
+    (async () => {
+      for (const b of next) {
+        const before = prevMap.get(b.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(b)) {
+          const { error: e } = await supabase.from("boxes").upsert(boxToRow(b), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
@@ -244,6 +270,11 @@ export default function IMS() {
             inventory={items} setInventory={setInventory}
             projects={projects} functions={functions}
             studio={studio} authUser={user} settings={settings}
+          />
+        ) : tab === "planning" ? (
+          <PlanningTab
+            projects={projects} functions={functions} inventory={items}
+            settings={settings} boxes={boxes} setBoxes={setBoxes} authUser={user}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">
