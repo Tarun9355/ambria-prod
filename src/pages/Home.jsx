@@ -1,9 +1,8 @@
-"use client";
-import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function Home() {
-  const router = useRouter();
+  const navigate = useNavigate();
 
   useEffect(() => {
     // Check if user has a saved session
@@ -14,15 +13,16 @@ export default function Home() {
         // Sales roles → Studio, Ops/Admin → IMS
         const salesRoles = ["Sales", "Admin"];
         if (salesRoles.includes(user.role)) {
-          router.replace("/studio");
+          navigate("/studio", { replace: true });
         } else {
-          router.replace("/ims");
+          navigate("/ims", { replace: true });
         }
-        return;
-      } catch {}
+      } catch {
+        // Invalid session — show landing
+      }
     }
     // No session — show landing
-  }, [router]);
+  }, [navigate]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-purple-50">
@@ -33,12 +33,12 @@ export default function Home() {
         <h1 className="text-4xl font-bold text-gray-900">Ambria</h1>
         <p className="text-gray-500 text-lg">Wedding & Event Décor Management</p>
         <div className="flex gap-4 justify-center">
-          <a href="/studio" className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg">
+          <Link to="/studio" className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg">
             Studio
-          </a>
-          <a href="/ims" className="px-8 py-3 bg-gray-800 text-white rounded-xl font-semibold hover:bg-gray-900 transition shadow-lg">
+          </Link>
+          <Link to="/ims" className="px-8 py-3 bg-gray-800 text-white rounded-xl font-semibold hover:bg-gray-900 transition shadow-lg">
             IMS
-          </a>
+          </Link>
         </div>
       </div>
     </div>

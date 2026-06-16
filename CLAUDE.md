@@ -6,18 +6,22 @@ Ambria is a wedding & event décor management platform with two user-facing sect
 - **IMS** (`/ims`) — used by 40 ops staff for inventory, manpower, flowers, finance, production
 
 ## Tech Stack
-- **Framework:** Next.js 15 (App Router)
-- **UI:** React 19 + Tailwind CSS v4
+- **Framework:** Vite 8 + React 19 (client-side SPA, `react-router-dom` v7)
+- **UI:** React 19 + Tailwind CSS v4 (via `@tailwindcss/vite`)
 - **Database:** Supabase (PostgreSQL + Realtime)
-- **Hosting:** Vercel
+- **Hosting:** GitHub Pages (project site at `/ambria-prod/`, deployed via GitHub Actions)
 - **CI/CD:** GitHub Actions
 - **Media:** Cloudinary (cloud dy9wfqhry)
 - **AI:** Anthropic Claude API (image tagging)
 
+> **No server runtime.** This is a static SPA — there are no server components or API routes.
+> Anything needing a secret server-side (Claude tagging, Cloudinary signing) must run via a
+> separate service/Supabase Edge Function, not in this app.
+
 ## Supabase Connection
 - Project URL: `https://taalribntdkowoqltvqw.supabase.co`
 - Use `src/lib/supabase.js` for all database operations
-- NEVER hardcode keys — use env vars
+- NEVER hardcode keys — use env vars (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, read via `import.meta.env`)
 - Real-time subscriptions via `subscribeTable()` helper
 
 ## Key Architecture Rules
@@ -27,29 +31,21 @@ Ambria is a wedding & event décor management platform with two user-facing sect
 3. **No JSON blobs for flat data** — Use proper columns. JSONB only for truly nested data (element lists, zone configs).
 4. **Component-per-feature** — Each tab/feature = own file. No giant single files.
 5. **Tailwind only** — No inline styles.
-6. **Server Components by default** — `"use client"` only when needed.
+6. **Client-only SPA** — All components run in the browser. Routing is via `react-router-dom`
+   (`HashRouter`, chosen so deep links/refreshes don't 404 on GitHub Pages).
 
 ## Project Structure
 ```
+index.html                      # Vite entry HTML
+vite.config.js                  # base: '/ambria-prod/', react + tailwind plugins
 src/
-├── app/
-│   ├── layout.jsx              # Root layout
-│   ├── page.jsx                # Landing → /studio or /ims
-│   ├── studio/                 # Sales team pages
-│   │   ├── page.jsx            # Studio home (event cards)
-│   │   ├── manage/page.jsx     # Event management
-│   │   ├── library/page.jsx    # Photo library + AI tagging
-│   │   ├── pricing/page.jsx    # Rate card editor
-│   │   └── settings/page.jsx   # Studio settings
-│   ├── ims/                    # Ops team pages
-│   │   ├── page.jsx            # Dashboard
-│   │   ├── inventory/page.jsx  # Inventory CRUD
-│   │   ├── events/page.jsx     # Event orders
-│   │   ├── flowers/page.jsx    # Mandi prices + recipes
-│   │   ├── planning/page.jsx   # Function planning
-│   │   ├── finance/page.jsx    # P&L, overheads
-│   │   └── admin/page.jsx      # Users, roles, settings
-│   └── api/                    # Server-side API routes
+├── main.jsx                    # App bootstrap (HashRouter + render)
+├── App.jsx                     # Route table (/ , /studio, /ims)
+├── index.css                   # Tailwind import + theme tokens
+├── pages/                      # Route pages
+│   ├── Home.jsx                # Landing → /studio or /ims (session-based redirect)
+│   ├── Studio.jsx              # Sales team UI
+│   └── IMS.jsx                 # Ops team UI
 ├── lib/
 │   ├── supabase.js             # DB client + helpers
 │   └── utils.js                # Shared utilities
