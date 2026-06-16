@@ -12,6 +12,7 @@ import SupplyTab from "./SupplyTab.jsx";
 import PlanningTab from "./PlanningTab.jsx";
 import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
+import FlowersTab from "./FlowersTab.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
@@ -405,6 +406,12 @@ export default function IMS() {
           <CalendarTab
             lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
+          />
+        ) : tab === "flowers" ? (
+          <FlowersTab
+            settings={settings} setSettings={setSettings}
+            supervisors={supervisors} setSupervisors={setSupervisors}
+            studio={studio} authUser={user}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">

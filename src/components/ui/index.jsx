@@ -69,6 +69,19 @@ export function Btn({ onClick, color = "indigo", size = "md", children, classNam
   return <button onClick={onClick} className={`${sz} ${col[color] || col.indigo} rounded-lg font-medium transition-all ${className}`}>{children}</button>;
 }
 
+export function AddInlineItem({ placeholder, onAdd }) {
+  const [val, setVal] = useState("");
+  function submit() { if (val.trim()) { onAdd(val.trim()); setVal(""); } }
+  return (
+    <div className="flex gap-1 mt-1">
+      <input value={val} onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+        placeholder={placeholder} className="flex-1 border rounded px-2 py-1 text-xs" />
+      <button onClick={submit} className="text-xs bg-indigo-600 text-white px-2 py-1 rounded">Add</button>
+    </div>
+  );
+}
+
 export function Stars({ val, onChange }) {
   return <div className="flex gap-1">{[1, 2, 3, 4, 5].map((i) => <button key={i} onClick={() => onChange && onChange(i)} className={"text-xl " + (i <= val ? "text-amber-400" : "text-gray-200 hover:text-amber-200")}>{i <= val ? "★" : "☆"}</button>)}</div>;
 }
