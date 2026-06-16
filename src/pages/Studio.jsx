@@ -2,10 +2,16 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import { supabase, fetchAll } from "../lib/supabase";
+import { RC_D } from "../lib/studio/constants";
+import RateCard from "./studio/RateCard.jsx";
 
 // ── studio_events row ⇄ object adapter ──
 const rowToEvent = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, client: row.client ?? row.data?.client, venue: row.venue ?? row.data?.venue, img: row.img ?? row.data?.img, functions: row.data?.functions || row.functions || [] });
 const eventToRow = (e) => ({ id: e.id, name: e.name ?? null, client: e.client ?? null, venue: e.venue ?? null, img: e.img ?? null, functions: e.functions || [], data: e });
+
+// ── rate_card row ⇄ rcItem adapter ──
+const rowToRcItem = (row) => ({ ...(row.data || {}), id: row.id });
+const rcItemToRow = (i) => ({ id: i.id, name: i.name ?? null, cat: i.cat ?? null, sub: i.sub ?? null, unit: i.unit ?? null, inhouse_mode: i.inhouseMode ?? "flat", inhouse_flat: i.inhouseFlat ?? 0, inhouse_s: i.inhouseS ?? 0, inhouse_m: i.inhouseM ?? 0, inhouse_b: i.inhouseB ?? 0, out_s: i.outS ?? 0, out_m: i.outM ?? 0, out_b: i.outB ?? 0, zones: i.zones || [], floral_mode: i.floralMode ?? null, default_real_pct: i.defaultRealPct ?? null, data: i });
 
 const MANAGE_TABS = [
   { id: "library", label: "🖼️ Library" },
@@ -31,11 +37,47 @@ export default function Studio() {
   const [mode, setMode] = useState("studio"); // studio | manage
   const [manageTab, setManageTab] = useState("library");
   const [events, setEvents] = useState([]);
+  const [rcItems, setRcItemsState] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const eventsRef = useRef([]);
+  const rcRef = useRef([]);
   useEffect(() => { eventsRef.current = events; }, [events]);
+  useEffect(() => { rcRef.current = rcItems; }, [rcItems]);
+
+  // Rate Card: load from rate_card; seed RC_D into the table on first run (one-time).
+  useEffect(() => {
+    let active = true;
+    fetchAll("rate_card").then(async (rows) => {
+      if (!active) return;
+      if (rows.length > 0) { setRcItemsState(rows.map(rowToRcItem)); return; }
+      setRcItemsState(RC_D);
+      for (let i = 0; i < RC_D.length; i += 100) {
+        await supabase.from("rate_card").upsert(RC_D.slice(i, i + 100).map(rcItemToRow), { onConflict: "id" }).catch(() => {});
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const setRcItems = useCallback((updater) => {
+    const prev = rcRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    rcRef.current = next;
+    setRcItemsState(next);
+    const prevMap = new Map(prev.map((i) => [i.id, i]));
+    const nextIds = new Set(next.map((i) => i.id));
+    (async () => {
+      for (const i of next) {
+        const before = prevMap.get(i.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(i)) {
+          const { error: e } = await supabase.from("rate_card").upsert(rcItemToRow(i), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+      for (const id of prevMap.keys()) if (!nextIds.has(id)) await supabase.from("rate_card").delete().eq("id", id);
+    })();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -143,7 +185,7 @@ export default function Studio() {
         ) : manageTab === "library" ? (
           <Placeholder name="🖼️ Library" note="Photo library + AI tagging — rebuilt in a later Studio slice." />
         ) : manageTab === "pricing" ? (
-          <Placeholder name="💲 Pricing" note="Rate card editor — rebuilt in a later Studio slice." />
+          <RateCard rcItems={rcItems} setRcItems={setRcItems} />
         ) : (
           <Placeholder name="⚙️ Settings" note="Studio settings (venues, zones, tags, clients, calendar) — rebuilt in a later Studio slice." />
         )}
