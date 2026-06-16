@@ -9,9 +9,36 @@
 //
 // Until that's deployed the sync resolves to [] (Calendar shows no contracts).
 
+import { supabase } from "../supabase";
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const LMS_FN_URL = `${SUPABASE_URL}/functions/v1/lms`;
+
+// Trigger the server-side full sync (Edge Function paginates LMS → upserts lms_contracts).
+// Returns { synced, syncedAt }. The browser never paginates LMS itself.
+export async function triggerLmsSync() {
+  const r = await fetch(LMS_FN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY },
+    body: JSON.stringify({ op: "sync" }),
+  });
+  if (!r.ok) throw new Error(`LMS sync ${r.status}`);
+  return r.json();
+}
+
+// Read cached contracts from Supabase (instant — no LMS call). Returns { contracts, lastSync }.
+export async function fetchCachedContracts() {
+  const { data, error } = await supabase
+    .from("lms_contracts")
+    .select("data, synced_at")
+    .order("synced_at", { ascending: false })
+    .limit(5000);
+  if (error) return { contracts: [], lastSync: 0 };
+  const contracts = (data || []).map((r) => r.data);
+  const lastSync = data?.[0]?.synced_at ? new Date(data[0].synced_at).getTime() : 0;
+  return { contracts, lastSync };
+}
 
 const LMS_VENUE_MAP = {
   "3": { lmsName: "Ambria Pushpanjali", internalName: "Ambria Pushpanjali" },

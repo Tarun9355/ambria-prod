@@ -12,7 +12,9 @@ import SupplyTab from "./SupplyTab.jsx";
 import PlanningTab from "./PlanningTab.jsx";
 import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
-import { syncLmsContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
+import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
+
+const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -137,24 +139,37 @@ export default function IMS() {
     return () => { active = false; supabase.removeChannel(channel); };
   }, []);
 
-  // ── LMS contract sync (manual "Sync LMS" button + on mount). Season date-categories
-  // are pulled automatically in the same pass — no separate button. Degrades to empty
-  // until the `lms` / `season` Edge Functions are deployed. ──
+  // Refresh in-memory state from the Supabase cache (instant — no LMS pagination) + season.
+  const loadLmsFromCache = useCallback(async () => {
+    const { contracts, lastSync } = await fetchCachedContracts();
+    setLmsContracts(contracts);
+    const season = await fetchSeason();
+    if (season) setStudioLmsCache({ dateCategories: buildDateCategories(season, contracts) });
+    return lastSync;
+  }, []);
+
+  // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
   const syncLms = useCallback(async () => {
     setLmsSyncing(true);
     try {
-      const contracts = await syncLmsContracts([]);
-      setLmsContracts(contracts || []);
-      const season = await fetchSeason();
-      if (season) setStudioLmsCache({ dateCategories: buildDateCategories(season, contracts || []) });
+      await triggerLmsSync();
+      await loadLmsFromCache();
     } catch (e) {
       setError(`LMS sync failed: ${e.message}`);
     } finally {
       setLmsSyncing(false);
     }
-  }, []);
+  }, [loadLmsFromCache]);
 
-  useEffect(() => { syncLms(); }, [syncLms]);
+  // On mount: read the cache instantly; only kick a background server-side sync if stale.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const lastSync = await loadLmsFromCache();
+      if (active && Date.now() - lastSync > LMS_STALE_MS) syncLms();
+    })();
+    return () => { active = false; };
+  }, [loadLmsFromCache, syncLms]);
 
   // Persist only the rows that actually changed (CLAUDE.md rule #1 — never re-save the whole table).
   const persistInventory = useCallback(async (prev, next, deletedIds) => {
