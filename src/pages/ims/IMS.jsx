@@ -7,6 +7,7 @@ import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter
 import InventoryTab from "./InventoryTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
 import AdminTab from "./AdminTab.jsx";
+import SupplyTab from "./SupplyTab.jsx";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -32,6 +33,9 @@ const rowToProject = (row) => ({ ...(row.data || {}), id: row.id, name: row.name
 const rowToVendor = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, type: row.type ?? row.data?.type, contact: row.contact ?? row.data?.contact, email: row.email ?? row.data?.email, bookings: row.data?.bookings || [], bills: row.data?.bills || [], ratings: row.data?.ratings || [] });
 const vendorToRow = (v) => ({ id: v.id, name: v.name ?? null, type: v.type ?? null, contact: v.contact ?? null, email: v.email ?? null, data: v });
 
+const rowToPurchase = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
+const purchaseToRow = (p) => ({ id: p.id, vendor_id: p.vendorSnapshot?.vendorId ?? null, amount: p.actualCost ?? p.estimatedCost ?? 0, status: p.status ?? "Pending", items: [], data: p });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -41,6 +45,7 @@ export default function IMS() {
   const [functions, setFns] = useState([]);
   const [projects, setProjects] = useState([]);
   const [vendors, setVendorsState] = useState([]);
+  const [purchase, setPurchaseState] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -53,20 +58,23 @@ export default function IMS() {
   const itemsRef = useRef([]);
   const fnsRef = useRef([]);
   const vendorsRef = useRef([]);
+  const purchaseRef = useRef([]);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
   useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
+  useEffect(() => { purchaseRef.current = purchase; }, [purchase]);
 
   // ── Initial load + inventory Realtime subscription ──
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
           fetchAll("vendors").catch(() => []),
+          fetchAll("purchase_orders").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -75,6 +83,7 @@ export default function IMS() {
         setFns(fnRows.map(rowToFn));
         setProjects(projRows.map(rowToProject));
         setVendorsState(venRows.map(rowToVendor));
+        setPurchaseState(poRows.map(rowToPurchase));
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = {};
         for (const r of setRows) settingsObj[r.key] = r.value;
@@ -158,6 +167,23 @@ export default function IMS() {
     })();
   }, []);
 
+  const setPurchase = useCallback((updater) => {
+    const prev = purchaseRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    purchaseRef.current = next;
+    setPurchaseState(next);
+    const prevMap = new Map(prev.map((p) => [p.id, p]));
+    (async () => {
+      for (const p of next) {
+        const before = prevMap.get(p.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
+          const { error: e } = await supabase.from("purchase_orders").upsert(purchaseToRow(p), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
@@ -212,6 +238,13 @@ export default function IMS() {
           />
         ) : tab === "admin" ? (
           <AdminTab vendors={vendors} setVendors={setVendors} functions={functions} settings={settings} />
+        ) : tab === "supply" ? (
+          <SupplyTab
+            purchase={purchase} setPurchase={setPurchase}
+            inventory={items} setInventory={setInventory}
+            projects={projects} functions={functions}
+            studio={studio} authUser={user} settings={settings}
+          />
         ) : (
           <div className="text-center text-gray-400 py-20">
             <p className="text-2xl mb-2">{TABS.find((t) => t.id === tab)?.label}</p>
