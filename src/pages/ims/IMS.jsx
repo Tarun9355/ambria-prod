@@ -6,6 +6,7 @@ import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import InventoryTab from "./InventoryTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
+import AdminTab from "./AdminTab.jsx";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -28,6 +29,9 @@ const fnToRow = (fn) => ({ id: fn.id, project_id: fn.projectId ?? fn.project_id 
 
 const rowToProject = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, status: row.status ?? row.data?.status, functions: row.data?.functions || [] });
 
+const rowToVendor = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, type: row.type ?? row.data?.type, contact: row.contact ?? row.data?.contact, email: row.email ?? row.data?.email, bookings: row.data?.bookings || [], bills: row.data?.bills || [], ratings: row.data?.ratings || [] });
+const vendorToRow = (v) => ({ id: v.id, name: v.name ?? null, type: v.type ?? null, contact: v.contact ?? null, email: v.email ?? null, data: v });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -36,6 +40,7 @@ export default function IMS() {
   const [items, setItems] = useState([]);
   const [functions, setFns] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [vendors, setVendorsState] = useState([]);
   const [categories, setCats] = useState([]);
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -47,18 +52,21 @@ export default function IMS() {
 
   const itemsRef = useRef([]);
   const fnsRef = useRef([]);
+  const vendorsRef = useRef([]);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
+  useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
 
   // ── Initial load + inventory Realtime subscription ──
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
+          fetchAll("vendors").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -66,6 +74,7 @@ export default function IMS() {
         setItems(invRows.map(rowToItem));
         setFns(fnRows.map(rowToFn));
         setProjects(projRows.map(rowToProject));
+        setVendorsState(venRows.map(rowToVendor));
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = {};
         for (const r of setRows) settingsObj[r.key] = r.value;
@@ -132,6 +141,23 @@ export default function IMS() {
     })();
   }, []);
 
+  const setVendors = useCallback((updater) => {
+    const prev = vendorsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    vendorsRef.current = next;
+    setVendorsState(next);
+    const prevMap = new Map(prev.map((v) => [v.id, v]));
+    (async () => {
+      for (const v of next) {
+        const before = prevMap.get(v.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(v)) {
+          const { error: e } = await supabase.from("vendors").upsert(vendorToRow(v), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
@@ -184,6 +210,8 @@ export default function IMS() {
             categories={categories} setCategories={setCategories}
             settings={settings} studio={studio}
           />
+        ) : tab === "admin" ? (
+          <AdminTab vendors={vendors} setVendors={setVendors} functions={functions} settings={settings} />
         ) : (
           <div className="text-center text-gray-400 py-20">
             <p className="text-2xl mb-2">{TABS.find((t) => t.id === tab)?.label}</p>
