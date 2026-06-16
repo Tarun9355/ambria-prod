@@ -518,7 +518,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         </div>
       )}
-      {(activePanel === "patterns") && <Placeholder name="🌺 Recipes" note="Flowers slice" />}
+      {(activePanel === "patterns") && <Placeholder name="🌺 Recipes" note="Studio-gated — pattern names come from the Studio Rate Card; builds out once Studio exists" />}
       {(activePanel === "trussbatta") && <Placeholder name="🏗️ Truss & Batta Config" note="Truss slice" />}
       {(activePanel === "fabricstock") && <Placeholder name="🧵 Fabric Stock" note="Fabric slice" />}
 
