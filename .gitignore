@@ -8,3 +8,7 @@ build/
 .vercel
 .DS_Store
 reference/
+
+# Supabase CLI local state
+supabase/.temp/
+.branches/
