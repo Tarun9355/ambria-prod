@@ -57,6 +57,7 @@ export function Input(props) {
 export function Select({ value, onChange, children, className = "" }) {
   return <select value={value} onChange={onChange} className={"w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 " + className}>{children}</select>;
 }
+export const Sel = Select;
 
 export function Btn({ onClick, color = "indigo", size = "md", children, className = "" }) {
   const sz = size === "sm" ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm";

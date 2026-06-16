@@ -1,5 +1,10 @@
 // Shared IMS constants (non-inventory). Faithful to the reference app.
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
+export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
+
+// Minimal default settings so finance math (buffer / min-profit) works before the
+// Settings phase populates the real settings table. Faithful to INIT_SETTINGS.
+export const SETTINGS_DEFAULTS = { bufferPct: 5, minProfitPct: 30 };
 
 // Seed price-intelligence data shown in the Purchase "Log Purchase" modal.
 export const PRICE_HISTORY = {

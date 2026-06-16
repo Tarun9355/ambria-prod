@@ -3,6 +3,7 @@
 /* Safelist dynamic color classes built via string interpolation (e.g. `text-${c}-600`,
    `border-${c}-100` in DashboardTab / import wizard) — the JIT scanner can't see these. */
 @source inline("{text,border}-{indigo,blue,green,amber,purple,teal,red,pink,gray}-{100,600}");
+@source inline("{bg,border}-{indigo,blue,green,amber,purple,teal,red,pink,gray,orange}-{50,100} text-{indigo,blue,green,amber,purple,teal,red,pink,gray,orange}-{600,700}");
 
 :root {
   --accent: #7C3AED;

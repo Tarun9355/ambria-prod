@@ -4,11 +4,13 @@ import { useAuth } from "../../lib/AuthContext";
 import { Tabs } from "../../components/ui";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
+import { SETTINGS_DEFAULTS } from "../../lib/ims/constants";
 import InventoryTab from "./InventoryTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
 import AdminTab from "./AdminTab.jsx";
 import SupplyTab from "./SupplyTab.jsx";
 import PlanningTab from "./PlanningTab.jsx";
+import FinanceTab from "./FinanceTab.jsx";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -40,6 +42,9 @@ const purchaseToRow = (p) => ({ id: p.id, vendor_id: p.vendorSnapshot?.vendorId 
 const rowToBox = (row) => ({ ...(row.data || {}), id: row.id });
 const boxToRow = (b) => ({ id: b.id, name: b.label ?? null, items: [], data: b });
 
+const rowToOverhead = (row) => ({ ...(row.data || {}), id: row.id, amount: row.amount ?? row.data?.amount ?? 0, category: row.category ?? row.data?.category });
+const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o.amount ?? 0, category: o.category ?? null, data: o });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -51,8 +56,9 @@ export default function IMS() {
   const [vendors, setVendorsState] = useState([]);
   const [purchase, setPurchaseState] = useState([]);
   const [boxes, setBoxesState] = useState([]);
+  const [overheads, setOverheadsState] = useState([]);
   const [categories, setCats] = useState([]);
-  const [settings, setSettings] = useState({});
+  const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -65,24 +71,29 @@ export default function IMS() {
   const vendorsRef = useRef([]);
   const purchaseRef = useRef([]);
   const boxesRef = useRef([]);
+  const overheadsRef = useRef([]);
+  const settingsRef = useRef(SETTINGS_DEFAULTS);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
   useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
   useEffect(() => { purchaseRef.current = purchase; }, [purchase]);
   useEffect(() => { boxesRef.current = boxes; }, [boxes]);
+  useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // ── Initial load + inventory Realtime subscription ──
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
           fetchAll("vendors").catch(() => []),
           fetchAll("purchase_orders").catch(() => []),
           fetchAll("boxes").catch(() => []),
+          fetchAll("overheads").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -93,10 +104,11 @@ export default function IMS() {
         setVendorsState(venRows.map(rowToVendor));
         setPurchaseState(poRows.map(rowToPurchase));
         setBoxesState(boxRows.map(rowToBox));
+        setOverheadsState(ohRows.map(rowToOverhead));
         setCats(catRows.map((c) => c.name).filter(Boolean));
-        const settingsObj = {};
+        const settingsObj = { ...SETTINGS_DEFAULTS };
         for (const r of setRows) settingsObj[r.key] = r.value;
-        setSettings(settingsObj);
+        setSettingsState(settingsObj);
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
@@ -210,6 +222,39 @@ export default function IMS() {
     })();
   }, []);
 
+  const setOverheads = useCallback((updater) => {
+    const prev = overheadsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    overheadsRef.current = next;
+    setOverheadsState(next);
+    const prevMap = new Map(prev.map((o) => [o.id, o]));
+    (async () => {
+      for (const o of next) {
+        const before = prevMap.get(o.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(o)) {
+          const { error: e } = await supabase.from("overheads").upsert(overheadToRow(o), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
+  // Settings are a key→value table; persist only the keys that changed.
+  const setSettings = useCallback((updater) => {
+    const prev = settingsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    settingsRef.current = next;
+    setSettingsState(next);
+    (async () => {
+      for (const k of Object.keys(next)) {
+        if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) {
+          const { error: e } = await supabase.from("settings").upsert({ key: k, value: next[k] }, { onConflict: "key" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
@@ -275,6 +320,12 @@ export default function IMS() {
           <PlanningTab
             projects={projects} functions={functions} inventory={items}
             settings={settings} boxes={boxes} setBoxes={setBoxes} authUser={user}
+          />
+        ) : tab === "finance" ? (
+          <FinanceTab
+            projects={projects} functions={functions} inventory={items} purchase={purchase}
+            settings={settings} setSettings={setSettings}
+            overheads={overheads} setOverheads={setOverheads} authUser={user}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">
