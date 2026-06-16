@@ -3,12 +3,11 @@ import DatePricingPanel from "./DatePricingPanel.jsx";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onRefreshCategories, settings, setSettings }) {
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [selDate, setSelDate] = useState(null);
-  const [catRefreshing, setCatRefreshing] = useState(false);
   const [showDatePricing, setShowDatePricing] = useState(false);
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -74,15 +73,14 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onRefreshCat
           <h2 className="text-lg font-bold text-gray-900">{MONTHS[month]} {year}</h2>
           <p className="text-xs text-gray-500">
             {monthEvents.length} events this month
+            <span> · {lmsContracts?.length || 0} LMS contracts synced</span>
             {hasCats && <span> · {Object.keys(dateCategories).length} dates categorised</span>}
-            {!hasCats && <span className="text-amber-500"> · No date categories loaded</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={async () => { setCatRefreshing(true); if (onRefreshCategories) await onRefreshCategories(); setCatRefreshing(false); }}
-            disabled={catRefreshing}
-            className={"px-3 py-2 border rounded-lg text-xs font-semibold " + (catRefreshing ? "bg-gray-100 text-gray-400" : "hover:bg-indigo-50 text-indigo-600 border-indigo-200")}>
-            {catRefreshing ? "⏳" : "🔄"} Categories
+          <button onClick={onSyncLms} disabled={lmsSyncing}
+            className={"px-3 py-2 border rounded-lg text-xs font-semibold " + (lmsSyncing ? "bg-gray-100 text-gray-400" : "hover:bg-indigo-50 text-indigo-600 border-indigo-200")}>
+            {lmsSyncing ? "⏳ Syncing…" : "🔄 Sync LMS"}
           </button>
           <button onClick={() => { if (month === 11) { setMonth(0); setYear((y) => y + 1); } else setMonth((m) => m + 1); }} className="px-3 py-2 border rounded-lg hover:bg-gray-50">→</button>
         </div>

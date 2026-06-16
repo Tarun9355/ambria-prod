@@ -12,7 +12,7 @@ import SupplyTab from "./SupplyTab.jsx";
 import PlanningTab from "./PlanningTab.jsx";
 import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
-import { syncLmsContracts } from "../../lib/ims/lms";
+import { syncLmsContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -62,8 +62,10 @@ export default function IMS() {
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [lmsContracts, setLmsContracts] = useState([]);
-  // Studio's LMS date-category cache comes from the Studio app (later phase); stub for now.
-  const studioLmsCache = null;
+  const [lmsSyncing, setLmsSyncing] = useState(false);
+  // Season date-categories ({ "YYYY-MM-DD": "Heavy Saya"|... }) — auto-synced from the
+  // season Edge Function (no manual button). Shape matches the reference studioLmsCache.
+  const [studioLmsCache, setStudioLmsCache] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -135,16 +137,24 @@ export default function IMS() {
     return () => { active = false; supabase.removeChannel(channel); };
   }, []);
 
-  // ── LMS / ERP contract sync on mount (lights up once the `lms` Edge Function is
-  // deployed with ERP creds; degrades to [] otherwise). ──
-  useEffect(() => {
-    let active = true;
-    syncLmsContracts([]).then((contracts) => { if (active) setLmsContracts(contracts || []); }).catch(() => {});
-    return () => { active = false; };
+  // ── LMS contract sync (manual "Sync LMS" button + on mount). Season date-categories
+  // are pulled automatically in the same pass — no separate button. Degrades to empty
+  // until the `lms` / `season` Edge Functions are deployed. ──
+  const syncLms = useCallback(async () => {
+    setLmsSyncing(true);
+    try {
+      const contracts = await syncLmsContracts([]);
+      setLmsContracts(contracts || []);
+      const season = await fetchSeason();
+      if (season) setStudioLmsCache({ dateCategories: buildDateCategories(season, contracts || []) });
+    } catch (e) {
+      setError(`LMS sync failed: ${e.message}`);
+    } finally {
+      setLmsSyncing(false);
+    }
   }, []);
 
-  // Studio LMS date-category refresh comes from the Studio app (later phase) — no-op for now.
-  const refreshStudioLmsCache = useCallback(async () => {}, []);
+  useEffect(() => { syncLms(); }, [syncLms]);
 
   // Persist only the rows that actually changed (CLAUDE.md rule #1 — never re-save the whole table).
   const persistInventory = useCallback(async (prev, next, deletedIds) => {
@@ -346,7 +356,7 @@ export default function IMS() {
         ) : tab === "calendar" ? (
           <CalendarTab
             lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
-            onRefreshCategories={refreshStudioLmsCache} settings={settings} setSettings={setSettings}
+            onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">

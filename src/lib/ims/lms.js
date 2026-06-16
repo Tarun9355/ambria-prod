@@ -200,3 +200,57 @@ export async function syncLmsContracts(eventOrders, onProgress) {
   const decor = await fetchLmsDeptContracts("decor", onProgress);
   return crossReferenceContracts([...venue, ...decor], eventOrders);
 }
+
+// ─── Season Calendar (date categories) ────────────────────────────────────────
+// Proxied through a Supabase Edge Function (supabase/functions/season) that holds the
+// SEASON_EXPORT_KEY and calls the season-export API on the other project. Runs
+// automatically (no manual button) — see IMS shell.
+const SEASON_FN_URL = `${SUPABASE_URL}/functions/v1/season`;
+
+export async function fetchSeason() {
+  try {
+    const r = await fetch(SEASON_FN_URL, { headers: { Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY } });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+// Build { "YYYY-MM-DD": "Heavy Saya"|"Saya"|"Normal" } from season data + demand
+// (function counts from LMS contracts). Faithful to Studio's §26 adjustedSeasonMap.
+export function buildDateCategories(seasonData, lmsContracts) {
+  const seasonDates = seasonData?.dates || {};
+  const seasonDefault = seasonData?.default_category || "Filler";
+  const yr = new Date().getFullYear();
+  const base = {};
+  Object.entries(seasonDates).forEach(([mmdd, cat]) => { base[`${yr}-${mmdd}`] = cat; base[`${yr + 1}-${mmdd}`] = cat; });
+
+  const fnCount = {};
+  for (const c of (lmsContracts || [])) {
+    for (const fn of (c.functions || [])) {
+      if (fn.functionDate) { const d = String(fn.functionDate).slice(0, 10); fnCount[d] = (fnCount[d] || 0) + 1; }
+    }
+  }
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const oneMonth = new Date(today); oneMonth.setMonth(today.getMonth() + 1);
+  const twoMonths = new Date(today); twoMonths.setMonth(today.getMonth() + 2);
+
+  const adjusted = {};
+  new Set([...Object.keys(base), ...Object.keys(fnCount)]).forEach((date) => {
+    const count = fnCount[date] || 0;
+    const current = base[date] || seasonDefault;
+    const d = new Date(date + "T00:00:00");
+    if (d < today) { if (current !== seasonDefault) adjusted[date] = current; return; }
+    if (count >= 6) { adjusted[date] = "King's"; return; }
+    if (d <= oneMonth && count < 5) { adjusted[date] = "Normal"; return; }
+    if (current === "King's" && d <= twoMonths && count < 5) { adjusted[date] = "Perfect"; return; }
+    if (current !== seasonDefault) adjusted[date] = current;
+  });
+
+  const imsMap = { "King's": "Heavy Saya", "Perfect": "Saya", "Normal": "Normal" };
+  const dateCategories = {};
+  Object.entries(adjusted).forEach(([date, cat]) => { const m = imsMap[cat]; if (m) dateCategories[date] = m; });
+  return dateCategories;
+}
