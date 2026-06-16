@@ -1,17 +1,19 @@
 // Supabase Edge Function — LMS / ERP proxy.
 //
-// Replaces the reference IMS app's Vercel `/api/lms` route. The browser can't call
-// the ERP directly (credentials + CORS), so this function injects the ERP token and
-// forwards the request.
+// Mirrors the reference Vercel `/api/lms` generic pass-through. The LMS API
+// (https://gyv.inqcrm.in) takes a JSON body and requires NO auth token — the browser
+// just can't call it directly (CORS), so this function forwards the request server-side.
 //
-// Deploy:
+// Deploy (no secrets required):
 //   supabase functions deploy lms
-//   supabase secrets set LMS_BASE_URL=https://<erp-host> LMS_TOKEN=<token>
 //
-// Client contract (from lib/ims/lms.js): POST { endpoint, body } → returns the ERP
-// JSON verbatim (expected shape: { Contractinfo: [...] }).
+// The IMS client (lib/ims/lms.js) paginates itself, calling this once per page with
+// { endpoint, body }; we forward verbatim and return the ERP JSON (e.g. { Contractinfo: [...] }).
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+// Fixed public LMS host (override only if the ERP host changes).
+const LMS_BASE = (Deno.env.get("LMS_BASE_URL") || "https://gyv.inqcrm.in").replace(/\/$/, "");
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -22,10 +24,6 @@ const CORS = {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
-
-  const baseUrl = Deno.env.get("LMS_BASE_URL");
-  const token = Deno.env.get("LMS_TOKEN");
-  if (!baseUrl) return json({ error: "LMS_BASE_URL not configured" }, 500);
 
   let payload;
   try {
@@ -40,12 +38,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const resp = await fetch(baseUrl.replace(/\/$/, "") + endpoint, {
+    // No auth token — the LMS API accepts the request body as-is.
+    const resp = await fetch(LMS_BASE + endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     });
     const data = await resp.json().catch(() => ({}));

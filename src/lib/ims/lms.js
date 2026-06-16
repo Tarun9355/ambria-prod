@@ -1,13 +1,13 @@
 // ─── LMS / ERP contract sync ──────────────────────────────────────────────────
-// Faithful port of the reference IMS LMS integration. The browser cannot call the
-// ERP directly (auth + CORS), so requests go through a Supabase Edge Function
-// (supabase/functions/lms) that injects the ERP credentials and forwards the call.
+// Faithful port of the reference IMS LMS integration. The LMS API
+// (https://gyv.inqcrm.in) needs NO auth token; the browser just can't call it
+// directly (CORS), so requests go through a Supabase Edge Function
+// (supabase/functions/lms) that forwards them server-side.
 //
-// Deploy:
+// Deploy (no secrets required):
 //   supabase functions deploy lms
-//   supabase secrets set LMS_BASE_URL=https://<erp-host>  LMS_TOKEN=<token>
 //
-// Until that's configured the sync resolves to [] (Calendar shows no contracts).
+// Until that's deployed the sync resolves to [] (Calendar shows no contracts).
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
