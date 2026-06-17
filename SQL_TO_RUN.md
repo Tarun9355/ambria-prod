@@ -19,7 +19,7 @@ on conflict (id) do update set name=excluded.name, username=excluded.username,
   password=excluded.password, role=excluded.role, active=excluded.active;
 ```
 
-## 3. LMS contract cache (migration 002) — ⬜ RUN THIS
+## 3. LMS contract cache (migration 002) — ✅ done (verified: table live + contracts synced)
 Enables instant Calendar loads (server-side LMS sync → table).
 ```sql
 CREATE TABLE IF NOT EXISTS lms_contracts (
@@ -36,16 +36,19 @@ ALTER PUBLICATION supabase_realtime ADD TABLE lms_contracts;
 
 ---
 
-## Edge Functions to deploy (CLI) — ⬜
-From project root, once `supabase login` + `supabase link --project-ref taalribntdkowoqltvqw` are done:
+## Edge Functions (CLI)
+- `lms` — ✅ deployed (verified live)
+- `season` — ✅ deployed + `SEASON_EXPORT_KEY` set (verified live)
+- `anthropic` — ⬜ NOT deployed. Only needed for AI features (Inventory photo-scan; later Events element-match):
 ```bash
-supabase functions deploy lms       # LMS proxy + server-side sync (no secret needed)
-supabase functions deploy season    # season categories proxy
-supabase functions deploy anthropic # AI photo-scan / element-match proxy
-# secrets:
-supabase secrets set SEASON_EXPORT_KEY=<your season export key>
+supabase functions deploy anthropic
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+## Studio Rate Card seed — ⬜ (no SQL — just open the app once)
+`rate_card` is empty in the DB. Open **Studio → Manage → Pricing** once; the app
+auto-seeds the 60 rate items, which also populates IMS → Admin → Sub-Categories and
+Flowers → Recipes.
 
 ---
 
