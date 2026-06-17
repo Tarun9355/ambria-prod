@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Tabs, AddInlineItem, FlowerPicker } from "../../components/ui";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
@@ -57,7 +58,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
       {(activePanel === "labourtiers") && <Placeholder name="👷 Workforce / Labour Tiers" />}
       {(activePanel === "venuemin") && <Placeholder name="🏢 Venue Minimum Labour" />}
-      {(activePanel === "dihari") && <Placeholder name="💰 Dihari Timings" />}
+      {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}
       {activePanel === "mandi" && (
         <div className="space-y-5">
           {/* Artificial Flower Colours */}
