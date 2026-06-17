@@ -1173,7 +1173,90 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         </div>
       )}
-      {(activePanel === "fabricstock") && <Placeholder name="🧵 Fabric Stock" note="Fabric slice" />}
+      {activePanel === "fabricstock" && trussInv && (() => {
+        const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
+        const fabricFreshMarkup = trussInv.fabricFreshMarkup || { liza: 40, masking: 40, curtain: 40 };
+        const rates = trussInv.rates || {};
+        const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
+        const updateMarkup = (key, val) => setTrussInv((ti) => ({ ...ti, fabricFreshMarkup: { ...(ti.fabricFreshMarkup || {}), [key]: parseFloat(val) || 0 } }));
+        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: key === "colour" ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
+        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0 }] }));
+        const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
+        const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, purchaseKey, markupKey) => {
+          const stock = Array.isArray(trussInv[which]) ? trussInv[which] : [];
+          return (
+            <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
+              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour stock + rental + new purchase price + fresh-stock markup %</p></div>
+              <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-3 gap-3`}>
+                <div><label className="text-xs text-gray-600">Rental price (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">When stock available — full charge</p></div>
+                <div><label className="text-xs text-gray-600">Fresh purchase price (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[purchaseKey] || 0} onChange={(e) => updateRates(purchaseKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">What Ambria pays to buy new</p></div>
+                <div><label className="text-xs text-gray-600">Fresh markup %</label><input type="number" min="0" max="500" step="1" value={fabricFreshMarkup[markupKey] || 0} onChange={(e) => updateMarkup(markupKey, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800 text-center`} /><p className="text-[10px] text-gray-400 mt-0.5">Shortfall qty = purchase × this %</p></div>
+              </div>
+              <div className={`bg-white border border-${themeColor}-100 rounded-lg overflow-hidden`}>
+                <div className={`flex items-center justify-between px-3 py-2 bg-${themeColor}-100`}>
+                  <p className={`text-xs font-bold text-${themeColor}-800`}>Per-colour Stock</p>
+                  <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>
+                </div>
+                {stock.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-gray-400 italic text-center">No colours added yet. Tap + Add Colour to start.</div>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Stock ({qtyLabel})</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <tbody>
+                      {stock.map((row, i) => {
+                        const cObj = (settings.colourCatalogue || []).find((c) => c.name === row.colour);
+                        return (
+                          <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
+                            <td className="px-2 py-1.5"><div className="w-5 h-5 rounded border border-gray-300" style={{ background: cObj?.hex || "#ccc" }} /></td>
+                            <td className="px-2 py-1.5">
+                              <select value={row.colour || ""} onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`}>
+                                <option value="">— pick —</option>
+                                {colourCat.map((cn) => <option key={cn} value={cn}>{cn}</option>)}
+                              </select>
+                            </td>
+                            <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-24 border border-${themeColor}-200 rounded px-2 py-1 text-xs font-bold text-center`} /></td>
+                            <td className="px-2 py-1.5 text-center"><button onClick={() => removeStockRow(which, i)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          );
+        };
+        return (
+          <div className="space-y-4">
+            <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
+              <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
+              <p className="text-xs text-indigo-700 mt-1">Three fabrics with per-colour inventory: <strong>Liza fabric</strong> (kg), <strong>Wall masking panels</strong> (pieces), <strong>Velvet curtains</strong> (pieces). Shortfall qty is charged at purchase price × fresh markup %; stocked qty uses full rental price.</p>
+            </div>
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-3">
+              <p className="font-bold text-rose-900">🧮 Liza kg Conversion Factors</p>
+              <p className="text-xs text-rose-700">How much Liza fabric (kg) is needed per RFT of truss wrap, and per sqft of ceiling drape at each density.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white border border-rose-100 rounded-lg p-3">
+                  <p className="text-xs font-bold text-rose-800 mb-2">U Truss + Half Box (Frame wrap)</p>
+                  <label className="text-xs text-gray-600">kg per RFT (pillars + beams)</label>
+                  <input type="number" min="0" step="0.01" value={trussInv.fabricFactors?.kgPerRftWrap ?? 0.3} onChange={(e) => setTrussInv((ti) => ({ ...ti, fabricFactors: { ...(ti.fabricFactors || {}), kgPerRftWrap: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-rose-200 rounded px-2 py-1 text-sm font-bold" />
+                </div>
+                <div className="bg-white border border-rose-100 rounded-lg p-3">
+                  <p className="text-xs font-bold text-rose-800 mb-2">Full Box (Ceiling drape) — kg per sqft</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[["Minimum", "kgPerSqftMinimum", 0.03], ["Moderate", "kgPerSqftModerate", 0.05], ["Dense", "kgPerSqftDense", 0.08]].map(([l, k, dv]) => (
+                      <div key={k}><label className="text-[10px] text-gray-600">{l}</label><input type="number" min="0" step="0.01" value={trussInv.fabricFactors?.[k] ?? dv} onChange={(e) => setTrussInv((ti) => ({ ...ti, fabricFactors: { ...(ti.fabricFactors || {}), [k]: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-rose-200 rounded px-2 py-1 text-xs font-bold text-center" /></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {renderFabric("Liza Fabric", "🪡", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgPurchase", "liza")}
+            {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPiecePurchase", "masking")}
+            {renderFabric("Velvet Curtains", "🎀", "purple", "curtainStock", "stockPieces", "pcs", "curtainPieceRate", "curtainPiecePurchase", "curtain")}
+          </div>
+        );
+      })()}
 
       {/* ── Supervisors ── */}
       {activePanel === "supervisors" && (

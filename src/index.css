@@ -4,6 +4,9 @@
    `border-${c}-100` in DashboardTab / import wizard) — the JIT scanner can't see these. */
 @source inline("{text,border}-{indigo,blue,green,amber,purple,teal,red,pink,gray}-{100,600}");
 @source inline("{bg,border}-{indigo,blue,green,amber,purple,teal,red,pink,gray,orange}-{50,100} text-{indigo,blue,green,amber,purple,teal,red,pink,gray,orange}-{600,700}");
+/* Fabric Stock panel themes its sub-cards via `${themeColor}` (rose/orange/purple) across many shades. */
+@source inline("{bg,border,text}-{rose,orange,purple}-{50,100,200,300,600,700,800,900}");
+@source inline("hover:bg-{rose,orange,purple}-700");
 
 :root {
   /* Ambria is a light-themed UI (white cards / gray-50 bg). Pin the scheme to light so

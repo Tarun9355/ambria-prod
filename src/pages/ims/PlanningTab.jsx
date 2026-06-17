@@ -38,7 +38,7 @@ export default function PlanningTab({ projects, functions, inventory, settings, 
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "boxes" && <BoxesTab boxes={boxes} setBoxes={setBoxes} functions={functions} projects={projects} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
-      {sub === "fabricstock" && <Placeholder name="🧵 Fabric Stock" note="next slice" />}
+      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
     </div>
   );
 }
