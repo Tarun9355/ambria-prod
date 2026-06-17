@@ -54,6 +54,9 @@ const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o
 const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active });
 const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
 
+const rowToProd = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
+const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.functionId ?? null, status: p.status ?? "Requested", data: p });
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -67,6 +70,7 @@ export default function IMS() {
   const [boxes, setBoxesState] = useState([]);
   const [overheads, setOverheadsState] = useState([]);
   const [supervisors, setSupervisorsState] = useState([]);
+  const [prodRequests, setProdRequestsState] = useState([]);
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
@@ -105,6 +109,7 @@ export default function IMS() {
   const boxesRef = useRef([]);
   const overheadsRef = useRef([]);
   const supervisorsRef = useRef([]);
+  const prodRequestsRef = useRef([]);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
@@ -113,6 +118,7 @@ export default function IMS() {
   useEffect(() => { boxesRef.current = boxes; }, [boxes]);
   useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
   useEffect(() => { supervisorsRef.current = supervisors; }, [supervisors]);
+  useEffect(() => { prodRequestsRef.current = prodRequests; }, [prodRequests]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // ── Initial load + inventory Realtime subscription ──
@@ -120,7 +126,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, prodRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -129,6 +135,7 @@ export default function IMS() {
           fetchAll("boxes").catch(() => []),
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
+          fetchAll("production_requests").catch(() => []),
           fetchAll("rate_card").catch(() => []),
           fetchAll("truss_inventory").catch(() => []),
           fetchAll("categories").catch(() => []),
@@ -143,6 +150,7 @@ export default function IMS() {
         setBoxesState(boxRows.map(rowToBox));
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
+        setProdRequestsState(prodRows.map(rowToProd));
         setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
         const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
         if (trussRow?.data) setTrussInvState(trussRow.data);
@@ -349,6 +357,28 @@ export default function IMS() {
     })();
   }, []);
 
+  // Production requests — full object stored in `data`; persist only changed/deleted rows.
+  const setProdRequests = useCallback((updater) => {
+    const prev = prodRequestsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    prodRequestsRef.current = next;
+    setProdRequestsState(next);
+    const prevMap = new Map(prev.map((p) => [p.id, p]));
+    const nextIds = new Set(next.map((p) => p.id));
+    (async () => {
+      for (const p of next) {
+        const before = prevMap.get(p.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
+          const { error: e } = await supabase.from("production_requests").upsert(prodToRow(p), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+      for (const id of prevMap.keys()) {
+        if (!nextIds.has(id)) await supabase.from("production_requests").delete().eq("id", id);
+      }
+    })();
+  }, []);
+
   // Truss inventory is a single-row key-value (key='main', data JSONB).
   const setTrussInv = useCallback((updater) => {
     setTrussInvState((prev) => {
@@ -421,6 +451,7 @@ export default function IMS() {
             purchase={purchase} setPurchase={setPurchase}
             inventory={items} setInventory={setInventory}
             projects={projects} functions={functions}
+            prodRequests={prodRequests} setProdRequests={setProdRequests}
             studio={studio} authUser={user} settings={settings}
           />
         ) : tab === "planning" ? (

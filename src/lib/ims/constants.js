@@ -1,4 +1,7 @@
 // Shared IMS constants (non-inventory). Faithful to the reference app.
+export const PROD_STATUSES = ["Requested", "Acknowledged", "In Progress", "Ready for Review", "Confirmed", "Added to Inventory"];
+export const PROD_DEPTS = ["Floral", "Fabric", "Structural", "Lighting", "Painter & Production", "Props", "Furniture", "Other"];
+export const DIM_UNITS = ["ft", "cm", "inches", "metres"];
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
 export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
 export const MANPOWER_TYPES = ["Flowerists", "Labours", "Fabric Bangali", "Carpenters", "Painters", "Electricians", "Truss Labour", "Drivers", "Supervisors"];
