@@ -2,6 +2,14 @@
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
 export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
 export const MANPOWER_TYPES = ["Flowerists", "Labours", "Fabric Bangali", "Carpenters", "Painters", "Electricians", "Truss Labour", "Drivers", "Supervisors"];
+export const DUMPING_LEVELS = [{ id: "nearby", label: "📍 Nearby", mult: 1.0 }, { id: "medium", label: "🚶 Medium", mult: 1.1 }, { id: "far", label: "🚛 Far", mult: 1.2 }];
+export const EVENT_TIMINGS = [
+  { id: "brunch", label: "🌅 Brunch", mult: 1.3, beforeHour: 11, setupWindow: "~5 hrs" },
+  { id: "lunch", label: "☀️ Lunch", mult: 1.15, beforeHour: 14, setupWindow: "~6 hrs" },
+  { id: "sundowner", label: "🌆 Sundowner", mult: 1.05, beforeHour: 17, setupWindow: "~8 hrs" },
+  { id: "dinner", label: "🌙 Dinner", mult: 1.0, beforeHour: 21, setupWindow: "~11 hrs" },
+  { id: "latenight", label: "🌃 Late Night", mult: 1.0, beforeHour: 24, setupWindow: "~14 hrs" },
+];
 export const SIT_MULT_DEFAULTS = {
   heavySaya: { Flowerists: 1.35, "Fabric Bangali": 1.25, "Truss Labour": 1.2, Electricians: 1.2, Carpenters: 1.15, Painters: 1.15, Labours: 1.1, Helpers: 1.1 },
   premium: { Electricians: 1.4, Painters: 1.3, Flowerists: 1.25, Carpenters: 1.2, "Fabric Bangali": 1.15, "Truss Labour": 1.15, Labours: 1.15, Helpers: 1.1 },
@@ -42,6 +50,20 @@ export const SETTINGS_DEFAULTS = {
   },
   defaultMinLabour: 4,
   eventTypeMultipliers: { outdoor_premium: 1.5, outdoor_budgeted: 1.0, inhouse: 0.75 },
+  sayaMultiplier: 1.3,
+  eventTimingMultipliers: { brunch: 1.3, lunch: 1.15, sundowner: 1.05, dinner: 1.0, latenight: 1.0 },
+  venueMinLabour: {
+    "The Grand Hyatt": { min: 6, dumpingLevel: "far" },
+    "Green Valley Farmhouse": { min: 4, dumpingLevel: "nearby" },
+    "Ambria Pushpanjali": { min: 4, dumpingLevel: "nearby" },
+    "Ambria Manaktala": { min: 5, dumpingLevel: "medium" },
+    "Ambria Exotica": { min: 5, dumpingLevel: "medium" },
+  },
+  heavyElementRanges: [
+    { subCat: "Pillars/Columns", ranges: [{ upTo: 10, extra: 0 }, { upTo: 20, extra: 2 }, { upTo: 40, extra: 4 }, { upTo: 9999, extra: 6 }] },
+    { subCat: "Truss Systems", ranges: [{ upTo: 2, extra: 0 }, { upTo: 4, extra: 2 }, { upTo: 9999, extra: 4 }] },
+    { subCat: "Platforms/Risers", ranges: [{ upTo: 2, extra: 0 }, { upTo: 5, extra: 2 }, { upTo: 9999, extra: 4 }] },
+  ],
   situationalMultipliers: {},
   situationalMultiplierCap: 1.8,
   electricianProductivity: {},

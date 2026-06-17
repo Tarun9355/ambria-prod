@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Tabs, AddInlineItem, FlowerPicker } from "../../components/ui";
+import { Tabs, AddInlineItem, FlowerPicker, Btn } from "../../components/ui";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
-import { MANPOWER_TYPES, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
+import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, DUMPING_LEVELS, EVENT_TIMINGS } from "../../lib/ims/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
@@ -24,6 +24,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [synNewWords, setSynNewWords] = useState("");
+  const [newVenueInput, setNewVenueInput] = useState("");
   // Mandi panel state
   const [sArtSettingsOpen, setSArtSettingsOpen] = useState(false);
   const [sMandiSearch, setSMandiSearch] = useState("");
@@ -267,7 +268,102 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         </div>
       )}
-      {(activePanel === "venuemin") && <Placeholder name="🏢 Venue Minimum Labour" />}
+      {activePanel === "venuemin" && (
+        <div className="space-y-4">
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="font-bold text-gray-900 mb-1">🏢 Venue Minimum Labour & Dumping</p>
+            <p className="text-xs text-gray-500 mb-4">Set minimum labour and dumping point multiplier per venue. Unknown venues use default ({settings.defaultMinLabour || 4}, dumping ×1.0).</p>
+            <div className="space-y-2">
+              {Object.entries(settings.venueMinLabour || {}).map(([venue, cfg]) => {
+                const min = typeof cfg === "object" ? (cfg.min || 4) : (typeof cfg === "number" ? cfg : 4);
+                const dumpLevel = typeof cfg === "object" ? (cfg.dumpingLevel || "nearby") : "nearby";
+                return (
+                  <div key={venue} className="flex items-center gap-3 bg-gray-50 border rounded-lg px-3 py-2.5 flex-wrap">
+                    <span className="flex-1 text-sm font-medium text-gray-800 min-w-[120px]">{venue}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Min:</span>
+                      <input type="number" min="1" value={min} onChange={(e) => setSettings((s) => ({ ...s, venueMinLabour: { ...s.venueMinLabour, [venue]: { min: parseInt(e.target.value) || 4, dumpingLevel: dumpLevel } } }))} className="w-14 border rounded px-2 py-1.5 text-sm text-center" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">🚛 Dump:</span>
+                      <select value={dumpLevel} onChange={(e) => setSettings((s) => ({ ...s, venueMinLabour: { ...s.venueMinLabour, [venue]: { min, dumpingLevel: e.target.value } } }))} className="border rounded px-2 py-1.5 text-xs bg-white">
+                        {DUMPING_LEVELS.map((d) => <option key={d.id} value={d.id}>{d.label} (×{d.mult})</option>)}
+                      </select>
+                    </div>
+                    <button onClick={() => setSettings((s) => { const v = { ...s.venueMinLabour }; delete v[venue]; return { ...s, venueMinLabour: v }; })} className="text-red-400 hover:text-red-600 text-sm">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <input value={newVenueInput} onChange={(e) => setNewVenueInput(e.target.value)} className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Venue name e.g. The Oberoi" />
+              <Btn onClick={() => { if (newVenueInput.trim()) { setSettings((s) => ({ ...s, venueMinLabour: { ...s.venueMinLabour, [newVenueInput.trim()]: { min: 4, dumpingLevel: "nearby" } } })); setNewVenueInput(""); } }} size="sm">+ Add</Btn>
+            </div>
+          </div>
+
+          <div className="bg-white border rounded-2xl p-5 space-y-4">
+            <p className="font-bold text-gray-900 mb-1">⚡ Situational Multipliers</p>
+            <p className="text-xs text-gray-500">Only the HIGHEST of Dumping/Saya/Timing applies (not stacked). Excluded entirely if day-prior setup.</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-gray-500 font-medium">👑 Heavy Saya Multiplier (Kings dates)</label>
+                <input type="number" min="1" max="3" step="0.1" value={settings.sayaMultiplier || 1.3} onChange={(e) => setSettings((s) => ({ ...s, sayaMultiplier: parseFloat(e.target.value) || 1.3 }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 font-medium">⏰ Event Timing Multipliers (auto-mapped from Event Start Time)</label>
+              <p className="text-xs text-gray-400 mb-2">Salesperson enters event start time per function. System auto-categorizes and applies the multiplier.</p>
+              <div className="grid grid-cols-5 gap-2 mt-2">
+                {EVENT_TIMINGS.map((t, i) => {
+                  const prevHour = i > 0 ? EVENT_TIMINGS[i - 1].beforeHour : 0;
+                  return (
+                    <div key={t.id} className="bg-gray-50 border rounded-lg p-2 text-center">
+                      <p className="text-xs font-medium text-gray-700 mb-1">{t.label}</p>
+                      <p className="text-xs text-gray-400 mb-0.5">{prevHour > 0 ? prevHour + ":00" : "Start"}–{t.beforeHour}:00</p>
+                      <p className="text-xs text-gray-400 mb-1.5">{t.setupWindow}</p>
+                      <input type="number" min="1" max="3" step="0.05" value={(settings.eventTimingMultipliers || {})[t.id] || t.mult} onChange={(e) => setSettings((s) => ({ ...s, eventTimingMultipliers: { ...s.eventTimingMultipliers, [t.id]: parseFloat(e.target.value) || 1 } }))} className="w-full border rounded px-2 py-1 text-sm text-center font-bold" />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white border rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-bold text-gray-900">🏗️ Heavy Element Add-ons</p>
+                <p className="text-xs text-gray-500 mt-0.5">Extra labours added based on heavy inventory items (auto-counted from blocked items)</p>
+              </div>
+              <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: "", ranges: [{ upTo: 5, extra: 0 }, { upTo: 9999, extra: 2 }] }] }))} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Heavy Element</button>
+            </div>
+            {(settings.heavyElementRanges || []).map((her, hi) => (
+              <div key={hi} className="border rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <select value={her.subCat} onChange={(e) => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], subCat: e.target.value }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="flex-1 border rounded-lg px-3 py-2 text-sm bg-white">
+                    <option value="">— Select Sub-Category —</option>
+                    {studioSubcats.map((sc) => <option key={sc} value={sc}>{sc}</option>)}
+                    {her.subCat && !studioSubcats.includes(her.subCat) && <option value={her.subCat}>{her.subCat} (legacy)</option>}
+                  </select>
+                  <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-sm px-2">✕</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(her.ranges || []).map((r, ri) => (
+                    <div key={ri} className="flex items-center gap-1 bg-gray-50 border rounded-lg px-2 py-1">
+                      <span className="text-xs text-gray-500">≤</span>
+                      <input type="number" value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: ranges[hi].ranges.map((rr, rj) => (rj === ri ? { ...rr, upTo: parseInt(e.target.value) || 9999 } : rr)) }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="w-14 border rounded px-1 py-0.5 text-xs text-center" />
+                      <span className="text-xs text-gray-500">→ +</span>
+                      <input type="number" value={r.extra} onChange={(e) => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: ranges[hi].ranges.map((rr, rj) => (rj === ri ? { ...rr, extra: parseInt(e.target.value) || 0 } : rr)) }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="w-12 border rounded px-1 py-0.5 text-xs text-center" />
+                      {(her.ranges || []).length > 1 && <button onClick={() => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: ranges[hi].ranges.filter((_, rj) => rj !== ri) }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="text-red-400 text-xs">×</button>}
+                    </div>
+                  ))}
+                  <button onClick={() => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: [...ranges[hi].ranges, { upTo: 9999, extra: 2 }] }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="text-xs text-indigo-500 hover:text-indigo-700 border border-dashed border-indigo-300 px-2 py-1 rounded-lg">+ Range</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}
       {activePanel === "mandi" && (
         <div className="space-y-5">
