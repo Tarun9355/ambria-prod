@@ -14,9 +14,14 @@ import PlanningTab from "./PlanningTab.jsx";
 import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
 import FlowersTab from "./FlowersTab.jsx";
+import EventsTab from "./EventsTab.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
+import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
+import { ensureCdnLibs } from "../../lib/ims/pdf";
+import { kvGet, reliableSave } from "../../lib/ims/kv";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
+const BLOCKS_SK = "ambria-ims-blocks-v1"; // blocks document blob (faithful to reference Redis key)
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -38,6 +43,7 @@ const rowToFn = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? r
 const fnToRow = (fn) => ({ id: fn.id, project_id: fn.projectId ?? fn.project_id ?? null, name: fn.name ?? null, date: fn.date ?? null, venue: fn.venue ?? null, status: fn.status ?? "pending", data: fn });
 
 const rowToProject = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, status: row.status ?? row.data?.status, functions: row.data?.functions || [] });
+const projectToRow = (p) => ({ id: p.id, name: p.name ?? null, client: p.client ?? null, venue: p.venue ?? null, status: p.status ?? "active", data: p });
 
 const rowToVendor = (row) => ({ ...(row.data || {}), id: row.id, name: row.name ?? row.data?.name, type: row.type ?? row.data?.type, contact: row.contact ?? row.data?.contact, email: row.email ?? row.data?.email, bookings: row.data?.bookings || [], bills: row.data?.bills || [], ratings: row.data?.ratings || [] });
 const vendorToRow = (v) => ({ id: v.id, name: v.name ?? null, type: v.type ?? null, contact: v.contact ?? null, email: v.email ?? null, data: v });
@@ -77,7 +83,7 @@ export default function IMS() {
 
   const [items, setItems] = useState([]);
   const [functions, setFns] = useState([]);
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjectsState] = useState([]);
   const [vendors, setVendorsState] = useState([]);
   const [purchase, setPurchaseState] = useState([]);
   const [boxes, setBoxesState] = useState([]);
@@ -85,6 +91,7 @@ export default function IMS() {
   const [supervisors, setSupervisorsState] = useState([]);
   const [prodRequests, setProdRequestsState] = useState([]);
   const [eventOrders, setEventOrdersState] = useState([]);
+  const [blocks, setBlocksState] = useState({});
   const [trussAlloc, setTrussAllocState] = useState({});
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
@@ -125,7 +132,12 @@ export default function IMS() {
   const overheadsRef = useRef([]);
   const supervisorsRef = useRef([]);
   const prodRequestsRef = useRef([]);
+  const eventOrdersRef = useRef([]);
+  const blocksRef = useRef({});
+  const projectsRef = useRef([]);
   const trussAllocRef = useRef({});
+  const trussPromotedRef = useRef(new Set());
+  const trussBackfilledRef = useRef(false);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
@@ -135,6 +147,9 @@ export default function IMS() {
   useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
   useEffect(() => { supervisorsRef.current = supervisors; }, [supervisors]);
   useEffect(() => { prodRequestsRef.current = prodRequests; }, [prodRequests]);
+  useEffect(() => { eventOrdersRef.current = eventOrders; }, [eventOrders]);
+  useEffect(() => { blocksRef.current = blocks; }, [blocks]);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
   useEffect(() => { trussAllocRef.current = trussAlloc; }, [trussAlloc]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
@@ -163,7 +178,7 @@ export default function IMS() {
         if (!active) return;
         setItems(invRows.map(rowToItem));
         setFns(fnRows.map(rowToFn));
-        setProjects(projRows.map(rowToProject));
+        setProjectsState(projRows.map(rowToProject));
         setVendorsState(venRows.map(rowToVendor));
         setPurchaseState(poRows.map(rowToPurchase));
         setBoxesState(boxRows.map(rowToBox));
@@ -172,12 +187,17 @@ export default function IMS() {
         setProdRequestsState(prodRows.map(rowToProd));
         setEventOrdersState(eoRows.map(rowToEO));
         setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
+        // blocks document — stored as one JSON-string blob under BLOCKS_SK (settings table).
+        const blocksRow = setRows.find((r) => r.key === BLOCKS_SK);
+        if (blocksRow?.value) { try { setBlocksState(typeof blocksRow.value === "string" ? JSON.parse(blocksRow.value) : blocksRow.value); } catch { /* keep {} */ } }
         setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
         const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
         if (trussRow?.data) setTrussInvState(trussRow.data);
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = { ...SETTINGS_DEFAULTS };
-        for (const r of setRows) settingsObj[r.key] = r.value;
+        // Skip internal KV blobs (truss overrides/simulations/audit, blocks) — those are
+        // read directly via kvGet by their owners and shouldn't pollute the settings object.
+        for (const r of setRows) { if (!/^ambria-/.test(r.key)) settingsObj[r.key] = r.value; }
         setSettingsState(settingsObj);
         setLoading(false);
       } catch (e) {
@@ -231,6 +251,134 @@ export default function IMS() {
     })();
     return () => { active = false; };
   }, [loadLmsFromCache, syncLms]);
+
+  // Load the CDN libs (pdf.js / XLSX / JSZip) once — Events deck rendering needs window.pdfjsLib.
+  useEffect(() => { ensureCdnLibs(); }, []);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // §23 PHASE 3 ORCHESTRATOR — keep trussAlloc in sync with sold event orders.
+  // Faithful to the reference: (1) promote soft→hard when an EO is sold, (2) sweep
+  // expired soft holds every 5 min, (3) one-time backfill of already-sold EOs.
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── Promote soft → hard when EO is sold/confirmed ──
+  useEffect(() => {
+    if (!user) return;
+    if (!Array.isArray(eventOrders) || eventOrders.length === 0) return;
+    if (!trussInv || !trussInv.pillars) return;
+    const toPromote = eventOrders.filter((eo) => {
+      if (!eo || !eo.id) return false;
+      if (trussPromotedRef.current.has(eo.id)) return false;
+      if (eo.status === "pending" || !eo.status) return false;
+      return true;
+    });
+    if (toPromote.length === 0) return;
+    let nextAlloc = { ...trussAllocRef.current };
+    const datesToRecompute = new Set();
+    toPromote.forEach((eo) => {
+      trussPromotedRef.current.add(eo.id);
+      const fnList = eoToFnList(eo);
+      const fnsByDate = {};
+      fnList.forEach((fn) => { const d = fn.date || eo.date || ""; if (!d) return; if (!fnsByDate[d]) fnsByDate[d] = []; fnsByDate[d].push(fn); });
+      Object.entries(fnsByDate).forEach(([d, fns]) => {
+        const eventEntry = buildEventAllocation({ eoId: eo.id, clientId: eo.clientId || "", clientName: eo.clientName || "", fnIdx: 0, state: "hard", expiry: null, heldBy: eo.salesperson || "—", createdAt: eo.createdAt || Date.now() }, fns, trussInv);
+        if (!eventEntry.trusses || eventEntry.trusses.length === 0) return;
+        const dateEntry = nextAlloc[d] || { events: [] };
+        const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+        const filteredEvents = existingEvents.filter((ev) => {
+          if (ev.state === "soft" && ev.clientId === eventEntry.clientId) return false;
+          if (ev.state === "hard" && ev.eoId === eventEntry.eoId) return false;
+          return true;
+        });
+        filteredEvents.push(eventEntry);
+        nextAlloc[d] = { ...dateEntry, events: filteredEvents };
+        datesToRecompute.add(d);
+      });
+    });
+    datesToRecompute.forEach((d) => { nextAlloc = allocateForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "auto-promote-on-sold"); });
+    if (datesToRecompute.size > 0) {
+      setTrussAlloc(nextAlloc);
+      datesToRecompute.forEach((d) => appendTrussAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: toPromote.map((e) => e.id), eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventOrders, trussInv, user]);
+
+  // ── Soft-hold expiry sweeper — runs every 5 min ──
+  useEffect(() => {
+    if (!user) return;
+    const sweep = () => {
+      const now = Date.now();
+      let next = { ...trussAllocRef.current };
+      const datesChanged = new Set();
+      Object.keys(next).forEach((d) => {
+        const fresh = expireStaleSoftHolds(next[d]?.events || [], now);
+        if (fresh) { next[d] = { ...next[d], events: fresh }; datesChanged.add(d); }
+      });
+      if (datesChanged.size === 0) return;
+      datesChanged.forEach((d) => { next = allocateForDate(next, d, next[d]?.events || [], trussInv, "soft-hold-expiry-sweep"); });
+      setTrussAlloc(next);
+      datesChanged.forEach((d) => appendTrussAudit({ date: d, event: "soft-hold-expired", eventCount: next[d]?.events?.length || 0 }));
+    };
+    sweep();
+    const id = setInterval(sweep, 5 * 60 * 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, trussInv]);
+
+  // ── One-time backfill of already-sold EOs into truss allocation ──
+  useEffect(() => {
+    if (!user) return;
+    if (trussBackfilledRef.current) return;
+    if (!Array.isArray(eventOrders)) return;
+    if (!trussInv || !trussInv.pillars) return;
+    (async () => {
+      try {
+        let alreadyDone = false;
+        try { alreadyDone = localStorage.getItem(TRUSS_P3_BACKFILLED_SK) === "1"; } catch { /* ignore */ }
+        if (!alreadyDone) { const redisFlag = await kvGet(TRUSS_P3_BACKFILLED_SK); alreadyDone = redisFlag === "1" || redisFlag === '"1"'; }
+        if (alreadyDone) { trussBackfilledRef.current = true; return; }
+        const soldEos = eventOrders.filter((eo) => eo && eo.id && eo.status && eo.status !== "pending");
+        const eosToBackfill = soldEos.filter((eo) => {
+          const d = eo.date || eo.functionsDetail?.[0]?.date || "";
+          if (!d) return false;
+          return !(trussAllocRef.current[d]?.events || []).some((ev) => ev.eoId === eo.id);
+        });
+        if (eosToBackfill.length === 0) {
+          await reliableSave(TRUSS_P3_BACKFILLED_SK, "1", "Phase 3 backfill flag");
+          try { localStorage.setItem(TRUSS_P3_BACKFILLED_SK, "1"); } catch { /* ignore */ }
+          trussBackfilledRef.current = true;
+          return;
+        }
+        let nextAlloc = { ...trussAllocRef.current };
+        const datesChanged = new Set();
+        eosToBackfill.forEach((eo) => {
+          trussPromotedRef.current.add(eo.id);
+          const fnList = eoToFnList(eo);
+          const fnsByDate = {};
+          fnList.forEach((fn) => { const d = fn.date || eo.date || ""; if (d) { if (!fnsByDate[d]) fnsByDate[d] = []; fnsByDate[d].push(fn); } });
+          Object.entries(fnsByDate).forEach(([d, fns]) => {
+            const eventEntry = buildEventAllocation({ eoId: eo.id, clientId: eo.clientId || "", clientName: eo.clientName || "", fnIdx: 0, state: "hard", expiry: null, heldBy: eo.salesperson || "—", createdAt: eo.createdAt || Date.now() }, fns, trussInv);
+            if (!eventEntry.trusses || eventEntry.trusses.length === 0) return;
+            const dateEntry = nextAlloc[d] || { events: [] };
+            const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+            const filtered = existingEvents.filter((ev) => ev.eoId !== eventEntry.eoId);
+            filtered.push(eventEntry);
+            nextAlloc[d] = { ...dateEntry, events: filtered };
+            datesChanged.add(d);
+          });
+        });
+        datesChanged.forEach((d) => { nextAlloc = allocateForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "phase3-backfill"); });
+        setTrussAlloc(nextAlloc);
+        await reliableSave(TRUSS_P3_BACKFILLED_SK, "1", "Phase 3 backfill flag");
+        try { localStorage.setItem(TRUSS_P3_BACKFILLED_SK, "1"); } catch { /* ignore */ }
+        trussBackfilledRef.current = true;
+        await appendTrussAudit({ date: "ALL", event: "phase3-backfill", eventCount: eosToBackfill.length, datesAffected: datesChanged.size });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[tier23-p3] backfill FAILED", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, eventOrders, trussInv]);
 
   // Persist only the rows that actually changed (CLAUDE.md rule #1 — never re-save the whole table).
   const persistInventory = useCallback(async (prev, next, deletedIds) => {
@@ -400,6 +548,69 @@ export default function IMS() {
     })();
   }, []);
 
+  // event_orders — array of EO objects (.id). Row-level diff persistence; second arg is
+  // deleted ids (faithful to the reference setEventOrders(v, del) contract).
+  const setEventOrders = useCallback((updater, deletedIds = []) => {
+    const prev = eventOrdersRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    eventOrdersRef.current = next;
+    setEventOrdersState(next);
+    const prevMap = new Map(prev.map((e) => [e.id, e]));
+    const nextIds = new Set(next.map((e) => e.id));
+    (async () => {
+      for (const eo of next) {
+        const before = prevMap.get(eo.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
+          const { error: e } = await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+      for (const id of [...deletedIds, ...[...prevMap.keys()].filter((id) => !nextIds.has(id))]) {
+        await supabase.from("event_orders").delete().eq("id", id);
+      }
+    })();
+  }, []);
+  // saveEventOrders — the reference passed an explicit save callback; here it routes to
+  // the same row-level persistence (setEventOrders already writes through).
+  const saveEventOrders = useCallback((val, del = []) => { setEventOrders(val, del); }, [setEventOrders]);
+
+  // blocks — one document blob ({ [itemId]: [reservations] }); persisted whole under
+  // BLOCKS_SK (faithful to the reference's single Redis blob).
+  const persistBlocks = (next) => {
+    reliableSave(BLOCKS_SK, JSON.stringify(next || {}), "Blocks").then((r) => { if (!r.ok && r.error) setError(`Save failed: ${r.error}`); });
+  };
+  const setBlocks = useCallback((updater) => {
+    const prev = blocksRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    blocksRef.current = next;
+    setBlocksState(next);
+    persistBlocks(next);
+  }, []);
+  const saveBlocks = useCallback((val) => {
+    const next = typeof val === "function" ? val(blocksRef.current) : val;
+    blocksRef.current = next;
+    setBlocksState(next);
+    persistBlocks(next);
+  }, []);
+
+  // projects — row-level diff persistence to the projects table.
+  const setProjects = useCallback((updater) => {
+    const prev = projectsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    projectsRef.current = next;
+    setProjectsState(next);
+    const prevMap = new Map(prev.map((p) => [p.id, p]));
+    (async () => {
+      for (const p of next) {
+        const before = prevMap.get(p.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
+          const { error: e } = await supabase.from("projects").upsert(projectToRow(p), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   // Truss allocations — object keyed by date. allocateForDate returns the whole map;
   // we persist only the dates whose entry actually changed (CLAUDE.md rule #1).
   const setTrussAlloc = useCallback((updater) => {
@@ -517,6 +728,17 @@ export default function IMS() {
             settings={settings} setSettings={setSettings}
             supervisors={supervisors} setSupervisors={setSupervisors}
             studio={studio} authUser={user}
+          />
+        ) : tab === "events" ? (
+          <EventsTab
+            eventOrders={eventOrders} setEventOrders={setEventOrders}
+            inventory={items} blocks={blocks} setBlocks={setBlocks}
+            saveBlocks={saveBlocks} saveEventOrders={saveEventOrders}
+            projects={projects} setProjects={setProjects}
+            functions={functions} setFunctions={setFunctions}
+            purchase={purchase} setPurchase={setPurchase}
+            settings={settings} studio={studio}
+            trussInv={trussInv} setTrussInv={setTrussInv}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">

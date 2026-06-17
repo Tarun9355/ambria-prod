@@ -39,11 +39,19 @@ ALTER PUBLICATION supabase_realtime ADD TABLE lms_contracts;
 ## Edge Functions (CLI)
 - `lms` — ✅ deployed (verified live)
 - `season` — ✅ deployed + `SEASON_EXPORT_KEY` set (verified live)
-- `anthropic` — ⬜ NOT deployed. Only needed for AI features (Inventory photo-scan; later Events element-match):
+- `anthropic` — ⬜ NOT deployed. Needed for ALL AI features: Inventory photo-scan, Production
+  finished-vs-reference photo comparison, and **Events → AI Scan** (Claude Vision deck → decor
+  element extraction → inventory auto-match). These paths fail gracefully until it's deployed:
 ```bash
 supabase functions deploy anthropic
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+> Note: Events also renders PPT/PDF decks to slides client-side via pdf.js (loaded from CDN at
+> runtime, like the reference) — no install or SQL needed. No new tables for Phase 10/11; the
+> `event_orders`, `truss_allocations`, `production_requests`, `blocks` tables are all in
+> migration 001. Truss override/simulation/audit + the blocks document live as JSON blobs in
+> the existing `settings` table (faithful to the reference's Redis-blob model).
 
 ## Studio Rate Card seed — ⬜ (no SQL — just open the app once)
 `rate_card` is empty in the DB. Open **Studio → Manage → Pricing** once; the app
