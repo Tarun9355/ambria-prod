@@ -1,5 +1,30 @@
 // Flower recipe/cost helpers (faithful to the reference IMS app).
 
+// Resolve a requested recipe size against a pattern's sizes object (with legacy aliases).
+export const resolveSizeKey = (sizesObj, requestedSize) => {
+  if (!sizesObj) return null;
+  if (sizesObj[requestedSize]) return requestedSize;
+  if (requestedSize === "large" && sizesObj.big) return "big"; // legacy alias
+  if (requestedSize === "big" && sizesObj.large) return "large"; // pre-migration safety
+  if (sizesObj.medium) return "medium";
+  const keys = Object.keys(sizesObj);
+  return keys.length ? keys[0] : null;
+};
+
+// Normalize a size-class string to S / B / M.
+export const normalizeSizeClass = (raw) => {
+  const s = String(raw || "").trim().toUpperCase();
+  if (s === "S" || s === "SMALL") return "S";
+  if (s === "B" || s === "BIG" || s === "LARGE") return "B";
+  return "M";
+};
+
+// Map a size-class to the recipe-pattern size key.
+export const sizeClassToPatternKey = (sc) => {
+  const c = normalizeSizeClass(sc);
+  return c === "S" ? "small" : c === "B" ? "big" : "medium";
+};
+
 // Resolve a flower id (parent or colour-variant) against the mandi catalogue.
 export const resolveMandiFlower = (id, mandi) => {
   if (!id) return null;

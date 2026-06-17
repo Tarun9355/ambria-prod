@@ -5,6 +5,7 @@ export const DIM_UNITS = ["ft", "cm", "inches", "metres"];
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
 export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
 export const MANPOWER_TYPES = ["Flowerists", "Labours", "Fabric Bangali", "Carpenters", "Painters", "Electricians", "Truss Labour", "Drivers", "Supervisors"];
+export const DEFAULT_RATES = { Flowerists: 800, Labours: 500, "Fabric Bangali": 600, Carpenters: 900, Painters: 700, Electricians: 1000, "Truss Labour": 800, Drivers: 600, Supervisors: 1200 };
 export const DUMPING_LEVELS = [{ id: "nearby", label: "📍 Nearby", mult: 1.0 }, { id: "medium", label: "🚶 Medium", mult: 1.1 }, { id: "far", label: "🚛 Far", mult: 1.2 }];
 export const EVENT_TIMINGS = [
   { id: "brunch", label: "🌅 Brunch", mult: 1.3, beforeHour: 11, setupWindow: "~5 hrs" },
