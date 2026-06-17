@@ -57,6 +57,19 @@ const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone
 const rowToProd = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
 const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.functionId ?? null, status: p.status ?? "Requested", data: p });
 
+// event_orders — read-mostly here (Truss uses it as a legacy fallback; Events tab is a
+// later phase). Full object carried so the eventual Events build is forward-compatible.
+const rowToEO = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
+
+// truss_allocations — keyed by date. The reference treats trussAlloc as an object
+// { [date]: entry } where entry = { events, pool, stockSummary, ... }. The table has
+// date / events / pool columns, so the non-events remainder of the entry rides in `pool`.
+const rowToAlloc = (row) => ({ ...(row.pool || {}), date: row.date, events: row.events || [] });
+const allocToRow = (date, entry) => {
+  const { events, date: _d, ...rest } = entry || {};
+  return { date, events: events || [], pool: rest };
+};
+
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -71,6 +84,8 @@ export default function IMS() {
   const [overheads, setOverheadsState] = useState([]);
   const [supervisors, setSupervisorsState] = useState([]);
   const [prodRequests, setProdRequestsState] = useState([]);
+  const [eventOrders, setEventOrdersState] = useState([]);
+  const [trussAlloc, setTrussAllocState] = useState({});
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
@@ -110,6 +125,7 @@ export default function IMS() {
   const overheadsRef = useRef([]);
   const supervisorsRef = useRef([]);
   const prodRequestsRef = useRef([]);
+  const trussAllocRef = useRef({});
   const settingsRef = useRef(SETTINGS_DEFAULTS);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
@@ -119,6 +135,7 @@ export default function IMS() {
   useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
   useEffect(() => { supervisorsRef.current = supervisors; }, [supervisors]);
   useEffect(() => { prodRequestsRef.current = prodRequests; }, [prodRequests]);
+  useEffect(() => { trussAllocRef.current = trussAlloc; }, [trussAlloc]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // ── Initial load + inventory Realtime subscription ──
@@ -126,7 +143,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, prodRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -136,6 +153,8 @@ export default function IMS() {
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
           fetchAll("production_requests").catch(() => []),
+          fetchAll("event_orders").catch(() => []),
+          fetchAll("truss_allocations").catch(() => []),
           fetchAll("rate_card").catch(() => []),
           fetchAll("truss_inventory").catch(() => []),
           fetchAll("categories").catch(() => []),
@@ -151,6 +170,8 @@ export default function IMS() {
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
         setProdRequestsState(prodRows.map(rowToProd));
+        setEventOrdersState(eoRows.map(rowToEO));
+        setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
         setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
         const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
         if (trussRow?.data) setTrussInvState(trussRow.data);
@@ -379,6 +400,23 @@ export default function IMS() {
     })();
   }, []);
 
+  // Truss allocations — object keyed by date. allocateForDate returns the whole map;
+  // we persist only the dates whose entry actually changed (CLAUDE.md rule #1).
+  const setTrussAlloc = useCallback((updater) => {
+    const prev = trussAllocRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    trussAllocRef.current = next;
+    setTrussAllocState(next);
+    (async () => {
+      for (const date of Object.keys(next)) {
+        if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
+          const { error: e } = await supabase.from("truss_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   // Truss inventory is a single-row key-value (key='main', data JSONB).
   const setTrussInv = useCallback((updater) => {
     setTrussInvState((prev) => {
@@ -459,7 +497,9 @@ export default function IMS() {
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items}
             vendors={vendors} setVendors={setVendors}
             settings={settings} setSettings={setSettings} boxes={boxes} setBoxes={setBoxes}
-            trussInv={trussInv} setTrussInv={setTrussInv} studio={studio} authUser={user}
+            trussInv={trussInv} setTrussInv={setTrussInv}
+            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders}
+            studio={studio} authUser={user}
           />
         ) : tab === "finance" ? (
           <FinanceTab
