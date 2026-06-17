@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Tabs, AddInlineItem } from "../../components/ui";
+import { Tabs, AddInlineItem, FlowerPicker } from "../../components/ui";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
+import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
@@ -17,7 +18,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [synNewWords, setSynNewWords] = useState("");
@@ -518,7 +519,243 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         </div>
       )}
-      {(activePanel === "patterns") && <Placeholder name="🌺 Recipes" note="Studio-gated — pattern names come from the Studio Rate Card; builds out once Studio exists" />}
+      {activePanel === "patterns" && (() => {
+        const studioFloralsItems = studio?.floralsItems || [];
+        const studioFloralsSubcats = studio?.floralsSubcats || [];
+        const studioLoadingFlag = !!studio?.loading;
+        const recipeSubs = settings.flowerRecipeSubcats || [];
+        const activeStudioItems = studioFloralsItems.filter((i) => recipeSubs.includes((i.sub || "").trim()));
+        const groupedBySub = {};
+        activeStudioItems.forEach((i) => { const sub = (i.sub || "").trim() || "(uncategorized)"; (groupedBySub[sub] = groupedBySub[sub] || []).push(i); });
+        const sortedSubs = Object.keys(groupedBySub).sort((a, b) => a.localeCompare(b));
+        const legacyPatterns = (settings.flowerPatterns || []).filter((p) => {
+          const norm = (p.name || "").toLowerCase().trim();
+          return !studioFloralsItems.some((i) => (i.name || "").toLowerCase().trim() === norm);
+        });
+
+        const toggleSub = (sub) => {
+          setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
+        };
+        const mutatePattern = (studioItem, mutator) => {
+          setSettings((s) => {
+            const norm = (x) => (x || "").toLowerCase().trim();
+            const targetName = studioItem.name;
+            const existing = (s.flowerPatterns || []).find((p) => norm(p.name) === norm(targetName));
+            const m = existing?.mode === "smb" ? "smb" : existing?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
+            const sizeKeys = m === "smb" ? ["small", "medium", "big"] : ["medium"];
+            const emptyTemplate = sizeKeys.reduce((a, k) => ({ ...a, [k]: { flowers: [], totalPieces: 0 } }), {});
+            if (existing) return { ...s, flowerPatterns: s.flowerPatterns.map((p) => (p.id === existing.id ? mutator(p) : p)) };
+            const fresh = mutator({ id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: targetName, mode: m, sub: (studioItem.sub || "").trim(), unit: studioItem.unit || "pc", unitBasis: "per piece", sizes: emptyTemplate });
+            return { ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] };
+          });
+        };
+        const renderSizeColumn = (studioItem, sz, sizeLabel, sizeEmoji) => {
+          const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
+          const sizeData = pat?.sizes?.[sz] || { flowers: [], totalPieces: 0 };
+          return (
+            <div key={sz} className="p-3">
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">{sizeEmoji} {sizeLabel}</p>
+              {sizeData.flowers.map((fl, fi) => {
+                const flower = resolveMandiFlower(fl.flowerId, settings.mandiCatalogue)?.parent;
+                return (
+                  <div key={fi} className="flex items-center gap-1.5 mb-1.5">
+                    <FlowerPicker value={fl.flowerId} catalogue={settings.mandiCatalogue || []}
+                      onChange={(newId) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, flowerId: newId } : x)) } } }))} />
+                    {(() => {
+                      const effGS = flower?.unit === "piece" ? 1 : (Number(flower?.gattharSize) || 0);
+                      const isVariable = effGS === 0;
+                      const setQty = (newStored) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, qty: newStored } : x)) } } }));
+                      const fmtN = (n) => (n > 0 ? (n % 1 === 0 ? n.toString() : n.toFixed(1)) : "");
+                      if (!isVariable) {
+                        const pieces = (Number(fl.qty) || 0) * effGS;
+                        return (
+                          <>
+                            <input type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
+                              onChange={(e) => { const p = parseFloat(e.target.value) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
+                              className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}`} />
+                            <span className="text-[10px] text-gray-400 w-10 truncate" title={effGS > 1 ? `${effGS} pcs/${flower?.unit}` : "per-piece flower"}>pcs</span>
+                          </>
+                        );
+                      }
+                      const stored = Number(fl.qty) || 0;
+                      const patternsPerUnit = stored > 0 ? (1 / stored) : 0;
+                      return (
+                        <>
+                          <span className="text-[10px] text-gray-400 whitespace-nowrap">1 {flower?.unit || "unit"} →</span>
+                          <input type="number" min="0" step="1" value={fmtN(patternsPerUnit)} placeholder="N"
+                            onChange={(e) => { const n = parseFloat(e.target.value) || 0; setQty(n > 0 ? 1 / n : 0); }}
+                            className="w-12 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${stored.toFixed(3)} ${flower?.unit || ""}/pattern`} />
+                          <span className="text-[10px] text-gray-400">made</span>
+                        </>
+                      );
+                    })()}
+                    <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.filter((_, i) => i !== fi) } } }))}
+                      className="text-red-400 hover:text-red-600 text-xs leading-none">×</button>
+                  </div>
+                );
+              })}
+              <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: [...sizeData.flowers, { flowerId: "", qty: 0 }] } } }))}
+                className="text-xs text-indigo-500 hover:text-indigo-700 border border-dashed border-indigo-200 rounded px-2 py-0.5 w-full mt-1">+ flower</button>
+              {(() => {
+                const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue);
+                if (cost === null) return <div className="mt-2 border-t border-dashed pt-2 text-[10px] text-gray-400 italic text-center">Empty — no cost</div>;
+                const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
+                const markup = effectiveMarkup(pat, settings);
+                const studioRate = Math.round(cost * markup);
+                const unitLbl = studioUnitLabel(studioItem.unit);
+                return (
+                  <div className="mt-2 border-t pt-2 space-y-0.5">
+                    <div className="flex items-center justify-between text-[10px]"><span className="text-gray-500">💰 Mandi cost</span><span className="font-semibold text-gray-800">₹{cost.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
+                    <div className="flex items-center justify-between text-[10px]"><span className="text-emerald-700">→ Studio rate</span><span className="font-bold text-emerald-700">₹{studioRate.toLocaleString("en-IN")}<span className="text-[9px] text-emerald-600 font-normal ml-0.5">{unitLbl}</span></span></div>
+                    <div className="text-[9px] text-gray-400 text-right italic">{markup}× markup</div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        };
+        const fmtSyncTime = (ts) => {
+          if (!ts) return "never";
+          const diff = Date.now() - ts;
+          if (diff < 5000) return "just now";
+          if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+          if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+          return new Date(ts).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" });
+        };
+
+        return (
+          <div className="space-y-4">
+            <div>
+              <h4 className="font-semibold text-gray-800">🌺 Flower Pattern Matrix</h4>
+              <p className="text-sm text-gray-500 mt-0.5">Pattern names sourced from Studio Rate Card · Florals. Ops edits the recipe (which flowers + how many) below.</p>
+            </div>
+
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-emerald-800 font-semibold">🔒 Admin · Studio markup:</span>
+                <input type="number" min="1" step="0.1" value={settings.defaultStudioMarkup ?? 3}
+                  onChange={(e) => { const v = parseFloat(e.target.value) || 3; setSettings((s) => ({ ...s, defaultStudioMarkup: v })); }}
+                  className="w-16 border border-emerald-300 rounded px-2 py-1 text-xs font-bold text-center text-emerald-900" />
+                <span className="text-xs text-emerald-700">×</span>
+              </div>
+              <div className="flex items-center gap-2 border-l border-emerald-200 pl-3">
+                <span className="text-xs text-emerald-800 font-semibold">🌸 Artificial mix:</span>
+                <span className="text-xs text-emerald-700">₹</span>
+                <input type="number" min="0" step="10" value={settings.artificialMixRatePerKg ?? 0}
+                  onChange={(e) => { const v = parseFloat(e.target.value) || 0; setSettings((s) => ({ ...s, artificialMixRatePerKg: v })); }}
+                  placeholder="0" className="w-20 border border-emerald-300 rounded px-2 py-1 text-xs font-bold text-center text-emerald-900" />
+                <span className="text-xs text-emerald-700">/kg</span>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[10px] text-emerald-600">Last sync: {fmtSyncTime(tier15LastSync)}</span>
+                <button onClick={async () => { if (!syncRecipeRatesToStudio) return; const res = await syncRecipeRatesToStudio({ silent: false }); if (res?.error) alert(`Sync failed: ${res.error}`); else alert(`Synced to Studio: ${res?.updated || 0} updated, ${res?.cleared || 0} unlocked.`); }}
+                  disabled={!!tier15Syncing} className={"text-xs px-3 py-1.5 rounded-lg font-semibold " + (tier15Syncing ? "bg-gray-300 text-gray-500" : "bg-emerald-600 hover:bg-emerald-700 text-white")}>
+                  {tier15Syncing ? "⏳ Syncing…" : "📤 Sync to Studio"}
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+              <p className="text-xs font-semibold text-indigo-800 mb-2">Recipe-driven sub-categories <span className="font-normal text-indigo-600">— tick the Florals subs whose items use flower recipes for costing</span></p>
+              {studioLoadingFlag && studioFloralsSubcats.length === 0 && <p className="text-xs text-gray-400 italic">Loading from Studio…</p>}
+              {!studioLoadingFlag && studioFloralsSubcats.length === 0 && <p className="text-xs text-amber-600">No Florals sub-categories found in Studio Rate Card.</p>}
+              {studioFloralsSubcats.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {studioFloralsSubcats.map((sub) => {
+                    const on = recipeSubs.includes(sub);
+                    const count = studioFloralsItems.filter((i) => (i.sub || "").trim() === sub).length;
+                    return (
+                      <button key={sub} onClick={() => toggleSub(sub)} className={"text-xs px-2.5 py-1 rounded-full border transition-colors " + (on ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-300 hover:border-indigo-400")}>
+                        {on ? "✓ " : ""}{sub} <span className={on ? "opacity-80" : "text-gray-400"}>({count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {!studioLoadingFlag && activeStudioItems.length === 0 && (
+              <div className="text-center py-10 text-gray-400 text-sm border border-dashed rounded-xl">No patterns yet — tick a sub-category above to source patterns from Studio.</div>
+            )}
+
+            {sortedSubs.map((sub) => (
+              <div key={sub} className="space-y-2">
+                <div className="flex items-center gap-2 mt-2"><h5 className="text-sm font-semibold text-gray-700">🌸 {sub}</h5><span className="text-xs text-gray-400">({groupedBySub[sub].length})</span></div>
+                {groupedBySub[sub].map((studioItem) => {
+                  const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
+                  const m = pat?.mode === "smb" ? "smb" : pat?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
+                  const hasRecipe = !!pat && Object.values(pat.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
+                  return (
+                    <div key={studioItem.id} className="bg-white border rounded-xl overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b flex-wrap">
+                        <span className="text-sm font-semibold text-gray-800">{studioItem.name}</span>
+                        <div className="flex rounded-full overflow-hidden border border-gray-300">
+                          {["flat", "smb"].map((mm) => (
+                            <button key={mm} onClick={() => {
+                              if (mm === m) return;
+                              if (mm === "flat" && (pat?.sizes?.small?.flowers?.length > 0 || pat?.sizes?.big?.flowers?.length > 0)) {
+                                if (!window.confirm("Switching to Flat will drop Small & Big recipes (keeps Medium only). Continue?")) return;
+                              }
+                              mutatePattern(studioItem, (p) => {
+                                const np = { ...p, mode: mm };
+                                if (mm === "smb") np.sizes = { ...(p.sizes || {}), small: p.sizes?.small || { flowers: [], totalPieces: 0 }, medium: p.sizes?.medium || { flowers: [], totalPieces: 0 }, big: p.sizes?.big || { flowers: [], totalPieces: 0 } };
+                                else np.sizes = { medium: p.sizes?.medium || { flowers: [], totalPieces: 0 } };
+                                return np;
+                              });
+                            }} className={"px-3 py-0.5 text-[10px] font-bold tracking-wide transition-colors " + (m === mm ? (mm === "smb" ? "bg-purple-600 text-white" : "bg-emerald-600 text-white") : "bg-white text-gray-500 hover:bg-gray-100")}>{mm === "flat" ? "FLAT" : "S/M/B"}</button>
+                          ))}
+                        </div>
+                        <span title="Unit sourced from Studio Rate Card" className="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-mono cursor-help">{studioUnitLabel(studioItem.unit) || "/pc"}</span>
+                        <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">
+                          <span className="text-[9px] text-emerald-800 font-semibold">Markup:</span>
+                          <input type="number" min="0" step="0.1" value={pat?.studioMarkup ?? ""}
+                            onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => { const np = { ...p }; if (v === undefined) delete np.studioMarkup; else np.studioMarkup = v; return np; }); }}
+                            placeholder={String(settings.defaultStudioMarkup ?? 3)} className="w-12 border border-emerald-300 rounded px-1 py-0.5 text-[11px] font-bold text-center text-emerald-900" />
+                          <span className="text-[9px] text-emerald-700">×</span>
+                        </div>
+                        {!hasRecipe && <span className="ml-auto text-[10px] text-amber-600 italic">Empty recipe</span>}
+                        {hasRecipe && <span className="ml-auto flex items-center gap-1.5"><span className="text-[10px] text-green-600">✓ Recipe set</span></span>}
+                      </div>
+                      {m === "smb" ? (
+                        <div className="grid grid-cols-3 divide-x">
+                          {renderSizeColumn(studioItem, "small", "Small", "🔹")}
+                          {renderSizeColumn(studioItem, "medium", "Medium", "🔷")}
+                          {renderSizeColumn(studioItem, "big", "Big", "🔵")}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1">{renderSizeColumn(studioItem, "medium", "Recipe", "🌼")}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+
+            {legacyPatterns.length > 0 && (
+              <div className="space-y-2">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-amber-800 mb-1">🟡 Needs Review ({legacyPatterns.length})</p>
+                  <p className="text-[11px] text-amber-700">These patterns don't match any Studio Florals item. Map each to a Studio twin (recipe transfers), or delete if obsolete.</p>
+                </div>
+                {legacyPatterns.map((pat) => (
+                  <div key={pat.id} className="bg-amber-50/50 border border-amber-200 rounded-xl p-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-700">{pat._legacyName || pat.name}</span>
+                      <span className="text-[10px] text-gray-500">({Object.values(pat.sizes || {}).reduce((a, sd) => a + (sd?.flowers || []).length, 0)} flower lines)</span>
+                      <button onClick={() => { if (!window.confirm(`Delete legacy pattern "${pat._legacyName || pat.name}"?`)) return; setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== pat.id) })); }} className="ml-auto text-red-400 hover:text-red-600 text-xs">🗑 Discard</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="bg-pink-50 border border-pink-100 rounded-xl p-3 text-xs text-pink-800">
+              <p className="font-semibold mb-1">💡 How patterns are used at function planning:</p>
+              <p>Flower Head selects patterns + sizes + quantities for a function, then sets the artificial ratio %. System auto-calculates the real flower mandi shopping list at current prices and artificial kg needed. Pattern names match the Studio Rate Card exactly so Deal Check computes correctly.</p>
+            </div>
+          </div>
+        );
+      })()}
       {(activePanel === "trussbatta") && <Placeholder name="🏗️ Truss & Batta Config" note="Truss slice" />}
       {(activePanel === "fabricstock") && <Placeholder name="🧵 Fabric Stock" note="Fabric slice" />}
 

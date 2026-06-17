@@ -20,6 +20,9 @@ export const SETTINGS_DEFAULTS = {
   artificialKgToPieces: 200,
   mandiPriceMultipliers: { heavy_saya: 1.4, competition: 1.0, non_saya: 0.85 },
   flowerCategories: ["Rose", "Daisy", "Carnation", "Stock", "Lily & Orchid", "Gladiolus", "Anthurium", "Guldavari", "Marigold", "Mogra", "Tuberose", "Sunflower", "Ranunculus", "Filler & Green", "Palm & Leaf", "Patti (Leaves)", "Specialty", "Other"],
+  flowerPatterns: [],
+  flowerRecipeSubcats: ["Flower Pattern"],
+  defaultStudioMarkup: 3,
   mandiCatalogue: [
     { id: "F001", flowerCat: "Rose", name: "Rose Baby Pink", unit: "bundle", gattharSize: null, currentPrice: 550, priceHistory: [{ price: 500, date: "2026-02-19" }] },
     { id: "F002", flowerCat: "Rose", name: "Rose White", unit: "bundle", gattharSize: null, currentPrice: 300, priceHistory: [{ price: 300, date: "2026-02-23" }] },

@@ -1,4 +1,62 @@
+import { useState, useEffect, useRef } from "react";
+
 // ─── Shared UI primitives (faithful copies of the reference IMS app) ──────────
+
+// Searchable flower picker (position:fixed dropdown to escape overflow containers).
+export function FlowerPicker({ value, catalogue, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const ref = useRef(null);
+  const inputRef = useRef(null);
+  const selected = (catalogue || []).find((f) => f.id === value);
+  const term = search.toLowerCase();
+  const filtered = term
+    ? (catalogue || []).filter((f) => (f.name || "").toLowerCase().includes(term) || (f.flowerCat || "").toLowerCase().includes(term))
+    : (catalogue || []);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setSearch(""); } };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  useEffect(() => {
+    if (!open || !ref.current) return;
+    const update = () => { const r = ref.current.getBoundingClientRect(); setPos({ top: r.bottom + 2, left: r.left }); };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
+  }, [open]);
+  const handleFocus = () => { setOpen(true); setSearch(""); };
+  const handlePick = (id) => { onChange(id); setOpen(false); setSearch(""); if (inputRef.current) inputRef.current.blur(); };
+  return (
+    <div ref={ref} className="relative flex-1 min-w-0">
+      <div className="flex items-center border rounded bg-white hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-200">
+        <input ref={inputRef} value={open ? search : (selected ? selected.name : "")} onChange={(e) => setSearch(e.target.value)} onFocus={handleFocus}
+          placeholder={selected ? selected.name : "Search flower…"} className="flex-1 min-w-0 px-1.5 py-1 text-xs bg-transparent outline-none" />
+        <button type="button" tabIndex={-1}
+          onMouseDown={(e) => { e.preventDefault(); if (open) { setOpen(false); setSearch(""); } else { handleFocus(); inputRef.current?.focus(); } }}
+          className="px-1 text-gray-400 hover:text-gray-600 text-[10px] flex-shrink-0 leading-none">▼</button>
+      </div>
+      {open && (
+        <div style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999, minWidth: "15rem", width: "max-content", maxWidth: "20rem" }} className="bg-white border border-gray-200 rounded-lg shadow-lg">
+          <div style={{ maxHeight: "200px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+            {filtered.length === 0 && <div className="px-3 py-2.5 text-xs text-gray-400 text-center">No match</div>}
+            {filtered.map((f) => (
+              <div key={f.id} onMouseDown={(e) => { e.preventDefault(); handlePick(f.id); }}
+                className={"px-3 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 transition-colors border-b border-gray-50 last:border-0" + (f.id === value ? " bg-indigo-50 font-semibold" : "")}>
+                <div className="text-gray-800">{f.name}</div>
+                <div className="text-[10px] text-gray-400 leading-tight">{f.flowerCat || ""}{f.currentPrice ? ` · ₹${f.currentPrice}/${f.unit || ""}` : ""}</div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[9px] text-gray-300 text-center py-0.5 border-t bg-gray-50 rounded-b-lg">{filtered.length} flower{filtered.length !== 1 ? "s" : ""}</div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export const BADGE_COLORS = {
   green: "bg-green-100 text-green-800", blue: "bg-blue-100 text-blue-800",
