@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Tabs } from "../../components/ui";
 import PaintPlanningTab from "./PaintPlanningTab.jsx";
 import BoxesTab from "./BoxesTab.jsx";
+import AdminSettingsTab from "./AdminSettingsTab.jsx";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Manpower / Truss / Paint /
 // Boxes / Truss&Batta / Fabric Stock). Manpower + the two AdminSettings-backed config
@@ -15,7 +16,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function PlanningTab({ projects, functions, inventory, settings, boxes, setBoxes, authUser }) {
+export default function PlanningTab({ projects, functions, inventory, settings, setSettings, boxes, setBoxes, trussInv, setTrussInv, studio, authUser }) {
   const allTabs = [
     { id: "manpower", label: "👷 Manpower" },
     { id: "truss", label: "🏗️ Truss" },
@@ -36,8 +37,8 @@ export default function PlanningTab({ projects, functions, inventory, settings, 
       {sub === "truss" && <Placeholder name="🏗️ Truss" note="Phase 6" />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "boxes" && <BoxesTab boxes={boxes} setBoxes={setBoxes} functions={functions} projects={projects} />}
-      {sub === "trussbatta" && <Placeholder name="🏗️ Truss & Batta Config" note="Settings phase" />}
-      {sub === "fabricstock" && <Placeholder name="🧵 Fabric Stock" note="Settings phase" />}
+      {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
+      {sub === "fabricstock" && <Placeholder name="🧵 Fabric Stock" note="next slice" />}
     </div>
   );
 }

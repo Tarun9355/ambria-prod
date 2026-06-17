@@ -4,7 +4,7 @@ import { useAuth } from "../../lib/AuthContext";
 import { Tabs } from "../../components/ui";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
-import { SETTINGS_DEFAULTS } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
 import DashboardTab from "./DashboardTab.jsx";
@@ -67,6 +67,7 @@ export default function IMS() {
   const [boxes, setBoxesState] = useState([]);
   const [overheads, setOverheadsState] = useState([]);
   const [supervisors, setSupervisorsState] = useState([]);
+  const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [studioRcItems, setStudioRcItems] = useState([]);
@@ -119,7 +120,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, rcRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -129,6 +130,7 @@ export default function IMS() {
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
           fetchAll("rate_card").catch(() => []),
+          fetchAll("truss_inventory").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
         ]);
@@ -142,6 +144,8 @@ export default function IMS() {
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
         setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
+        const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
+        if (trussRow?.data) setTrussInvState(trussRow.data);
         setCats(catRows.map((c) => c.name).filter(Boolean));
         const settingsObj = { ...SETTINGS_DEFAULTS };
         for (const r of setRows) settingsObj[r.key] = r.value;
@@ -345,6 +349,15 @@ export default function IMS() {
     })();
   }, []);
 
+  // Truss inventory is a single-row key-value (key='main', data JSONB).
+  const setTrussInv = useCallback((updater) => {
+    setTrussInvState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      supabase.from("truss_inventory").upsert({ key: "main", data: next }, { onConflict: "key" }).then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); });
+      return next;
+    });
+  }, []);
+
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
@@ -413,7 +426,8 @@ export default function IMS() {
         ) : tab === "planning" ? (
           <PlanningTab
             projects={projects} functions={functions} inventory={items}
-            settings={settings} boxes={boxes} setBoxes={setBoxes} authUser={user}
+            settings={settings} setSettings={setSettings} boxes={boxes} setBoxes={setBoxes}
+            trussInv={trussInv} setTrussInv={setTrussInv} studio={studio} authUser={user}
           />
         ) : tab === "finance" ? (
           <FinanceTab

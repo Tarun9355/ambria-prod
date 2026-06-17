@@ -20,7 +20,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [synNewWords, setSynNewWords] = useState("");
@@ -1063,7 +1063,116 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         );
       })()}
-      {(activePanel === "trussbatta") && <Placeholder name="🏗️ Truss & Batta Config" note="Truss slice" />}
+      {activePanel === "trussbatta" && trussInv && (
+        <div className="space-y-4">
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">🏗️</span>
+              <div className="flex-1">
+                <p className="font-bold text-indigo-900">Truss · Batta · Liza Inventory</p>
+                <p className="text-xs text-indigo-700 mt-0.5">Skeleton (pillars + beams) wrapped by batta cloth, then covered by Liza fabric. Stock counts seeded per §23.2. Rates start at ₹0 — fill in below.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-3 mt-4">
+              <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-indigo-700">{Object.values(trussInv.pillars || {}).reduce((s, p) => s + (p.stock || 0), 0)}</div><div className="text-xs text-gray-500">Pillar pieces</div></div>
+              <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-indigo-700">{Object.values(trussInv.beams || {}).reduce((s, b) => s + (b.stock || 0), 0)}</div><div className="text-xs text-gray-500">Beam pieces</div></div>
+              <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-amber-700">{(trussInv.batta?.stockRft || 0).toLocaleString("en-IN")}</div><div className="text-xs text-gray-500">Batta RFT pool</div></div>
+              <div className="bg-white rounded-xl p-3 text-center"><div className="text-2xl font-bold text-rose-700">{(trussInv.liza?.stockKg || 0).toLocaleString("en-IN")}</div><div className="text-xs text-gray-500">Liza kg pool</div></div>
+            </div>
+          </div>
+
+          {/* Pillars */}
+          <div className="bg-white border border-indigo-100 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div><p className="font-bold text-indigo-800">🏛️ Pillars (load-bearing tops)</p><p className="text-xs text-gray-500">Standard heights 10/12/15 ft. Single piece, 0 joints.</p></div>
+              <button onClick={() => { const sz = prompt("New pillar size (ft, e.g. 8 or 18):"); if (!sz) return; const key = String(parseInt(sz) || 0); if (!key || key === "0") { alert("Invalid size"); return; } if (trussInv.pillars?.[key]) { alert("Size already exists"); return; } setTrussInv((ti) => ({ ...ti, pillars: { ...ti.pillars, [key]: { stock: 0, name: `Pillar ${key}ft` } } })); }} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Size</button>
+            </div>
+            <div className="overflow-hidden border border-indigo-100 rounded-xl">
+              <table className="w-full text-sm">
+                <thead className="bg-indigo-50 text-xs text-indigo-700"><tr><th className="px-3 py-2 text-left font-medium">Size</th><th className="px-3 py-2 text-left font-medium">Display name</th><th className="px-3 py-2 text-center font-medium">Stock (pieces)</th><th className="px-3 py-2 text-right font-medium">Total RFT</th><th className="px-3 py-2 text-center font-medium w-12"></th></tr></thead>
+                <tbody>
+                  {Object.entries(trussInv.pillars || {}).sort(([a], [b]) => parseInt(b) - parseInt(a)).map(([size, p]) => {
+                    const totalRft = (parseInt(size) || 0) * (p.stock || 0);
+                    return (
+                      <tr key={size} className="border-t border-indigo-50">
+                        <td className="px-3 py-2 font-bold text-indigo-700">{size} ft</td>
+                        <td className="px-3 py-2"><input type="text" value={p.name || ""} onChange={(e) => setTrussInv((ti) => ({ ...ti, pillars: { ...ti.pillars, [size]: { ...p, name: e.target.value } } }))} className="w-full border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
+                        <td className="px-3 py-2 text-center"><input type="number" min="0" value={p.stock || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, pillars: { ...ti.pillars, [size]: { ...p, stock: parseInt(e.target.value) || 0 } } }))} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                        <td className="px-3 py-2 text-right text-gray-500 text-xs">{totalRft.toLocaleString("en-IN")} ft</td>
+                        <td className="px-3 py-2 text-center">{Object.keys(trussInv.pillars || {}).length > 1 && (<button onClick={() => { if (!confirm(`Delete ${size}ft pillar?`)) return; setTrussInv((ti) => { const next = { ...ti.pillars }; delete next[size]; return { ...ti, pillars: next }; }); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 bg-indigo-50 border border-indigo-100 rounded-xl p-3 flex items-center justify-between">
+              <div><p className="text-sm font-bold text-indigo-800">💰 Pillar rental rate</p><p className="text-xs text-indigo-600">Single rate for all pillar sizes (₹/RFT × height).</p></div>
+              <div className="flex items-center gap-2"><span className="text-sm text-gray-700">₹</span><input type="number" min="0" value={trussInv.rates?.pillarRftRate || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, rates: { ...ti.rates, pillarRftRate: parseFloat(e.target.value) || 0 } }))} className="w-24 border border-indigo-300 rounded-lg px-3 py-1.5 text-sm font-bold text-indigo-700 text-center" /><span className="text-sm text-gray-700">/ RFT</span></div>
+            </div>
+          </div>
+
+          {/* Beams */}
+          <div className="bg-white border border-purple-100 rounded-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div><p className="font-bold text-purple-800">🔗 Beams (horizontal spans)</p><p className="text-xs text-gray-500">Sizes 2/3/4/5/8/10/12/15 ft.</p></div>
+              <button onClick={() => { const sz = prompt("New beam size (ft, e.g. 6 or 20):"); if (!sz) return; const key = String(parseInt(sz) || 0); if (!key || key === "0") { alert("Invalid size"); return; } if (trussInv.beams?.[key]) { alert("Size already exists"); return; } setTrussInv((ti) => ({ ...ti, beams: { ...ti.beams, [key]: { stock: 0, name: `Beam ${key}ft` } } })); }} className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Size</button>
+            </div>
+            <div className="overflow-hidden border border-purple-100 rounded-xl">
+              <table className="w-full text-sm">
+                <thead className="bg-purple-50 text-xs text-purple-700"><tr><th className="px-3 py-2 text-left font-medium">Size</th><th className="px-3 py-2 text-left font-medium">Display name</th><th className="px-3 py-2 text-center font-medium">Stock (pieces)</th><th className="px-3 py-2 text-right font-medium">Total RFT</th><th className="px-3 py-2 text-center font-medium w-12"></th></tr></thead>
+                <tbody>
+                  {Object.entries(trussInv.beams || {}).sort(([a], [b]) => parseInt(b) - parseInt(a)).map(([size, b]) => {
+                    const totalRft = (parseInt(size) || 0) * (b.stock || 0);
+                    const isScarce = (b.stock || 0) < 10;
+                    return (
+                      <tr key={size} className="border-t border-purple-50">
+                        <td className="px-3 py-2 font-bold text-purple-700">{size} ft{isScarce && <span className="ml-1 text-amber-500" title="Low stock">⚠️</span>}</td>
+                        <td className="px-3 py-2"><input type="text" value={b.name || ""} onChange={(e) => setTrussInv((ti) => ({ ...ti, beams: { ...ti.beams, [size]: { ...b, name: e.target.value } } }))} className="w-full border border-purple-200 rounded px-2 py-1 text-xs" /></td>
+                        <td className="px-3 py-2 text-center"><input type="number" min="0" value={b.stock || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, beams: { ...ti.beams, [size]: { ...b, stock: parseInt(e.target.value) || 0 } } }))} className="w-20 border border-purple-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
+                        <td className="px-3 py-2 text-right text-gray-500 text-xs">{totalRft.toLocaleString("en-IN")} ft</td>
+                        <td className="px-3 py-2 text-center">{Object.keys(trussInv.beams || {}).length > 1 && (<button onClick={() => { if (!confirm(`Delete ${size}ft beam?`)) return; setTrussInv((ti) => { const next = { ...ti.beams }; delete next[size]; return { ...ti, beams: next }; }); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 bg-purple-50 border border-purple-100 rounded-xl p-3 flex items-center justify-between">
+              <div><p className="text-sm font-bold text-purple-800">💰 Beam rental rate</p><p className="text-xs text-purple-600">Single rate for all beam sizes (₹/RFT × length).</p></div>
+              <div className="flex items-center gap-2"><span className="text-sm text-gray-700">₹</span><input type="number" min="0" value={trussInv.rates?.beamRftRate || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, rates: { ...ti.rates, beamRftRate: parseFloat(e.target.value) || 0 } }))} className="w-24 border border-purple-300 rounded-lg px-3 py-1.5 text-sm font-bold text-purple-700 text-center" /><span className="text-sm text-gray-700">/ RFT</span></div>
+            </div>
+          </div>
+
+          {/* Batta */}
+          <div className="bg-white border border-amber-100 rounded-2xl p-5">
+            <div className="mb-3"><p className="font-bold text-amber-800">🧵 Batta (truss wrap)</p><p className="text-xs text-gray-500">Bulk RFT pool — ops cuts to needed length. Wraps every pillar + beam.</p></div>
+            <div className="grid md:grid-cols-3 gap-3">
+              <div><label className="text-xs text-gray-600 font-medium">Total stock (RFT)</label><input type="number" min="0" value={trussInv.batta?.stockRft || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, batta: { ...ti.batta, stockRft: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Rental rate (₹/RFT)</label><input type="number" min="0" value={trussInv.rates?.battaRftRate || 0} onChange={(e) => setTrussInv((ti) => ({ ...ti, rates: { ...ti.rates, battaRftRate: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Precautionary buffer (%)</label><input type="number" min="0" max="50" value={trussInv.batta?.bufferPct || 10} onChange={(e) => setTrussInv((ti) => ({ ...ti, batta: { ...ti.batta, bufferPct: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+            </div>
+          </div>
+
+          {/* Engineering settings */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5">
+            <p className="font-bold text-gray-800 mb-1">⚙️ Engineering settings</p>
+            <p className="text-xs text-gray-500 mb-4">Layer 1 topology rules. Change only if engineering practice changes.</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div><label className="text-xs text-gray-600 font-medium">Pillar width (ft)</label><input type="number" step="0.05" min="0" value={trussInv.settings?.pillarWidthFt || 0.75} onChange={(e) => setTrussInv((ti) => ({ ...ti, settings: { ...ti.settings, pillarWidthFt: parseFloat(e.target.value) || 0.75 } }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-bold text-gray-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Max span (ft)</label><input type="number" min="1" value={trussInv.settings?.maxSpanFt || 30} onChange={(e) => setTrussInv((ti) => ({ ...ti, settings: { ...ti.settings, maxSpanFt: parseInt(e.target.value) || 30 } }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-bold text-gray-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Default back depth (ft)</label><input type="number" min="1" value={trussInv.settings?.defaultBackDepthFt || 4} onChange={(e) => setTrussInv((ti) => ({ ...ti, settings: { ...ti.settings, defaultBackDepthFt: parseInt(e.target.value) || 4 } }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-bold text-gray-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Default truss type</label>
+                <select value={trussInv.settings?.untaggedFallback || "half_box"} onChange={(e) => setTrussInv((ti) => ({ ...ti, settings: { ...ti.settings, untaggedFallback: e.target.value } }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-bold text-gray-700">
+                  <option value="u_only">🟢 U Truss (cheapest)</option>
+                  <option value="half_box">🟡 Half Box (recommended)</option>
+                  <option value="full_box">🔴 Full Box (overpriced safety)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {(activePanel === "fabricstock") && <Placeholder name="🧵 Fabric Stock" note="Fabric slice" />}
 
       {/* ── Supervisors ── */}

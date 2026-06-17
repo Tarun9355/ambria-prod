@@ -17,6 +17,36 @@ export const SIT_MULT_DEFAULTS = {
   rush: { Labours: 1.3, Helpers: 1.3, Carpenters: 1.25, "Fabric Bangali": 1.2, Painters: 1.2, Electricians: 1.15, Flowerists: 1.1, "Truss Labour": 1.15 },
 };
 
+// §23 Truss + Batta + Liza inventory defaults (faithful to reference INIT_TRUSS_INV).
+export const INIT_TRUSS_INV = {
+  pillars: {
+    "15": { stock: 32, name: "Pillar 15ft" },
+    "12": { stock: 100, name: "Pillar 12ft" },
+    "10": { stock: 22, name: "Pillar 10ft" },
+  },
+  beams: {
+    "15": { stock: 40, name: "Beam 15ft" },
+    "12": { stock: 90, name: "Beam 12ft" },
+    "10": { stock: 85, name: "Beam 10ft" },
+    "8": { stock: 8, name: "Beam 8ft" },
+    "5": { stock: 20, name: "Beam 5ft" },
+    "4": { stock: 20, name: "Beam 4ft" },
+    "3": { stock: 40, name: "Beam 3ft" },
+    "2": { stock: 30, name: "Beam 2ft" },
+  },
+  rates: { pillarRftRate: 0, beamRftRate: 0, battaRftRate: 0, lizaKgRate: 0, maskingPieceRate: 0, curtainPieceRate: 0, lizaKgPurchase: 0, maskingPiecePurchase: 0, curtainPiecePurchase: 0 },
+  fabricFreshMarkup: { liza: 40, masking: 40, curtain: 40 },
+  fabricFactors: { kgPerRftWrap: 0.3, kgPerSqftDense: 0.08, kgPerSqftModerate: 0.05, kgPerSqftMinimum: 0.03 },
+  batta: { stockRft: 3000, bufferPct: 10 },
+  liza: { stockKg: 0 },
+  lizaStock: [],
+  maskingStock: [],
+  curtainStock: [],
+  settings: { pillarWidthFt: 0.75, maxSpanFt: 30, defaultBackDepthFt: 4, backDepthRange: [3, 5], untaggedFallback: "half_box", hybridPricingMethod: "simple_avg" },
+  lastUpdated: null,
+  updatedBy: null,
+};
+
 // Minimal default settings so finance math (buffer / min-profit) + date pricing work
 // before the Settings phase populates the real settings table. Faithful to INIT_SETTINGS.
 export const SETTINGS_DEFAULTS = {
