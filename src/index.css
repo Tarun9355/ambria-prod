@@ -6,6 +6,9 @@
 @source inline("{bg,border}-{indigo,blue,green,amber,purple,teal,red,pink,gray,orange}-{50,100} text-{indigo,blue,green,amber,purple,teal,red,pink,gray,orange}-{600,700}");
 
 :root {
+  /* Ambria is a light-themed UI (white cards / gray-50 bg). Pin the scheme to light so
+     OS dark mode never flips text/native form controls to white-on-white. */
+  color-scheme: light;
   --accent: #7C3AED;
   --accent-light: #A78BFA;
   --bg: #F9FAFB;
@@ -15,18 +18,21 @@
   --text-secondary: #6B7280;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0F0F1A;
-    --card: #1A1A2E;
-    --border: #2D2D44;
-    --text-primary: #F3F4F6;
-    --text-secondary: #9CA3AF;
-  }
-}
-
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text-primary);
+}
+
+/* Form controls inherit `color` via Tailwind's reset — without this they'd pick up the
+   body color and (previously) render near-white. Pin to readable dark; explicit Tailwind
+   text-* utilities (e.g. text-indigo-700 on rate inputs) still override this. */
+input,
+select,
+textarea {
+  color: var(--text-primary);
+}
+input::placeholder,
+textarea::placeholder {
+  color: #9CA3AF;
 }
