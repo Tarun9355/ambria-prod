@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Tabs, AddInlineItem, FlowerPicker } from "../../components/ui";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { MANPOWER_TYPES, SIT_MULT_DEFAULTS } from "../../lib/ims/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
@@ -56,7 +57,216 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     <div className="space-y-4">
       {!forcedMode && <Tabs tabs={panels} active={panel} onChange={setPanel} />}
 
-      {(activePanel === "labourtiers") && <Placeholder name="👷 Workforce / Labour Tiers" />}
+      {activePanel === "labourtiers" && (
+        <div className="space-y-4">
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="font-bold text-gray-900 mb-1">👷 Labour Tier Configuration</p>
+            <p className="text-xs text-gray-500 mb-4">Assign each manpower type to a planning tier. Tier 2 types have configurable minimum and scaling rules.</p>
+            <div className="space-y-2">
+              {MANPOWER_TYPES.filter((t) => t !== "Drivers").map((type) => {
+                const cfg = (settings.labourTiers || {})[type] || { tier: 1 };
+                return (
+                  <div key={type} className="bg-gray-50 border rounded-xl p-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-medium text-gray-800 text-sm w-32">{type}</span>
+                      <select value={cfg.tier} onChange={(e) => { const val = e.target.value; const tier = (val === "fixed" || val === "pillar-range" || val === "sqft-range") ? val : parseInt(val); setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, tier } } })); }} className="border rounded-lg px-2 py-1.5 text-xs bg-white w-44">
+                        <option value={1}>⚡ Tier 1 — Element-driven</option>
+                        <option value={2}>📊 Tier 2 — Min + Scaling</option>
+                        <option value={3}>🏢 Tier 3 — Venue + Event</option>
+                        <option value={4}>🤖 Tier 4 — AI + Past Ref</option>
+                        <option value="pillar-range">🔩 Pillar-Range (Truss)</option>
+                        <option value="sqft-range">📐 SqFt-Range (Fabric)</option>
+                        <option value="fixed">📌 Fixed</option>
+                      </select>
+                      {cfg.tier === 2 && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-gray-500">Min:</span>
+                          <input type="number" min="1" max="20" value={cfg.minimum || 1} onChange={(e) => setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, minimum: parseInt(e.target.value) || 1 } } }))} className="w-14 border rounded px-2 py-1 text-xs" />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1 ml-auto">
+                        <span className="text-xs text-gray-500">Dismantle:</span>
+                        <input type="number" min="0" max="100" value={cfg.dismantlingPct ?? ""} onChange={(e) => setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, dismantlingPct: parseInt(e.target.value) || 0 } } }))} placeholder="—" className="w-14 border rounded px-2 py-1 text-xs text-center" />
+                        <span className="text-xs text-gray-400">%</span>
+                      </div>
+                    </div>
+                    {cfg.tier === 2 && (
+                      <div className="mt-2">
+                        <p className="text-xs text-gray-500 mb-1.5">Sub-Categories & Batch Size <span className="text-gray-400">(click to add, set how many elements 1 worker handles)</span>:</p>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {Object.entries(cfg.subCatBatches || {}).map(([sc, batch]) => (
+                            <div key={sc} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1">
+                              <span className="text-xs text-indigo-700 font-medium">{sc}</span>
+                              <span className="text-xs text-gray-400">→ 1:</span>
+                              <input type="number" min="1" max="50" value={batch} onChange={(e) => { const nb = { ...(cfg.subCatBatches || {}), [sc]: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="w-10 border rounded px-1 py-0.5 text-xs text-center" />
+                              <button onClick={() => { const nb = { ...(cfg.subCatBatches || {}) }; delete nb[sc]; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {studioSubcats.filter((sc) => !(cfg.subCatBatches || {})[sc]).map((sc) => (
+                            <button key={sc} onClick={() => { const nb = { ...(cfg.subCatBatches || {}), [sc]: 3 }; setSettings((s) => ({ ...s, labourTiers: { ...s.labourTiers, [type]: { ...cfg, subCatBatches: nb } } })); }} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Tier 3 globals */}
+            <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-bold text-blue-800">🏢 Tier 3 Global Settings</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div><label className="text-xs text-gray-500">Default Min Labour</label><input type="number" value={settings.defaultMinLabour || 4} onChange={(e) => setSettings((s) => ({ ...s, defaultMinLabour: parseInt(e.target.value) || 4 }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" /></div>
+              </div>
+              <div><p className="text-xs text-gray-500 mb-2">Event Type Multipliers:</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[["outdoor_premium", "Premium ×"], ["outdoor_budgeted", "Budgeted ×"], ["inhouse", "In-house ×"]].map(([k, l]) => (
+                    <div key={k} className="flex items-center gap-2">
+                      <span className="text-xs text-gray-600 w-20">{l}</span>
+                      <input type="number" step="0.1" value={(settings.eventTypeMultipliers || {})[k] || 1} onChange={(e) => setSettings((s) => ({ ...s, eventTypeMultipliers: { ...s.eventTypeMultipliers, [k]: parseFloat(e.target.value) || 1 } }))} className="w-16 border rounded px-2 py-1 text-xs" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Truss Labour — Pillar Range Table */}
+            <div className="mt-4 bg-teal-50 border border-teal-100 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold text-teal-800">🔩 Truss Labour — Pillar Range Table</p>
+                  <p className="text-xs text-teal-600 mt-0.5">Define how many truss labours are needed based on total pillar count</p>
+                </div>
+                <button onClick={() => { const ranges = [...(settings.trussLabourRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 20, labour: (ranges[ranges.length - 1]?.labour || 6) + 2, label: "+20 pillars" }); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Range</button>
+              </div>
+              <div className="bg-white rounded-lg border border-teal-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-teal-100 text-xs text-teal-700"><tr><th className="px-3 py-2 text-left font-medium">Pillar Range</th><th className="px-3 py-2 text-center font-medium">Up To (pillars)</th><th className="px-3 py-2 text-center font-medium">Truss Labour</th><th className="px-3 py-2 text-center font-medium w-16"></th></tr></thead>
+                  <tbody>
+                    {(settings.trussLabourRanges || []).map((r, i) => {
+                      const prevMax = i > 0 ? (settings.trussLabourRanges[i - 1].upTo + 1) : 1;
+                      return (
+                        <tr key={i} className="border-t border-teal-100">
+                          <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} pillars</td>
+                          <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.trussLabourRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-20 border border-teal-200 rounded px-2 py-1 text-xs text-center" /></td>
+                          <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-16 border border-teal-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
+                          <td className="px-3 py-2 text-center">{(settings.trussLabourRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.trussLabourRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-teal-600">💡 Enter total truss pillar count in the Manpower tab → Truss Labour card auto-calculates from this table.</p>
+            </div>
+
+            {/* Fabric Bangali — SqFt Range Table */}
+            <div className="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold text-orange-800">📐 Fabric Bangali — Box Truss SqFt Range Table</p>
+                  <p className="text-xs text-orange-600 mt-0.5">SqFt = L × W of box truss (height doesn't affect fabric labour count)</p>
+                </div>
+                <button onClick={() => { const ranges = [...(settings.fabricBangaliRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 1000, labour: (ranges[ranges.length - 1]?.labour || 3) + 4, label: "" }); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Range</button>
+              </div>
+              <div className="bg-white rounded-lg border border-orange-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-orange-100 text-xs text-orange-700"><tr><th className="px-3 py-2 text-left font-medium">SqFt Range</th><th className="px-3 py-2 text-center font-medium">Up To (sqft)</th><th className="px-3 py-2 text-center font-medium">Fabric Bangali</th><th className="px-3 py-2 text-left font-medium">Example</th><th className="px-3 py-2 text-center font-medium w-16"></th></tr></thead>
+                  <tbody>
+                    {(settings.fabricBangaliRanges || []).map((r, i) => {
+                      const prevMax = i > 0 ? (settings.fabricBangaliRanges[i - 1].upTo + 1) : 1;
+                      const side = Math.round(Math.sqrt(r.upTo > 9000 ? 5000 : r.upTo));
+                      return (
+                        <tr key={i} className="border-t border-orange-100">
+                          <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} sqft</td>
+                          <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.fabricBangaliRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-20 border border-orange-200 rounded px-2 py-1 text-xs text-center" /></td>
+                          <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
+                          <td className="px-3 py-2 text-xs text-gray-400 italic">~{side}×{side}ft</td>
+                          <td className="px-3 py-2 text-center">{(settings.fabricBangaliRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.fabricBangaliRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Fabric RFT */}
+            <div className="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-bold text-orange-800">📏 Fabric RFT Settings (Side Walls + Half Box backDepth)</p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm text-gray-700">1 Fabric Bangali per</span>
+                <input type="number" min="10" max="500" value={settings.fabricRftPerWorker || 100} onChange={(e) => setSettings((s) => ({ ...s, fabricRftPerWorker: parseInt(e.target.value) || 100 }))} className="w-20 border border-orange-300 rounded-lg px-3 py-2 text-sm font-bold text-orange-700 text-center" />
+                <span className="text-sm text-gray-700">RFT</span>
+                <span className="text-sm text-gray-400 mx-2">|</span>
+                <span className="text-sm text-gray-700">Half Box back depth:</span>
+                <input type="number" min="1" max="20" value={settings.fabricBackDepthFt || 4} onChange={(e) => setSettings((s) => ({ ...s, fabricBackDepthFt: parseInt(e.target.value) || 4 }))} className="w-16 border border-orange-300 rounded-lg px-3 py-2 text-sm font-bold text-orange-700 text-center" />
+                <span className="text-sm text-gray-700">ft</span>
+              </div>
+            </div>
+
+            {/* Carpet Fresh Markup */}
+            <div className="mt-4 bg-rose-50 border border-rose-100 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-bold text-rose-800">🟥 Carpet Fresh Markup</p>
+              <p className="text-xs text-rose-600">When a deal needs more carpet than is owned, the shortfall is bought fresh. Only a % of the fresh purchase price is charged to the event.</p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm text-gray-700">Charge</span>
+                <input type="number" min="0" max="200" value={settings.carpetFreshMarkup ?? 40} onChange={(e) => setSettings((s) => ({ ...s, carpetFreshMarkup: parseFloat(e.target.value) || 0 }))} className="w-20 border border-rose-300 rounded-lg px-3 py-2 text-sm font-bold text-rose-700 text-center" />
+                <span className="text-sm text-gray-700">% of fresh carpet purchase price</span>
+              </div>
+            </div>
+
+            {/* Situational Multipliers */}
+            <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold text-amber-800">⚡ Situational Multipliers</p>
+                  <p className="text-xs text-amber-600 mt-0.5">Universal pressure factors applied on top of tier base counts.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Combined Cap:</span>
+                  <input type="number" step="0.1" min="1.5" max="2.5" value={settings.situationalMultiplierCap || 1.8} onChange={(e) => setSettings((s) => ({ ...s, situationalMultiplierCap: parseFloat(e.target.value) || 1.8 }))} className="w-16 border border-amber-300 rounded px-2 py-1 text-xs text-center font-bold" />
+                  <span className="text-xs text-gray-400">×</span>
+                </div>
+              </div>
+              {[
+                { key: "heavySaya", label: "🔴 Heavy Saya", desc: "Date is marked Heavy Saya — competition for workers" },
+                { key: "premium", label: "★ Premium Segment", desc: "Outdoor Premium events need higher quality/speed" },
+                { key: "dayPrior", label: "📅 Day-Prior Setup", desc: "Extra time available — can REDUCE workers needed" },
+                { key: "rush", label: "⚡ Rush / Last-Minute", desc: "Booking within " + ((settings.datePricing || {}).lastMinuteDays || 10) + " days — scramble premium" },
+              ].map((factor) => {
+                const vals = (settings.situationalMultipliers || {})[factor.key] || SIT_MULT_DEFAULTS[factor.key] || {};
+                const defaults = SIT_MULT_DEFAULTS[factor.key] || {};
+                return (
+                  <div key={factor.key} className="bg-white border border-amber-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div><span className="text-xs font-bold text-gray-800">{factor.label}</span><span className="text-xs text-gray-400 ml-2">{factor.desc}</span></div>
+                      <button onClick={() => setSettings((s) => ({ ...s, situationalMultipliers: { ...s.situationalMultipliers, [factor.key]: { ...defaults } } }))} className="text-xs text-amber-600 hover:text-amber-800">↩ Reset defaults</button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {MANPOWER_TYPES.filter((t) => t !== "Drivers" && t !== "Supervisors").map((type) => {
+                        const val = vals[type] || defaults[type] || 1.0;
+                        const isDefault = val === (defaults[type] || 1.0);
+                        const isReduction = val < 1;
+                        return (
+                          <div key={type} className={"flex items-center gap-1 border rounded-lg px-2 py-1 " + (isReduction ? "bg-green-50 border-green-200" : val > 1 ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200")}>
+                            <span className="text-xs text-gray-700 w-20 truncate" title={type}>{type}</span>
+                            <input type="number" step="0.05" min="0.5" max="2.0" value={val} onChange={(e) => { const v = parseFloat(e.target.value) || 1.0; setSettings((s) => ({ ...s, situationalMultipliers: { ...s.situationalMultipliers, [factor.key]: { ...(s.situationalMultipliers || {})[factor.key], [type]: v } } })); }} className={"w-14 border rounded px-1.5 py-0.5 text-xs text-center font-bold " + (isReduction ? "border-green-300 text-green-700" : val > 1 ? "border-amber-300 text-amber-700" : "border-gray-200 text-gray-500")} />
+                            {!isDefault && <span className="text-xs text-amber-500">•</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
       {(activePanel === "venuemin") && <Placeholder name="🏢 Venue Minimum Labour" />}
       {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}
       {activePanel === "mandi" && (

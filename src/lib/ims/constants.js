@@ -1,6 +1,13 @@
 // Shared IMS constants (non-inventory). Faithful to the reference app.
 export const VENDOR_TYPES = ["Manpower Contractor", "Transport", "Inventory Supplier", "Printing", "Flower Supplier", "Rental", "Service"];
 export const OVERHEAD_CATS = ["Godown Rent", "Fixed Staff Salaries", "Utilities", "Vehicle EMI/Maintenance", "Equipment Maintenance", "Subscriptions/Software", "Other"];
+export const MANPOWER_TYPES = ["Flowerists", "Labours", "Fabric Bangali", "Carpenters", "Painters", "Electricians", "Truss Labour", "Drivers", "Supervisors"];
+export const SIT_MULT_DEFAULTS = {
+  heavySaya: { Flowerists: 1.35, "Fabric Bangali": 1.25, "Truss Labour": 1.2, Electricians: 1.2, Carpenters: 1.15, Painters: 1.15, Labours: 1.1, Helpers: 1.1 },
+  premium: { Electricians: 1.4, Painters: 1.3, Flowerists: 1.25, Carpenters: 1.2, "Fabric Bangali": 1.15, "Truss Labour": 1.15, Labours: 1.15, Helpers: 1.1 },
+  dayPrior: { Carpenters: 0.7, Painters: 0.75, Labours: 0.8, Helpers: 0.8, "Fabric Bangali": 0.8, "Truss Labour": 0.8, Electricians: 0.85, Flowerists: 0.85 },
+  rush: { Labours: 1.3, Helpers: 1.3, Carpenters: 1.25, "Fabric Bangali": 1.2, Painters: 1.2, Electricians: 1.15, Flowerists: 1.1, "Truss Labour": 1.15 },
+};
 
 // Minimal default settings so finance math (buffer / min-profit) + date pricing work
 // before the Settings phase populates the real settings table. Faithful to INIT_SETTINGS.
@@ -23,6 +30,39 @@ export const SETTINGS_DEFAULTS = {
   flowerPatterns: [],
   flowerRecipeSubcats: ["Flower Pattern"],
   defaultStudioMarkup: 3,
+  labourTiers: {
+    Flowerists: { tier: 1 },
+    Electricians: { tier: 1 },
+    Painters: { tier: 2, minimum: 1, subCatBatches: { "Arches & Frames": 1, "Backdrops": 2, "Gate/Entry Frames": 1, "Themed Props": 5, "Decorative Objects": 5 } },
+    Carpenters: { tier: 2, minimum: 1, subCatBatches: { "Stage Frames": 1, "Mandap Frames": 1, "Gate/Entry Frames": 2, "Bar Counters": 2, "Platforms/Risers": 1 } },
+    Labours: { tier: 3 },
+    "Fabric Bangali": { tier: "sqft-range" },
+    "Truss Labour": { tier: "pillar-range" },
+    Supervisors: { tier: "fixed" },
+  },
+  defaultMinLabour: 4,
+  eventTypeMultipliers: { outdoor_premium: 1.5, outdoor_budgeted: 1.0, inhouse: 0.75 },
+  situationalMultipliers: {},
+  situationalMultiplierCap: 1.8,
+  electricianProductivity: {},
+  fabricRftPerWorker: 100,
+  fabricBackDepthFt: 4,
+  carpetFreshMarkup: 40,
+  trussLabourRanges: [
+    { upTo: 40, labour: 6, label: "Base (up to 40 pillars)" },
+    { upTo: 60, labour: 8, label: "+20 pillars" },
+    { upTo: 80, labour: 10, label: "+20 pillars" },
+    { upTo: 100, labour: 12, label: "+20 pillars" },
+    { upTo: 140, labour: 15, label: "+40 pillars" },
+    { upTo: 9999, labour: 18, label: "140+ pillars" },
+  ],
+  fabricBangaliRanges: [
+    { upTo: 1000, labour: 3, label: "Up to 1000 sqft (e.g. 30×30)" },
+    { upTo: 1600, labour: 4, label: "Up to 1600 sqft (e.g. 40×40)" },
+    { upTo: 2500, labour: 8, label: "Up to 2500 sqft (e.g. 50×50)" },
+    { upTo: 3600, labour: 12, label: "Up to 3600 sqft (e.g. 60×60)" },
+    { upTo: 9999, labour: 16, label: "3600+ sqft" },
+  ],
   dihariSchemes: {
     "Flowerists": { rate: 1200, windows: [{ id: "day", label: "9 AM – 6 PM" }, { id: "night", label: "6 PM – 2 AM" }] },
     "Electricians": { rate: 1500, windows: [{ id: "fullday", label: "Full day" }] },
