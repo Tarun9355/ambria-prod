@@ -37,8 +37,8 @@ Last updated by the autonomous build run. Read this first when resuming.
 \* photo-scan needs the `anthropic` function deployed.
 
 ## Remaining work (resume here, in suggested order)
-0. ~~Studio → Pricing / Rate Card~~ ✅ DONE (rate_card seeded; IMS sub-cats now read it). Note: floral pricing-mode pills + IMS-driven lock on rate items were deferred (deal-builder/cross-app coupled).
-1. **IMS Flowers → Recipes** (now unblocked — `studio.floralsItems`/`floralsSubcats` populate from rate_card florals) (`activePanel==="patterns"`, IMS ref 6818–7321). Studio-gated (needs rate-card florals). Helpers: resolveMandiFlower, FlowerPicker, computePatternSizeCost, effectiveMarkup, studioUnitLabel.
+0. ~~Studio → Pricing / Rate Card~~ ✅ DONE. ~~IMS Flowers → Recipes~~ ✅ DONE (Flowers tab fully live; recipe→Studio sync button inert until cross-app write wired). Deferred: floral pricing-mode pills + IMS-driven lock on rate items.
+1. **(was 1) IMS Flowers Recipes — DONE.** Next → (`activePanel==="patterns"`, IMS ref 6818–7321). Studio-gated (needs rate-card florals). Helpers: resolveMandiFlower, FlowerPicker, computePatternSizeCost, effectiveMarkup, studioUnitLabel.
 3. **IMS keystone slice 4** — Workforce/Labour Tiers (ref 5649–6028), Venue Min (6028–6271), Dihari (DihariTimingsPanel 7906). Needs porting rest of `INIT_SETTINGS` (labourTiers, manpowerMatrix, venueMinLabour, thresholdOutdoor, venues, dihariSchemes/defaultWindowsByPhase, colourCatalogue, etc.). Unblocks Manpower.
 4. **IMS keystone slice 5** — Truss & Batta (7410) + Fabric Stock (7726) config panels. Unblocks Planning configs + Truss tab.
 5. **IMS Phase 10** — Manpower (ManpowerTab 3058–4400), Truss (TrussPlanningTab 14470 + allocation engine), Production (ProductionTab 12234–13035). Large; Truss needs the Studio-shared allocation engine.
