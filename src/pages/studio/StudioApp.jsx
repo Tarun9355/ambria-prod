@@ -31,7 +31,11 @@ import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
+  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
 } from "../../lib/studio/pricing";
+import { callClaudeStreaming } from "../../lib/ai";
+import { supabase, fetchAll } from "../../lib/supabase";
+import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
@@ -226,6 +230,455 @@ function getActiveSoftHold(softHolds, itemId, currentSalesperson, nowMs) {
   return h;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// §23 PHASE 3 — Studio-side Layer 2+3 + truss soft-hold helpers — VERBATIM
+// (mirrors IMS allocator so soft-hold drafts carry actual BOM, not just intent)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── Layer 2 — Pillar Height Resolver (mirrors IMS) ──
+const resolvePillarHeight = (H, trussInv) => {
+  if (!H || H <= 0) return { pieces: [], joints: 0, shortage: true, reason: "Invalid height" };
+  const inv = trussInv || {};
+  const pillarSizes = Object.keys(inv.pillars || {}).map(Number).sort((a,b) => b - a);
+  const beamSizes   = Object.keys(inv.beams   || {}).map(Number).sort((a,b) => b - a);
+  if (pillarSizes.length === 0) return { pieces: [], joints: 0, shortage: true, reason: "No pillar sizes defined" };
+  if (pillarSizes.includes(H)) {
+    return { pieces: [{ type: "pillar", size: H, qty: 1 }], joints: 0, shortage: false };
+  }
+  for (const topPillar of pillarSizes) {
+    if (topPillar >= H) continue;
+    const gap = H - topPillar;
+    if (beamSizes.includes(gap)) {
+      return { pieces: [{ type: "beam", size: gap, qty: 1, position: "ground" }, { type: "pillar", size: topPillar, qty: 1, position: "top" }], joints: 1, shortage: false };
+    }
+    for (let i = 0; i < beamSizes.length; i++) {
+      for (let j = i; j < beamSizes.length; j++) {
+        if (beamSizes[i] + beamSizes[j] === gap) {
+          return { pieces: [{ type: "beam", size: beamSizes[i], qty: 1, position: "ground" }, { type: "beam", size: beamSizes[j], qty: 1, position: "ground" }, { type: "pillar", size: topPillar, qty: 1, position: "top" }], joints: 1, shortage: false };
+        }
+      }
+    }
+  }
+  return { pieces: [], joints: 0, shortage: true, reason: `Cannot assemble ${H}ft pillar from available sizes` };
+};
+
+// ─── Layer 3 — Beam Segment Resolver (mirrors IMS) ──
+const resolveBeamSegment = (targetLength, trussInv) => {
+  if (!targetLength || targetLength <= 0) return { pieces: [], joints: 0, shortage: false, gap: 0 };
+  const MAX_GAP = 1.0;
+  const inv = trussInv || {};
+  const beamSizes = Object.keys(inv.beams || {}).map(Number).filter(n => n > 0).sort((a,b) => b - a);
+  if (beamSizes.length === 0) return { pieces: [], joints: 0, shortage: true, reason: "No beam sizes" };
+
+  const targetFloor = Math.floor(targetLength + 1e-9);
+  const minAcceptable = Math.max(0, Math.ceil(targetLength - MAX_GAP - 1e-9));
+
+  const candidates = [];
+  const MAX_DEPTH = 6;
+  const search = (remainingBudget, combo, startIdx, currentSum) => {
+    if (currentSum >= minAcceptable && currentSum <= targetFloor) {
+      candidates.push({ combo: [...combo], sum: currentSum });
+    }
+    if (combo.length >= MAX_DEPTH) return;
+    if (remainingBudget < beamSizes[beamSizes.length - 1]) return;
+    for (let i = startIdx; i < beamSizes.length; i++) {
+      if (beamSizes[i] <= remainingBudget) {
+        combo.push(beamSizes[i]);
+        search(remainingBudget - beamSizes[i], combo, i, currentSum + beamSizes[i]);
+        combo.pop();
+      }
+    }
+  };
+  search(targetFloor, [], 0, 0);
+
+  if (candidates.length === 0) {
+    const fallback = beamSizes.find(s => s <= targetFloor);
+    if (fallback) return { pieces: [{ type: "beam", size: fallback, qty: 1 }], joints: 0, shortage: true, gap: targetLength - fallback, reason: `No combo within ${MAX_GAP}ft of ${targetLength}ft; closest under = ${fallback}ft` };
+    return { pieces: [], joints: 0, shortage: true, reason: `No combo possible for ${targetLength}ft` };
+  }
+
+  let best = null;
+  for (const cand of candidates) {
+    const joints = cand.combo.length - 1;
+    const gap = targetLength - cand.sum;
+    const sizeCounts = {};
+    cand.combo.forEach(s => { sizeCounts[s] = (sizeCounts[s] || 0) + 1; });
+    let abundance = Infinity;
+    Object.entries(sizeCounts).forEach(([sz, qty]) => {
+      const stock = inv.beams[sz]?.stock || 0;
+      const ratio = Math.log10(Math.max(stock - qty + 1, 1));
+      if (ratio < abundance) abundance = ratio;
+    });
+    if (!isFinite(abundance)) abundance = 0;
+    const cost = (100 * joints) + (10 * gap) + (1 * cand.combo.length) - (0.1 * abundance);
+    if (!best || cost < best.cost) best = { cost, joints, gap, sizeCounts, sum: cand.sum };
+  }
+
+  const piecesArr = Object.entries(best.sizeCounts).map(([sz, qty]) => ({ type: "beam", size: parseFloat(sz), qty })).sort((a, b) => b.size - a.size);
+  return { pieces: piecesArr, joints: best.joints, shortage: false, cost: best.cost, gap: best.gap, rounded: best.sum !== targetLength };
+};
+
+// ─── allocateTruss (mirrors IMS Phase 2) ──
+const allocateTruss = (zoneId, topology, trussInv) => {
+  if (!topology) return null;
+  const inv = trussInv || {};
+  const result = {
+    trussId: `T-${zoneId}`,
+    zone: zoneId,
+    trussConfig: topology.config,
+    method: topology.method,
+    pillarCount: topology.pillarCount,
+    pillars: [],
+    beamSegments: [],
+    totals: { pillarsUsed: {}, beamsUsed: {}, totalJoints: 0, physicalL: topology.physicalL, physicalW: topology.physicalW },
+    shortage: false,
+    shortageNotes: [],
+  };
+  topology.pillars.forEach((p, idx) => {
+    const r = resolvePillarHeight(p.H, inv);
+    result.pillars.push({ id: p.id, H: p.H, pieces: r.pieces, joints: r.joints });
+    result.totals.totalJoints += r.joints;
+    if (r.shortage) { result.shortage = true; result.shortageNotes.push(`${p.id}: ${r.reason}`); }
+    r.pieces.forEach(pc => {
+      if (pc.type === "pillar") result.totals.pillarsUsed[pc.size] = (result.totals.pillarsUsed[pc.size] || 0) + pc.qty;
+      else                       result.totals.beamsUsed[pc.size]   = (result.totals.beamsUsed[pc.size]   || 0) + pc.qty;
+    });
+  });
+  topology.beams.forEach(b => {
+    const r = resolveBeamSegment(b.lengthFt, inv);
+    result.beamSegments.push({ side: b.side, lengthFt: b.lengthFt, pieces: r.pieces, joints: r.joints });
+    result.totals.totalJoints += r.joints;
+    if (r.shortage) { result.shortage = true; result.shortageNotes.push(`Beam ${b.side} (${b.lengthFt}ft): ${r.reason}`); }
+    r.pieces.forEach(pc => {
+      result.totals.beamsUsed[pc.size] = (result.totals.beamsUsed[pc.size] || 0) + pc.qty;
+    });
+  });
+  return result;
+};
+
+// ─── Helper — Build truss soft-hold event entry for an entire fn list — VERBATIM ──
+const buildSoftHoldEntry = ({ clientId, clientName, salesperson, fnList, trussInv, expiry, eventDate }) => {
+  const trusses = [];
+  (fnList || []).forEach(fn => {
+    const zc = fn?.zoneConfig || {};
+    const en = fn?.enabledEls || {};
+    Object.entries(zc).forEach(([zoneKey, z]) => {
+      if (!z) return;
+      if (en && Object.keys(en).length > 0 && !en[zoneKey]) return;
+      const layer0 = resolveTrussConfig(z);
+      if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
+      const eng = trussInv?.settings || {};
+      const L = parseFloat(z.dims?.L) || 0;
+      const W = parseFloat(z.dims?.W) || 0;
+      const H = parseFloat(z.dims?.H) || 0;
+      const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
+      const backDepth = z.trussBackDepth || eng.defaultBackDepthFt || 4;
+      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
+      if (!topology) return;
+      const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}`, topology, trussInv);
+      if (!alloc) return;
+      trusses.push({
+        fnIdx: fn.fnIdx ?? 0,
+        zoneKey,
+        trussConfig: layer0.config,
+        allocation: alloc,
+        shortage: !!alloc.shortage,
+      });
+    });
+  });
+  if (trusses.length === 0) return null;
+  // Aggregate totals
+  const totalPillarsUsed = {};
+  const totalBeamsUsed   = {};
+  let totalJoints = 0;
+  trusses.forEach(t => {
+    Object.entries(t.allocation.totals.pillarsUsed || {}).forEach(([sz, q]) => { totalPillarsUsed[sz] = (totalPillarsUsed[sz] || 0) + q; });
+    Object.entries(t.allocation.totals.beamsUsed   || {}).forEach(([sz, q]) => { totalBeamsUsed[sz]   = (totalBeamsUsed[sz]   || 0) + q; });
+    totalJoints += t.allocation.totals.totalJoints || 0;
+  });
+  return {
+    eoId: `soft-${clientId}`,        // soft-hold pseudo-eoId; promoted to real EO id on SOLD
+    clientId,
+    clientName,
+    fnIdx: 0,
+    state: "soft",
+    expiry: expiry || (Date.now() + 24 * 60 * 60 * 1000),
+    heldBy: salesperson || "—",
+    createdAt: Date.now(),
+    eventDate: eventDate || "",
+    trusses,
+    totalPillarsUsed,
+    totalBeamsUsed,
+    totalJoints,
+    shortageBorne: false,
+  };
+};
+
+// ═══ DEAL CHECK REBUILD HELPERS (§7.9 · Deploy 1) — VERBATIM ═══
+
+// §7.9.5 — match an RC element by code (F01..F12) OR name fragment to a hard-prop entry.
+function lookupFloralMapping(rcCode, rcName, hardPropMap) {
+  const map = hardPropMap || FLORAL_HARDPROP_DEFAULT;
+  if (rcCode && map[rcCode]) return map[rcCode];
+  const n = String(rcName || "").toLowerCase();
+  if (/coffee\s*table/.test(n)) return map["F07"] || FLORAL_HARDPROP_DEFAULT["F07"];
+  if (/cocktail\s*table/.test(n)) return map["F08"] || FLORAL_HARDPROP_DEFAULT["F08"];
+  if (/console\s*table/.test(n)) return map["F12"] || FLORAL_HARDPROP_DEFAULT["F12"];
+  if (/couple\s*couch|couch\s*flow/.test(n)) return map["F11"] || FLORAL_HARDPROP_DEFAULT["F11"];
+  if (/centerp|round\s*table/.test(n)) return map["F09"] || FLORAL_HARDPROP_DEFAULT["F09"];
+  if (/flower\s*pot|flower\s*planter/.test(n)) return map["F05"] || FLORAL_HARDPROP_DEFAULT["F05"];
+  if (/floral\s*reet|garland|petals?|flower\s*garden/.test(n)) return [];
+  return null;
+}
+
+// §7.9.8 — cardKey builders.
+function buildElCardKey(zoneKey, rcName, idx) {
+  return `el::${zoneKey || ""}::${rcName || ""}::${idx ?? 0}`;
+}
+function buildFlCardKey(zoneKey, rcName, idx, propType) {
+  return `fl::${zoneKey || ""}::${rcName || ""}::${idx ?? 0}::${propType || "x"}`;
+}
+function parseCardKey(key) {
+  if (!key || typeof key !== "string") return null;
+  const parts = key.split("::");
+  if (parts[0] === "el" && parts.length === 4) {
+    return { kind: "el", zoneKey: parts[1], rcName: parts[2], idx: Number(parts[3]) || 0 };
+  }
+  if (parts[0] === "fl" && parts.length === 5) {
+    return { kind: "fl", zoneKey: parts[1], rcName: parts[2], idx: Number(parts[3]) || 0, propType: parts[4] };
+  }
+  return null;
+}
+
+// §7.9.6 #5 — dirty-zone-only re-runs.
+function isZoneDirty(zoneState, dcCards, fnIdx, zoneKey) {
+  const lastEditedAt = zoneState?.[fnIdx]?.[zoneKey]?.lastEditedAt;
+  if (!lastEditedAt) return true;  // never resolved → always dirty
+  const cards = dcCards?.[fnIdx] || {};
+  let earliestResolved = Infinity;
+  let foundAny = false;
+  for (const k of Object.keys(cards)) {
+    const parsed = parseCardKey(k);
+    if (!parsed || parsed.zoneKey !== zoneKey) continue;
+    foundAny = true;
+    const r = cards[k]?.resolvedAt;
+    if (!r) return true;  // any unresolved card → dirty
+    if (r < earliestResolved) earliestResolved = r;
+  }
+  if (!foundAny) return true;  // no cards yet → dirty
+  return lastEditedAt > earliestResolved;
+}
+
+// §7.9.6 #1 — filter IMS catalog to items matching a subcategory (case-insensitive).
+function filterImsBySubcategory(imsItems, subcategory) {
+  if (!Array.isArray(imsItems)) return [];
+  if (!subcategory) return imsItems;
+  const target = String(subcategory).toLowerCase().trim();
+  const matches = imsItems.filter(i => String(imsField.subcategory(i)).toLowerCase().trim() === target);
+  return matches.length > 0 ? matches : imsItems;  // fallback to full catalog if no subcat match
+}
+
+// §7.9.6 #2 — name-match shortcut.
+function nameMatchUnique(rcName, scopedItems) {
+  if (!rcName || !Array.isArray(scopedItems)) return { matched: false, item: null };
+  const target = String(rcName).toLowerCase().trim();
+  if (!target) return { matched: false, item: null };
+  const hits = scopedItems.filter(i => String(i?.name || "").toLowerCase().trim() === target);
+  if (hits.length === 1) return { matched: true, item: hits[0] };
+  return { matched: false, item: null };
+}
+
+// §7.9.4 #2 + §7.9.5 — derive all expected card specs for a zone.
+function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems) {
+  if (!Array.isArray(zoneElems) || zoneElems.length === 0) return [];
+  const out = [];
+  const rcArr = Array.isArray(rcItems) ? rcItems : [];
+  zoneElems.forEach((el, idx) => {
+    if (!el) return;
+    const rcName = el.name || "";
+    if (!rcName) return;
+    const qty = Number(el.qty) || 0;
+    if (qty <= 0) return;  // skip elements with 0 qty (toggled off but still in array)
+    const rc = rcArr.find(i => String(i?.name || "").toLowerCase() === String(rcName).toLowerCase());
+    const rcCode = rc?.id || "";
+    const subcategory = rc?.sub || "";
+    const cat = String(rc?.cat || "").toLowerCase();
+    const isFloral = cat === "florals" || /^F\d+$/.test(rcCode);
+    if (isFloral) {
+      const mapping = lookupFloralMapping(rcCode, rcName, hardPropMap);
+      if (!Array.isArray(mapping) || mapping.length === 0) return;  // F01-F04 or unknown floral → no card
+      mapping.forEach((spec, mIdx) => {
+        out.push({
+          cardKey: buildFlCardKey(zoneKey, rcName, idx, spec.propType),
+          kind: "fl",
+          rcName, rcCode, qty,
+          subcategory,  // from rc.sub — single source of truth (21 May 2026)
+          propType: spec.propType,
+          photoUrl,
+          dualCardIdx: mapping.length > 1 ? mIdx : null,
+        });
+      });
+    } else {
+      out.push({
+        cardKey: buildElCardKey(zoneKey, rcName, idx),
+        kind: "el",
+        rcName, rcCode, qty,
+        subcategory,
+        propType: null,
+        photoUrl,
+      });
+    }
+  });
+  return out;
+}
+
+// §7.9.4 #3 + §7.9.6 — element-first AI matcher with subcategory-scoped catalog.
+// REWIRED: posts through callClaudeStreaming (Supabase Edge Function) instead of /api/anthropic.
+async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
+  if (!Array.isArray(scopedItems) || scopedItems.length === 0) return { primary: null, alternatives: [] };
+  // Bound prompt size — top 40 candidates after subcategory filter
+  const candidates = scopedItems.slice(0, 40).map(i => ({
+    id: i.id,
+    name: i.name,
+    cat: imsField.category(i),
+    subCat: imsField.subcategory(i),
+    size: imsField.sizeText(i),
+    qty: imsField.qtyOwned(i),
+  }));
+  const prompt = "You are an inventory matcher for Ambria Decorations. Match a Rate Card element to the best IMS inventory item.\n\n" +
+    "RC element details:\n" +
+    "  name: " + (cardSpec.rcName || "(unknown)") + "\n" +
+    "  subcategory: " + (cardSpec.subcategory || "(unscoped)") + "\n" +
+    (cardSpec.propType ? "  prop type: " + cardSpec.propType + " (this is a floral hard-prop card — match to the physical vessel/stand, not the flowers)\n" : "") +
+    "\n" +
+    "Candidate IMS items (already scoped to subcategory):\n" + JSON.stringify(candidates, null, 2) + "\n\n" +
+    "Return ONLY valid JSON, no markdown:\n" +
+    "{ \"primary\": { \"imsId\": \"X-####\", \"reasoning\": \"short why\" }, \"alternatives\": [ { \"imsId\": \"X-####\" }, { \"imsId\": \"X-####\" }, { \"imsId\": \"X-####\" } ] }\n\n" +
+    "If nothing matches reasonably, return: { \"primary\": null, \"alternatives\": [] }";
+  try {
+    if (signal?.aborted) return { primary: null, alternatives: [], aborted: true };
+    const text = await callClaudeStreaming({
+      contentBlocks: prompt,
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 800,
+    });
+    const clean = (text || "").replace(/```json|```/g, "").trim();
+    let parsed;
+    try { parsed = JSON.parse(clean); } catch { return { primary: null, alternatives: [] }; }
+    // Hydrate names from full scopedItems list
+    if (parsed?.primary?.imsId) {
+      const item = scopedItems.find(i => i.id === parsed.primary.imsId);
+      if (item) parsed.primary.name = item.name;
+    }
+    parsed.alternatives = (parsed?.alternatives || []).map(alt => {
+      const item = scopedItems.find(i => i.id === alt?.imsId);
+      return item ? { imsId: alt.imsId, name: item.name } : null;
+    }).filter(Boolean);
+    return parsed;
+  } catch (e) {
+    if (e?.name === "AbortError") return { primary: null, alternatives: [], aborted: true };
+    console.error("[dc-rebuild] aiMatchCardWithSubcat failed:", e);
+    return { primary: null, alternatives: [] };
+  }
+}
+
+// Claude Vision call — matches a design photo to the best IMS inventory item.
+// REWIRED through callClaudeStreaming (image-URL block + text prompt).
+async function matchPhotoWithAI(photoUrl, photoMetadata, inventoryList) {
+  const tags = (photoMetadata?.elements || []).map(t => (t?.name || "").toLowerCase()).filter(Boolean);
+  let candidates = inventoryList;
+  if (tags.length > 0) {
+    const filtered = inventoryList.filter(i => {
+      const name = (i.name || "").toLowerCase();
+      const cat = (i.cat || "").toLowerCase();
+      const subCat = (i.subCat || "").toLowerCase();
+      return tags.some(t => name.includes(t) || cat.includes(t) || subCat.includes(t));
+    });
+    if (filtered.length > 0) candidates = filtered;
+  }
+  candidates = candidates.slice(0, 50);
+  if (candidates.length === 0) return { primary: null, alternatives: [] };
+  const invList = candidates.map(i => ({ id: i.id, name: i.name, cat: i.cat, subCat: i.subCat, size: i.size, qty: i.qty }));
+  const prompt = "You are an expert decor inventory matcher for Ambria Decorations. Look at the attached photo from our wedding/event decoration library.\n\n" +
+    "Identify the MAIN physical prop or structural element shown (arch, mandap, console, backdrop, pedestal, etc.). Ignore decorative fills like flowers, candles, fabric unless they ARE the main item.\n\n" +
+    "Match to the best candidate from this IMS inventory list:\n" + JSON.stringify(invList, null, 2) + "\n\n" +
+    "Photo element tags: " + (tags.join(", ") || "(none)") + "\n\n" +
+    "Return ONLY valid JSON, no markdown, no preamble:\n" +
+    "{\n  \"primary\": { \"imsId\": \"X####\", \"confidence\": \"high\"|\"medium\"|\"low\", \"reasoning\": \"short why\" },\n" +
+    "  \"alternatives\": [ { \"imsId\": \"X####\" }, { \"imsId\": \"X####\" }, { \"imsId\": \"X####\" } ]\n}\n\n" +
+    "If nothing reasonably matches, return: { \"primary\": null, \"alternatives\": [] }";
+  try {
+    const text = await callClaudeStreaming({
+      contentBlocks: [
+        { type: "image", source: { type: "url", url: photoUrl } },
+        { type: "text", text: prompt },
+      ],
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 1000,
+    });
+    const clean = (text || "").replace(/```json|```/g, "").trim();
+    let parsed;
+    try { parsed = JSON.parse(clean); } catch { return { primary: null, alternatives: [] }; }
+    if (parsed?.primary?.imsId) {
+      const item = inventoryList.find(i => i.id === parsed.primary.imsId);
+      if (item) parsed.primary.name = item.name;
+    }
+    parsed.alternatives = (parsed?.alternatives || []).map(alt => {
+      const item = inventoryList.find(i => i.id === alt.imsId);
+      return item ? { imsId: alt.imsId, name: item.name } : alt;
+    }).filter(a => a?.imsId);
+    return parsed;
+  } catch (e) {
+    console.error("[preflight] matchPhotoWithAI failed:", e);
+    return { primary: null, alternatives: [] };
+  }
+}
+
+// Resolve a photo URL to IMS ID. Order: event override → global cache → AI fallback. — VERBATIM
+async function resolvePhotoToIMS(photoUrl, photoMetadata, eventOverrides, imsInventory, photoImsMap) {
+  if (eventOverrides && eventOverrides[photoUrl]) {
+    const imsId = eventOverrides[photoUrl];
+    const item = imsInventory.find(i => i.id === imsId);
+    return { imsId, source: "override", name: item?.name || null, alternatives: [], aiCalled: false };
+  }
+  const cached = photoImsMap ? photoImsMap[photoUrl] : null;
+  if (cached && cached.primary && cached.primary.imsId) {
+    const item = imsInventory.find(i => i.id === cached.primary.imsId);
+    if (!item) {
+      return { imsId: null, source: "stale_cache", name: null, alternatives: [], aiCalled: false };
+    }
+    return {
+      imsId: cached.primary.imsId,
+      source: "cache",
+      name: item.name,
+      confidence: cached.primary.confidence,
+      alternatives: cached.alternatives || [],
+      aiCalled: false
+    };
+  }
+  const aiResult = await matchPhotoWithAI(photoUrl, photoMetadata, imsInventory);
+  if (!aiResult?.primary?.imsId) {
+    return { imsId: null, source: "ai_no_match", name: null, alternatives: [], aiCalled: true };
+  }
+  const item = imsInventory.find(i => i.id === aiResult.primary.imsId);
+  const cacheEntry = {
+    primary: { imsId: aiResult.primary.imsId, confidence: aiResult.primary.confidence, name: item?.name, reasoning: aiResult.primary.reasoning },
+    alternatives: aiResult.alternatives || [],
+    lastScanned: Date.now(),
+    timesUsed: 1,
+    correctionsCount: 0
+  };
+  return {
+    imsId: aiResult.primary.imsId,
+    source: "ai",
+    name: item?.name || null,
+    confidence: aiResult.primary.confidence,
+    alternatives: aiResult.alternatives || [],
+    aiCalled: true,
+    cacheUpdate: { [photoUrl]: cacheEntry }
+  };
+}
+
 // ═══ IMS field accessor shim (used by Deal Check cost rollups) — VERBATIM ═══
 const imsField = {
   category: (i) => i?.category || i?.cat || "",
@@ -318,10 +771,35 @@ function paintPillLabel(el, baseColour) {
   return `${allocs.length} colours`;
 }
 
-// ═══ Stubbed integrations — IMS cross-fetch is still a later slice (Deal Check engine).
-// §25 LMS lead search is LIVE: searchLmsLeads (imported below) hits the cached
-// lms_contracts table. fetchIMSData stays neutral until the Deal Check generate engine.
-async function fetchIMSData(/* date */) { return { inventory: [], blocksByDate: {}, blocksForDate: {} }; }
+// ═══ IMS cross-fetch — REWIRED to Supabase (Part 2). §25 LMS lead search is LIVE.
+// Reads inventory (inventory table → rowToItem) + blocks (settings blob IMS_BLOCKS_SK).
+// Returns the same per-date shape the reference returned: { inventory, blocksForDate }.
+// blocksForDate: { imsId: totalBlockedQty for that date }.
+async function fetchIMSData(date) {
+  try {
+    const [invRows, blocksBlob] = await Promise.all([
+      fetchAll("inventory").catch(() => []),
+      kvGet("ambria-ims-blocks-v1").catch(() => null),
+    ]);
+    let inventory = Array.isArray(invRows) ? invRows.map(rowToItem).filter(Boolean) : [];
+    let blocks = blocksBlob;
+    // Defensive double-parse (blob may be a JSON string)
+    for (let i = 0; i < 2; i++) { if (typeof blocks === "string") { try { blocks = JSON.parse(blocks); } catch {} } }
+    if (typeof blocks !== "object" || !blocks) blocks = {};
+    const blocksForDate = {};
+    for (const [imsId, blockList] of Object.entries(blocks)) {
+      if (!Array.isArray(blockList)) continue;
+      const total = blockList
+        .filter(b => b && b.date === date && (b.status === "confirmed" || b.status === "final" || b.status === "held"))
+        .reduce((sum, b) => sum + (Number(b.qty) || 0), 0);
+      if (total > 0) blocksForDate[imsId] = total;
+    }
+    return { inventory, blocksForDate };
+  } catch (e) {
+    console.error("[preflight] fetchIMSData failed:", e);
+    return null;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
@@ -2629,13 +3107,439 @@ export default function StudioApp() {
   }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx]);
 
   // ═══════════════════════════════════════════════════════════════
-  // DEAL CHECK orchestration handlers — IMS fetch + AI photo-match loop.
-  // These are heavy async flows ported in a later Studio slice; the Deal Check
-  // overlay's Regenerate button wires to them. Stubbed here so the shell renders.
-  // TODO slice: DealCheck openDealCheck / runDealCheckGenerate
+  // DEAL CHECK orchestration — IMS fetch (Supabase) + AI photo-match loop +
+  // subcat-scoped Generate engine + truss soft-hold bridge writes. VERBATIM ports
+  // (Redis→Supabase rewires are the only adaptations).
   // ═══════════════════════════════════════════════════════════════
-  const openDealCheck = useCallback(async () => {}, []);
-  const runDealCheckGenerate = useCallback(async () => {}, []);
+
+  // ═══ DEAL CHECK REBUILD — saved-session migration (§7.9.8 Option A · Patch 7) — VERBATIM ═══
+  useEffect(() => {
+    if (!dcFullPageOpen) return;
+    const cli = clientLedger.find(c => c.id === activeClientId);
+    if (!cli) return;
+    const saved = cli.dcCards;
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      let isNewShape = false;
+      for (const fi of Object.keys(saved)) {
+        const inner = saved[fi];
+        if (!inner || typeof inner !== "object") continue;
+        const sampleKey = Object.keys(inner)[0];
+        if (sampleKey && (sampleKey.startsWith("el::") || sampleKey.startsWith("fl::"))) { isNewShape = true; break; }
+      }
+      if (isNewShape) setDcCards(saved);
+    }
+    if (cli.dcZoneState && typeof cli.dcZoneState === "object" && !Array.isArray(cli.dcZoneState)) {
+      setDcZoneState(cli.dcZoneState);
+    }
+    if (cli.dcKitEdits && typeof cli.dcKitEdits === "object" && !Array.isArray(cli.dcKitEdits)) {
+      setDcKitEdits(cli.dcKitEdits);
+    }
+    if (cli.dcCarpetPick && typeof cli.dcCarpetPick === "object" && !Array.isArray(cli.dcCarpetPick)) {
+      setDcCarpetPick(cli.dcCarpetPick);
+    }
+    if (cli.dcMpOverrides && typeof cli.dcMpOverrides === "object") setDcMpOverrides(cli.dcMpOverrides);
+    if (typeof cli.dcMpIncludeMinusOne === "boolean") setDcMpIncludeMinusOne(cli.dcMpIncludeMinusOne);
+    if (typeof cli.dcMpIncludeDismantle === "boolean") setDcMpIncludeDismantle(cli.dcMpIncludeDismantle);
+  }, [dcFullPageOpen, activeClientId, clientLedger]);
+
+  // ═══ Part 3 — write Studio truss soft-holds into the truss_allocations TABLE ═══
+  // Merges Studio's soft event into each date's existing events[], dropping any prior
+  // soft entry for the same eoId (soft-<clientId>) and PRESERVING IMS hard events.
+  // Row shape: { date, events:[...], pool:{...rest} } — matches IMS rowToAlloc/allocToRow.
+  const writeStudioTrussSoftHolds = useCallback(async (allocByDate) => {
+    for (const [date, entry] of Object.entries(allocByDate || {})) {
+      if (!entry) continue;
+      try {
+        // Read the existing row first (do NOT clobber IMS hard events).
+        const { data: rows } = await supabase.from("truss_allocations").select("*").eq("date", date).maybeSingle();
+        const existingEvents = Array.isArray(rows?.events) ? rows.events : [];
+        const pool = rows?.pool || {};
+        // Drop any prior entry for this client's soft hold (idempotent re-Generate).
+        const filtered = existingEvents.filter(ev => !(ev?.eoId === entry.eoId && ev?.state === "soft"));
+        filtered.push(entry);
+        const row = { date, events: filtered, pool };
+        await supabase.from("truss_allocations").upsert(row, { onConflict: "date" });
+      } catch (e) {
+        console.warn("[tier23-p3] writeStudioTrussSoftHolds failed for", date, e?.message || e);
+      }
+    }
+  }, []);
+
+  // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
+  const openDealCheck = useCallback(async () => {
+    setDealCheckLoading(true);
+    setDealCheckError(null);
+    setDealCheckData(null);
+    // ═══ Cache restore — restore cached DC state BEFORE state resets ═══
+    const cachedForThisClient = activeClientId ? dcCache[activeClientId] : null;
+    const hasCache = !!cachedForThisClient;
+    if (hasCache) {
+      setDcResolved(cachedForThisClient.resolved || {});
+      setDcCards(cachedForThisClient.cards || {});
+      setDcZoneState(cachedForThisClient.zoneState || {});
+      setDcPhotoOverrides(cachedForThisClient.photoOverrides || {});
+      setDcSkipped(cachedForThisClient.skipped || {});
+      setDcManualItems(Array.isArray(cachedForThisClient.manualItems) ? cachedForThisClient.manualItems : []);
+      setDcDedupOverrides(cachedForThisClient.dedupOverrides || {});
+      setDcProductionAccepted(cachedForThisClient.productionAccepted || {});
+      setDcArtFlowerAlloc(cachedForThisClient.artFlowerAlloc || {});
+      setDcFloralColorPrefs(cachedForThisClient.floralColorPrefs || {});
+      if (dcCustomItems.length === 0 && Array.isArray(cachedForThisClient.customItems) && cachedForThisClient.customItems.length > 0) {
+        setDcCustomItems(cachedForThisClient.customItems);
+      }
+    } else {
+      setDcResolved({});
+    }
+    setDcResolving({});
+    const allFns = collectAllFunctionData();
+    const uniqueDates = [...new Set(allFns.map(f => f.fnDate).filter(Boolean))];
+    if (uniqueDates.length === 0) {
+      setDealCheckError("Event date required — add a date to at least one function first");
+      setDealCheckLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    setDcAbortRef(ac);
+    try {
+      // Fetch IMS inventory + per-date blocks via the Supabase-backed fetchIMSData.
+      // Settings (one fetch), vendors + truss inventory from their tables, in parallel.
+      const [invResults, settingsRows, vendorRows, trussInvRows] = await Promise.all([
+        Promise.all(uniqueDates.map(d => fetchIMSData(d))),
+        supabase.from("settings").select("key,value").then(r => r.data || []).catch(() => []),
+        fetchAll("vendors").catch(() => []),
+        fetchAll("truss_inventory").catch(() => []),
+      ]);
+      if (invResults.some(r => r === null) || invResults[0] === null) {
+        setDealCheckError("IMS unavailable — inventory check offline. Close and retry, or proceed with SOLD without inventory verification.");
+        setDealCheckLoading(false);
+        setDcAbortRef(null);
+        return;
+      }
+      // Single inventory (shared), per-date blocks
+      const inventory = invResults[0].inventory || [];
+      const blocksByDate = {};
+      uniqueDates.forEach((d, i) => { blocksByDate[d] = invResults[i]?.blocksForDate || {}; });
+      // Reduce settings rows → object s (EXACT key/field names the reference uses)
+      const s = {};
+      (settingsRows || []).forEach(r => {
+        let v = r?.value;
+        for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } }
+        s[r.key] = v;
+      });
+      // Defaults mirroring the reference
+      let mandiPriceMultipliers = { heavy_saya:1.4, competition:1.0, non_saya:0.85 };
+      let eventTypeMultipliers = { outdoor_premium:1.5, outdoor_budgeted:1.0, inhouse:0.75 };
+      let eventTimingMultipliers = { brunch:1.3, lunch:1.15, sundowner:1.05, dinner:1.0, latenight:1.0 };
+      const flowerPatterns = Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [];
+      const mandiCatalogue = Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [];
+      if (s.mandiPriceMultipliers) mandiPriceMultipliers = s.mandiPriceMultipliers;
+      const seasonMap = (s.seasonMap && typeof s.seasonMap === "object") ? s.seasonMap : {};
+      const electricianProductivity = (s.electricianProductivity && typeof s.electricianProductivity === "object") ? s.electricianProductivity : {};
+      const artificialMixRatePerKg = typeof s.artificialMixRatePerKg === "number" ? s.artificialMixRatePerKg : 0;
+      const artificialFlowerRatePerKg = typeof s.artificialFlowerRatePerKg === "number" ? s.artificialFlowerRatePerKg : 50;
+      const artificialFlowerBunchesPerKg = (typeof s.artificialFlowerBunchesPerKg === "number" && s.artificialFlowerBunchesPerKg > 0) ? s.artificialFlowerBunchesPerKg : 16;
+      const artificialGreenRatePerKg = typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40;
+      const artificialGreenBunchesPerKg = (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23;
+      const flowerRecipeSubcats = (Array.isArray(s.flowerRecipeSubcats) && s.flowerRecipeSubcats.length > 0) ? s.flowerRecipeSubcats : ["Flower Pattern"];
+      const dihariSchemes = (s.dihariSchemes && typeof s.dihariSchemes === "object") ? s.dihariSchemes : {};
+      const defaultWindowsByPhase = (s.defaultWindowsByPhase && typeof s.defaultWindowsByPhase === "object") ? s.defaultWindowsByPhase : {};
+      const labourTiers = (s.labourTiers && typeof s.labourTiers === "object") ? s.labourTiers : {};
+      const venueMinLabour = (s.venueMinLabour && typeof s.venueMinLabour === "object") ? s.venueMinLabour : {};
+      const defaultMinLabour = typeof s.defaultMinLabour === "number" ? s.defaultMinLabour : 4;
+      if (s.eventTypeMultipliers && typeof s.eventTypeMultipliers === "object") eventTypeMultipliers = s.eventTypeMultipliers;
+      if (s.eventTimingMultipliers && typeof s.eventTimingMultipliers === "object") eventTimingMultipliers = s.eventTimingMultipliers;
+      const sayaMultiplier = typeof s.sayaMultiplier === "number" ? s.sayaMultiplier : 1.3;
+      const heavyElementRanges = Array.isArray(s.heavyElementRanges) ? s.heavyElementRanges : [];
+      const fabricBangaliRanges = Array.isArray(s.fabricBangaliRanges) ? s.fabricBangaliRanges : [];
+      const trussLabourRanges = Array.isArray(s.trussLabourRanges) ? s.trussLabourRanges : [];
+      const fabricRftPerWorker = (typeof s.fabricRftPerWorker === "number" && s.fabricRftPerWorker > 0) ? s.fabricRftPerWorker : 100;
+      const colourCatalogue = Array.isArray(s.colourCatalogue) ? s.colourCatalogue : [];
+      const paletteCatalogue = Array.isArray(s.paletteCatalogue) ? s.paletteCatalogue : [];
+      const paintableCategories = Array.isArray(s.paintableCategories) ? s.paintableCategories : [];
+      const defaultPaintCostPerItem = typeof s.defaultPaintCostPerItem === "number" ? s.defaultPaintCostPerItem : 400;
+      const carpetFreshMarkup = typeof s.carpetFreshMarkup === "number" ? s.carpetFreshMarkup : 40;
+      // Vendors (manpower avg-rate forecast) — match IMS rowToVendor shape (type/name from columns).
+      const vendors = Array.isArray(vendorRows)
+        ? vendorRows.map(v => ({ ...(v?.data || {}), id: v?.id, name: v?.name ?? v?.data?.name, type: v?.type ?? v?.data?.type }))
+        : [];
+      // Truss inventory — row with key === "main", use its .data
+      let trussInv = null;
+      const trussMain = Array.isArray(trussInvRows) ? trussInvRows.find(r => r.key === "main") : null;
+      let tv = trussMain?.data;
+      for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch {} } }
+      if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
+
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup });
+      setDealCheckLoading(false);
+      if (inventory.length === 0) {
+        setDcAbortRef(null);
+        return;
+      }
+      if (hasCache) {
+        setDcAbortRef(null);
+        return;
+      }
+      // Progressively resolve each (fnIdx, photoUrl) — AI only for uncached
+      for (const fnData of allFns) {
+        if (ac.signal.aborted) break;
+        const fnOverrides = dcPhotoOverrides[fnData.fnIdx] || {};
+        const photosInFn = {};
+        Object.entries(fnData.elSelectedPhoto || {}).forEach(([zk, ph]) => {
+          if (!fnData.enabledEls[zk]) return;
+          const url = ph?.src;
+          if (!url) return;
+          photosInFn[url] = ph;
+        });
+        for (const [photoUrl, photoMeta] of Object.entries(photosInFn)) {
+          if (ac.signal.aborted) break;
+          const key = fnData.fnIdx + "__" + photoUrl;
+          setDcResolving(prev => ({ ...prev, [key]: true }));
+          try {
+            const result = await resolvePhotoToIMS(photoUrl, photoMeta, fnOverrides, inventory, photoImsMap);
+            if (ac.signal.aborted) break;
+            setDcResolved(prev => ({
+              ...prev,
+              [fnData.fnIdx]: { ...(prev[fnData.fnIdx] || {}), [photoUrl]: result }
+            }));
+            if (result.cacheUpdate) {
+              setPhotoImsMap(prev => {
+                const next = { ...prev, ...result.cacheUpdate };
+                reliableSave(PIMAP_SK, JSON.stringify(next), "Photo→IMS map").catch(() => {});
+                return next;
+              });
+            }
+          } catch (e) {
+            if (!ac.signal.aborted) {
+              setDcResolved(prev => ({
+                ...prev,
+                [fnData.fnIdx]: { ...(prev[fnData.fnIdx] || {}), [photoUrl]: { imsId: null, source: "error", name: null, alternatives: [], aiCalled: false, error: e?.message || "resolve failed" } }
+              }));
+            }
+          }
+          setDcResolving(prev => { const n = { ...prev }; delete n[key]; return n; });
+        }
+      }
+    } catch (e) {
+      if (!ac.signal.aborted) {
+        setDealCheckError("Failed to load inventory: " + (e?.message || "unknown error"));
+        setDealCheckLoading(false);
+      }
+    }
+    setDcAbortRef(null);
+  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId]);
+
+  // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
+  useEffect(() => {
+    if (!dcFullPageOpen) return;
+    openDealCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dcFullPageOpen]);
+
+  // ═══ Tier 2.2 — Deal Check cache writer (debounced, per-client) — VERBATIM ═══
+  useEffect(() => {
+    if (!activeClientId || !dcFullPageOpen) return;
+    const allEmpty =
+      Object.keys(dcResolved).length === 0 &&
+      Object.keys(dcCards).length === 0 &&
+      Object.keys(dcZoneState).length === 0 &&
+      Object.keys(dcPhotoOverrides).length === 0 &&
+      Object.keys(dcSkipped).length === 0 &&
+      (dcManualItems?.length || 0) === 0 &&
+      Object.keys(dcDedupOverrides).length === 0 &&
+      Object.keys(dcProductionAccepted).length === 0;
+    if (allEmpty) return;
+    const t = setTimeout(() => {
+      const snapshot = {
+        resolved: dcResolved,
+        cards: dcCards,
+        zoneState: dcZoneState,
+        photoOverrides: dcPhotoOverrides,
+        skipped: dcSkipped,
+        manualItems: dcManualItems,
+        dedupOverrides: dcDedupOverrides,
+        productionAccepted: dcProductionAccepted,
+        artFlowerAlloc: dcArtFlowerAlloc,
+        floralColorPrefs: dcFloralColorPrefs,
+        customItems: dcCustomItems,
+        cachedAt: new Date().toISOString()
+      };
+      setDcCache(prev => {
+        const next = { ...prev, [activeClientId]: snapshot };
+        reliableSave(DC_CACHE_SK, JSON.stringify(next), "Deal Check cache").catch(() => {});
+        return next;
+      });
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [activeClientId, dcFullPageOpen, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems]);
+
+  // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
+  const runDealCheckGenerate = useCallback(async (fnIdxFilter = null) => {
+    const cli = clientLedger.find(c => c.id === activeClientId);
+    if (!cli) { showMsg("No active client", "red"); return { ok: false, error: "no-client" }; }
+    const isSold = cli.status === "booked";
+    const counterKey = activeClientId;
+    const cur = dcRunCounter[counterKey] || { preSold: 0, postSold: 0, isSold: false };
+    const limit = 999;  // TESTING — revert to 2 after testing complete
+    const usedNow = isSold ? cur.postSold : cur.preSold;
+    if (usedNow >= limit) {
+      const msg = isSold
+        ? "Post-SOLD Deal Check limit reached (2/2). Contact admin to unlock more runs."
+        : "Pre-SOLD Deal Check limit reached (2/2). Mark function as SOLD to unlock 2 more runs.";
+      showMsg(msg, "red");
+      return { ok: false, blocked: true };
+    }
+    setDcGenerating(true);
+    setDcGenStatus("Loading IMS inventory…");
+    const firstDate = (cli.functions?.[0]?.date) || cli.eventDate || clientDate || "";
+    const ims = await fetchIMSData(firstDate);
+    if (!ims || !Array.isArray(ims.inventory)) {
+      setDcGenerating(false); setDcGenStatus("");
+      showMsg("IMS unreachable — try again", "red");
+      return { ok: false, error: "ims-unreachable" };
+    }
+    const inventory = ims.inventory;
+    setDcInventoryCache(inventory);  // Patch 4 — cache for card rendering lookups
+    const nextCounter = {
+      ...cur,
+      isSold,
+      preSold: isSold ? cur.preSold : (cur.preSold + 1),
+      postSold: isSold ? (cur.postSold + 1) : cur.postSold,
+    };
+    const nextAllCounters = { ...dcRunCounter, [counterKey]: nextCounter };
+    setDcRunCounter(nextAllCounters);
+    try { await reliableSave(DC_RUN_COUNTER_SK, JSON.stringify(nextAllCounters)); } catch {}
+    const allFns = collectAllFunctionData ? collectAllFunctionData() : [];
+    const fnsToProcess = fnIdxFilter == null ? allFns : allFns.filter((_, i) => i === fnIdxFilter);
+    const newCards = { ...dcCards };
+    const newZoneState = { ...dcZoneState };
+    const matchedItemIds = new Set();
+    let zonesProcessed = 0, cardsResolved = 0, cardsAi = 0, cardsNameMatch = 0, cardsUnmatched = 0;
+    const ac = new AbortController();
+    setDcAbortRef(ac);
+    for (let fi = 0; fi < fnsToProcess.length; fi++) {
+      const fn = fnsToProcess[fi];
+      const fnIdx = fnIdxFilter == null ? fi : fnIdxFilter;
+      if (!fn || !fn.enabledEls) continue;
+      newCards[fnIdx] = { ...(newCards[fnIdx] || {}) };
+      newZoneState[fnIdx] = { ...(newZoneState[fnIdx] || {}) };
+      const enabledZoneKeys = Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]);
+      for (const zoneKey of enabledZoneKeys) {
+        const zoneElems = fn.zoneElements?.[zoneKey] || [];
+        if (zoneElems.length === 0) continue;
+        if (!isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey)) continue;  // §7.9.6 #5 — skip clean zones
+        const photoUrl = fn.elSelectedPhoto?.[zoneKey] || null;
+        zonesProcessed += 1;
+        setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
+        const cardSpecs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
+        for (const spec of cardSpecs) {
+          const scoped = filterImsBySubcategory(inventory, spec.subcategory);
+          const nm = nameMatchUnique(spec.rcName, scoped);
+          let primary = null, alternatives = [], source = null;
+          if (nm.matched) {
+            primary = { imsId: nm.item.id, name: nm.item.name };
+            alternatives = scoped.filter(x => x.id !== nm.item.id).slice(0, 12).map(x => ({ imsId: x.id, name: x.name }));
+            source = "name-match"; cardsNameMatch += 1;
+          } else {
+            const ai = await aiMatchCardWithSubcat(spec, scoped, ac.signal);
+            if (ai?.aborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
+            if (ai?.primary?.imsId) {
+              primary = { imsId: ai.primary.imsId, name: ai.primary.name };
+              alternatives = (ai.alternatives || []).slice(0, 12);
+              source = spec.kind === "fl" ? "floral" : (spec.photoUrl ? "photo" : "list");
+              cardsAi += 1;
+            } else {
+              source = "no-match"; cardsUnmatched += 1;
+            }
+          }
+          newCards[fnIdx][spec.cardKey] = {
+            imsId: primary?.imsId || null,
+            imsName: primary?.name || null,
+            alternatives,
+            source,
+            propType: spec.propType || null,
+            rcName: spec.rcName,
+            qty: spec.qty || 1,
+            zoneKey,
+            resolvedAt: Date.now(),
+          };
+          if (primary?.imsId) { matchedItemIds.add(primary.imsId); cardsResolved += 1; }
+        }
+        newZoneState[fnIdx][zoneKey] = { ...(newZoneState[fnIdx][zoneKey] || {}), lastResolvedAt: Date.now() };
+      }
+    }
+    setDcCards(newCards);
+    setDcZoneState(newZoneState);
+    // §26 — Add artificial flower allocated item IDs to soft-holds
+    Object.values(dcArtFlowerAlloc).forEach(allocs => {
+      (allocs || []).forEach(a => { if (a.itemId) matchedItemIds.add(a.itemId); });
+    });
+    // §7.9.7 — write 24h soft holds for newly-matched items (pre-SOLD only)
+    if (!isSold && matchedItemIds.size > 0) {
+      const expiry = Date.now() + 24 * 60 * 60 * 1000;
+      const salesperson = (typeof authUser !== "undefined" ? authUser?.name : "") || "—";
+      const eventName = cli.name || "—";
+      const nextHolds = { ...softHolds };
+      for (const itemId of matchedItemIds) {
+        nextHolds[itemId] = { salesperson, expiry, clientId: counterKey, eventName };
+      }
+      setSoftHolds(nextHolds);
+      try { await reliableSave(SOFT_HOLDS_SK, JSON.stringify(nextHolds)); } catch {}
+    }
+    // ════════════════════════════════════════════════════════════════════════
+    // §23 PHASE 3 — Write truss soft-hold draft to the truss_allocations TABLE.
+    // Pre-SOLD only. Merges Studio's soft event into each date row, preserving IMS
+    // hard events (Part 3 bridge write — adapted Redis→Supabase).
+    // ════════════════════════════════════════════════════════════════════════
+    try {
+      const trussInvLocal = dealCheckData?.trussInv;
+      if (!isSold && trussInvLocal && trussInvLocal.pillars) {
+        const salesperson = (typeof authUser !== "undefined" ? authUser?.name : "") || "—";
+        const fnList = fnsToProcess;
+        const fnsByDate = {};
+        fnList.forEach(fn => {
+          const d = fn.fnDate || cli.eventDate || "";
+          if (!d) return;
+          if (!fnsByDate[d]) fnsByDate[d] = [];
+          fnsByDate[d].push(fn);
+        });
+        const allocByDate = {};
+        let nextAlloc = { ...trussAlloc };
+        let datesWritten = 0;
+        Object.entries(fnsByDate).forEach(([d, fnsForDate]) => {
+          const entry = buildSoftHoldEntry({
+            clientId: counterKey,
+            clientName: cli.name || "—",
+            salesperson,
+            fnList: fnsForDate,
+            trussInv: trussInvLocal,
+            expiry: Date.now() + 24 * 60 * 60 * 1000,
+            eventDate: d,
+          });
+          if (!entry) return;
+          allocByDate[d] = entry;
+          // Keep local React mirror in sync (drop prior soft for this client, preserve hard)
+          const dateEntry = nextAlloc[d] || { events: [] };
+          const existing = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+          const filtered = existing.filter(ev => !(ev.state === "soft" && ev.clientId === counterKey));
+          filtered.push(entry);
+          nextAlloc[d] = { ...dateEntry, events: filtered, lastCascadeAt: Date.now(), lastCascadeBy: `studio-softhold-${salesperson}` };
+          datesWritten += 1;
+        });
+        if (datesWritten > 0) {
+          setTrussAlloc(nextAlloc);
+          await writeStudioTrussSoftHolds(allocByDate);
+          console.log("[tier23-p3] truss soft-hold written for", datesWritten, "date(s) ·", cli.name);
+        }
+      }
+    } catch (e) {
+      console.warn("[tier23-p3] truss soft-hold write failed:", e?.message || e);
+    }
+    setDcGenerating(false);
+    setDcGenStatus("");
+    setDcAbortRef(null);
+    showMsg(`Deal Check generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match (no AI cost) · ${cardsAi} AI calls`, "green");
+    return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds]);
 
   // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
@@ -2772,6 +3676,9 @@ export default function StudioApp() {
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    writeStudioTrussSoftHolds,
+    // deal check inventory-tab module helpers
+    isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // module helpers exposed for views
     imsField, fetchIMSData, searchLmsLeads, calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan,
     LABOUR, LABOUR_PRESETS, SEASON_MULT, TPL_DEFAULTS, PERM_LABELS, ROLE_DEFAULTS, ROLES, TAX_LABELS,
