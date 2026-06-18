@@ -29,6 +29,7 @@ import { itemToRow } from "../src/lib/inventory/adapter.js";
 
 const MODE = process.argv.includes("--apply") ? "apply" : "scan";
 const DRY = process.argv.includes("--dry-run");
+const RESTORE_EO = process.argv.includes("--restore-eo");
 
 // ── Source config (1 or 2 Upstash REST stores) ──
 const SOURCES = [
@@ -40,7 +41,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 if (!SOURCES.length) { console.error("✗ No Upstash source configured (set UPSTASH_REDIS_REST_URL + _TOKEN)."); process.exit(1); }
-if (MODE === "apply" && (!SUPABASE_URL || !SUPABASE_KEY)) { console.error("✗ SUPABASE_URL + SUPABASE_SERVICE_KEY required for --apply."); process.exit(1); }
+if ((MODE === "apply" || RESTORE_EO) && !DRY && (!SUPABASE_URL || !SUPABASE_KEY)) { console.error("✗ SUPABASE_URL + SUPABASE_SERVICE_KEY required to write."); process.exit(1); }
 
 // ── Upstash REST helpers ──
 async function up(src, path) {
@@ -152,7 +153,7 @@ async function gather() {
   return map;
 }
 
-const sb = MODE === "apply" ? createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } }) : null;
+const sb = ((MODE === "apply" || RESTORE_EO) && !DRY) ? createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } }) : null;
 async function upsertChunked(table, rows, conflict) {
   if (DRY) return { count: rows.length, dry: true };
   let done = 0;
@@ -164,7 +165,26 @@ async function upsertChunked(table, rows, conflict) {
   return { count: done };
 }
 
+// One-off: restore the 14 archived event orders from the studio snapshot backup.
+async function restoreEventOrders() {
+  const KEY = "ambria-studio-snap-prev-ambria-eventorders-v1";
+  console.log(`\n=== Restore event orders from ${KEY}${DRY ? " (dry-run)" : ""} ===\n`);
+  let raw = null;
+  for (const src of SOURCES) { raw = await getVal(src, KEY).catch(() => null); if (raw) break; }
+  const arr = parseVal(raw);
+  if (!Array.isArray(arr) || arr.length === 0) { console.log("✗ No event orders found in the snapshot."); return; }
+  const rows = arr.map((e, i) => { const r = eoToRow(e); if (!r.id) r.id = e.id || `eo_${i}`; return r; });
+  const uniq = [...new Map(rows.map((r) => [r.id, r])).values()];
+  console.log(`Found ${arr.length} event orders (${uniq.length} unique ids).`);
+  uniq.forEach((r) => console.log(`  ${r.id}  ${r.client_name || "—"}  [${r.status || "?"}]`));
+  if (DRY) { console.log(`\n(dry-run — no writes.)\n`); return; }
+  await upsertChunked("event_orders", uniq, "id");                       // IMS reads the table
+  await upsertChunked("settings", [{ key: "ambria-eventorders-v1", value: arr }], "key"); // Studio reads kvGet(EO_SK)
+  console.log(`\n✓ Restored ${uniq.length} event orders (event_orders table + settings).\n`);
+}
+
 async function run() {
+  if (RESTORE_EO) { await restoreEventOrders(); return; }
   console.log(`\n=== Ambria migration · mode=${MODE}${DRY ? " (dry-run)" : ""} · ${SOURCES.length} source(s) ===\n`);
   const map = await gather();
   console.log(`\nTotal distinct keys: ${map.size}\n`);
