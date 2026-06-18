@@ -113,8 +113,11 @@ const REG = {
 // team(studio), premia, notifications, yt-tags, clients, datetypes, pimap, scanhist,
 // manual/hidden videos, filter-priority, palette, floral-hardprop, dc-counter/cache,
 // soft-holds, blocks, truss overrides/sims/audit, studio-lms-cache, …).
-// Auto-skip any key matching these (migration flags / backups).
-const SKIP_RE = /(migrated|backup|tier\d+|-v1-backup|p3-backfilled)/i;
+// Auto-skip: migration flags, safety backups, per-key snapshots, daily audit logs
+// (NOT truss-audit-v1, which the Truss tab reads), and the legacy v3 rate card.
+const SKIP_RE = /(migrated|backup|tier\d+|p3-backfilled|snap-prev|ratecard-v3|-audit-\d{4}-\d{2}-\d{2})/i;
+// settings keys owned by a dedicated rename — explode must not overwrite them.
+const RENAME_TARGETS = new Set(["mandiCatalogue", "flowerPatterns"]);
 
 function classify(key) {
   if (REG[key]) return REG[key];
@@ -177,7 +180,7 @@ async function run() {
       settingsRows.push({ key, value: parsed }); // keep raw blob for Studio's read-only ref
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         for (const [k, val] of Object.entries(parsed)) {
-          if (k.startsWith("_") || k.startsWith("ambria-")) continue;
+          if (k.startsWith("_") || k.startsWith("ambria-") || RENAME_TARGETS.has(k)) continue;
           settingsRows.push({ key: k, value: val });
         }
       }
