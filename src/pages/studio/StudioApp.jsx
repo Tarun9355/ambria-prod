@@ -16,6 +16,7 @@ import AppSwitcher from "../../components/AppSwitcher.jsx";
 import RateCard from "./RateCard.jsx";
 import ManageLibrary from "./manage/ManageLibrary.jsx";
 import ManageSettings from "./manage/ManageSettings.jsx";
+import StudioModals from "./StudioModals.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
@@ -1108,6 +1109,7 @@ export default function StudioApp() {
   // ═══ ZONE UPLOAD STATE — VERBATIM (Cloudinary + AI tag) ═══
   const [zoneUploading, setZoneUploading] = useState(null); // elKey currently uploading
   const [zoneUploadReview, setZoneUploadReview] = useState(null);
+  const [zurElSearch, setZurElSearch] = useState("");
   const [inspQ, setInspQ] = useState("");
   const [inspResults, setInspResults] = useState([]);
   const [inspLoading, setInspLoading] = useState(false);
@@ -3560,6 +3562,26 @@ export default function StudioApp() {
   // CTX BAG — single object literal passed to view slices in later commits.
   // Comprehensive: every state var, setter, and pricing/save helper a view might need.
   // ═══════════════════════════════════════════════════════════════
+  // Apply a reviewed client-photo upload to its zone (verbatim from reference).
+  const applyZoneUpload = () => {
+    const r = zoneUploadReview; if (!r) return;
+    const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, addedAt: Date.now(), source: "client-upload" };
+    const newLib = [...libItems, libImg]; saveLib(newLib);
+    logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
+    const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
+    selectElPhoto(r.elKey, photo);
+    if (r.dims) {
+      const cfg = buildZoneConfig(r.elKey, r.dims);
+      if (cfg) {
+        setZoneConfig(p => ({ ...p, [r.elKey]: cfg }));
+        setEnabledEls(p => ({ ...p, [r.elKey]: true }));
+      }
+    }
+    showMsg("✓ Applied to " + (zoneLabelsD[r.elKey]?.label || r.elKey) + " with " + r.elements.length + " elements", "green");
+    setZoneUploadReview(null);
+  };
+
   const ctx = {
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
@@ -3578,7 +3600,7 @@ export default function StudioApp() {
     lmsCacheRef,
     // zone photo filters + upload
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
-    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview,
+    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope,
     // app mode + steps
@@ -3798,6 +3820,9 @@ export default function StudioApp() {
 
       {/* DEAL CHECK FULL-PAGE OVERLAY */}
       {authUser && dcFullPageOpen && <DealCheckOverlay ctx={ctx} />}
+
+      {/* Top-level modals (paint/fabric pickers, custom item, video, zone-upload, lightbox) */}
+      <StudioModals ctx={ctx} />
     </div>
   );
 }
