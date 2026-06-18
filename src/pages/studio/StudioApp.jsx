@@ -815,7 +815,7 @@ export default function StudioApp() {
   // reference's shape ({id,name,role,perms}). hasPerm/isAdmin derive from it verbatim.
   const { user, logout } = useAuth();
   const authUser = user
-    ? { id: user.id || user.username || user.name, name: user.name || user.username || "User", role: user.role || "sales", perms: user.perms || {} }
+    ? { id: user.id || user.username || user.name, name: user.name || user.username || "User", role: user.role || "sales", perms: user.permissions || user.perms || {} }
     : null;
 
   // ═══ APP MODE ═══
@@ -1267,11 +1267,15 @@ export default function StudioApp() {
 
   const showMsg = (msg, color) => { setToast({ msg, color }); setTimeout(() => setToast(null), 2000); };
   const doLogout = () => { logout(); };
-  const isAdmin = authUser?.role === "admin";
+  // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
+  // reference Studio used "admin". Also honor the seeded u_admin id.
+  const isAdmin = (authUser?.role || "").toLowerCase() === "admin" || authUser?.id === "u_admin";
   const hasPerm = useCallback((perm) => {
-    if (authUser?.role === "admin") return true;
-    return authUser?.perms?.[perm] === true;
-  }, [authUser]);
+    if (isAdmin) return true;
+    const p = authUser?.perms;
+    if (Array.isArray(p)) return p.includes(perm);     // users.permissions is a text[]
+    return p?.[perm] === true;
+  }, [authUser, isAdmin]);
 
   const userVenueScope = useMemo(() => {
     if (!authUser) return "all";
