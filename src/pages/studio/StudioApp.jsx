@@ -2251,6 +2251,27 @@ export default function StudioApp() {
 
   const untaggedVideoCount = useMemo(() => allVideos.filter((v) => !hiddenVideos[v.id] && !ytVideoTags[v.id]).length, [allVideos, hiddenVideos, ytVideoTags]);
 
+  // ── Venue memos — VERBATIM ── (declared early: the video/Cloudinary/aiTag helpers
+  // below reference allInhouseVenues etc. in their deps, which evaluate during render.)
+  const allInhouseVenues = useMemo(() => customInhouse.filter(v => v.parent && v.parent !== "Custom").map(v => v.name), [customInhouse]);
+  const allVenueData = useMemo(() => {
+    const merged = {};
+    customInhouse.forEach(v => { merged[v.name] = { base: v.base || 0, label: v.label || "", type: v.type || "Outdoor" }; });
+    return merged;
+  }, [customInhouse]);
+  const allInhouseGroups = useMemo(() => {
+    const groups = [];
+    customInhouse.forEach(v => {
+      if (!v.parent || v.parent === "Custom") return;
+      const parent = v.parent;
+      let group = groups.find(g => g.parent === parent);
+      if (!group) { group = { parent, manager: v.manager || "—", icon: v.icon || "🏢", subVenues: [], desc: v.desc || "" }; groups.push(group); }
+      if (!group.subVenues.includes(v.name)) group.subVenues.push(v.name);
+    });
+    return groups;
+  }, [customInhouse]);
+  const allOutdoorDB = useMemo(() => customOutdoor.slice(), [customOutdoor]);
+
   // ═══ CLOUDINARY PHOTO BROWSER (reference ~4111) — rewired /api/cloudinary → cldAdmin ═══
   const fetchCldFolders = useCallback(async (path = "") => {
     setCldLoading(true);
@@ -2636,26 +2657,6 @@ Return ONLY JSON:
 
   // Populate the video catalog on first entry to the Browse step (so tiles appear).
   useEffect(() => { if (mode === "studio" && step === 1 && ytVideos.length === 0 && !ytLoading) loadAllYT(); }, [mode, step]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Venue memos — VERBATIM ──
-  const allInhouseVenues = useMemo(() => customInhouse.filter(v => v.parent && v.parent !== "Custom").map(v => v.name), [customInhouse]);
-  const allVenueData = useMemo(() => {
-    const merged = {};
-    customInhouse.forEach(v => { merged[v.name] = { base: v.base || 0, label: v.label || "", type: v.type || "Outdoor" }; });
-    return merged;
-  }, [customInhouse]);
-  const allInhouseGroups = useMemo(() => {
-    const groups = [];
-    customInhouse.forEach(v => {
-      if (!v.parent || v.parent === "Custom") return;
-      const parent = v.parent;
-      let group = groups.find(g => g.parent === parent);
-      if (!group) { group = { parent, manager: v.manager || "—", icon: v.icon || "🏢", subVenues: [], desc: v.desc || "" }; groups.push(group); }
-      if (!group.subVenues.includes(v.name)) group.subVenues.push(v.name);
-    });
-    return groups;
-  }, [customInhouse]);
-  const allOutdoorDB = useMemo(() => customOutdoor.slice(), [customOutdoor]);
 
   // ── Auto-persist custom venue (Event Info) — VERBATIM ──
   const autoPersistCustomVenue = useCallback(() => {
