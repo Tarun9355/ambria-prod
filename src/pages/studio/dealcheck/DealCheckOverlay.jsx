@@ -8,12 +8,12 @@
 export default function DealCheckOverlay({ ctx }) {
   const {
     // chrome / theme
-    border, textS, accent, fmt,
+    border, textS, textP, accent, fmt,
     // client + auth
     clientLedger, activeClientId, clientName, clientDate, authUser,
     // deal check state
     dcRunCounter, dcActiveTab, setDcActiveTab, dcCache, setDcCache, dcGenerating, dcGenStatus,
-    dcCards, dcInventoryCache, dcCarpetPick, dcCustomItems, dcDedupOverrides, setDcDedupOverrides,
+    dcCards, dcInventoryCache, dcCarpetPick, dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
     dcZoneState, dcKitEdits, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcManualItems, setDcProductionAccepted,
@@ -376,21 +376,68 @@ export default function DealCheckOverlay({ ctx }) {
                     <div style={{fontSize:16,fontWeight:600,color:"#fff",marginBottom:8}}>Truss</div>
                     <div style={{fontSize:12}}>This tab is being rebuilt in a later Studio slice.</div>
                   </div>
-                ) : dcActiveTab === "transport" ? (
-                  <div style={{padding:"60px 30px",textAlign:"center",color:textS}}>
-                    {/* TODO slice: DealCheck transport */}
-                    <div style={{fontSize:42,marginBottom:14}}>🚚</div>
-                    <div style={{fontSize:16,fontWeight:600,color:"#fff",marginBottom:8}}>Transport</div>
-                    <div style={{fontSize:12}}>This tab is being rebuilt in a later Studio slice.</div>
-                  </div>
-                ) : (dcActiveTab === "production" || dcActiveTab === "buying") ? (
-                  <div style={{padding:"60px 30px",textAlign:"center",color:textS}}>
-                    {/* TODO slice: DealCheck production / buying */}
-                    <div style={{fontSize:42,marginBottom:14}}>{dcActiveTab==="production"?"🏭":"🛒"}</div>
-                    <div style={{fontSize:16,fontWeight:600,color:"#fff",marginBottom:8}}>{dcActiveTab==="production"?"Production":"Buying"}</div>
-                    <div style={{fontSize:12}}>This tab is being rebuilt in a later Studio slice.</div>
-                  </div>
-                ) : dcActiveTab === "status" ? (() => {
+                ) : dcActiveTab === "transport" ? (() => {
+                  // ═══ TRANSPORT TAB BODY (Patch 5) — per-function transport from existing calcFunctionBreakdown ═══
+                  const fns = collectAllFunctionData ? collectAllFunctionData() : [];
+                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:textS,fontSize:11}}>No functions configured yet.</div>;
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                      {fns.map((fn, fi) => {
+                        let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
+                        const t = bd?.transportTotal || 0;
+                        return (
+                          <div key={fi} style={{padding:"11px 14px",borderRadius:9,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <div>
+                              <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>🚚 {fn?.fnType || `Function ${fi+1}`}</div>
+                              <div style={{fontSize:10,color:textS,marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}{bd?.transport?.trucks?` · ${bd.transport.trucks.length} truck${bd.transport.trucks.length===1?"":"s"}`:""}</div>
+                            </div>
+                            <div style={{fontSize:14,fontWeight:800,color:"#fff",whiteSpace:"nowrap"}}>{t>0?`₹${Math.round(t).toLocaleString("en-IN")}`:"—"}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })() : (dcActiveTab === "production" || dcActiveTab === "buying") ? (() => {
+                  const fnIdx = activeFnIdx || 0;
+                  const isP = dcActiveTab === "production";
+                  const items = dcCustomItems.filter(c => c.fnIdx === fnIdx && c.type === dcActiveTab);
+                  const total = items.reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
+                  const ciColor = isP ? "#A855F7" : "#F59E0B";
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <div style={{fontSize:11,color:textS}}>Function {fnIdx+1} · {items.length} {dcActiveTab} item{items.length===1?"":"s"}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:ciColor}}>₹{Math.round(total).toLocaleString("en-IN")}</div>
+                      </div>
+                      {items.length === 0 ? (
+                        <div style={{padding:"40px 20px",textAlign:"center",color:textS,fontSize:11,borderRadius:10,border:`1px dashed ${border}`}}>
+                          No {dcActiveTab} items yet. Add them from the 🏭/🛒 icons in zone headers on the Build screen.
+                        </div>
+                      ) : items.map(ci => {
+                        const unitCost = ci.manualPrice || ci.refPrice || 0;
+                        const refItem = ci.refItemId ? (dcInventoryCache || []).find(x => x.id === ci.refItemId) : null;
+                        const refPhoto = refItem ? imsField.photos(refItem)[0] : null;
+                        const zonePhoto = elSelectedPhoto[ci.zoneKey]?.src || null;
+                        const photo = ci.photo || zonePhoto || refPhoto || null;
+                        return (
+                          <div key={ci.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${ciColor}30`,background:`${ciColor}06`,display:"flex",gap:10,alignItems:"center"}}>
+                            {photo ? <img src={photo} alt="" style={{width:48,height:48,borderRadius:8,objectFit:"cover"}} /> : <div style={{width:48,height:48,borderRadius:8,background:`${ciColor}12`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{isP?"🏭":"🛒"}</div>}
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:12,fontWeight:600,color:textP}}>{ci.cat ? `${ci.cat} → ` : ""}{ci.subCat}</div>
+                              <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims?.l?` · ${ci.dims.l}L × ${ci.dims.w}W × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
+                              <div style={{fontSize:9,color:textS,marginTop:1}}>Zone: {ci.zoneKey}{refItem?` · Ref: ${refItem.name}`:""}</div>
+                            </div>
+                            <div style={{textAlign:"right"}}>
+                              <div style={{fontSize:14,fontWeight:700,color:ciColor}}>₹{Math.round(unitCost * (Number(ci.qty)||1)).toLocaleString("en-IN")}</div>
+                              <div style={{fontSize:9,color:textS}}>₹{Math.round(unitCost).toLocaleString("en-IN")} × {ci.qty}</div>
+                            </div>
+                            <button onClick={()=>setDcCustomItems(prev=>prev.filter(x=>x.id!==ci.id))} style={{padding:"4px 8px",borderRadius:4,border:"none",background:"rgba(239,68,68,0.12)",color:"#EF4444",fontSize:11,cursor:"pointer",fontWeight:700}}>✕</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })() : dcActiveTab === "status" ? (() => {
                   // ═══ INVENTORY STATUS TAB — Deploy 3 · §7.9.2.A + §7.9.18 + §7.9.19 ═══
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:textS,fontSize:11}}>No functions configured yet.</div>;
