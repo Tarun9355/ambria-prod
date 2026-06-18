@@ -5,6 +5,10 @@
 // bodies. The 7 large sub-tabs (inventory / truss / florals / manpower /
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
+import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
+import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
+import DCTrussTab from "./tabs/DCTrussTab.jsx";
+
 export default function DealCheckOverlay({ ctx }) {
   const {
     // chrome / theme
@@ -980,26 +984,11 @@ export default function DealCheckOverlay({ ctx }) {
                     </div>
                   );
                 })() : dcActiveTab === "florals" ? (
-                  <div style={{padding:"60px 30px",textAlign:"center",color:textS}}>
-                    {/* TODO slice: DealCheck florals */}
-                    <div style={{fontSize:42,marginBottom:14}}>🌸</div>
-                    <div style={{fontSize:16,fontWeight:600,color:"#fff",marginBottom:8}}>Florals</div>
-                    <div style={{fontSize:12}}>This tab is being rebuilt in a later Studio slice.</div>
-                  </div>
+                  <DCFloralsTab ctx={ctx} />
                 ) : dcActiveTab === "manpower" ? (
-                  <div style={{padding:"60px 30px",textAlign:"center",color:textS}}>
-                    {/* TODO slice: DealCheck manpower */}
-                    <div style={{fontSize:42,marginBottom:14}}>👷</div>
-                    <div style={{fontSize:16,fontWeight:600,color:"#fff",marginBottom:8}}>Manpower</div>
-                    <div style={{fontSize:12}}>This tab is being rebuilt in a later Studio slice.</div>
-                  </div>
+                  <DCManpowerTab ctx={ctx} />
                 ) : dcActiveTab === "truss" ? (
-                  <div style={{padding:"60px 30px",textAlign:"center",color:textS}}>
-                    {/* TODO slice: DealCheck truss */}
-                    <div style={{fontSize:42,marginBottom:14}}>🏗️</div>
-                    <div style={{fontSize:16,fontWeight:600,color:"#fff",marginBottom:8}}>Truss</div>
-                    <div style={{fontSize:12}}>This tab is being rebuilt in a later Studio slice.</div>
-                  </div>
+                  <DCTrussTab ctx={ctx} />
                 ) : dcActiveTab === "transport" ? (() => {
                   // ═══ TRANSPORT TAB BODY (Patch 5) — per-function transport from existing calcFunctionBreakdown ═══
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
