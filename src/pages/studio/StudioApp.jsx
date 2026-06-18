@@ -14,6 +14,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import RateCard from "./RateCard.jsx";
+import ManageLibrary from "./manage/ManageLibrary.jsx";
+import ManageSettings from "./manage/ManageSettings.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
@@ -3771,10 +3773,13 @@ export default function StudioApp() {
 
       {/* MANAGE MODE — permission-gated */}
       {mode === "manage" && authUser && <div style={S.main}>
-        {manageTab === "pricing" ? (
+        {manageTab === "library" ? (
+          <ManageLibrary ctx={ctx} />
+        ) : manageTab === "pricing" ? (
           <RateCard rcItems={rcItems} setRcItems={setRcItems} />
+        ) : manageTab === "settings" ? (
+          <ManageSettings ctx={ctx} />
         ) : (
-          /* TODO slice: ManageMode (library / settings) */
           <div style={{ textAlign: "center", padding: 60, color: textS }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>🛠️</div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>Manage — {manageTab}</div>
