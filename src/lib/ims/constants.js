@@ -1,4 +1,42 @@
 // Shared IMS constants (non-inventory). Faithful to the reference app.
+export const ROLES = ["Admin", "Sales", "Production", "Logistics", "Dept Head - Floral", "Dept Head - Fabric", "Dept Head - Lighting", "Dept Head - Painter", "Dept Head - Furniture", "Flower Head", "Purchase Manager", "Site Supervisor"];
+export const PERM_GROUPS = {
+  "Inventory": ["inv_view", "inv_add", "inv_delete", "inv_import", "inv_categories", "inv_images"],
+  "Blocking": ["block_single", "block_bulk", "block_release"],
+  "Events": ["events_create", "events_edit", "events_manpower", "events_view"],
+  "Boxes & Logistics": ["box_manage", "box_status", "box_scan", "box_challan"],
+  "Reports": ["reports_generate"],
+  "Purchase": ["purchase_request", "purchase_approve", "purchase_add"],
+  "Admin": ["admin_users"],
+  "Production": ["prod_tasks", "prod_update", "prod_addinv"],
+};
+export const PERM_LABELS = {
+  inv_view: "View Inventory", inv_add: "Add / Edit Items", inv_delete: "Delete Items",
+  inv_import: "Import Excel", inv_categories: "Manage Categories", inv_images: "Upload Images",
+  block_single: "Block Items", block_bulk: "Bulk Block", block_release: "Release Items",
+  events_create: "Create Events", events_edit: "Edit / Delete Events",
+  events_manpower: "Manage Manpower", events_view: "View Events",
+  box_manage: "Create / Edit Boxes", box_status: "Update Status", box_scan: "Scan Box", box_challan: "Generate Challans",
+  reports_generate: "Generate Reports",
+  purchase_request: "Create Requests", purchase_approve: "Approve / Reject", purchase_add: "Add to Inventory",
+  admin_users: "Manage Users & Permissions",
+  prod_tasks: "View Build Tasks", prod_update: "Update Task Status", prod_addinv: "Add to Inventory",
+};
+export const ROLE_DEFAULTS = {
+  Admin: Object.values(PERM_GROUPS).flat(),
+  Sales: ["inv_view", "block_single", "block_bulk", "block_release", "events_create", "events_edit", "events_view", "reports_generate", "purchase_request"],
+  Production: ["inv_view", "inv_add", "inv_images", "events_view", "purchase_request", "prod_tasks", "prod_update", "prod_addinv"],
+  Logistics: ["inv_view", "box_manage", "box_status", "box_scan", "box_challan", "events_view"],
+  "Dept Head - Floral": ["inv_view", "inv_add", "inv_images", "events_view", "events_manpower", "purchase_request", "purchase_approve", "prod_tasks", "prod_update", "reports_generate"],
+  "Dept Head - Fabric": ["inv_view", "inv_add", "inv_images", "events_view", "events_manpower", "purchase_request", "purchase_approve", "prod_tasks", "prod_update", "reports_generate"],
+  "Dept Head - Lighting": ["inv_view", "inv_add", "inv_images", "events_view", "events_manpower", "purchase_request", "purchase_approve", "prod_tasks", "prod_update", "reports_generate"],
+  "Dept Head - Painter": ["inv_view", "inv_add", "inv_images", "events_view", "events_manpower", "purchase_request", "purchase_approve", "prod_tasks", "prod_update", "reports_generate"],
+  "Dept Head - Furniture": ["inv_view", "inv_add", "inv_images", "events_view", "events_manpower", "purchase_request", "purchase_approve", "prod_tasks", "prod_update", "reports_generate"],
+  "Flower Head": ["inv_view", "inv_add", "inv_images", "events_view", "events_manpower", "purchase_request", "purchase_approve", "prod_tasks", "reports_generate"],
+  "Purchase Manager": ["inv_view", "inv_add", "purchase_request", "purchase_approve", "purchase_add", "events_view", "reports_generate"],
+  "Site Supervisor": ["inv_view", "events_view", "events_manpower", "box_scan", "box_status", "purchase_request", "reports_generate"],
+};
+
 export const PROD_STATUSES = ["Requested", "Acknowledged", "In Progress", "Ready for Review", "Confirmed", "Added to Inventory"];
 export const PROD_DEPTS = ["Floral", "Fabric", "Structural", "Lighting", "Painter & Production", "Props", "Furniture", "Other"];
 export const DIM_UNITS = ["ft", "cm", "inches", "metres"];

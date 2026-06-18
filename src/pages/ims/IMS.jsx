@@ -61,6 +61,9 @@ const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o
 const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active });
 const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
 
+const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, password: row.password, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, createdAt: row.created_at });
+const userToRow = (u) => ({ id: u.id, name: u.name ?? null, username: u.username ?? null, password: u.password ?? null, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null });
+
 const rowToProd = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
 const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.functionId ?? null, status: p.status ?? "Requested", data: p });
 
@@ -90,6 +93,7 @@ export default function IMS() {
   const [boxes, setBoxesState] = useState([]);
   const [overheads, setOverheadsState] = useState([]);
   const [supervisors, setSupervisorsState] = useState([]);
+  const [users, setUsersState] = useState([]);
   const [prodRequests, setProdRequestsState] = useState([]);
   const [eventOrders, setEventOrdersState] = useState([]);
   const [blocks, setBlocksState] = useState({});
@@ -132,6 +136,7 @@ export default function IMS() {
   const boxesRef = useRef([]);
   const overheadsRef = useRef([]);
   const supervisorsRef = useRef([]);
+  const usersRef = useRef([]);
   const prodRequestsRef = useRef([]);
   const eventOrdersRef = useRef([]);
   const blocksRef = useRef({});
@@ -147,6 +152,7 @@ export default function IMS() {
   useEffect(() => { boxesRef.current = boxes; }, [boxes]);
   useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
   useEffect(() => { supervisorsRef.current = supervisors; }, [supervisors]);
+  useEffect(() => { usersRef.current = users; }, [users]);
   useEffect(() => { prodRequestsRef.current = prodRequests; }, [prodRequests]);
   useEffect(() => { eventOrdersRef.current = eventOrders; }, [eventOrders]);
   useEffect(() => { blocksRef.current = blocks; }, [blocks]);
@@ -159,7 +165,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -168,6 +174,7 @@ export default function IMS() {
           fetchAll("boxes").catch(() => []),
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
+          fetchAll("users").catch(() => []),
           fetchAll("production_requests").catch(() => []),
           fetchAll("event_orders").catch(() => []),
           fetchAll("truss_allocations").catch(() => []),
@@ -185,6 +192,7 @@ export default function IMS() {
         setBoxesState(boxRows.map(rowToBox));
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
+        setUsersState(userRows.map(rowToUser));
         setProdRequestsState(prodRows.map(rowToProd));
         setEventOrdersState(eoRows.map(rowToEO));
         setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
@@ -527,6 +535,28 @@ export default function IMS() {
     })();
   }, []);
 
+  // Users — row-level diff persistence to the users table (incl. per-user apps + role/perms).
+  const setUsers = useCallback((updater) => {
+    const prev = usersRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    usersRef.current = next;
+    setUsersState(next);
+    const prevMap = new Map(prev.map((u) => [u.id, u]));
+    const nextIds = new Set(next.map((u) => u.id));
+    (async () => {
+      for (const u of next) {
+        const before = prevMap.get(u.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(u)) {
+          const { error: e } = await supabase.from("users").upsert(userToRow(u), { onConflict: "id" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+      for (const id of prevMap.keys()) {
+        if (!nextIds.has(id)) await supabase.from("users").delete().eq("id", id);
+      }
+    })();
+  }, []);
+
   // Production requests — full object stored in `data`; persist only changed/deleted rows.
   const setProdRequests = useCallback((updater) => {
     const prev = prodRequestsRef.current;
@@ -696,6 +726,7 @@ export default function IMS() {
             vendors={vendors} setVendors={setVendors} functions={functions}
             settings={settings} setSettings={setSettings}
             supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
+            users={users} setUsers={setUsers}
           />
         ) : tab === "supply" ? (
           <SupplyTab
