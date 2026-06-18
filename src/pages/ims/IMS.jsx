@@ -15,6 +15,7 @@ import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
 import FlowersTab from "./FlowersTab.jsx";
 import EventsTab from "./EventsTab.jsx";
+import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
@@ -667,6 +668,7 @@ export default function IMS() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <AppSwitcher current="ims" />
               <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-sm font-bold">{(user?.name || "?")[0]}</div>
               <span className="text-sm text-gray-700 hidden sm:block">{user?.name} · {user?.role || "User"}</span>
               <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 ml-2 px-2 py-1 border rounded-lg">Logout</button>

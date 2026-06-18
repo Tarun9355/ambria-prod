@@ -53,6 +53,16 @@ supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 > migration 001. Truss override/simulation/audit + the blocks document live as JSON blobs in
 > the existing `settings` table (faithful to the reference's Redis-blob model).
 
+## Per-user app access (migration 003) — ⬜ optional
+Adds a `users.apps text[]` column so a user can be granted Studio, IMS, or both. The
+in-app header switcher + route gating work WITHOUT this (access is derived from role:
+Admin → both, Sales → studio, ops → ims). Run only when you want explicit per-user control:
+```sql
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS apps text[] DEFAULT NULL;
+-- grant a specific user both apps:
+UPDATE public.users SET apps = ARRAY['studio','ims'] WHERE username = 'tarun';
+```
+
 ## Studio Rate Card seed — ⬜ (no SQL — just open the app once)
 `rate_card` is empty in the DB. Open **Studio → Manage → Pricing** once; the app
 auto-seeds the 60 rate items, which also populates IMS → Admin → Sub-Categories and

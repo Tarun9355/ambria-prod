@@ -12,6 +12,7 @@
 // the Supabase `settings`-table shim (src/lib/ims/kv).
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "../../lib/AuthContext";
+import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeS } from "../../lib/studio/styles";
 import {
@@ -1680,6 +1681,8 @@ export default function StudioApp() {
               <div style={{ padding: "3px 8px", borderRadius: 8, fontSize: 10, fontWeight: 600, background: cat.bg, color: cat.color }}>{cat.label}</div>
             </div>
           </div>}
+          {/* Cross-app switcher (only for users granted both Studio + IMS) */}
+          <AppSwitcher current="studio" />
           {/* Deal Check entry */}
           {authUser && mode === "studio" && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)", background: "transparent", color: "#6B7280", fontSize: 13, cursor: "pointer", lineHeight: 1 }}>⚙</button>}
           {/* User badge */}
