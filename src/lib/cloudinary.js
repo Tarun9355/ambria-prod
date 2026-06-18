@@ -29,3 +29,20 @@ export function compressImageForCloudinary(file, maxW = 2000, quality = 0.8) {
     img.src = url;
   });
 }
+
+// ─── Cloudinary Admin API (signed) via the Supabase `cloudinary` Edge Function ──
+// Faithful replacement for the reference's `/api/cloudinary` proxy. Browse/list/delete
+// existing assets (the API secret stays server-side). Client POSTs { action, ...params }.
+const _SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const _ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const _CLD_FN_URL = `${_SUPABASE_URL}/functions/v1/cloudinary`;
+
+export async function cldAdmin(action, params = {}) {
+  const r = await fetch(_CLD_FN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${_ANON_KEY}`, apikey: _ANON_KEY },
+    body: JSON.stringify({ action, ...params }),
+  });
+  if (!r.ok) throw new Error(`Cloudinary ${r.status}`);
+  return r.json();
+}

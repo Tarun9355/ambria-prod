@@ -24,7 +24,8 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
-import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
+import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
+import { ytApi, ytDuration } from "../../lib/youtube";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
@@ -56,6 +57,7 @@ import {
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
 // (Constants that already live in our libs are imported above.)
 // ═══════════════════════════════════════════════════════════════
+const YT_CACHE_TTL = 60 * 60 * 1000; // 1h — YouTube playlist cache TTL
 
 const fmt = (n) => `₹${(n || 0).toLocaleString("en-IN")}`;
 
@@ -2224,6 +2226,73 @@ export default function StudioApp() {
     return merged;
   }, [ytVideos, manualVideos]);
 
+  const untaggedVideoCount = useMemo(() => allVideos.filter((v) => !hiddenVideos[v.id] && !ytVideoTags[v.id]).length, [allVideos, hiddenVideos, ytVideoTags]);
+
+  // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
+  // (ytApi) + kv cache (YT_SK settings blob) instead of /api/youtube + window.storage. ──
+  const fetchYTPlaylist = useCallback(async (playlistId, pageToken) => {
+    const d = await ytApi("playlistItems", { part: "snippet,contentDetails", maxResults: 50, playlistId, ...(pageToken ? { pageToken } : {}) }).catch(() => ({}));
+    if (!d.items) return { items: [], nextPageToken: null };
+    const videoIds = d.items.map((i) => i.contentDetails?.videoId).filter(Boolean).join(",");
+    const durations = {};
+    if (videoIds) {
+      const vd = await ytApi("videos", { part: "contentDetails", id: videoIds }).catch(() => ({}));
+      (vd.items || []).forEach((v) => { durations[v.id] = ytDuration(v.contentDetails?.duration); });
+    }
+    const items = d.items.map((i) => ({
+      id: i.contentDetails?.videoId, title: i.snippet?.title || "", thumb: i.snippet?.thumbnails?.medium?.url || i.snippet?.thumbnails?.default?.url || "",
+      date: i.snippet?.publishedAt?.slice(0, 10) || "", duration: durations[i.contentDetails?.videoId] || "",
+      playlistId, embedUrl: `https://www.youtube.com/embed/${i.contentDetails?.videoId}?rel=0&modestbranding=1`,
+    })).filter((i) => i.id && i.title !== "Deleted video" && i.title !== "Private video");
+    return { items, nextPageToken: d.nextPageToken || null };
+  }, []);
+
+  const loadAllYT = useCallback(async (forceRefresh) => {
+    if (!forceRefresh && ytVideos.length > 0 && Date.now() - ytLastFetch < YT_CACHE_TTL) return;
+    setYtLoading(true);
+    try {
+      if (!forceRefresh) {
+        try {
+          const raw = await kvGet(YT_SK);
+          const cd = typeof raw === "string" ? JSON.parse(raw) : raw;
+          if (cd?.ts && Date.now() - cd.ts < YT_CACHE_TTL && cd.videos?.length) { setYtVideos(cd.videos); if (cd.playlists) setYtPlaylists(cd.playlists); setYtLastFetch(cd.ts); setYtLoading(false); return; }
+        } catch { /* ignore */ }
+      }
+      let vids = [];
+      for (const pl of ytPlaylists) {
+        let pageToken = null;
+        do {
+          const { items, nextPageToken } = await fetchYTPlaylist(pl.id, pageToken);
+          vids = [...vids, ...items];
+          pageToken = nextPageToken;
+        } while (pageToken);
+      }
+      const seen = new Set();
+      vids = vids.filter((v) => { if (seen.has(v.id)) return false; seen.add(v.id); return true; });
+      setYtVideos(vids); setYtLastFetch(Date.now());
+      try { await reliableSave(YT_SK, JSON.stringify({ videos: vids, playlists: ytPlaylists, ts: Date.now() }), "YT cache"); } catch { /* ignore */ }
+    } catch { showMsg("YouTube fetch failed", "red"); }
+    setYtLoading(false);
+  }, [ytPlaylists, ytVideos, ytLastFetch, fetchYTPlaylist, showMsg]);
+
+  const searchYT = useCallback(async (query) => {
+    if (!query.trim()) return;
+    setYtLoading(true);
+    try {
+      const d = await ytApi("search", { part: "snippet", type: "video", maxResults: 20, q: query }).catch(() => ({}));
+      const items = (d.items || []).map((i) => ({
+        id: i.id?.videoId, title: i.snippet?.title || "", thumb: i.snippet?.thumbnails?.medium?.url || "",
+        date: i.snippet?.publishedAt?.slice(0, 10) || "", duration: "", playlistId: "search",
+        embedUrl: `https://www.youtube.com/embed/${i.id?.videoId}?rel=0&modestbranding=1`,
+      })).filter((i) => i.id);
+      setYtVideos(items);
+    } catch { showMsg("YouTube search failed", "red"); }
+    setYtLoading(false);
+  }, [showMsg]);
+
+  // Populate the video catalog on first entry to the Browse step (so tiles appear).
+  useEffect(() => { if (mode === "studio" && step === 1 && ytVideos.length === 0 && !ytLoading) loadAllYT(); }, [mode, step]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Venue memos — VERBATIM ──
   const allInhouseVenues = useMemo(() => customInhouse.filter(v => v.parent && v.parent !== "Custom").map(v => v.name), [customInhouse]);
   const allVenueData = useMemo(() => {
@@ -3674,6 +3743,7 @@ export default function StudioApp() {
     premiaEditorOpen, setPremiaEditorOpen, premiaPreview, setPremiaPreview, isPremiaPlatinum,
     // youtube
     ytVideos, setYtVideos, ytPlaylists, setYtPlaylists, ytLoading, setYtLoading, ytSearch, setYtSearch, ytFilterPL, setYtFilterPL,
+    loadAllYT, searchYT, fetchYTPlaylist, untaggedVideoCount, cldAdmin,
     ytPicker, setYtPicker, ytLastFetch, setYtLastFetch, ytVideoTags, setYtVideoTags, saveYtTags, ytTagEdit, setYtTagEdit,
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub, aiTaggingVideo, setAiTaggingVideo, aiVideoDraft, setAiVideoDraft,
     ytFilterVenue, setYtFilterVenue, ytFilterFn, setYtFilterFn, ytFilterTier, setYtFilterTier, ytFilterLinked, setYtFilterLinked,
