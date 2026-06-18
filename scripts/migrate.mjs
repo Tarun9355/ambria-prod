@@ -62,18 +62,24 @@ function parseVal(raw) {
 
 // ── Row builders (mirror the app's adapters; tables keep a `data` JSONB catch-all) ──
 const id = (o, i) => o?.id || o?.code || `mig_${i}`;
+const deriveUsername = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
 const fnToRow = (f) => ({ id: f.id, project_id: f.projectId ?? f.project_id ?? null, name: f.name ?? null, date: f.date ?? null, venue: f.venue ?? null, status: f.status ?? "pending", data: f });
-const projectToRow = (p) => ({ id: p.id, name: p.name ?? null, client: p.client ?? null, venue: p.venue ?? null, status: p.status ?? "active", data: p });
-const vendorToRow = (v) => ({ id: v.id, name: v.name ?? null, type: v.type ?? null, contact: v.contact ?? null, email: v.email ?? null, data: v });
+const projectToRow = (p, i) => ({ id: p.id || `proj_${i}`, name: p.name || p.id || `Project ${i + 1}`, client: p.client ?? null, venue: p.venue ?? null, status: p.status ?? "active", data: p });
+const vendorToRow = (v, i) => ({ id: v.id || `ven_${i}`, name: v.name || v.id || `Vendor ${i + 1}`, type: v.type ?? null, contact: v.contact ?? null, email: v.email ?? null, data: v });
 const purchaseToRow = (p) => ({ id: p.id, vendor_id: p.vendorSnapshot?.vendorId ?? null, amount: p.actualCost ?? p.estimatedCost ?? 0, status: p.status ?? "Pending", items: [], data: p });
 const boxToRow = (b) => ({ id: b.id, name: b.label ?? b.name ?? null, items: [], data: b });
 const overheadToRow = (o) => ({ id: o.id, name: o.description ?? o.name ?? null, amount: o.amount ?? 0, category: o.category ?? null, data: o });
-const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
-const userToRow = (u) => ({ id: u.id, name: u.name ?? null, username: u.username ?? null, password: u.password ?? null, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null });
+const supervisorToRow = (s, i) => ({ id: s.id || `sup_${i}`, name: s.name || s.id || `Supervisor ${i + 1}`, phone: s.phone ?? null, active: s.active ?? true });
+const userToRow = (u, i) => {
+  const username = u.username || deriveUsername(u.name) || `user_${i + 1}`;
+  const row = { id: u.id || username, name: u.name || username, username, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null };
+  if (u.password) row.password = u.password; // omit when absent so merge-by-username preserves any existing password
+  return row;
+};
 const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.functionId ?? null, status: p.status ?? "Requested", data: p });
 const eoToRow = (e) => ({ id: e.id, client_name: e.clientName ?? null, event_id: e.eventId ?? null, fn_id: e.fnId ?? null, status: e.status ?? "pending", items: e.items || [], manual_items: e.manualItems || [], decisions: e.decisions || {}, data: e });
 const catToRow = (c, i) => (typeof c === "string" ? { id: c, name: c } : { id: c.id || c.name || `cat_${i}`, name: c.name ?? String(c), parent: c.parent ?? null, icon: c.icon ?? null, sort_order: c.sortOrder ?? c.sort_order ?? 0 });
-const rcItemToRow = (i) => ({ id: i.id, name: i.name ?? null, cat: i.cat ?? null, sub: i.sub ?? null, unit: i.unit ?? null, inhouse_mode: i.inhouseMode ?? "flat", inhouse_flat: i.inhouseFlat ?? 0, inhouse_s: i.inhouseS ?? 0, inhouse_m: i.inhouseM ?? 0, inhouse_b: i.inhouseB ?? 0, out_s: i.outS ?? 0, out_m: i.outM ?? 0, out_b: i.outB ?? 0, zones: i.zones || [], floral_mode: i.floralMode ?? null, default_real_pct: i.defaultRealPct ?? null, data: i });
+const rcItemToRow = (i, idx) => ({ id: i.id || `rc_${idx}`, name: i.name || i.id || `Item ${idx + 1}`, cat: i.cat ?? null, sub: i.sub ?? null, unit: i.unit ?? null, inhouse_mode: i.inhouseMode ?? "flat", inhouse_flat: i.inhouseFlat ?? 0, inhouse_s: i.inhouseS ?? 0, inhouse_m: i.inhouseM ?? 0, inhouse_b: i.inhouseB ?? 0, out_s: i.outS ?? 0, out_m: i.outM ?? 0, out_b: i.outB ?? 0, zones: i.zones || [], floral_mode: i.floralMode ?? null, default_real_pct: i.defaultRealPct ?? null, data: i });
 
 // ── Registry: exact old key → routing ──
 // action: table | raw | rename | explode | trussInv | trussAlloc | tableAndRaw | skip
@@ -218,7 +224,7 @@ async function run() {
   if (MODE === "scan") { console.log(`\n(scan only — no writes. Re-run with --apply --dry-run, then --apply.)\n`); return; }
 
   console.log(`\n── ${DRY ? "Would write" : "Writing"} ──`);
-  const conflicts = { inventory: "id", functions: "id", projects: "id", vendors: "id", purchase_orders: "id", boxes: "id", overheads: "id", supervisors: "id", users: "id", production_requests: "id", categories: "id", rate_card: "id", event_orders: "id", truss_inventory: "key", truss_allocations: "date" };
+  const conflicts = { inventory: "id", functions: "id", projects: "id", vendors: "id", purchase_orders: "id", boxes: "id", overheads: "id", supervisors: "id", users: "username", production_requests: "id", categories: "id", rate_card: "id", event_orders: "id", truss_inventory: "key", truss_allocations: "date" };
   for (const [table, rows] of Object.entries(tableRows)) {
     if (!rows.length) continue;
     // de-dupe by conflict key (last wins)
