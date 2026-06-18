@@ -43,14 +43,17 @@ Edge Functions (`callClaudeStreaming`) · single-file → multi-file · polling 
 Gated on credentials/deploys only you can do. The code paths are faithful and degrade
 gracefully until then.
 
-| Feature (currently degraded) | What unlocks it |
-|---|---|
-| **All AI** — Inventory photo-scan, Production compare, Events deck-scan, Deal Check photo-match, Library/zone AI tagging | `supabase functions deploy anthropic` + `supabase secrets set ANTHROPIC_API_KEY=sk-ant-…` (function already written) |
-| **Studio Browse video catalog** + Library Videos subsystem | A `youtube` Edge Function proxying the YouTube Data API (playlist `PLugzG6u3RGd4VBBcIQfWPAVf-1LpSKlEp`) with a `YT_API_KEY` secret. **Not yet written** — needs the YouTube API contract; client Videos UI is placeholdered. |
-| **Library Cloudinary browser** (listing existing cloud images) | A signed `cloudinary` Edge Function (Admin API). Photo **uploads already work** client-side (unsigned preset `z3nlj6cx`) — only the browse-existing view is placeholdered. |
+All client code + Edge Functions are written. **Remaining work = deploy 2 functions.**
 
-Already deployed/working: `lms` (✅), `season` (✅). Optional SQL: migration `003`
-(`users.apps text[]`) for explicit per-user grants — role defaults work without it.
+| Feature | Status |
+|---|---|
+| **All AI** — Inventory scan, Production compare, Events deck-scan, Deal Check photo-match, image/video tagging | ✅ LIVE — `anthropic` function deployed + `ANTHROPIC_API_KEY` set |
+| **Per-user app access** | ✅ LIVE — migration `003` run; editable in IMS Admin → Users |
+| **Studio Browse video catalog + Library Videos subsystem** | Code complete. ⬜ Run `supabase functions deploy youtube` (secret `YT_API_KEY` already set) |
+| **Library Cloudinary browser** (list/delete existing assets) | Code complete. ⬜ Run `supabase functions deploy cloudinary` (secret `CLOUDINARY_API_SECRET` already set). Uploads already work client-side. |
+
+Already deployed/working: `anthropic` ✅, `lms` ✅, `season` ✅. After deploying
+`youtube` + `cloudinary`, the entire app is fully functional — **no placeholders remain**.
 
 After deploying `anthropic`, smoke-test the Deal Check flow end-to-end: open a deal →
 Generate (populates cards + writes soft-holds) → confirm the soft truss-hold appears in
