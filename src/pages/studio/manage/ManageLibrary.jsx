@@ -1,4 +1,5 @@
 import { Fragment, useMemo } from "react";
+import LazyYT from "../../../components/studio/LazyYT";
 
 // ═══ MANAGE: LIBRARY & CONTENT ═══
 // Faithful rebuild of the reference AmbriStudioInner library view.
@@ -6,15 +7,15 @@ import { Fragment, useMemo } from "react";
 // (~11042), LibraryAdd() (~11426), LibraryBulk() (~11505), plus the inline helpers
 // libFiltered/toggleLibFilter/toggleLibVenueName/clearLibFilters (~10964–10995).
 //
-// The reference ManageLibrary() also contained a Cloudinary photo browser (cld* state)
-// and a full Videos subsystem (yt*/cldVideo*). Those reference dozens of identifiers
-// that are NOT exposed on StudioApp's ctx (loadAllYT, openCldVideoBrowser, aiTagVideo,
-// getPhotos, fetchCldFolders, cld*/yt* state, YT_API_KEY, etc.). The faithful, buildable
-// scope is the image library — single-photo add (LibraryAdd), bulk URL → AI tagging
-// (LibraryBulk), and the filtered library browser/editor (LibraryBrowse). The Cloudinary
-// browser + Videos branches are intentionally omitted (see report).
+// Cloudinary photo browser (cld* block, reference ~11706–11817) and the Videos
+// subsystem (libView==="videos" + zone-picker modal, reference ~11846–12319) are
+// transcribed VERBATIM below, rewired to the ctx data layer:
+//   • /api/cloudinary fetches → ctx.cldAdmin(action, params)  (via cld* handlers on ctx)
+//   • /api/youtube loaders     → ctx.loadAllYT / ctx.searchYT
+//   • /api/anthropic video tag → ctx.aiTagVideo (callClaudeStreaming inside StudioApp)
+//   • image upload             → unsigned client upload (handled inside StudioApp.handleCldUpload)
 //
-// AI tagging routes through ctx.aiTagImage (already ported into StudioApp).
+// AI image tagging routes through ctx.aiTagImage (already ported into StudioApp).
 export default function ManageLibrary({ ctx }) {
   const {
     // theme / chrome
@@ -22,8 +23,9 @@ export default function ManageLibrary({ ctx }) {
     accentBg, accentText, textP, cardBg,
     // taxonomy
     taxonomy, TAX_LABELS, imsPaletteCatalogue,
+    taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
-    allInhouseVenues, allOutdoorDB,
+    allInhouseVenues, allOutdoorDB, customOutdoor,
     // library state + persistence
     libItems, saveLib, libView, setLibView,
     libSearch, setLibSearch, libFilters, setLibFilters,
@@ -40,9 +42,33 @@ export default function ManageLibrary({ ctx }) {
     rcItems, rcCats, rcIsSMB,
     // misc
     showMsg, aiTagImage,
-    // videos toggle metadata (count only — full videos subsystem is a later slice)
-    allVideos,
+    // events + persistence (video → event linking)
+    events, save,
+    // ═══ CLOUDINARY PHOTO BROWSER ═══
+    cldOpen, setCldOpen, cldFolders, cldPath, cldImages, setCldImages, cldLoading,
+    cldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
+    cldSelectMode, setCldSelectMode, cldSelected, setCldSelected, cldDeleting,
+    fetchCldFolders, cldNavigate, cldGoBack, handleCldUpload, handleCldBulkDelete, handleCldDeleteFolder,
+    // ═══ VIDEOS SUBSYSTEM ═══
+    allVideos, ytVideos, loadAllYT, ytLoading, ytSearch, setYtSearch, ytFilterPL,
+    ytVideoTags, saveYtTags, ytTagEdit, setYtTagEdit, aiTaggingVideo, aiTagVideo,
+    aiVideoDraft, setAiVideoDraft, untaggedVideoCount, hiddenVideos, saveHiddenVideos,
+    manualVideos, saveManualVideos, showHidden, setShowHidden, lastVisitTs,
+    ytPicker, setYtPicker, getPhotos, ZONE_ICONS,
+    ytFilterVenue, setYtFilterVenue, ytFilterFn, setYtFilterFn, ytFilterTier, setYtFilterTier,
+    ytFilterIO, setYtFilterIO, ytFilterStyle, setYtFilterStyle, ytFilterColor, setYtFilterColor,
+    ytFilterLinked, setYtFilterLinked,
+    // cloudinary video browser
+    addVideoOpen, setAddVideoOpen, cldVideoFolders, cldVideoPath, cldVideoList, cldVideoLoading,
+    openCldVideoBrowser, cldVideoNavigate, cldVideoGoBack, addCldVideo,
+    // zone picker modal
+    zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
+    getLibPhotosForZone, calcElsCost, filterPriority,
+    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
+
+  // reference module-scope theme bg (~7081)
+  const bg = isDark ? "#0F0F1A" : "#FAF9F6";
 
   // ── inline helper: taxonomy label (reference module-scope getTaxLabel ~line 1267) ──
   const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -658,7 +684,119 @@ export default function ManageLibrary({ ctx }) {
           setLibAiLoading(false);
         }} disabled={libAiLoading} style={{ ...S.btn(true), fontSize: 11, opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "Tagging..." : "🤖 AI tag & add"}</button>
         <button onClick={() => setLibShowBulk(!libShowBulk)} style={{ ...S.btn(false), fontSize: 11 }}>📦 Bulk</button>
+        <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>☁️ Cloudinary</button>
       </div>
+      {/* Cloudinary Browser for Library */}
+      {cldOpen==="library"&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:14,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:700,color:accent}}>📂 Browse Cloudinary Photos</div>
+          <span onClick={()=>setCldOpen(null)} style={{fontSize:11,cursor:"pointer",color:"#E11D48",fontWeight:700}}>✕ Close</span>
+        </div>
+        <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+          <span onClick={()=>cldGoBack(0)} style={{fontSize:10,color:accent,cursor:"pointer",fontWeight:600}}>Root</span>
+          {cldPath.map((seg,si)=><Fragment key={si}>
+            <span style={{fontSize:10,color:textS}}>/</span>
+            <span onClick={()=>cldGoBack(si+1)} style={{fontSize:10,color:si===cldPath.length-1?textP:accent,cursor:"pointer",fontWeight:600}}>{seg}</span>
+          </Fragment>)}
+        </div>
+        {/* Upload & select buttons — visible when inside a folder */}
+        {cldPath.length>0&&<div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+          <input ref={cldUploadRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{if(e.target.files.length)handleCldUpload(e.target.files,false);e.target.value="";}} />
+          <input ref={cldFolderUploadRef} type="file" accept="image/*" multiple webkitdirectory="" directory="" style={{display:"none"}} onChange={e=>{if(e.target.files.length)handleCldUpload(e.target.files,true);e.target.value="";}} />
+          <button onClick={()=>cldUploadRef.current?.click()} disabled={cldUploading} style={{...S.btn(true),fontSize:11,padding:"7px 16px",opacity:cldUploading?0.5:1}}>📤 Upload Photos</button>
+          <button onClick={()=>cldFolderUploadRef.current?.click()} disabled={cldUploading} style={{...S.btn(false),fontSize:11,padding:"7px 16px",opacity:cldUploading?0.5:1,border:`1px solid ${accent}`}}>📂 Upload Folder</button>
+          {cldImages.length>0&&<button onClick={()=>{setCldSelectMode(!cldSelectMode);setCldSelected(new Set());}} style={{...S.btn(cldSelectMode),fontSize:11,padding:"7px 16px",border:`1px solid ${cldSelectMode?"#E11D48":border}`,color:cldSelectMode?"#E11D48":textS}}>{cldSelectMode?"✕ Cancel":"☑️ Select"}</button>}
+          <span style={{fontSize:10,color:textS}}>→ {cldPath.join("/")}</span>
+        </div>}
+        {/* Select mode toolbar */}
+        {cldSelectMode&&<div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10,padding:"8px 12px",borderRadius:8,background:"#E11D4812",border:"1px solid #E11D4840"}}>
+          <span style={{fontSize:11,color:"#E11D48",fontWeight:600}}>{cldSelected.size} selected</span>
+          <button onClick={()=>{const all=new Set(cldImages.map(i=>i.public_id));setCldSelected(cldSelected.size===cldImages.length?new Set():all);}} style={{...S.btn(false),fontSize:10,padding:"4px 10px",color:accent}}>
+            {cldSelected.size===cldImages.length?"Deselect All":"Select All"}
+          </button>
+          {cldSelected.size>0&&<button onClick={handleCldBulkDelete} disabled={cldDeleting} style={{...S.btn(true),fontSize:10,padding:"4px 12px",background:"#E11D48",opacity:cldDeleting?0.5:1}}>
+            {cldDeleting?"Deleting...":` Delete ${cldSelected.size}`}
+          </button>}
+        </div>}
+        {/* Upload progress */}
+        {cldUploadProgress.length>0&&<div style={{marginBottom:10,padding:10,borderRadius:8,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"rgba(0,0,0,0.02)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <span style={{fontSize:11,fontWeight:600,color:textP}}>Upload Progress</span>
+            {!cldUploading&&<span onClick={()=>setCldUploadProgress([])} style={{fontSize:10,cursor:"pointer",color:"#E11D48",fontWeight:600}}>✕ Clear</span>}
+          </div>
+          {cldUploadProgress.map((f,i)=>{
+            const isDone=f.status==="done",isErr=f.status==="error",isSkip=f.status==="skipped",isUnsup=f.status==="unsupported";
+            const clr=isDone?"#10B981":isErr?"#E11D48":isSkip?"#3B82F6":isUnsup?"#F59E0B":"#F59E0B";
+            const icon=isDone?"✅":isErr?"❌":isSkip?"⊘":isUnsup?"⚠️":f.status==="compressing"?"🗜️":f.status==="checking"?"🔍":"⏳";
+            return <div key={i} style={{display:"flex",gap:8,alignItems:"center",fontSize:10,color:textS,padding:"3px 0"}}>
+              <span style={{color:clr}}>{icon}</span>
+              <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
+              <span style={{fontSize:9,color:clr}}>{f.status}</span>
+            </div>;
+          })}
+        </div>}
+        {cldLoading&&<div style={{textAlign:"center",padding:20,color:textS,fontSize:11}}>⏳ Loading...</div>}
+        {!cldLoading&&cldFolders.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8,marginBottom:10}}>
+          {cldFolders.map(f=>{const fn=f.name||f.path;return <div key={fn} style={{position:"relative",padding:"10px 12px",borderRadius:8,border:`1px solid ${border}`,cursor:"pointer",textAlign:"center",fontSize:11,fontWeight:600,color:textP,background:isDark?"rgba(255,255,255,0.03)":"rgba(0,0,0,0.02)"}}>
+            <div onClick={()=>cldNavigate(fn)}>📁 {fn}</div>
+            <button onClick={(e)=>{e.stopPropagation();handleCldDeleteFolder(fn);}} disabled={cldDeleting} style={{position:"absolute",top:3,right:3,background:"rgba(0,0,0,0.5)",border:"none",borderRadius:4,padding:"2px 5px",cursor:"pointer",fontSize:9,color:"#F87171",lineHeight:1,opacity:cldDeleting?0.3:0.7}} title="Delete folder">✕</button>
+          </div>;})}
+        </div>}
+        {!cldLoading&&cldImages.length>0&&<>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:10,color:textS}}>{cldImages.length} images</div>
+            <button onClick={()=>{
+              const existUrls=new Set(libItems.map(l=>l.url));
+              const newImgs=cldImages.filter(img=>!existUrls.has(img.secure_url)).map(img=>({
+                id:"LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+                url:img.secure_url,
+                name:(img.public_id||"").split("/").pop().replace(/[-_]/g," "),
+                tags:{eventType:[],venueType:[],venue:"",areasElements:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]},
+                elements:[],addedAt:Date.now(),source:"cloudinary"
+              }));
+              if(!newImgs.length){showMsg("All already in Library","orange");return;}
+              saveLib([...libItems,...newImgs]);
+              showMsg(`✓ ${newImgs.length} photos added to Library — tag them now`,"green");
+            }} style={{...S.btn(true),fontSize:10,padding:"6px 12px"}}>Add All ({cldImages.length}) to Library</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:6,maxHeight:300,overflowY:"auto"}}>
+            {cldImages.map(img=>{
+              const imgUrl=img.secure_url;
+              const alreadyAdded=libItems.some(l=>l.url===imgUrl);
+              const isSelected=cldSelected.has(img.public_id);
+              return <div key={img.public_id} style={{position:"relative",borderRadius:6,overflow:"hidden",border:isSelected?`2px solid #E11D48`:`1px solid ${border}`}}>
+                <div onClick={()=>{
+                  if(cldSelectMode){
+                    const ns=new Set(cldSelected);
+                    if(ns.has(img.public_id))ns.delete(img.public_id);else ns.add(img.public_id);
+                    setCldSelected(ns);return;
+                  }
+                  if(alreadyAdded){showMsg("Already in Library","orange");return;}
+                  const libImg={id:"LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),url:imgUrl,name:(img.public_id||"").split("/").pop().replace(/[-_]/g," "),tags:{eventType:[],venueType:[],venue:"",areasElements:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]},elements:[],addedAt:Date.now(),source:"cloudinary"};
+                  saveLib([...libItems,libImg]);
+                  showMsg("✓ Added to Library — tap to tag it","green");
+                }} style={{cursor:"pointer",opacity:alreadyAdded&&!cldSelectMode?0.5:1}}>
+                  <img src={imgUrl} alt="" style={{width:"100%",height:70,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.display="none"}}/>
+                  {cldSelectMode&&<div style={{position:"absolute",top:3,left:3,width:18,height:18,borderRadius:4,border:"2px solid #fff",background:isSelected?"#E11D48":"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {isSelected&&<span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
+                  </div>}
+                  {!cldSelectMode&&alreadyAdded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.4)"}}><span style={{color:"#fff",fontSize:14,fontWeight:700}}>✓</span></div>}
+                </div>
+                {!cldSelectMode&&<button onClick={async(e)=>{
+                  e.stopPropagation();
+                  if(!confirm("Delete this photo from Cloudinary permanently?")) return;
+                  try {
+                    const d=await ctx.cldAdmin("delete",{public_id:img.public_id});
+                    if(d.deleted){setCldImages(prev=>prev.filter(p=>p.public_id!==img.public_id));showMsg("✓ Deleted","green");}
+                    else{showMsg("Delete failed: "+(d.error||"unknown"),"red");}
+                  }catch(err){showMsg("Delete failed","red");}
+                }} style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.6)",border:"none",borderRadius:4,padding:"2px 5px",cursor:"pointer",fontSize:10,color:"#F87171",lineHeight:1}}>✕</button>}
+              </div>;
+            })}
+          </div>
+        </>}
+        {!cldLoading&&cldFolders.length===0&&cldImages.length===0&&cldPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>Empty folder</div>}
+      </div>}
       {/* Add preview panel */}
       {libAddPreview && (
         <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: 14, marginBottom: 14 }}>
@@ -683,17 +821,479 @@ export default function ManageLibrary({ ctx }) {
       {/* Images / Videos toggle */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
         <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libItems.length})</button>
-        <button onClick={() => { setLibView("videos"); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>
+        <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>
       </div>
       {/* Content */}
       {libView === "images" && LibraryBrowse()}
       {libView === "videos" && (
-        <div style={{ textAlign: "center", padding: 60, color: textS }}>
-          <div style={{ fontSize: 36, marginBottom: 12 }}>🎬</div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Videos</div>
-          <div style={{ fontSize: 12 }}>The video library &amp; Cloudinary browser are rebuilt in a later Studio slice.</div>
+        <div>
+          {/* Search + Refresh + Add Video row */}
+          <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+            <input value={ytSearch} onChange={e=>setYtSearch(e.target.value)} placeholder="Search videos by title..." style={{...S.input,flex:1,marginBottom:0,fontSize:12}}/>
+            <button onClick={()=>openCldVideoBrowser()} style={{...S.btn(true),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Add Video</button>
+            <button onClick={()=>loadAllYT(true)} disabled={ytLoading} style={{...S.btn(false),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap",opacity:ytLoading?0.5:1}}>{ytLoading?"⏳":"🔄"} Refresh YT</button>
+          </div>
+          {/* Untagged alert banner */}
+          {untaggedVideoCount>0&&<div onClick={()=>{setYtFilterLinked("untagged");}} style={{padding:"8px 14px",background:"rgba(245,158,11,0.1)",borderRadius:10,border:"1px solid rgba(245,158,11,0.3)",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>🔴 {untaggedVideoCount} untagged video{untaggedVideoCount>1?"s":""} — tap to filter</div>
+          </div>}
+          {/* Add Video Panel (Cloudinary Video Browser) */}
+          {addVideoOpen&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:12,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:accent}}>📂 Add Video from Cloudinary</div>
+              <span onClick={()=>setAddVideoOpen(false)} style={{fontSize:11,cursor:"pointer",color:"#E11D48",fontWeight:700}}>✕ Close</span>
+            </div>
+            {/* Breadcrumb */}
+            <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+              <span onClick={()=>cldVideoGoBack(0)} style={{fontSize:10,color:accent,cursor:"pointer",fontWeight:600}}>Root</span>
+              {cldVideoPath.map((seg,si)=><Fragment key={si}>
+                <span style={{fontSize:10,color:textS}}>/</span>
+                <span onClick={()=>cldVideoGoBack(si+1)} style={{fontSize:10,color:si===cldVideoPath.length-1?textP:accent,cursor:"pointer",fontWeight:600}}>{seg}</span>
+              </Fragment>)}
+            </div>
+            {cldVideoLoading&&<div style={{textAlign:"center",padding:20,color:textS,fontSize:11}}>⏳ Loading...</div>}
+            {/* Folders */}
+            {!cldVideoLoading&&cldVideoFolders.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8,marginBottom:10}}>
+              {cldVideoFolders.map(f=><div key={f.name||f.path} onClick={()=>cldVideoNavigate(f.name||f.path)} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${border}`,cursor:"pointer",textAlign:"center",fontSize:11,fontWeight:600,color:textP,background:isDark?"rgba(255,255,255,0.03)":"rgba(0,0,0,0.02)"}}>
+                📁 {f.name||f.path}
+              </div>)}
+            </div>}
+            {/* Video files */}
+            {!cldVideoLoading&&cldVideoList.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+              {cldVideoList.map(res=>{
+                const thumbUrl=res.secure_url.replace("/video/upload/","/video/upload/so_0,w_320,h_180,c_fill/").replace(/\.[^.]+$/,".jpg");
+                const fileName=(res.public_id||"").split("/").pop().replace(/[-_]/g," ");
+                const alreadyAdded=manualVideos.some(m=>m.videoUrl===res.secure_url);
+                return <div key={res.public_id} style={{borderRadius:8,border:`1px solid ${border}`,overflow:"hidden",opacity:alreadyAdded?0.4:1}}>
+                  <img src={thumbUrl} alt={fileName} style={{width:"100%",height:100,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="100px";}}/>
+                  <div style={{padding:"6px 8px"}}>
+                    <div style={{fontSize:10,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}}>{fileName}</div>
+                    {alreadyAdded?<div style={{fontSize:9,color:"#059669",fontWeight:600}}>✓ Added</div>:
+                    <button onClick={()=>addCldVideo(res)} style={{...S.btn(true),fontSize:9,padding:"4px 10px",width:"100%"}}>+ Add to App</button>}
+                  </div>
+                </div>;
+              })}
+            </div>}
+            {!cldVideoLoading&&cldVideoFolders.length===0&&cldVideoList.length===0&&cldVideoPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>No video files in this folder</div>}
+            <div style={{fontSize:9,color:textS,marginTop:8}}>Upload videos to any Cloudinary folder first, then browse them here. Supports mp4, mov, webm.</div>
+          </div>}
+          {/* Filter pills row */}
+          <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{fontSize:10,color:textS,fontWeight:600}}>Filter:</span>
+            <select value={ytFilterVenue} onChange={e=>setYtFilterVenue(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">All Venues</option>
+              <optgroup label="Inhouse">
+                {allInhouseVenues.map(v=><option key={v} value={v}>{v}</option>)}
+              </optgroup>
+              {customOutdoor.filter(o=>o.empanelled).length>0&&<optgroup label="Outside — Empanelled">
+                {customOutdoor.filter(o=>o.empanelled).map(o=><option key={"em-"+o.name} value={o.name}>{o.name}</option>)}
+              </optgroup>}
+              {customOutdoor.filter(o=>!o.empanelled).length>0&&<optgroup label="Outside — Other">
+                {customOutdoor.filter(o=>!o.empanelled).map(o=><option key={"ot-"+o.name} value={o.name}>{o.name}</option>)}
+              </optgroup>}
+            </select>
+            <select value={ytFilterFn} onChange={e=>setYtFilterFn(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">All Events</option>
+              {taxOr(taxonomy.eventType, FUNCTIONS).map(f=><option key={f} value={f}>{f}</option>)}
+            </select>
+            <select value={ytFilterTier} onChange={e=>setYtFilterTier(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">All Tiers</option>
+              {taxOr(taxonomy.tier, CATEGORIES).map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={ytFilterIO} onChange={e=>setYtFilterIO(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">In/Out</option>
+              {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
+            </select>
+            <select value={ytFilterStyle} onChange={e=>setYtFilterStyle(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">All Styles</option>
+              {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={ytFilterColor} onChange={e=>setYtFilterColor(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">All Colors</option>
+              {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={ytFilterLinked} onChange={e=>setYtFilterLinked(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
+              <option value="all">All</option>
+              <option value="tagged">Tagged</option>
+              <option value="untagged">Untagged</option>
+              <option value="linked">Linked to Event</option>
+              <option value="hidden">Hidden</option>
+            </select>
+            <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,color:textS}}>
+              <input type="checkbox" checked={showHidden} onChange={e=>setShowHidden(e.target.checked)} style={{accentColor:accent}}/>
+              Show hidden
+            </label>
+            {(ytFilterVenue!=="all"||ytFilterFn!=="all"||ytFilterTier!=="all"||ytFilterLinked!=="all"||ytFilterStyle!=="all"||ytFilterColor!=="all"||ytFilterIO!=="all")&&
+              <span onClick={()=>{setYtFilterVenue("all");setYtFilterFn("all");setYtFilterTier("all");setYtFilterLinked("all");setYtFilterStyle("all");setYtFilterColor("all");setYtFilterIO("all");}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:600}}>✕ Clear</span>}
+            <span style={{fontSize:10,color:textS,marginLeft:"auto"}}>{Object.keys(ytVideoTags).length} tagged · {Object.keys(hiddenVideos).length} hidden · {allVideos.length} total</span>
+          </div>
+          {/* Picker banner */}
+          {ytPicker&&<div style={{padding:"10px 16px",background:"rgba(14,165,233,0.12)",borderRadius:10,border:"1px solid rgba(14,165,233,0.3)",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><span style={{fontWeight:600,color:"#0EA5E9",fontSize:12}}>🔗 Linking video to:</span> <span style={{fontSize:12,fontWeight:700}}>{events.find(e=>e.id===ytPicker)?.name||"Event"}</span></div>
+            <button onClick={()=>setYtPicker(null)} style={{...S.btn(false),fontSize:10,padding:"4px 10px"}}>Cancel</button>
+          </div>}
+          {ytLoading&&<div style={{textAlign:"center",padding:40,color:textS}}>⏳ Loading videos from YouTube...</div>}
+          {!ytLoading&&allVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>No videos found. Hit Refresh to load from YouTube or Add Video from Cloudinary.</div>}
+          {/* Video grid */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+            {allVideos.filter(v=>{
+              // Hidden filter
+              const isHid = !!hiddenVideos[v.id];
+              if(ytFilterLinked==="hidden") return isHid;
+              if(isHid && !showHidden) return false;
+              if(ytFilterPL!=="all"&&v.playlistId!==ytFilterPL) return false;
+              if(ytSearch.trim()&&!v.title.toLowerCase().includes(ytSearch.toLowerCase())) return false;
+              const tag=ytVideoTags[v.id];
+              if(ytFilterVenue!=="all"&&tag?.venue!==ytFilterVenue) return false;
+              if(ytFilterFn!=="all"&&!(tag?.fn||[]).includes?.(ytFilterFn)&&tag?.fn!==ytFilterFn) return false;
+              if(ytFilterTier!=="all"&&tag?.tier!==ytFilterTier) return false;
+              if(ytFilterIO!=="all"&&tag?.io!==ytFilterIO) return false;
+              if(ytFilterStyle!=="all"&&!(tag?.styles||[]).includes(ytFilterStyle)) return false;
+              if(ytFilterColor!=="all"&&!(tag?.colors||[]).includes(ytFilterColor)) return false;
+              if(ytFilterLinked==="tagged"&&!tag) return false;
+              if(ytFilterLinked==="untagged"&&tag) return false;
+              if(ytFilterLinked==="linked"&&!(tag?.linkedEvents?.length>0)) return false;
+              return true;
+            }).map(v=>{
+              const savedTag=ytVideoTags[v.id]||{};
+              const hasDraft=aiVideoDraft&&aiVideoDraft.videoId===v.id;
+              const tag=hasDraft?aiVideoDraft.tags:savedTag;
+              const isEditing=ytTagEdit===v.id;
+              const linkedEvts=(savedTag.linkedEvents||[]).map(eid=>events.find(e=>e.id===eid)).filter(Boolean);
+              const hasTag=savedTag.venue||savedTag.fn||(savedTag.styles||[]).length||savedTag.tier||savedTag.io||(savedTag.colors||[]).length;
+              return(
+              <div key={v.id} style={{...S.card,overflow:"hidden",border:isEditing?`2px solid ${accent}`:`1px solid ${border}`,transition:"border 0.2s"}}>
+                {/* Thumbnail */}
+                <div style={{position:"relative",cursor:"pointer"}} onClick={()=>{
+                  if(ytPicker){
+                    const idx=events.findIndex(e=>e.id===ytPicker);
+                    if(idx>=0){
+                      const upd=[...events];upd[idx]={...upd[idx],video:`https://www.youtube.com/embed/${v.id}`};save(upd);
+                      const nt={...ytVideoTags,[v.id]:{...tag,linkedEvents:[...new Set([...(tag.linkedEvents||[]),ytPicker])]}};saveYtTags(nt);
+                      setYtPicker(null);
+                    }
+                  } else {
+                    if(isEditing&&hasDraft)setAiVideoDraft(null);
+                    setYtTagEdit(isEditing?null:v.id);
+                  }
+                }}>
+                  <img src={v.thumb} alt={v.title} loading="lazy" style={{width:"100%",height:140,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <div style={{width:44,height:32,borderRadius:8,background:"rgba(255,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:0,height:0,borderLeft:"12px solid #fff",borderTop:"7px solid transparent",borderBottom:"7px solid transparent",marginLeft:2}}/></div>
+                  </div>
+                  {v.duration&&<div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.8)",color:"#fff",fontSize:9,padding:"2px 5px",borderRadius:4,fontWeight:600}}>{v.duration}</div>}
+                  {/* NEW badge */}
+                  {(v.addedAt||0)>lastVisitTs&&lastVisitTs>0&&<div style={{position:"absolute",bottom:4,left:4,background:"rgba(239,68,68,0.95)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:800,letterSpacing:0.5}}>NEW</div>}
+                  {/* Source badge */}
+                  {v.source==="cloudinary"&&<div style={{position:"absolute",bottom:4,left:v.addedAt>lastVisitTs&&lastVisitTs>0?40:4,background:"rgba(99,102,241,0.9)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:700}}>☁️ CLD</div>}
+                  {/* Hidden overlay */}
+                  {!!hiddenVideos[v.id]&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:12,fontWeight:700}}>👁‍🗨 Hidden</span></div>}
+                  {/* Tag badges on thumbnail */}
+                  <div style={{position:"absolute",top:4,left:4,display:"flex",gap:3,flexWrap:"wrap",maxWidth:"80%"}}>
+                    {tag.venue&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(14,165,233,0.9)",color:"#fff",fontWeight:700}}>{tag.venue}</span>}
+                    {tag.fn&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(168,85,247,0.9)",color:"#fff",fontWeight:700}}>{typeof tag.fn==="string"?tag.fn:(tag.fn||[]).join(", ")}</span>}
+                    {tag.tier&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:tag.tier==="Gold"?"rgba(245,158,11,0.9)":"rgba(148,163,184,0.9)",color:"#fff",fontWeight:700}}>{tag.tier}</span>}
+                    {tag.io&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.9)",color:"#fff",fontWeight:700}}>{tag.io}</span>}
+                    {(tag.styles||[]).length>0&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(236,72,153,0.9)",color:"#fff",fontWeight:700}}>{tag.styles[0]}{tag.styles.length>1?` +${tag.styles.length-1}`:""}</span>}
+                    {(tag.colors||[]).length>0&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(249,115,22,0.9)",color:"#fff",fontWeight:700}}>{tag.colors[0]}{tag.colors.length>1?` +${tag.colors.length-1}`:""}</span>}
+                  </div>
+                  {linkedEvts.length>0&&<div style={{position:"absolute",top:4,right:4,background:"rgba(5,150,105,0.9)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:700}}>🔗 {linkedEvts.length}</div>}
+                  {getPhotos(tag).length>0&&!linkedEvts.length&&<div style={{position:"absolute",top:4,right:4,background:"rgba(14,165,233,0.9)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:700}}>📸 {getPhotos(tag).length}</div>}
+                  {getPhotos(tag).length>0&&linkedEvts.length>0&&<div style={{position:"absolute",top:22,right:4,background:"rgba(14,165,233,0.9)",color:"#fff",fontSize:8,padding:"2px 6px",borderRadius:4,fontWeight:700}}>📸 {getPhotos(tag).length}</div>}
+                </div>
+                {/* Title + date */}
+                <div style={{padding:"8px 10px"}}>
+                  <div style={{fontSize:11,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",lineHeight:1.4,color:textP}}>{v.title}</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+                    <div style={{fontSize:9,color:textS}}>{v.date}</div>
+                    {!hasTag&&!isEditing&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>
+                      <button onClick={(e)=>{e.stopPropagation();aiTagVideo(v.id);}} disabled={aiTaggingVideo===v.id} style={{padding:"2px 8px",borderRadius:6,border:"none",background:aiTaggingVideo===v.id?"#C9A96E44":"#C9A96E",color:aiTaggingVideo===v.id?"#C9A96E":"#1a1a2e",fontSize:9,fontWeight:600,cursor:aiTaggingVideo===v.id?"wait":"pointer"}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
+                    </div>}
+                  </div>
+                </div>
+                {/* Expanded tag editor */}
+                {isEditing&&<div style={{padding:"10px 12px",borderTop:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"rgba(0,0,0,0.01)"}}>
+                  {/* Playable video — admin watches here before tagging (Fix 4). Cloudinary uses <video>, YouTube uses LazyYT/iframe. */}
+                  <div onClick={e=>e.stopPropagation()} style={{marginBottom:10,borderRadius:8,overflow:"hidden",background:"#000",aspectRatio:"16/9"}}>
+                    {v.source==="cloudinary"&&v.videoUrl
+                      ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
+                      : <LazyYT src={`https://www.youtube.com/embed/${v.id}`} poster={v.thumb}/>}
+                  </div>
+                  {/* AI Draft banner */}
+                  {hasDraft&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",marginBottom:10,borderRadius:8,background:"rgba(201,169,110,0.12)",border:`1px solid ${accent}40`}}>
+                    <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>🤖 AI suggested — review & save</span>
+                    <button onClick={()=>{const nt={...ytVideoTags,[v.id]:aiVideoDraft.tags};saveYtTags(nt);setAiVideoDraft(null);showMsg("✓ Tags saved","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
+                    <button onClick={()=>{setAiVideoDraft(null);setYtTagEdit(null);}} style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>✕ Discard</button>
+                  </div>}
+                  {/* Row 1: Venue (2-level chip picker — mirrors Browse page pattern) */}
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Venue</div>
+                    {(() => {
+                      const curVenue = tag.venue || "";
+                      const isInhouse = curVenue && allInhouseVenues.includes(curVenue);
+                      // Auto-sync group when venue is already set
+                      const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
+                      const setVidVenue = (val) => {
+                        const nt = { ...ytVideoTags, [v.id]: { ...tag, venue: val || undefined, venueCustom: undefined } };
+                        if (hasDraft) { setAiVideoDraft(p => ({ ...p, tags: { ...p.tags, venue: val || undefined, venueCustom: undefined } })); } else { saveYtTags(nt); }
+                      };
+                      const outsideFiltered = customOutdoor.filter(o => tagOutsideSub === "empanelled" ? o.empanelled : tagOutsideSub === "other" ? !o.empanelled : true);
+                      return <>
+                        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                          <div onClick={()=>{setTagVenueGroup("inhouse");setTagOutsideSub("all");}} style={S.pill(activeGroup==="inhouse")}>Inhouse</div>
+                          <div onClick={()=>{setTagVenueGroup("outside");setTagOutsideSub("all");}} style={S.pill(activeGroup==="outside")}>Outside</div>
+                          {curVenue&&<div onClick={()=>{setVidVenue("");setTagVenueGroup("");}} style={{padding:"4px 8px",borderRadius:12,fontSize:9,cursor:"pointer",color:textS,border:`1px dashed ${border}`}}>✕ {curVenue}</div>}
+                        </div>
+                        {activeGroup==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+                          {allInhouseVenues.map(vn=>{const on=curVenue===vn;return <div key={vn} onClick={()=>setVidVenue(on?"":vn)} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px"}}>{vn}</div>;})}
+                        </div>}
+                        {activeGroup==="outside"&&<>
+                          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+                            <div onClick={()=>{setTagOutsideSub("all");}} style={{...S.pill(tagOutsideSub==="all"),fontSize:10,padding:"4px 10px"}}>All</div>
+                            <div onClick={()=>{setTagOutsideSub("empanelled");}} style={{...S.pill(tagOutsideSub==="empanelled"),fontSize:10,padding:"4px 10px"}}>Empanelled</div>
+                            <div onClick={()=>{setTagOutsideSub("other");}} style={{...S.pill(tagOutsideSub==="other"),fontSize:10,padding:"4px 10px"}}>Other</div>
+                          </div>
+                          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:4}}>
+                            {outsideFiltered.map(o=>{const on=curVenue===o.name;return <div key={o.name} onClick={()=>setVidVenue(on?"":o.name)} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</div>;})}
+                          </div>
+                        </>}
+                      </>;
+                    })()}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                    <div>
+                      <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Tier</div>
+                      <select value={tag.tier||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,tier:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,tier:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                        <option value="">—</option>
+                        {taxOr(taxonomy.tier, CATEGORIES).map(c=><option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Indoor / Outdoor</div>
+                      <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,io:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                        <option value="">—</option>
+                        {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    {/* §23 Phase 2.9c — palette per video (drives Build screen paint picker grouping) */}
+                    <div>
+                      <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>🎨 Palette</div>
+                      <select value={tag.palette||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,palette:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,palette:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                        <option value="">—</option>
+                        {(imsPaletteCatalogue.length>0?imsPaletteCatalogue:[{name:"Custom"}]).map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {/* Row 2: Event type — multi-select chips */}
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,color:textS,marginBottom:4,fontWeight:600}}>Event type <span style={{fontWeight:400,opacity:0.7}}>(tap to toggle)</span></div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                      {taxOr(taxonomy.eventType, FUNCTIONS).map(f=>{
+                        const sel=(tag.fn||[]).includes?.(f)||(typeof tag.fn==="string"&&tag.fn===f);
+                        return <span key={f} onClick={()=>{
+                          const cur=Array.isArray(tag.fn)?tag.fn:(tag.fn?[tag.fn]:[]);
+                          const next=cur.includes(f)?cur.filter(x=>x!==f):[...cur,f];
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,fn:next.length?next:undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,fn:next.length?next:undefined}};saveYtTags(nt);}
+                        }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
+                          background:sel?"rgba(168,85,247,0.2)":"transparent",
+                          border:`1px solid ${sel?"rgba(168,85,247,0.5)":border}`,
+                          color:sel?"#A855F7":textS}}>{f}</span>;
+                      })}
+                    </div>
+                  </div>
+                  {/* Row 3: Style — multi-select chips */}
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:9,color:textS,marginBottom:4,fontWeight:600}}>Design Style <span style={{fontWeight:400,opacity:0.7}}>(tap to toggle)</span></div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                      {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(s=>{
+                        const sel=(tag.styles||[]).includes(s);
+                        return <span key={s} onClick={()=>{
+                          const cur=tag.styles||[];
+                          const next=cur.includes(s)?cur.filter(x=>x!==s):[...cur,s];
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,styles:next.length?next:undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,styles:next.length?next:undefined}};saveYtTags(nt);}
+                        }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
+                          background:sel?"rgba(236,72,153,0.2)":"transparent",
+                          border:`1px solid ${sel?"rgba(236,72,153,0.5)":border}`,
+                          color:sel?"#EC4899":textS}}>{s}</span>;
+                      })}
+                    </div>
+                  </div>
+                  {/* Row 4: Color Palette — multi-select chips */}
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:9,color:textS,marginBottom:4,fontWeight:600}}>Color Palette <span style={{fontWeight:400,opacity:0.7}}>(tap to toggle)</span></div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                      {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(c=>{
+                        const sel=(tag.colors||[]).includes(c);
+                        return <span key={c} onClick={()=>{
+                          const cur=tag.colors||[];
+                          const next=cur.includes(c)?cur.filter(x=>x!==c):[...cur,c];
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,colors:next.length?next:undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,colors:next.length?next:undefined}};saveYtTags(nt);}
+                        }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
+                          background:sel?"rgba(249,115,22,0.2)":"transparent",
+                          border:`1px solid ${sel?"rgba(249,115,22,0.5)":border}`,
+                          color:sel?"#F97316":textS}}>{c}</span>;
+                      })}
+                    </div>
+                  </div>
+                  {/* ═══ PHOTOS BY ZONE — tap zone to open Library picker ═══ */}
+                  <div style={{marginBottom:8,borderTop:`1px solid ${border}`,paddingTop:10}}>
+                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — tap zone to pick from Library</div>
+                    <div style={{borderRadius:8,border:`1px solid ${border}`,overflow:"hidden"}}>
+                      {(taxonomy.areasElements||[]).map((zone,zi)=>{
+                        const zp=tag.zonePhotos||{};
+                        const libId=zp[zone];
+                        const libItem=libId?libItems.find(li=>li.id===libId):null;
+                        return <div key={zone} onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]});}} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderBottom:zi<(taxonomy.areasElements||[]).length-1?`1px solid ${border}`:"none",cursor:"pointer",background:libItem?(isDark?"rgba(201,169,110,0.06)":"rgba(201,169,110,0.04)"):"transparent"}}>
+                          <span style={{fontSize:14,width:20,textAlign:"center"}}>{ZONE_ICONS[zone]||"📍"}</span>
+                          <span style={{fontSize:11,fontWeight:600,color:textP,flex:1}}>{zone}</span>
+                          {libItem?<>
+                            <img src={libItem.url} alt="" style={{width:48,height:34,objectFit:"cover",borderRadius:4,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
+                            <span onClick={(e2)=>{e2.stopPropagation();const np={...zp};delete np[zone];const nt={...ytVideoTags,[v.id]:{...tag,zonePhotos:np}};saveYtTags(nt);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>×</span>
+                          </>:<>
+                            <div style={{width:48,height:34,borderRadius:4,border:`1px dashed ${border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:textS,flexShrink:0}}>+</div>
+                          </>}
+                          <span style={{fontSize:10,color:accent,fontWeight:600,flexShrink:0}}>{libItem?"Change":"Select"}</span>
+                        </div>;
+                      })}
+                    </div>
+                    {Object.keys(tag.zonePhotos||{}).length>0&&<div style={{fontSize:9,color:textS,marginTop:4}}>{Object.keys(tag.zonePhotos||{}).length} of {(taxonomy.areasElements||[]).length} zones assigned</div>}
+                  </div>
+                  {/* Quick actions */}
+                  <div style={{display:"flex",gap:6,justifyContent:"flex-end",flexWrap:"wrap"}}>
+                    <button onClick={(e)=>{e.stopPropagation();const nh={...hiddenVideos};if(nh[v.id])delete nh[v.id];else nh[v.id]=true;saveHiddenVideos(nh);showMsg(nh[v.id]?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
+                      {hiddenVideos[v.id]?"👁 Unhide":"👁‍🗨 Hide"}
+                    </button>
+                    {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();if(!confirm("Delete this video from app?"))return;saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]);const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);setYtTagEdit(null);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
+                    {hasTag&&<button onClick={()=>{const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
+                    <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
+                    <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
+                  </div>
+                </div>}
+              </div>);
+            })}
+          </div>
         </div>
       )}
+      {/* ═══ FULL-SCREEN LIBRARY PICKER MODAL ═══ */}
+      {zonePickerVid&&zonePickerZone&&(()=>{
+        const vTag=ytVideoTags[zonePickerVid]||{};
+        const {exact:rawExact,similar:rawSimilar,fallback:rawFallback}=getLibPhotosForZone(zonePickerZone,vTag);
+        const exact=zpHasFilters?rawExact.filter(zpFilterPhoto):rawExact;
+        const similar=zpHasFilters?rawSimilar.filter(zpFilterPhoto):rawSimilar;
+        const fallback=zpHasFilters?rawFallback.filter(zpFilterPhoto):rawFallback;
+        const totalRaw=rawExact.length+rawSimilar.length+rawFallback.length;
+        const totalFiltered=exact.length+similar.length+fallback.length;
+        const currentLibId=(vTag.zonePhotos||{})[zonePickerZone];
+        const selectPhoto=(libId)=>{
+          const zp={...(vTag.zonePhotos||{}), [zonePickerZone]:libId};
+          const nt={...ytVideoTags,[zonePickerVid]:{...vTag,zonePhotos:zp}};
+          saveYtTags(nt);
+          setZonePickerVid(null);setZonePickerZone(null);
+        };
+        const calcElCost=(li)=>{
+          if(!(li.elements||[]).length)return 0;
+          return calcElsCost(li.elements, true, null);
+        };
+        const renderCard=(li)=>{
+          const isCurrent=li.id===currentLibId;
+          const cost=calcElCost(li);
+          return <div key={li.id} onClick={()=>selectPhoto(li.id)} style={{borderRadius:10,border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,overflow:"hidden",cursor:"pointer",background:cardBg,position:"relative"}}>
+            <div style={{position:"relative"}}>
+              <img src={li.url} alt={li.name||""} style={{width:"100%",height:120,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="120px";}}/>
+              {isCurrent&&<div style={{position:"absolute",top:4,right:4,background:accent,color:"#fff",fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700}}>Current</div>}
+              {cost>0&&<div style={{position:"absolute",top:4,left:4,background:"rgba(0,0,0,0.75)",color:"#fff",fontSize:10,padding:"2px 8px",borderRadius:4,fontWeight:700}}>{fmt(cost)}</div>}
+            </div>
+            <div style={{padding:"6px 8px"}}>
+              <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{li.name||"Untitled"}</div>
+              <div style={{fontSize:9,color:textS}}>{(li.elements||[]).length} elements</div>
+              <div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:3}}>
+                {(li.tags?.colorPalette||[]).map(c=><span key={c} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(249,115,22,0.12)",color:"#F97316"}}>{c}</span>)}
+                {(li.tags?.designStyle||[]).map(s=><span key={s} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(236,72,153,0.12)",color:"#EC4899"}}>{s}</span>)}
+                {(li.tags?.categoryTier||[]).map(t=><span key={t} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(148,163,184,0.15)",color:textS}}>{t}</span>)}
+              </div>
+            </div>
+          </div>;
+        };
+        const priorityLabels = filterPriority.map(p=>p.label).join(" > ");
+        return <div style={{position:"fixed",inset:0,zIndex:9999,background:isDark?"rgba(0,0,0,0.92)":"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}} onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:bg,borderRadius:16,width:"100%",maxWidth:1000,maxHeight:"90vh",overflow:"auto",border:`1px solid ${border}`}}>
+            <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:bg,zIndex:1}}>
+              <div>
+                <div style={{fontSize:18,fontWeight:700,color:textP}}>{ZONE_ICONS[zonePickerZone]||"📍"} Select photo for {zonePickerZone}</div>
+                <div style={{fontSize:12,color:textS,marginTop:2}}>Priority: {priorityLabels}</div>
+              </div>
+              <span onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700,padding:"4px 8px"}}>✕</span>
+            </div>
+            <div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:10,color:textS}}>Video tags:</span>
+              {vTag.tier&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(148,163,184,0.2)",color:textP,fontWeight:600}}>{vTag.tier}</span>}
+              {(vTag.colors||[]).map(c=><span key={c} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(249,115,22,0.15)",color:"#F97316",fontWeight:600}}>{c}</span>)}
+              {(vTag.styles||[]).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600}}>{s}</span>)}
+              {(Array.isArray(vTag.fn)?vTag.fn:(vTag.fn?[vTag.fn]:[])).map(f=><span key={f} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(168,85,247,0.15)",color:"#A855F7",fontWeight:600}}>{f}</span>)}
+              {vTag.io&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>{vTag.io}</span>}
+            </div>
+            {/* Filter toggle + panel */}
+            <div style={{padding:"8px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <span onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 12px",borderRadius:8,background:zpFilterOpen?`${accent}22`:"transparent",border:`1px solid ${zpFilterOpen?accent:border}`,color:zpFilterOpen?accent:textS,fontSize:11,fontWeight:500,cursor:"pointer"}}>🔍 Filters {zpFilterOpen?"▲":"▼"}</span>
+              {zpHasFilters&&<span style={{fontSize:10,color:textS}}>{totalFiltered} of {totalRaw}</span>}
+              {zpHasFilters&&<span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]})} style={{fontSize:10,color:"#E11D48",cursor:"pointer"}}>Clear</span>}
+            </div>
+            {zpFilterOpen&&<div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Event type</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.includes(v)?accent:"transparent",color:zpFilters.eventType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.includes(v)?accent:border}`,fontWeight:zpFilters.eventType.includes(v)?600:400}}>{v}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Venue type</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.includes(v)?accent:"transparent",color:zpFilters.venueType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.includes(v)?accent:border}`,fontWeight:zpFilters.venueType.includes(v)?600:400}}>{v}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Design style</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.includes(v)?accent:"transparent",color:zpFilters.designStyle.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.includes(v)?accent:border}`,fontWeight:zpFilters.designStyle.includes(v)?600:400}}>{v}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Color palette</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.includes(v)?accent:"transparent",color:zpFilters.colorPalette.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.includes(v)?accent:border}`,fontWeight:zpFilters.colorPalette.includes(v)?600:400}}>{v}</span>)}
+                  </div>
+                </div>
+              </div>
+            </div>}
+            <div style={{padding:20}}>
+              {exact.length>0&&<>
+                <div style={{fontSize:12,fontWeight:700,color:accent,marginBottom:8}}>Best matches ({exact.length})</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:20}}>
+                  {exact.map(renderCard)}
+                </div>
+              </>}
+              {similar.length>0&&<>
+                <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>Similar options ({similar.length})</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:20}}>
+                  {similar.map(renderCard)}
+                </div>
+              </>}
+              {fallback.length>0&&<>
+                <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>More options ({fallback.length})</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:20}}>
+                  {fallback.map(renderCard)}
+                </div>
+              </>}
+              {exact.length===0&&similar.length===0&&fallback.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>
+                <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>No photos in Library yet</div>
+                <div style={{fontSize:12}}>Add photos to Library and tag them to see options here.</div>
+              </div>}
+            </div>
+          </div>
+        </div>;
+      })()}
     </div>
   );
 }

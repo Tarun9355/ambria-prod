@@ -1317,6 +1317,29 @@ export default function StudioApp() {
   const [showHidden, setShowHidden] = useState(false);
   const [lastVisitTs, setLastVisitTs] = useState(0);
 
+  // ═══ CLOUDINARY PHOTO BROWSER STATE (reference ~3580) ═══
+  const [cldOpen, setCldOpen] = useState(null); // video id for which CLD browser is open
+  const [cldFolders, setCldFolders] = useState([]);
+  const [cldPath, setCldPath] = useState([]); // breadcrumb ["Decor","Wedding","Indoor"]
+  const [cldImages, setCldImages] = useState([]);
+  const [cldLoading, setCldLoading] = useState(false);
+  const [cldUploading, setCldUploading] = useState(false);
+  const [cldUploadProgress, setCldUploadProgress] = useState([]); // [{name, status:'checking'|'compressing'|'uploading'|'done'|'error'|'skipped', url?}]
+  const cldUploadRef = useRef(null);
+  const cldFolderUploadRef = useRef(null);
+  const [cldSelectMode, setCldSelectMode] = useState(false);
+  const [cldSelected, setCldSelected] = useState(new Set());
+  const [cldDeleting, setCldDeleting] = useState(false);
+  // ═══ CLOUDINARY VIDEO BROWSER STATE (reference ~3595) ═══
+  const [addVideoOpen, setAddVideoOpen] = useState(false); // show add video panel
+  const [cldVideoFolders, setCldVideoFolders] = useState([]);
+  const [cldVideoPath, setCldVideoPath] = useState([]);
+  const [cldVideoList, setCldVideoList] = useState([]);
+  const [cldVideoLoading, setCldVideoLoading] = useState(false);
+  // ═══ ZONE PICKER MODAL STATE (reference ~3601) ═══
+  const [zonePickerVid, setZonePickerVid] = useState(null); // video id for zone picker modal
+  const [zonePickerZone, setZonePickerZone] = useState(null); // zone name being picked
+
   // ═══ PINTEREST SEARCH STATE ═══
   const [pinResults, setPinResults] = useState([]);
   const [pinLoading, setPinLoading] = useState(false);
@@ -2227,6 +2250,327 @@ export default function StudioApp() {
   }, [ytVideos, manualVideos]);
 
   const untaggedVideoCount = useMemo(() => allVideos.filter((v) => !hiddenVideos[v.id] && !ytVideoTags[v.id]).length, [allVideos, hiddenVideos, ytVideoTags]);
+
+  // ═══ CLOUDINARY PHOTO BROWSER (reference ~4111) — rewired /api/cloudinary → cldAdmin ═══
+  const fetchCldFolders = useCallback(async (path = "") => {
+    setCldLoading(true);
+    try {
+      const data = await cldAdmin("folders", { path });
+      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldLoading(false); return; }
+      setCldFolders(data.folders || []);
+      setCldImages([]);
+    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+    setCldLoading(false);
+  }, []);
+
+  const fetchCldImages = useCallback(async (prefix) => {
+    setCldLoading(true);
+    try {
+      const data = await cldAdmin("list", { prefix, max_results: 200 });
+      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldLoading(false); return; }
+      setCldImages(data.resources || []);
+    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+    setCldLoading(false);
+  }, []);
+
+  const cldNavigate = useCallback((folderName) => {
+    const newPath = [...cldPath, folderName];
+    setCldPath(newPath);
+    const fullPath = newPath.join("/");
+    fetchCldFolders(fullPath);
+    fetchCldImages(fullPath);
+  }, [cldPath, fetchCldFolders, fetchCldImages]);
+
+  const cldGoBack = useCallback((idx) => {
+    const newPath = cldPath.slice(0, idx);
+    setCldPath(newPath);
+    const fullPath = newPath.join("/");
+    fetchCldFolders(fullPath);
+    if (newPath.length > 0) fetchCldImages(fullPath); else setCldImages([]);
+  }, [cldPath, fetchCldFolders, fetchCldImages]);
+
+  // ═══ CLOUDINARY DIRECT UPLOAD FROM LIBRARY (reference ~4155) — unsigned client upload ═══
+  // Sanitize folder path for Cloudinary — & breaks uploads; #, ?, %, \ are URL-unsafe
+  const sanitizeCloudinaryPath = (s) => s.replace(/&/g, "and").replace(/[#?%\\]/g, "_");
+  // Fetch ALL existing display_names in a folder (paginated, case-insensitive)
+  const fetchExistingNames = async (folder) => {
+    const names = new Set();
+    let cursor = "";
+    for (let i = 0; i < 20; i++) { // hard cap 20 pages × 500 = 10k files
+      const data = await cldAdmin("list", { prefix: folder, max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
+      (data.resources || []).forEach(r => {
+        const displayName = r.display_name || (r.public_id || "").split("/").pop();
+        if (displayName) names.add(displayName.toLowerCase());
+      });
+      if (!data.next_cursor) break;
+      cursor = data.next_cursor;
+    }
+    return names;
+  };
+  const handleCldUpload = useCallback(async (files, isFolderUpload = false) => {
+    if (!files || files.length === 0 || cldUploading) return;
+    const baseFolder = cldPath.join("/");
+    if (!baseFolder) { showMsg("Navigate into a folder first", "orange"); return; }
+    // Filter: extension-based whitelist (reliable, unlike MIME which can mis-label RAW as image/*)
+    const CLD_SUPPORTED = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|avif|ico|svg)$/i;
+    const CLD_UNSUPPORTED = /\.(cr2|cr3|nef|arw|raf|orf|rw2|dng|raw|srw|pef|rwl|x3f|3fr|mrw|erf|kdc)$/i;
+    const allFiles = Array.from(files);
+    const imageFiles = allFiles.filter(f => CLD_SUPPORTED.test(f.name));
+    const unsupportedFiles = allFiles.filter(f => CLD_UNSUPPORTED.test(f.name));
+    if (!imageFiles.length && !unsupportedFiles.length) { showMsg("No image files found", "orange"); return; }
+    if (!imageFiles.length) {
+      setCldUploadProgress(unsupportedFiles.map(f => ({ name: isFolderUpload ? (f.webkitRelativePath || f.name) : f.name, status: "unsupported" })));
+      showMsg(`⚠ ${unsupportedFiles.length} unsupported (RAW formats — convert to JPG first)`, "orange");
+      return;
+    }
+    setCldUploading(true);
+    // Pre-compute sanitized target folder per file
+    const fileTargets = imageFiles.map(file => {
+      let targetFolder = baseFolder;
+      if (isFolderUpload && file.webkitRelativePath) {
+        const parts = file.webkitRelativePath.split("/");
+        if (parts.length > 1) {
+          // Trim each segment and drop empties — Mac Finder allows trailing/leading spaces in folder names,
+          // but Cloudinary rejects them (causes 400 errors on any folder whose name has " /" or "/ ").
+          const subPath = parts.slice(0, -1).map(p => p.trim()).filter(Boolean).join("/");
+          if (subPath) targetFolder = baseFolder + "/" + subPath;
+        }
+      }
+      return { file, targetFolder: sanitizeCloudinaryPath(targetFolder) };
+    });
+    const progress = imageFiles.map(f => ({ name: isFolderUpload ? (f.webkitRelativePath || f.name) : f.name, status: "checking" }));
+    unsupportedFiles.forEach(f => progress.push({ name: isFolderUpload ? (f.webkitRelativePath || f.name) : f.name, status: "unsupported" }));
+    setCldUploadProgress([...progress]);
+    // Dedup pre-check: fetch existing display_names per unique target folder (parallel)
+    const uniqueFolders = [...new Set(fileTargets.map(t => t.targetFolder))];
+    const existingByFolder = {};
+    await Promise.all(uniqueFolders.map(async folder => {
+      try { existingByFolder[folder] = await fetchExistingNames(folder); }
+      catch (e) { existingByFolder[folder] = new Set(); }
+    }));
+    let doneCount = 0, skippedCount = 0;
+    const BATCH = 5;
+    for (let start = 0; start < fileTargets.length; start += BATCH) {
+      const batch = fileTargets.slice(start, start + BATCH);
+      await Promise.all(batch.map(async ({ file, targetFolder }, bi) => {
+        const idx = start + bi;
+        // Dedup check — case-insensitive match on base filename (no extension)
+        const baseName = file.name.replace(/\.[^.]+$/, "").toLowerCase();
+        if ((existingByFolder[targetFolder] || new Set()).has(baseName)) {
+          progress[idx] = { ...progress[idx], status: "skipped" };
+          skippedCount++;
+          setCldUploadProgress([...progress]);
+          return;
+        }
+        try {
+          // Compress
+          const compressed = await compressImageForCloudinary(file);
+          progress[idx].status = "uploading";
+          setCldUploadProgress([...progress]);
+          const fd = new FormData();
+          fd.append("file", compressed);
+          fd.append("upload_preset", IMS_CLD_PRESET);
+          fd.append("folder", targetFolder);
+          const res = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          progress[idx] = { ...progress[idx], status: "done", url: data.secure_url };
+          doneCount++;
+        } catch (e) {
+          progress[idx] = { ...progress[idx], status: "error" };
+        }
+        setCldUploadProgress([...progress]);
+      }));
+    }
+    setCldUploading(false);
+    const failedCount = imageFiles.length - doneCount - skippedCount;
+    const parts = [];
+    if (doneCount > 0) parts.push(`✓ ${doneCount} uploaded`);
+    if (skippedCount > 0) parts.push(`⊘ ${skippedCount} skipped`);
+    if (unsupportedFiles.length > 0) parts.push(`⚠ ${unsupportedFiles.length} unsupported`);
+    if (failedCount > 0) parts.push(`✗ ${failedCount} failed`);
+    showMsg(parts.join(", ") || "Nothing to upload", failedCount === 0 ? "green" : "orange");
+    fetchCldImages(baseFolder);
+    fetchCldFolders(baseFolder);
+  }, [cldPath, cldUploading, fetchCldImages, fetchCldFolders]);
+
+  // ═══ CLOUDINARY BULK DELETE (reference ~4282) ═══
+  const handleCldBulkDelete = useCallback(async () => {
+    const ids = Array.from(cldSelected);
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""} permanently from Cloudinary?`)) return;
+    setCldDeleting(true);
+    try {
+      const d = await cldAdmin("delete_bulk", { public_ids: ids });
+      const deletedCount = d.deleted ? Object.values(d.deleted).filter(v => v === "deleted").length : 0;
+      setCldImages(prev => prev.filter(img => !cldSelected.has(img.public_id)));
+      setCldSelected(new Set());
+      setCldSelectMode(false);
+      showMsg(`✓ ${deletedCount} photo${deletedCount !== 1 ? "s" : ""} deleted`, "green");
+    } catch (e) { showMsg("Bulk delete failed: " + e.message, "red"); }
+    setCldDeleting(false);
+  }, [cldSelected]);
+
+  // ═══ CLOUDINARY DELETE FOLDER (reference ~4303) ═══
+  const handleCldDeleteFolder = useCallback(async (folderName) => {
+    const fullPath = [...cldPath, folderName].join("/");
+    if (!confirm(`Delete folder "${folderName}" and ALL its contents permanently?\n\nPath: ${fullPath}\n\nThis cannot be undone!`)) return;
+    setCldDeleting(true);
+    try {
+      const d = await cldAdmin("delete_folder", { prefix: fullPath });
+      setCldFolders(prev => prev.filter(f => (f.name || f.path) !== folderName));
+      showMsg(`✓ Folder "${folderName}" deleted`, "green");
+    } catch (e) { showMsg("Folder delete failed: " + e.message, "red"); }
+    setCldDeleting(false);
+  }, [cldPath]);
+
+  // Normalize photo: string → {url, zones:[]} (reference ~4319)
+  const normPhoto = (p) => typeof p === "string" ? { url: p, zones: [] } : { url: p.url || "", zones: p.zones || [] };
+  const getPhotos = (tag) => (tag.photos || []).map(normPhoto);
+
+  // ═══ ZONE ICONS (reference ~4324) ═══
+  const ZONE_ICONS = { "Stage": "🎭", "Entry Passage": "🚪", "Centre Lounge": "🛋️", "Side Lounge": "🪑", "Vedi": "🕯️", "Centre Pieces": "💎", "Open Lounges": "🌿", "Photobooth": "📸", "Installations": "✨", "Props": "🎪" };
+
+  // ═══ MANUAL VIDEOS SAVE (reference ~4393) — routed through reliableSave like saveLib ═══
+  const saveManualVideos = useCallback(async (nv, del) => {
+    setManualVideos(nv);
+    await reliableSave(MANUAL_VID_SK, JSON.stringify(nv), "Video");
+  }, []);
+
+  const saveHiddenVideos = useCallback(async (nh) => {
+    setHiddenVideos(nh);
+    await reliableSave(HIDDEN_VID_SK, JSON.stringify(nh), "Hidden videos");
+  }, []);
+
+  // ═══ CLOUDINARY VIDEO BROWSER (reference ~4415) — rewired /api/cloudinary → cldAdmin ═══
+  const fetchCldVideoFolders = useCallback(async (path = "") => {
+    setCldVideoLoading(true);
+    try {
+      const data = await cldAdmin("folders", { path });
+      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldVideoLoading(false); return; }
+      setCldVideoFolders(data.folders || []);
+      setCldVideoList([]);
+    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+    setCldVideoLoading(false);
+  }, []);
+
+  const fetchCldVideoList = useCallback(async (prefix) => {
+    setCldVideoLoading(true);
+    try {
+      const data = await cldAdmin("list_video", { prefix, max_results: 100 });
+      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldVideoLoading(false); return; }
+      setCldVideoList(data.resources || []);
+    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+    setCldVideoLoading(false);
+  }, []);
+
+  const openCldVideoBrowser = useCallback(() => {
+    setAddVideoOpen(true); setCldVideoPath([]); setCldVideoFolders([]); setCldVideoList([]);
+    fetchCldVideoFolders("");
+  }, [fetchCldVideoFolders]);
+
+  const cldVideoNavigate = useCallback((folderName) => {
+    const newPath = [...cldVideoPath, folderName];
+    setCldVideoPath(newPath);
+    const fullPath = newPath.join("/");
+    fetchCldVideoFolders(fullPath);
+    fetchCldVideoList(fullPath);
+  }, [cldVideoPath, fetchCldVideoFolders, fetchCldVideoList]);
+
+  const cldVideoGoBack = useCallback((idx) => {
+    const newPath = cldVideoPath.slice(0, idx);
+    setCldVideoPath(newPath);
+    const fullPath = newPath.join("/");
+    fetchCldVideoFolders(fullPath);
+    if (newPath.length > 0) fetchCldVideoList(fullPath); else setCldVideoList([]);
+  }, [cldVideoPath, fetchCldVideoFolders, fetchCldVideoList]);
+
+  const addCldVideo = useCallback((resource) => {
+    const vidUrl = resource.secure_url;
+    // Generate thumbnail: replace /video/upload/ path and extension
+    const thumbUrl = vidUrl.replace("/video/upload/", "/video/upload/so_0,w_320,h_180,c_fill/").replace(/\.[^.]+$/, ".jpg");
+    const vid = {
+      id: "M" + Date.now().toString(36),
+      title: (resource.public_id || "").split("/").pop().replace(/[-_]/g, " "),
+      thumb: thumbUrl,
+      videoUrl: vidUrl,
+      duration: resource.duration ? Math.floor(resource.duration / 60) + ":" + String(Math.floor(resource.duration % 60)).padStart(2, "0") : "",
+      date: (resource.created_at || "").slice(0, 10),
+      source: "cloudinary",
+      addedAt: Date.now()
+    };
+    const existing = manualVideos.some(m => m.videoUrl === vidUrl);
+    if (existing) { showMsg("Already added", "orange"); return; }
+    saveManualVideos([vid, ...manualVideos]);
+  }, [manualVideos, saveManualVideos]);
+
+  // ═══ AI TAG VIDEO (reference ~4762) — /api/youtube → ytApi, /api/anthropic → callClaudeStreaming ═══
+  const aiTagVideo = useCallback(async (videoId) => {
+    if (aiTaggingVideo) return;
+    setAiTaggingVideo(videoId);
+    showMsg("🤖 Fetching video details...", "blue");
+    try {
+      const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
+      const snippet = ytData.items?.[0]?.snippet;
+      if (!snippet) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
+      const title = snippet.title || "";
+      const desc = snippet.description || "";
+      const ytTags = (snippet.tags || []).join(", ");
+      const venueList = allInhouseVenues.join(", ");
+      const venueAliases = allInhouseVenues.map(v => {
+        const parts = v.toLowerCase().split(/\s+/);
+        return `"${v}" (match if text contains: ${parts.filter(p => p.length > 3).join(", ")})`;
+      }).join("; ");
+      const fnList = taxOr(taxonomy.eventType, FUNCTIONS).map(f => `"${f}"`).join(", ");
+      const styleList = (taxonomy.designStyle || []).map(s => `"${s}"`).join(", ");
+      const colorList = (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || [])).map(c => `"${c}"`).join(", ");
+      const prompt = `You are a wedding/event decor video tagger. Respond ONLY with valid JSON.
+
+Analyze this YouTube video about Indian wedding/event decoration and extract tags.
+
+VIDEO TITLE: ${title}
+VIDEO DESCRIPTION: ${desc.slice(0, 1500)}
+VIDEO TAGS: ${ytTags}
+
+SMART VENUE MATCHING — match against these known venues: ${venueList}
+Aliases: ${venueAliases}
+Rules: If the title/description mentions "Pushpanjali" → venue is "Pushpanjali". If it mentions "Exotica" → "Exotica". If it mentions "Manaktala" → "Manaktala". Match partial names intelligently. Also match abbreviations or variations.
+
+Extract these fields using ONLY these exact values:
+- venue: one of [${allInhouseVenues.map(v => `"${v}"`).join(", ")}] or "" if unknown
+- fn: function type, array from [${fnList}]
+- tier: "Silver" (simple/basic decor) or "Gold" (premium/enhanced/luxury decor) — infer from description/quality/scale
+- io: "Indoor" or "Outdoor" or "" — infer from venue name, description, or visual cues mentioned
+- colors: array from [${colorList}] — pick values that match colors mentioned or implied
+- styles: array from [${styleList}] — pick values that match the decor style described
+
+Return ONLY JSON:
+{"venue":"...","fn":["..."],"tier":"...","io":"...","colors":["..."],"styles":["..."]}`;
+
+      showMsg("🤖 AI analyzing video...", "blue");
+      const txt = await callClaudeStreaming({
+        contentBlocks: prompt,
+        model: "claude-sonnet-4-20250514",
+        maxTokens: 500,
+      });
+      const clean = (txt || "").replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      const existingTag = ytVideoTags[videoId] || {};
+      const newTag = {
+        ...existingTag,
+        venue: parsed.venue || existingTag.venue || "",
+        fn: Array.isArray(parsed.fn) ? (parsed.fn.length === 1 ? parsed.fn[0] : parsed.fn) : parsed.fn || existingTag.fn,
+        tier: parsed.tier || existingTag.tier,
+        io: parsed.io || existingTag.io,
+        colors: (parsed.colors || []).length ? parsed.colors : existingTag.colors || [],
+        styles: (parsed.styles || []).length ? parsed.styles : existingTag.styles || [],
+      };
+      setAiVideoDraft({ videoId, tags: newTag });
+      setYtTagEdit(videoId);
+      showMsg("✓ AI suggested tags — review & save", "green");
+    } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
+    setAiTaggingVideo(null);
+  }, [aiTaggingVideo, ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue]);
 
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
   // (ytApi) + kv cache (YT_SK settings blob) instead of /api/youtube + window.storage. ──
@@ -3749,6 +4093,18 @@ export default function StudioApp() {
     ytFilterVenue, setYtFilterVenue, ytFilterFn, setYtFilterFn, ytFilterTier, setYtFilterTier, ytFilterLinked, setYtFilterLinked,
     ytFilterStyle, setYtFilterStyle, ytFilterColor, setYtFilterColor, ytFilterIO, setYtFilterIO, ytPhotoUrl, setYtPhotoUrl,
     manualVideos, setManualVideos, hiddenVideos, setHiddenVideos, showHidden, setShowHidden, lastVisitTs, setLastVisitTs,
+    saveManualVideos, saveHiddenVideos, aiTagVideo, getPhotos, ZONE_ICONS,
+    // cloudinary photo browser
+    cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading, setCldLoading,
+    cldUploading, setCldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
+    cldSelectMode, setCldSelectMode, cldSelected, setCldSelected, cldDeleting, setCldDeleting,
+    fetchCldFolders, cldNavigate, cldGoBack, handleCldUpload, handleCldBulkDelete, handleCldDeleteFolder,
+    // cloudinary video browser
+    addVideoOpen, setAddVideoOpen, cldVideoFolders, setCldVideoFolders, cldVideoPath, setCldVideoPath,
+    cldVideoList, setCldVideoList, cldVideoLoading, setCldVideoLoading,
+    openCldVideoBrowser, cldVideoNavigate, cldVideoGoBack, addCldVideo,
+    // zone picker modal
+    zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
     // notifications
     notifications, setNotifications, notifOpen, setNotifOpen, notifLastRead, setNotifLastRead, unreadCount, markAllRead,
     filterPriority, setFilterPriority,
