@@ -24,6 +24,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
+import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
@@ -2923,14 +2924,17 @@ export default function StudioApp() {
     setZoneUploading(elKey);
     showMsg("📷 Uploading to Cloudinary...", "blue");
     try {
-      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
-      const upRes = await fetch("/api/cloudinary", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "upload", file: b64, folder: "client-uploads" })
-      });
+      // Migration: the reference signed uploads via /api/cloudinary. This SPA has no server,
+      // so we use Cloudinary's unsigned upload preset (client-side, safe) — same as IMS.
+      const compressed = await compressImageForCloudinary(file);
+      const fd = new FormData();
+      fd.append("file", compressed);
+      fd.append("upload_preset", IMS_CLD_PRESET);
+      fd.append("folder", "client-uploads");
+      const upRes = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
       const upData = await upRes.json();
-      if (upData.error) { showMsg("Upload failed: " + upData.error, "red"); setZoneUploading(null); return; }
-      const cldUrl = upData.url;
+      if (upData.error) { showMsg("Upload failed: " + (upData.error.message || upData.error), "red"); setZoneUploading(null); return; }
+      const cldUrl = upData.secure_url || upData.url;
       showMsg("✓ Uploaded! Running AI analysis...", "green");
       let aiResult = null;
       try { aiResult = await Promise.race([aiTagImage(cldUrl), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 25000))]); } catch (e) { showMsg("AI tagging skipped — edit manually", "red"); }
