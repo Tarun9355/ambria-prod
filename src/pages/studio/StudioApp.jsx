@@ -13,6 +13,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
+import RateCard from "./RateCard.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
@@ -2772,12 +2773,16 @@ export default function StudioApp() {
 
       {/* MANAGE MODE — permission-gated */}
       {mode === "manage" && authUser && <div style={S.main}>
-        {/* TODO slice: ManageMode (library / pricing / settings) */}
-        <div style={{ textAlign: "center", padding: 60, color: textS }}>
-          <div style={{ fontSize: 36, marginBottom: 12 }}>🛠️</div>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>Manage — {manageTab}</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>This section is being rebuilt in a later Studio slice.</div>
-        </div>
+        {manageTab === "pricing" ? (
+          <RateCard rcItems={rcItems} setRcItems={setRcItems} />
+        ) : (
+          /* TODO slice: ManageMode (library / settings) */
+          <div style={{ textAlign: "center", padding: 60, color: textS }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🛠️</div>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>Manage — {manageTab}</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>This section is being rebuilt in a later Studio slice.</div>
+          </div>
+        )}
       </div>}
 
       {/* STUDIO MODE */}
