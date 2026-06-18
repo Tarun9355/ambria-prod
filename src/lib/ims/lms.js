@@ -228,6 +228,53 @@ export async function syncLmsContracts(eventOrders, onProgress) {
   return crossReferenceContracts([...venue, ...decor], eventOrders);
 }
 
+// ─── §25 Studio lead lookup ────────────────────────────────────────────────────
+// Faithful replacement for the reference Studio's `/api/lms?op=search`. Instead of a
+// server-side paginating proxy, we search the already-synced `lms_contracts` cache
+// (filled by triggerLmsSync) by guest name / phone — instant, no LMS round-trip.
+// Returns leads in the shape Studio's loadLmsLead expects.
+function lmsContractToLead(c) {
+  if (!c) return null;
+  return {
+    id: c.id,
+    guestName: c.guestName || "",
+    phone: c.contactNo || "",
+    address: c.address || c.city || "",
+    brideName: c.brideName || "",
+    groomName: c.groomName || "",
+    dept: c.dept,
+    entryNo: c.entryNo,
+    priority: c.priority || "",
+    functions: (c.functions || [])
+      .map((f) => ({
+        fnDate: String(f.functionDate || "").slice(0, 10),
+        fnLabel: f.functionType || "",
+        fnType: f.functionTypeId || "",
+        venueLabel: f.internalVenueName || f.venueName || f.externalVenue || "",
+        shift: f.session || "",
+      }))
+      .sort((a, b) => (a.fnDate || "").localeCompare(b.fnDate || "")),
+  };
+}
+
+export async function searchLmsLeads(query /*, signal */) {
+  const q = (query || "").trim();
+  if (q.length < 2) return { ok: true, leads: [], complete: true };
+  try {
+    const like = `%${q}%`;
+    const { data, error } = await supabase
+      .from("lms_contracts")
+      .select("data")
+      .or(`guest_name.ilike.${like},data->>contactNo.ilike.${like}`)
+      .limit(50);
+    if (error) throw error;
+    const leads = (data || []).map((r) => lmsContractToLead(r.data)).filter(Boolean);
+    return { ok: true, leads, complete: true, cached: true };
+  } catch (e) {
+    return { ok: false, leads: [], error: e.message || "LMS unreachable" };
+  }
+}
+
 // ─── Season Calendar (date categories) ────────────────────────────────────────
 // Proxied through a Supabase Edge Function (supabase/functions/season) that holds the
 // SEASON_EXPORT_KEY and calls the season-export API on the other project. Runs

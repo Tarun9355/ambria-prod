@@ -20,6 +20,7 @@ import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
+import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
@@ -317,10 +318,9 @@ function paintPillLabel(el, baseColour) {
   return `${allocs.length} colours`;
 }
 
-// ═══ Stubbed integrations — the reference proxies these through serverless /api routes
-// (LMS lead search, IMS cross-fetch). No server runtime exists in this static SPA build,
-// so they resolve to empty/neutral results. Replaced by real Supabase reads in later slices.
-const searchLmsLeads = async (/* query, signal */) => ({ ok: true, complete: true, aborted: false, leads: [] });
+// ═══ Stubbed integrations — IMS cross-fetch is still a later slice (Deal Check engine).
+// §25 LMS lead search is LIVE: searchLmsLeads (imported below) hits the cached
+// lms_contracts table. fetchIMSData stays neutral until the Deal Check generate engine.
 async function fetchIMSData(/* date */) { return { inventory: [], blocksByDate: {}, blocksForDate: {} }; }
 
 // ═══════════════════════════════════════════════════════════════
@@ -442,6 +442,74 @@ export default function StudioApp() {
   const lmsDebounceRef = useRef(null);
   const lmsAbortRef = useRef(null);
   const lmsPollRef = useRef(null);
+
+  // ═══ §25 LMS lead search — debounced lookup on clientName (faithful port) ═══
+  // Real backend: the cached lms_contracts table via searchLmsLeads. Since the cache
+  // returns complete results instantly, the reference's poll loop short-circuits.
+  useEffect(() => {
+    if (lmsAbortRef.current) lmsAbortRef.current.abort();
+    if (lmsPollRef.current) clearTimeout(lmsPollRef.current);
+    const query = (clientName || "").trim();
+    if (query.length < 2) {
+      setLmsLeads([]); setLmsLoading(false); setLmsError(false); setLmsFilling(false);
+      return;
+    }
+    const cacheKey = query.toLowerCase();
+    if (lmsCacheRef.current.has(cacheKey)) {
+      const cached = lmsCacheRef.current.get(cacheKey);
+      setLmsLeads(cached.leads || []); setLmsError(!!cached.error); setLmsLoading(false); setLmsFilling(false);
+      return;
+    }
+    const runSearch = async () => {
+      const abort = new AbortController();
+      lmsAbortRef.current = abort;
+      const result = await searchLmsLeads(query, abort.signal);
+      if (result.aborted) return true;
+      if (result.complete) {
+        if (lmsCacheRef.current.size >= 20) {
+          const firstKey = lmsCacheRef.current.keys().next().value;
+          lmsCacheRef.current.delete(firstKey);
+        }
+        lmsCacheRef.current.set(cacheKey, { leads: result.leads, error: !result.ok });
+      }
+      setLmsLeads(result.leads || []);
+      setLmsError(!result.ok);
+      setLmsLoading(false);
+      const stillFilling = !result.complete && result.ok;
+      setLmsFilling(stillFilling);
+      return !stillFilling;
+    };
+    lmsDebounceRef.current = setTimeout(async () => {
+      setLmsLoading(true); setLmsError(false);
+      const done = await runSearch();
+      if (done) return;
+      let pollsLeft = 30;
+      const poll = async () => {
+        if (pollsLeft-- <= 0) { setLmsFilling(false); return; }
+        const finished = await runSearch();
+        if (finished) return;
+        lmsPollRef.current = setTimeout(poll, 3000);
+      };
+      lmsPollRef.current = setTimeout(poll, 3000);
+    }, 400);
+    return () => {
+      if (lmsDebounceRef.current) clearTimeout(lmsDebounceRef.current);
+      if (lmsPollRef.current) clearTimeout(lmsPollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientName, activeClientId, lmsRefreshCounter]);
+
+  // §25 LMS pre-warm: if the shared lms_contracts cache is stale/empty, kick a
+  // background server-side sync once on mount so lead search has data (fire-and-forget).
+  useEffect(() => {
+    (async () => {
+      try {
+        const { lastSync } = await fetchCachedContracts();
+        if (Date.now() - lastSync > 30 * 60 * 1000) triggerLmsSync().catch(() => {});
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
   const [sessionHistoryExpanded, setSessionHistoryExpanded] = useState(false);
   const [dateTypes, setDateTypes] = useState({});
   const [eventOrders, setEventOrders] = useState([]);
