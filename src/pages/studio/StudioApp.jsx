@@ -13,11 +13,15 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
+import StudioEventInfo from "./views/StudioEventInfo.jsx";
+import StudioBrowse from "./views/StudioBrowse.jsx";
+import StudioBuild from "./views/StudioBuild.jsx";
+import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
-  getCat,
+  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
 } from "../../lib/studio/taxonomy";
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
@@ -249,6 +253,58 @@ const ensureFunctionsArray = (ev) => {
 };
 const ensureAllEventsWrapped = (events) => (Array.isArray(events) ? events.map(ensureFunctionsArray) : []);
 
+// ═══ TEMPLATE LOOKUP — VERBATIM ═══
+function findTemplate(id, tplList) { return (tplList || TPL_DEFAULTS).find(t => t.id === id) || null; }
+
+// ═══ §23 Phase 2.9d — Paint Allocation helpers — VERBATIM ═══
+const PAINT_TOKENS_FALLBACK = ["truss", "struct", "mask", "platform", "carpet", "furniture", "arch", "prop", "panel", "pillar", "glass", "stage", "wrought", "consumable"];
+function isSubcatPaintable(rcSub, imsInventory) {
+  if (!imsInventory || imsInventory.length === 0) return null; // null = "use fallback"
+  if (!rcSub) return false;
+  const target = String(rcSub).toLowerCase().trim();
+  return imsInventory.some(item => {
+    const sub = String(item.subcategory || item.subCat || item.sub || "").toLowerCase().trim();
+    return sub === target && Number(item.paintCost || 0) > 0;
+  });
+}
+function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
+  if (!imsInventory || imsInventory.length === 0 || !rcSub) return fallback;
+  const target = String(rcSub).toLowerCase().trim();
+  let mx = 0;
+  imsInventory.forEach(item => {
+    const sub = String(item.subcategory || item.subCat || item.sub || "").toLowerCase().trim();
+    if (sub === target) {
+      const pc = Number(item.paintCost || 0);
+      if (pc > mx) mx = pc;
+    }
+  });
+  return mx > 0 ? mx : fallback;
+}
+function normalizePaintAllocation(el, baseColour) {
+  if (!el) return [];
+  const totalQty = Number(el.qty) || 0;
+  if (totalQty <= 0) return [];
+  if (Array.isArray(el.paintAllocation) && el.paintAllocation.length > 0) {
+    return el.paintAllocation
+      .filter(a => a && Number(a.qty) > 0 && a.colour && a.colour !== baseColour)
+      .map(a => ({ qty: Number(a.qty), colour: String(a.colour) }));
+  }
+  if (el.paintOverride && el.paintOverride !== baseColour) {
+    return [{ qty: totalQty, colour: String(el.paintOverride) }];
+  }
+  return [];
+}
+function paintPillLabel(el, baseColour) {
+  const allocs = normalizePaintAllocation(el, baseColour);
+  if (allocs.length === 0) return baseColour || "Ivory";
+  if (allocs.length === 1) {
+    const a = allocs[0];
+    const totalQty = Number(el.qty) || 0;
+    return a.qty === totalQty ? a.colour : `${a.colour} ×${a.qty}`;
+  }
+  return `${allocs.length} colours`;
+}
+
 // ═══ Stubbed integrations — the reference proxies these through serverless /api routes
 // (LMS lead search, IMS cross-fetch). No server runtime exists in this static SPA build,
 // so they resolve to empty/neutral results. Replaced by real Supabase reads in later slices.
@@ -471,6 +527,27 @@ export default function StudioApp() {
 
   const [floralRatio, setFloralRatio] = useState(70);
   const [floralOverrides, setFloralOverrides] = useState({ note: "", rows: [] });
+
+  // ═══ ZONE PHOTO FILTERS (Build canvas) — VERBATIM ═══
+  const [zpFilterOpen, setZpFilterOpen] = useState(false);
+  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [] });
+  const zpToggleFilter = useCallback((cat, val) => {
+    setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
+  }, []);
+  const zpHasFilters = Object.values(zpFilters).some(a => a.length > 0);
+  const zpFilterPhoto = useCallback((li) => {
+    if (!li) return true;
+    for (const [cat, vals] of Object.entries(zpFilters)) {
+      if (!vals.length) continue;
+      const it = li.tags?.[cat] || [];
+      if (!vals.some(v => it.includes(v))) return false;
+    }
+    return true;
+  }, [zpFilters]);
+
+  // ═══ ZONE UPLOAD STATE — VERBATIM (Cloudinary + AI tag) ═══
+  const [zoneUploading, setZoneUploading] = useState(null); // elKey currently uploading
+  const [zoneUploadReview, setZoneUploadReview] = useState(null);
   const [inspQ, setInspQ] = useState("");
   const [inspResults, setInspResults] = useState([]);
   const [inspLoading, setInspLoading] = useState(false);
@@ -1511,6 +1588,967 @@ export default function StudioApp() {
   const cat = getCat(grandTotal);
 
   // ═══════════════════════════════════════════════════════════════
+  // DERIVED MEMOS + HANDLERS — VERBATIM from the reference (wired to
+  // StudioApp state). Ports include transitive deps (loadEvent → pickAndLoad
+  // → pickAndLoadFromVideo; saveSession → markSold; buildZonesForFn →
+  // buildCombinedCostSheetData).
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── Activity logger (notifications) — reduced port (no serverless) ──
+  const logActivity = useCallback(async (action, detail) => {
+    const entry = { id: Date.now(), user: authUser?.name || "System", userId: authUser?.id || "system", action, detail, ts: Date.now() };
+    const updated = [entry, ...notifications].slice(0, 200);
+    setNotifications(updated);
+    reliableSave(NOTIF_SK, JSON.stringify(updated), "Activity").catch(() => {});
+  }, [authUser, notifications]);
+
+  // ── Transport save (used by autoPersistCustomVenue) — VERBATIM (kv shim) ──
+  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr) => {
+    const sv = nv || trVenues; const st = ntc || truckCap; const sf = nfpt !== undefined ? nfpt : floralPerTruck; const sb = nbt || bufferTiers; const sgr = ngr !== undefined ? ngr : gensetRate;
+    if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr);
+    const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr };
+    await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
+  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
+
+  // ── Library photo scoring for a zone — VERBATIM ──
+  const getLibPhotosForZone = useCallback((zone, videoTag) => {
+    if (!zone || !libItems.length) return { exact: [], similar: [], fallback: [] };
+    const tier = videoTag?.tier;
+    const libTier = tier === "Silver" ? "Simple" : tier === "Gold" ? "Enhanced" : null;
+    const colors = videoTag?.colors || [];
+    const styles = videoTag?.styles || [];
+    const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
+    const io = videoTag?.io || "";
+    const zoneMatches = libItems.filter(li => (li.tags?.areasElements || []).includes(zone));
+    const scorePhoto = (li) => {
+      let score = 0;
+      const liTier = li.tags?.categoryTier || [];
+      const liColor = li.tags?.colorPalette || [];
+      const liStyle = li.tags?.designStyle || [];
+      const liFn = li.tags?.eventType || [];
+      const liIO = li.tags?.venueType || [];
+      filterPriority.forEach((p, idx) => {
+        const weight = (filterPriority.length - idx) * 10;
+        switch (p.id) {
+          case "tier": if (libTier && liTier.includes(libTier)) score += weight; break;
+          case "style": if (styles.length && styles.some(s => liStyle.includes(s))) score += weight; break;
+          case "color": if (colors.length && colors.some(c => liColor.includes(c))) score += weight; break;
+          case "fn": if (fns.length && fns.some(f => liFn.includes(f))) score += weight; break;
+          case "io": if (io && liIO.includes(io)) score += weight; break;
+        }
+      });
+      return score;
+    };
+    const scored = zoneMatches.map(li => ({ li, score: scorePhoto(li) })).sort((a, b) => b.score - a.score);
+    const exact = scored.filter(s => s.score >= 40).map(s => s.li).slice(0, 50);
+    const similar = scored.filter(s => s.score >= 10 && s.score < 40).map(s => s.li).slice(0, 50 - exact.length);
+    const fallback = scored.filter(s => s.score < 10).map(s => s.li).slice(0, 50 - exact.length - similar.length);
+    const total = exact.length + similar.length + fallback.length;
+    let overflow = [];
+    if (total < 50) {
+      const usedIds = new Set([...exact, ...similar, ...fallback].map(li => li.id));
+      overflow = libItems.filter(li => !usedIds.has(li.id)).slice(0, 50 - total);
+    }
+    return { exact, similar, fallback: [...fallback, ...overflow] };
+  }, [libItems, filterPriority]);
+
+  // ── All videos (youtube + manual), newest first — VERBATIM ──
+  const allVideos = useMemo(() => {
+    const yt = ytVideos.map(v => ({ ...v, source: "youtube", addedAt: v.addedAt || new Date(v.date || 0).getTime() }));
+    const manual = manualVideos.map(v => ({ ...v, source: v.source || "cloudinary" }));
+    const merged = [...yt, ...manual];
+    merged.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    return merged;
+  }, [ytVideos, manualVideos]);
+
+  // ── Venue memos — VERBATIM ──
+  const allInhouseVenues = useMemo(() => customInhouse.filter(v => v.parent && v.parent !== "Custom").map(v => v.name), [customInhouse]);
+  const allVenueData = useMemo(() => {
+    const merged = {};
+    customInhouse.forEach(v => { merged[v.name] = { base: v.base || 0, label: v.label || "", type: v.type || "Outdoor" }; });
+    return merged;
+  }, [customInhouse]);
+  const allInhouseGroups = useMemo(() => {
+    const groups = [];
+    customInhouse.forEach(v => {
+      if (!v.parent || v.parent === "Custom") return;
+      const parent = v.parent;
+      let group = groups.find(g => g.parent === parent);
+      if (!group) { group = { parent, manager: v.manager || "—", icon: v.icon || "🏢", subVenues: [], desc: v.desc || "" }; groups.push(group); }
+      if (!group.subVenues.includes(v.name)) group.subVenues.push(v.name);
+    });
+    return groups;
+  }, [customInhouse]);
+  const allOutdoorDB = useMemo(() => customOutdoor.slice(), [customOutdoor]);
+
+  // ── Auto-persist custom venue (Event Info) — VERBATIM ──
+  const autoPersistCustomVenue = useCallback(() => {
+    const name = (clientVenueOther || "").trim();
+    const rate = Number(customTripRate) || 0;
+    const gensets = customGensets;
+    if (!name || rate <= 0 || gensets === null || gensets === undefined || gensets < 0) return;
+    const lcName = name.toLowerCase();
+    const inInhouse = allInhouseVenues.some(v => v.toLowerCase() === lcName);
+    const inOutside = customOutdoor.some(o => (o.name || "").toLowerCase() === lcName);
+    const inAnyTR = trVenues.some(v => (v.name || "").toLowerCase() === lcName);
+    if (inInhouse || inOutside || inAnyTR) return;
+    const existingTR = trVenues.find(v => (v.name || "").toLowerCase() === lcName);
+    let newTR;
+    if (existingTR) {
+      newTR = trVenues.map(v => v.id === existingTR.id ? { ...v, rate, gensets, name } : v);
+    } else {
+      const id = "V" + Date.now().toString(36).slice(-5).toUpperCase();
+      newTR = [...trVenues, { id, tier: "other", name, rate, gensets }];
+    }
+    const existingOut = customOutdoor.find(o => (o.name || "").toLowerCase() === lcName);
+    const newOut = existingOut ? customOutdoor : [...customOutdoor, { name, empanelled: false }];
+    saveTR(newTR, null);
+    if (newOut !== customOutdoor) saveVenues(customInhouse, newOut);
+    showMsg(`✓ Saved ${name} (₹${rate}/trip, ${gensets} gensets)`, "green");
+  }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, saveVenues]);
+
+  // ── Outdoor venue list (DB + events) — VERBATIM ──
+  const outdoorVenueList = useMemo(() => {
+    const venueMap = {};
+    allOutdoorDB.forEach(v => { venueMap[v.name] = { ...v, fromDB: true }; });
+    events.forEach(ev => {
+      if (ev.venue && !allInhouseVenues.includes(ev.venue) && !venueMap[ev.venue]) {
+        venueMap[ev.venue] = { name: ev.venue, empanelled: false, fromDB: false, newlyAdded: true };
+      }
+    });
+    return Object.values(venueMap).sort((a, b) => a.name.localeCompare(b.name));
+  }, [events, allOutdoorDB, allInhouseVenues]);
+
+  // ── Browse videos (tagged-video inspiration catalog) — VERBATIM ──
+  const browseVideos = useMemo(() => {
+    const list = Object.entries(ytVideoTags).map(([vidId, tag]) => {
+      const vid = allVideos.find(v => v.id === vidId);
+      const fnArr = Array.isArray(tag.fn) ? tag.fn : (tag.fn ? [tag.fn] : []);
+      const hasZonePhotos = tag.zonePhotos && Object.keys(tag.zonePhotos).length > 0;
+      const evForCost = { id: `vid_${vidId}`, venue: tag.venue || "", video: `https://www.youtube.com/embed/${vidId}` };
+      const price = hasZonePhotos ? calcFullEventCost(evForCost) : null;
+      return {
+        id: vidId,
+        title: vid?.title || "Untitled video",
+        thumbnail: vid?.thumbnail || `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
+        venue: tag.venue || "",
+        fns: fnArr,
+        fn: fnArr[0] || "",
+        tier: tag.tier || "",
+        tierCat: tag.tier || "",
+        space: tag.io || "",
+        styles: tag.styles || [],
+        colors: tag.colors || [],
+        hasZonePhotos,
+        price,
+        duration: vid?.duration || "",
+        source: vid?.source || "youtube"
+      };
+    });
+    let out = list;
+    if (venueGroup === "inhouse") out = out.filter(v => v.venue && allInhouseVenues.includes(v.venue));
+    else if (venueGroup === "outside") {
+      out = out.filter(v => v.venue && !allInhouseVenues.includes(v.venue));
+      if (outsideSub === "empanelled") out = out.filter(v => allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
+      else if (outsideSub === "other") out = out.filter(v => !allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
+    }
+    if (browseVenues.length > 0) out = out.filter(v => browseVenues.includes(v.venue));
+    if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
+    if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
+    if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
+    if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
+    if (filterPalette.length > 0) out = out.filter(v => v.colors.some(c => filterPalette.includes(c)));
+    return out;
+  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenues, allOutdoorDB]);
+
+  // ── Active client + meeting number — VERBATIM ──
+  const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
+  const meetingNumber = useMemo(() => (activeClient?.sessions?.length || 0) + 1, [activeClient]);
+
+  // ── Element toggle — VERBATIM ──
+  const toggleEl = k => { setEnabledEls(p => ({ ...p, [k]: !p[k] })); setActiveZones([]); };
+
+  // ── loadEvent → pickAndLoad → pickAndLoadFromVideo (browse → build) — VERBATIM ──
+  const loadEvent = useCallback((ev, targetStep) => {
+    if (isPremiaPlatinum(ev)) { setPremiaGate({ ev }); return; }
+    setSourceEvent(ev);
+    if (activeFnIdx === 0) {
+      if (!fn) setFn(ev.fn);
+      if (!venue) setVenue(ev.venue);
+    } else {
+      setExtraFunctions(prev => prev.map((f, i) => {
+        if (i !== activeFnIdx - 1) return f;
+        return { ...f, type: f.type || ev.fn, venue: f.venue || ev.venue };
+      }));
+    }
+    setVenueCustom(false); setCustomGensets(null);
+    setSelectedMoods(ev.mood ? [ev.mood] : []); setSelectedPalettes(ev.palette ? [ev.palette] : []);
+    const en = {}; (ev.enabledEls || []).forEach(k => { en[k] = true; });
+    (ev.zones || []).forEach(z => { if (z.type) en[z.type] = true; });
+    en.lighting = true;
+    setEnabledEls(en);
+    const tierKey = getCat(getFullCost(ev)).label === "Silver" ? "simple" : "enhanced";
+    const et = {}; Object.keys(en).forEach(k => { if (en[k]) et[k] = tierKey; });
+    setElTiers(et);
+    setCustomMode({});
+    setItemQty(ev.itemQtys || {});
+    setItemGrades(ev.itemGrades || {});
+    setActiveZones([]);
+    setVideoModal(null); setVideoOverlay(false); setStep((targetStep || 1) + 1);
+  }, [isPremiaPlatinum, getFullCost, activeFnIdx, fn, venue, extraFunctions]);
+
+  const pickAndLoad = useCallback((ev, targetStep, videoUrl) => {
+    const vidId = (videoUrl || ev.video)?.match(/embed\/([a-zA-Z0-9_-]{11})/)?.[1];
+    let videoZoneKeys = [];
+    if (vidId) {
+      const vTag = ytVideoTags[vidId] || {};
+      const vid = allVideos.find(v => v.id === vidId);
+      setSourceVideo({ id: vidId, title: vid?.title || ev.name, tags: vTag });
+      const zonePhotos = vTag.zonePhotos || {};
+      const autoZE = {};
+      const autoSP = {};
+      const autoZC = {};
+      Object.entries(zonePhotos).forEach(([zk, libId]) => {
+        const li = libItems.find(l => l.id === libId);
+        if (!li) return;
+        if ((li.elements || []).length > 0) {
+          autoZE[zk] = JSON.parse(JSON.stringify(li.elements));
+        }
+        autoSP[zk] = { src: li.url, eventName: li.name || "Library photo" };
+        const pd = li.dims || {};
+        if (pd.trussW || pd.trussL || pd.trussH || pd.floorL || pd.floorW) {
+          const cfg = buildZoneConfig(zk, pd);
+          if (cfg) autoZC[zk] = cfg;
+        }
+      });
+      if (Object.keys(autoZE).length > 0) setZoneElements(autoZE);
+      if (Object.keys(autoSP).length > 0) setElSelectedPhoto(autoSP);
+      if (Object.keys(autoZC).length > 0) {
+        setZoneConfig(prev => ({ ...prev, ...autoZC }));
+        setActiveZones([]);
+      }
+      videoZoneKeys = Object.keys(zonePhotos);
+    }
+    loadEvent(ev, targetStep);
+    if (videoZoneKeys.length > 0) {
+      setEnabledEls(prev => {
+        const updated = { ...prev };
+        videoZoneKeys.forEach(zk => { updated[zk] = true; });
+        return updated;
+      });
+    }
+  }, [loadEvent, ytVideoTags, allVideos, libItems]);
+
+  const pickAndLoadFromVideo = useCallback((videoId, targetStep) => {
+    const tag = ytVideoTags[videoId] || {};
+    const vid = allVideos.find(v => v.id === videoId);
+    const fnArr = Array.isArray(tag.fn) ? tag.fn : (tag.fn ? [tag.fn] : []);
+    const synthEv = {
+      id: `vid_${videoId}`,
+      name: vid?.title || "Inspiration video",
+      venue: tag.venue || "",
+      fn: fnArr[0] || "Wedding",
+      space: tag.io || "Outdoor",
+      category: tag.tier || "Silver",
+      mood: (tag.styles && tag.styles[0]) || "",
+      palette: (tag.colors && tag.colors[0]) || "",
+      gradient: "linear-gradient(135deg,#2C1810,#C9A96E,#1a1a2e)",
+      photos: [],
+      video: `https://www.youtube.com/embed/${videoId}`,
+      desc: "",
+      enabledEls: Object.keys(tag.zonePhotos || {}),
+      itemQtys: {},
+      itemGrades: {},
+      tags: [...(tag.styles || []), ...(tag.colors || [])].slice(0, 3)
+    };
+    pickAndLoad(synthEv, targetStep, synthEv.video);
+  }, [ytVideoTags, allVideos, pickAndLoad]);
+
+  // ── Save session — VERBATIM ──
+  const saveSession = useCallback(() => {
+    if (!clientName.trim()) return;
+    const totalFns = 1 + (extraFunctions || []).length;
+    const fnSnapshots = {};
+    for (let i = 0; i < totalFns; i++) {
+      let snap;
+      if (i === activeFnIdx) {
+        snap = snapshotBuildState();
+      } else {
+        snap = fnBuilds[i] || null;
+      }
+      if (snap) {
+        if (snap.elSelectedPhoto) {
+          snap = {
+            ...snap,
+            elSelectedPhoto: Object.fromEntries(Object.entries(snap.elSelectedPhoto).map(([ek, v]) => [ek, { src: v?.src, eventName: v?.eventName }]))
+          };
+        }
+        fnSnapshots[i] = snap;
+      }
+    }
+    const snapshot = {
+      id: "SES_" + Date.now().toString(36),
+      savedAt: Date.now(),
+      savedBy: authUser?.name || "—",
+      eventDate: clientDate,
+      venue, fn,
+      tier: getCat(grandTotal).label,
+      total: grandTotal,
+      decorTotal: totalCost(),
+      transportTotal: transportCalc.total,
+      enabledEls: { ...enabledEls },
+      elTiers: { ...elTiers },
+      zoneConfig: JSON.parse(JSON.stringify(zoneConfig)),
+      zoneElements: JSON.parse(JSON.stringify(zoneElements)),
+      elNotes: { ...elNotes },
+      elSelectedPhoto: Object.fromEntries(Object.entries(elSelectedPhoto).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName }])),
+      sourceEventId: sourceEvent?.id || null,
+      sourceEventName: sourceEvent?.name || null,
+      sourceVideoId: sourceVideo?.id || null,
+      sourceVideoTitle: sourceVideo?.title || null,
+      selectedMoods: [...selectedMoods],
+      selectedPalettes: [...selectedPalettes],
+      floralRatio,
+      fnSnapshots,
+      savedActiveFnIdx: activeFnIdx,
+      customItems: dcCustomItems,
+    };
+    let updated = [...clientLedger];
+    let client = updated.find(c => c.id === activeClientId);
+    if (!client) {
+      client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
+      updated.push(client);
+    }
+    client.name = clientName.trim();
+    client.phone = clientPhone.trim();
+    client.lastContactAt = Date.now();
+    client.eventDate = clientDate || client.eventDate || "";
+    client.venue = venue || client.venue || "";
+    client.fn = fn || client.fn || "";
+    client.shift = clientShift || client.shift || "";
+    client.pax = clientPax || client.pax || "";
+    client.brideGroom = clientBrideGroom || client.brideGroom || "";
+    client.functions = [
+      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
+      ...extraFunctions
+    ];
+    if (!client.createdBy) client.createdBy = authUser?.name || "—";
+    if (!client.status) client.status = "ongoing";
+    client.sessions = [snapshot, ...(client.sessions || [])].slice(0, 20);
+    setActiveClientId(client.id);
+    const finalLedger = updated.slice(0, 200);
+    saveClientLedger(finalLedger);
+    showMsg("✓ Session saved to " + client.name, "green");
+    return { client, ledger: finalLedger };
+  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems]);
+
+  // ── Mark sold (writes Event Order) — VERBATIM ──
+  const markSold = useCallback(() => {
+    try {
+      if (!clientName.trim()) { showMsg("Client name is required", "red"); return; }
+      if (!clientDate) { showMsg("Event date is required", "red"); return; }
+      if (!venue) { showMsg("Venue is required", "red"); return; }
+      const dt = dateTypes[clientDate];
+      const bookedCount = clientLedger.filter(c => c.eventDate === clientDate && c.status === "booked").length;
+      let warns = [];
+      if (dt === "saya") warns.push("🔴 This is a Saya day");
+      if (dt === "competition") warns.push("⚫ This is a Competition day");
+      if (bookedCount >= 2) warns.push(`🔥 ${bookedCount} bookings already on this date`);
+      const warnStr = warns.length ? "\n\n⚠️ " + warns.join("\n⚠️ ") : "";
+      if (!confirm(`Confirm booking for ${clientName.trim()} — ${clientDate} at ${venue}?${warnStr}`)) return;
+      const result = saveSession();
+      if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
+      const { client, ledger } = result;
+      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null } : c);
+      saveClientLedger(updated);
+      const allFns = collectAllFunctionData();
+      const fnEOs = allFns.map(fnData => {
+        const bd = calcFunctionBreakdown(fnData);
+        return {
+          fnIdx: fnData.fnIdx,
+          type: fnData.fnType || "",
+          date: fnData.fnDate || "",
+          venue: fnData.fnVenue || "",
+          shift: fnData.fnShift || "",
+          pax: fnData.fnPax || "",
+          zones: JSON.parse(JSON.stringify(fnData.zoneConfig || {})),
+          elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
+          enabledEls: { ...(fnData.enabledEls || {}) },
+          elTiers: { ...(fnData.elTiers || {}) },
+          elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName }])),
+          dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
+          decorCost: bd.decorTotal,
+          transportCost: bd.transportTotal,
+          customItemsCost: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
+          total: bd.grand + dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
+          floralRatio: typeof fnData.floralRatio === "number" ? fnData.floralRatio : floralRatio,
+          floralOverrides: fnData.floralOverrides && typeof fnData.floralOverrides === "object"
+            ? { note: fnData.floralOverrides.note || "", rows: Array.isArray(fnData.floralOverrides.rows) ? fnData.floralOverrides.rows : [] }
+            : { note: "", rows: [] },
+          floralColorPrefs: dcFloralColorPrefs[fnData.fnIdx] || {},
+          customItems: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx),
+          photoOverrides: { ...(dcPhotoOverrides[fnData.fnIdx] || {}) },
+          skipped: [...(dcSkipped[fnData.fnIdx] || [])],
+          productionAccepted: [...(dcProductionAccepted[fnData.fnIdx] || [])],
+          dedupOverrides: { ...(dcDedupOverrides[fnData.fnIdx] || {}) }
+        };
+      });
+      const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
+      const eventDecor = fnEOs.reduce((s, f) => s + (f.decorCost || 0), 0);
+      const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
+      const eo = {
+        id: "eo_" + Date.now().toString(36),
+        clientId: client.id,
+        clientName: client.name,
+        phone: clientPhone.trim(),
+        lmsLeadId: client.lmsLeadId || null,
+        lmsDept: client.lmsDept || null,
+        lmsPriority: client.lmsPriority || null,
+        lmsStatus: client.lmsStatus || null,
+        date: clientDate,
+        venue,
+        functions: allFns.map(f => f.fnType).filter(Boolean),
+        shift: clientShift || "",
+        brideGroom: clientBrideGroom || "",
+        pax: clientPax || "",
+        zones: JSON.parse(JSON.stringify(zoneConfig)),
+        elements: JSON.parse(JSON.stringify(zoneElements)),
+        enabledEls: { ...enabledEls },
+        elTiers: { ...elTiers },
+        dims: Object.fromEntries(Object.entries(zoneConfig).map(([zk, zc]) => [zk, zc?.dims || {}])),
+        totalCost: eventTotal,
+        decorCost: eventDecor,
+        transportCost: eventTransport,
+        functionsDetail: fnEOs,
+        manualItems: [...dcManualItems],
+        floralRatio,
+        salesperson: authUser?.name || "—",
+        createdAt: Date.now(),
+        status: "pending"
+      };
+      saveEventOrders([...eventOrders, eo]);
+      logActivity("booking", `🎉 ${client.name} — Booking confirmed by ${authUser?.name || "—"}`);
+      setShowSoldConfetti(true);
+      setTimeout(() => setShowSoldConfetti(false), 4000);
+      showMsg("🎉 Booking confirmed for " + client.name, "green");
+    } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
+  }, [saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs]);
+
+  // ── Load client session — VERBATIM ──
+  const loadClientSession = useCallback((client, session, landingStep = 3) => {
+    setClientName(client.name);
+    setClientPhone(client.phone || "");
+    setActiveClientId(client.id);
+    setClientDate(client.eventDate || "");
+    setVenue(client.venue || "");
+    setFn(client.fn || "");
+    setClientShift(client.shift || "");
+    setClientPax(client.pax || "");
+    setClientBrideGroom(client.brideGroom || "");
+    const f0 = Array.isArray(client.functions) && client.functions[0] ? client.functions[0] : null;
+    setClientPalette(f0?.palette || "Custom");
+    if (Array.isArray(client.functions) && client.functions.length > 1) {
+      setExtraFunctions(client.functions.slice(1).map(f => ({
+        type: f?.type || "",
+        date: f?.date || "",
+        venue: f?.venue || "",
+        shift: f?.shift || "",
+        pax: f?.pax || "",
+        palette: f?.palette || "Custom",
+      })));
+    } else {
+      setExtraFunctions([]);
+    }
+    setExpandedFnIdx(0);
+    setActiveFnIdx(0);
+    if (!session) {
+      setFnBuilds({});
+      setStep(landingStep);
+      return;
+    }
+    if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
+      const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
+      restoreBuildState(fn0Snap);
+      const restoredBuilds = {};
+      Object.entries(session.fnSnapshots).forEach(([k, v]) => {
+        const idx = parseInt(k);
+        if (!isNaN(idx) && idx !== 0 && v) restoredBuilds[idx] = v;
+      });
+      setFnBuilds(restoredBuilds);
+      if (session.eventDate) setClientDate(session.eventDate);
+      if (session.venue) setVenue(session.venue);
+      if (session.fn) setFn(session.fn);
+      if (session.sourceEventId) {
+        const ev = events.find(e => e.id === session.sourceEventId);
+        if (ev) setSourceEvent(ev);
+      }
+      if (session.sourceVideoId) {
+        const vid = allVideos.find(v => v.id === session.sourceVideoId);
+        const vTag = ytVideoTags[session.sourceVideoId] || {};
+        setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
+      }
+      setStep(landingStep);
+      const fnCount = Object.keys(session.fnSnapshots).length;
+      showMsg("Loaded session from " + new Date(session.savedAt).toLocaleDateString("en-IN") + " (" + fnCount + " function" + (fnCount > 1 ? "s" : "") + ")", "green");
+      return;
+    }
+    setFnBuilds({});
+    if (session.eventDate) setClientDate(session.eventDate);
+    if (session.venue) setVenue(session.venue);
+    if (session.fn) setFn(session.fn);
+    setEnabledEls(session.enabledEls || {});
+    setElTiers(session.elTiers || {});
+    setZoneConfig(session.zoneConfig || {});
+    setZoneElements(session.zoneElements || {});
+    setElNotes(session.elNotes || {});
+    setSelectedMoods(session.selectedMoods || []);
+    setSelectedPalettes(session.selectedPalettes || []);
+    setFloralOverrides({ note: "", rows: [] });
+    if (typeof session.floralRatio === "number") setFloralRatio(session.floralRatio);
+    if (Array.isArray(session.customItems)) setDcCustomItems(session.customItems);
+    if (session.sourceEventId) {
+      const ev = events.find(e => e.id === session.sourceEventId);
+      if (ev) setSourceEvent(ev);
+    }
+    if (session.sourceVideoId) {
+      const vid = allVideos.find(v => v.id === session.sourceVideoId);
+      const vTag = ytVideoTags[session.sourceVideoId] || {};
+      setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
+    }
+    if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
+    setStep(landingStep);
+    showMsg("Loaded session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
+  }, [events, allVideos, ytVideoTags]);
+
+  // ── Load LMS lead — VERBATIM ──
+  const loadLmsLead = useCallback((lead) => {
+    if (!lead) return;
+    setClientName(lead.guestName || "");
+    setClientPhone(lead.phone || "");
+    setClientBrideGroom("");
+    setClientPax("");
+    setClientPalette("Custom");
+    setExpandedFnIdx(0);
+    setActiveFnIdx(0);
+    const allKnownVenues = [
+      ...allInhouseVenues,
+      ...allOutdoorDB.map(v => v.name).filter(Boolean),
+    ];
+    const resolveVenue = (candidate) => {
+      const trimmed = (candidate || "").trim();
+      if (!trimmed) return { venue: "", custom: "" };
+      const matched = allKnownVenues.find(v => v.toLowerCase().trim() === trimmed.toLowerCase());
+      if (matched) return { venue: matched, custom: "" };
+      return { venue: "Others", custom: trimmed };
+    };
+    const fns = Array.isArray(lead.functions) && lead.functions.length > 0
+      ? lead.functions
+      : [{ fnDate: lead.fnDate, fnLabel: lead.fnLabel, fnType: lead.fnType, venueLabel: lead.venueLabel, shift: lead.shift }];
+    const f1 = fns[0] || {};
+    const f1Venue = resolveVenue(f1.venueLabel || lead.address);
+    setClientDate(f1.fnDate || "");
+    setFn(f1.fnLabel || "");
+    setVenue(f1Venue.venue);
+    setClientVenueOther(f1Venue.custom);
+    setClientShift(f1.shift || "");
+    const extras = fns.slice(1).map(f => {
+      const v = resolveVenue(f.venueLabel || lead.address);
+      return {
+        type: f.fnLabel || "",
+        date: f.fnDate || "",
+        venue: v.venue,
+        venueOther: v.custom,
+        shift: f.shift || "",
+        pax: "",
+        palette: "Custom",
+      };
+    });
+    setExtraFunctions(extras);
+    const phoneKey = (lead.phone || "").replace(/\D/g, "");
+    const existing = phoneKey
+      ? clientLedger.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey)
+      : null;
+    let client;
+    if (existing) {
+      client = {
+        ...existing,
+        name: existing.name || lead.guestName,
+        phone: existing.phone || lead.phone,
+        lmsLeadId: lead.entryNo,
+        lmsDept: lead.dept,
+        lmsPriority: lead.priority,
+        lmsStatus: lead.status,
+        lmsLinkedAt: Date.now(),
+      };
+      const updated = clientLedger.map(c => c.id === client.id ? client : c);
+      saveClientLedger(updated);
+    } else {
+      client = {
+        id: "CLI_" + Date.now().toString(36),
+        name: (lead.guestName || "").trim(),
+        phone: (lead.phone || "").trim(),
+        sessions: [],
+        createdAt: Date.now(),
+        status: "ongoing",
+        createdBy: authUser?.name || "—",
+        bookedAt: null,
+        bookedBy: null,
+        finalSession: null,
+        lmsLeadId: lead.entryNo,
+        lmsDept: lead.dept,
+        lmsPriority: lead.priority,
+        lmsStatus: lead.status,
+        lmsLinkedAt: Date.now(),
+      };
+      saveClientLedger([client, ...clientLedger]);
+    }
+    setActiveClientId(client.id);
+    setLmsLeads([]);
+    setLmsError(false);
+    const latestSession = (client.sessions && client.sessions.length > 0) ? client.sessions[0] : null;
+    if (latestSession) {
+      loadClientSession(client, latestSession, 3);
+      showMsg(`Loaded LMS lead #${lead.entryNo} + restored last session`, "green");
+    } else {
+      showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
+    }
+  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession]);
+
+  // ── Resume saved session (per-pill) — VERBATIM ──
+  const resumeSavedSession = useCallback((session) => {
+    if (!session) return;
+    if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
+      const activeSnap = session.fnSnapshots[activeFnIdx] || session.fnSnapshots[String(activeFnIdx)] || null;
+      restoreBuildState(activeSnap);
+      const otherBuilds = {};
+      Object.entries(session.fnSnapshots).forEach(([k, v]) => {
+        const idx = parseInt(k);
+        if (!isNaN(idx) && idx !== activeFnIdx && v) otherBuilds[idx] = v;
+      });
+      setFnBuilds(otherBuilds);
+      setStep(2);
+      showMsg("Resumed Fn" + (activeFnIdx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
+      return;
+    }
+    setEnabledEls(session.enabledEls || {});
+    setElTiers(session.elTiers || {});
+    setZoneConfig(session.zoneConfig || {});
+    setZoneElements(session.zoneElements || {});
+    setElNotes(session.elNotes || {});
+    setElSelectedPhoto(session.elSelectedPhoto || {});
+    setSelectedMoods(session.selectedMoods || []);
+    setSelectedPalettes(session.selectedPalettes || []);
+    setFloralOverrides({ note: "", rows: [] });
+    if (typeof session.floralRatio === "number") setFloralRatio(session.floralRatio);
+    if (Array.isArray(session.customItems)) setDcCustomItems(session.customItems);
+    if (session.sourceEventId) {
+      const ev = events.find(e => e.id === session.sourceEventId);
+      if (ev) setSourceEvent(ev);
+    } else {
+      setSourceEvent(null);
+    }
+    if (session.sourceVideoId) {
+      const vid = allVideos.find(v => v.id === session.sourceVideoId);
+      const vTag = ytVideoTags[session.sourceVideoId] || {};
+      setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
+    } else {
+      setSourceVideo(null);
+    }
+    setStep(2);
+    showMsg("Resumed session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
+  }, [events, allVideos, ytVideoTags, activeFnIdx]);
+
+  // ── AI tag an image (Claude vision) — VERBATIM (routes via /api/anthropic) ──
+  const aiTagImage = async (url) => {
+    const STRUCTURAL_CATS = new Set(["truss", "platform", "masking", "fixed"]);
+    const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
+    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this Rate Card list. Copy the name character-for-character:\n${elemList}\n2. For each visible element, estimate quantity and pick size (S/M/B) if available.\n3. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional.\n4. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"short descriptive name","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal"},{"name":"Custom Drape Structure","qty":2,"unit":"pc","size":"","detail":"fabric","new":true}]}`;
+    const toBase64 = (imgUrl) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Image load timeout")), 10000);
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const c = document.createElement("canvas");
+          const maxW = 800;
+          const scale = img.width > maxW ? maxW / img.width : 1;
+          c.width = img.width * scale;
+          c.height = img.height * scale;
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL("image/jpeg", 0.7).split(",")[1]);
+        } catch (e) { reject(e); }
+      };
+      img.onerror = () => { clearTimeout(timer); reject(new Error("Image load failed")); };
+      img.src = imgUrl;
+    });
+    const fetchBase64 = async (imgUrl) => {
+      const resp = await fetch(imgUrl, { mode: "cors" });
+      if (!resp.ok) throw new Error("Fetch failed: " + resp.status);
+      const blob = await resp.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    };
+    try {
+      let b64 = null;
+      if (url.startsWith("data:image")) {
+        b64 = url.split(",")[1];
+        showMsg("Image loaded, analyzing...", "green");
+      } else {
+        try { b64 = await toBase64(url); showMsg("Image loaded, analyzing...", "green"); } catch (e1) {
+          try { b64 = await fetchBase64(url); showMsg("Image fetched, analyzing...", "green"); } catch (e2) {
+            showMsg("CORS blocked — trying direct URL...", "orange");
+          }
+        }
+      }
+      const msgContent = b64
+        ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: prompt }]
+        : [{ type: "image", source: { type: "url", url } }, { type: "text", text: prompt }];
+      const r = await fetch("/api/anthropic", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 1500,
+          system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
+          messages: [{ role: "user", content: msgContent }]
+        })
+      });
+      const d = await r.json();
+      if (d.error) { showMsg("API error: " + (d.error.message || JSON.stringify(d.error)), "red"); return null; }
+      const txt = d.content?.map(c => c.text || "").join("") || "";
+      if (!txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
+      const clean = txt.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      if (parsed.elements && rcItems.length) {
+        const sizeHints = { heavy: "B", large: "B", big: "B", tall: "B", medium: "M", mid: "M", regular: "M", small: "S", mini: "S", light: "S", short: "S" };
+        const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+        const stopWords = new Set(["the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium", "standard", "basic", "indian", "wedding", "event", "decor"]);
+        const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1);
+        parsed.elements = parsed.elements.map(el => {
+          const exact = rcItems.find(rc => normalize(rc.name) === normalize(el.name));
+          if (exact) return { ...el, name: exact.name, unit: exact.unit, new: undefined };
+          const elWords = normalize(el.name).split(" ");
+          let sizeFromName = "";
+          for (const w of elWords) { if (sizeHints[w]) { sizeFromName = sizeHints[w]; break; } }
+          const elKw = keywords(el.name);
+          let bestScore = 0, bestMatch = null;
+          for (const rc of rcItems) {
+            const rcKw = keywords(rc.name);
+            const rcNorm = normalize(rc.name);
+            const elNorm = normalize(el.name);
+            if (elNorm.includes(rcNorm) || rcNorm.includes(elNorm)) { bestScore = 100; bestMatch = rc; break; }
+            const overlap = elKw.filter(w => rcKw.some(rw => rw.includes(w) || w.includes(rw))).length;
+            const score = overlap > 0 ? (overlap / Math.max(elKw.length, rcKw.length)) * 100 : 0;
+            if (score > bestScore) { bestScore = score; bestMatch = rc; }
+          }
+          if (bestMatch && bestScore >= 40) {
+            const size = sizeFromName || el.size || (bestMatch.inhouseMode === "smb" ? "M" : "");
+            return { ...el, name: bestMatch.name, unit: bestMatch.unit, size, new: undefined };
+          }
+          return { ...el, new: true };
+        });
+      }
+      return parsed;
+    } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
+  };
+
+  // ── Zone upload (Cloudinary → AI tag → review) — VERBATIM ──
+  const handleZoneUpload = async (elKey, file) => {
+    if (!file || zoneUploading) return;
+    setZoneUploading(elKey);
+    showMsg("📷 Uploading to Cloudinary...", "blue");
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+      const upRes = await fetch("/api/cloudinary", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "upload", file: b64, folder: "client-uploads" })
+      });
+      const upData = await upRes.json();
+      if (upData.error) { showMsg("Upload failed: " + upData.error, "red"); setZoneUploading(null); return; }
+      const cldUrl = upData.url;
+      showMsg("✓ Uploaded! Running AI analysis...", "green");
+      let aiResult = null;
+      try { aiResult = await Promise.race([aiTagImage(cldUrl), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 25000))]); } catch (e) { showMsg("AI tagging skipped — edit manually", "red"); }
+      setZoneUploadReview({
+        elKey, url: cldUrl,
+        name: aiResult?.name || file.name?.replace(/\.[^.]+$/, "") || "Client Upload",
+        tags: aiResult?.tags || { eventType: [], venueType: [], areasElements: [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] },
+        elements: aiResult?.elements || [],
+        dims: aiResult?.dims || {},
+      });
+      showMsg("✓ AI done — review & edit before applying", "green");
+    } catch (e) { showMsg("Upload failed: " + e.message, "red"); }
+    setZoneUploading(null);
+  };
+
+  // ── Select element photo → load pricing — VERBATIM ──
+  const selectElPhoto = (elKey, photo) => {
+    const currentSel = elSelectedPhoto[elKey];
+    if (currentSel && currentSel.src === photo.src) {
+      setElSelectedPhoto(p => { const n = { ...p }; delete n[elKey]; return n; });
+      setZoneElements(p => { const n = { ...p }; delete n[elKey]; return n; });
+      return;
+    }
+    setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
+    if (photo.isLibrary && (photo.elements || []).length > 0) {
+      setZoneElements(p => ({ ...p, [elKey]: JSON.parse(JSON.stringify(photo.elements)) }));
+    } else {
+      setZoneElements(p => ({ ...p, [elKey]: [] }));
+    }
+    const libImg = photo.isLibrary ? libItems.find(i => i.url === photo.src || i.id === photo.eventId) : null;
+    const photoDims = photo.dims || libImg?.dims || {};
+    const cfg = buildZoneConfig(elKey, photoDims);
+    if (cfg) {
+      const evZone = (photo.zones || []).find(z => z.type === elKey);
+      if (evZone?.config) {
+        cfg.trT = evZone.config.trT || cfg.trT;
+        cfg.mkOn = evZone.config.mkOn ?? cfg.mkOn;
+        cfg.mkT = evZone.config.mkT || cfg.mkT;
+        cfg.mkWalls = evZone.config.mkWalls || cfg.mkWalls;
+        cfg.plH = evZone.config.plH || cfg.plH;
+        cfg.cpT = evZone.config.cpT || cfg.cpT;
+      }
+      setZoneConfig(p => ({ ...p, [elKey]: cfg }));
+    }
+    setActiveZones([]);
+    setCustomMode(p => ({ ...p, [elKey]: false }));
+  };
+
+  // ── Cost-sheet zone builder + combined data — VERBATIM ──
+  const buildZonesForFn = useCallback((fnData) => {
+    if (!fnData) return [];
+    const fEnabledEls = fnData.enabledEls || {};
+    const fZoneElements = fnData.zoneElements || {};
+    const fZoneConfig = fnData.zoneConfig || {};
+    const fElSelectedPhoto = fnData.elSelectedPhoto || {};
+    const fElNotes = fnData.elNotes || {};
+    const fCustomZones = fnData.customZones || [];
+    const fElTiers = fnData.elTiers || {};
+    const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
+    return Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
+      const el = zoneLabelsD[k] || fCustomZones.find(cz => cz.id === k) || { label: k, icon: "📦" };
+      const t = fElTiers[k] || "simple";
+      const ze = fZoneElements[k];
+      let items = [];
+      if (ze && ze.length > 0) {
+        ze.forEach(el2 => {
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio);
+          const rc = priceInfo.rc;
+          const up = priceInfo.unitPrice;
+          const lt = priceInfo.lineCost;
+          if (lt > 0) items.push({ name: el2.name, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
+          if (el2.qty > 0) {
+            const imsInv = dealCheckData?.inventory || [];
+            const invItem = imsInv.find(i => i.name === el2.name);
+            const baseColour = invItem?.baseColour || "Ivory";
+            const paintCost = invItem?.paintCost
+              ? invItem.paintCost
+              : maxRepaintCostInSubcat(rc?.sub, imsInv, imsDefaultPaintCost ?? 400);
+            const allocs = normalizePaintAllocation(el2, baseColour);
+            allocs.forEach(a => {
+              const subTotal = paintCost * a.qty;
+              if (subTotal > 0) {
+                items.push({
+                  name: `🖌 Paint: ${el2.name} (${baseColour} → ${a.colour})`,
+                  size: "",
+                  qty: a.qty,
+                  unit: "item",
+                  rate: paintCost,
+                  total: subTotal,
+                  isPaint: true
+                });
+              }
+            });
+          }
+        });
+      }
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k]) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const structItems = [];
+      const zc = fZoneConfig[k] || {};
+      const zm = zoneMeta[k];
+      const dims = zc.dims || {};
+      const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
+      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)", total: zl.truss });
+      if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
+      if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
+      if (zl.carpet > 0) structItems.push({ name: "Carpet (" + (zc.cpT === "new" ? "New ₹15" : "Old ₹7") + "/sqft)", total: zl.carpet });
+      if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
+      if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
+      if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });
+      dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k).forEach(ci => {
+        const isP = ci.type === "production";
+        const unitCost = ci.manualPrice || ci.refPrice || 0;
+        const lineCost = unitCost * (Number(ci.qty) || 1);
+        if (lineCost > 0) items.push({ name: (isP ? "🏭 " : "🛒 ") + (ci.subCat || ci.cat || "Custom"), size: "", qty: Number(ci.qty) || 1, unit: "pc", rate: unitCost, total: lineCost, isCustom: true, customType: ci.type });
+      });
+      const ic = items.reduce((s, i) => s + i.total, 0);
+      return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
+    }).filter(z => z.items.length > 0 || z.structItems.length > 0);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, dealCheckData, imsDefaultPaintCost, dcCustomItems]);
+
+  const buildCombinedCostSheetData = useCallback(() => {
+    const all = collectAllFunctionData();
+    const ac = clientLedger.find(c => c.id === activeClientId);
+    const clientSessions = (ac?.sessions) || [];
+    const isThin = (fnData) => {
+      const zeKeys = Object.keys(fnData.zoneElements || {}).filter(k => (fnData.zoneElements[k] || []).length > 0);
+      const phKeys = Object.keys(fnData.elSelectedPhoto || {}).filter(k => fnData.elSelectedPhoto[k]?.src);
+      return zeKeys.length === 0 && phKeys.length === 0;
+    };
+    const enrichFromSession = (fnData) => {
+      if (fnData.fnIdx === activeFnIdx) return fnData;
+      if (!isThin(fnData)) return fnData;
+      const target = (fnData.fnType || "").toLowerCase().trim();
+      if (!target) return fnData;
+      const match = clientSessions.find(s => (s.fn || "").toLowerCase().trim() === target);
+      if (!match) return fnData;
+      return {
+        ...fnData,
+        enabledEls: match.enabledEls || fnData.enabledEls,
+        zoneConfig: match.zoneConfig || fnData.zoneConfig,
+        zoneElements: match.zoneElements || fnData.zoneElements,
+        elSelectedPhoto: match.elSelectedPhoto || fnData.elSelectedPhoto,
+        elNotes: match.elNotes || fnData.elNotes,
+        elTiers: match.elTiers || fnData.elTiers,
+        floralRatio: typeof match.floralRatio === "number" ? match.floralRatio : fnData.floralRatio
+      };
+    };
+    const sorted = [...all].sort((a, b) => {
+      const da = a.fnDate || "9999-12-31";
+      const db = b.fnDate || "9999-12-31";
+      return da.localeCompare(db);
+    });
+    const functions = sorted.map(fnDataRaw => {
+      const fnData = enrichFromSession(fnDataRaw);
+      const zones = buildZonesForFn(fnData);
+      const bd = calcFunctionBreakdown(fnData);
+      return {
+        fnIdx: fnData.fnIdx,
+        fnType: fnData.fnType,
+        fnDate: fnData.fnDate,
+        fnVenue: fnData.fnVenue,
+        fnShift: fnData.fnShift,
+        fnPax: fnData.fnPax,
+        zones,
+        transport: bd.transport,
+        decorTotal: bd.decorTotal,
+        transportTotal: bd.transportTotal,
+        grand: bd.grand,
+        isEmpty: zones.length === 0
+      };
+    });
+    const eventGT = functions.reduce((s, f) => s + (f.grand || 0), 0);
+    return {
+      functions,
+      eventGrandTotal: eventGT,
+      clientName, clientPhone, clientBrideGroom
+    };
+  }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx]);
+
+  // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
   // ═══════════════════════════════════════════════════════════════
   const isDark = mode === "manage";
@@ -1518,6 +2556,10 @@ export default function StudioApp() {
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const textS = isDark ? "#6B7280" : "#8b8fa3";
+  const cardBg = isDark ? "#1A1A2E" : "#fff";
+  const textP = isDark ? "#E5E5E5" : "#1a1a2e";
+  const accentBg = isDark ? "rgba(201,169,110,0.12)" : "#F5F0FF";
+  const accentText = isDark ? "#C9A96E" : "#6D28D9";
 
   // ═══════════════════════════════════════════════════════════════
   // CTX BAG — single object literal passed to view slices in later commits.
@@ -1526,6 +2568,22 @@ export default function StudioApp() {
   const ctx = {
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
+    textP, accentBg, accentText, cardBg,
+    // taxonomy constants (module-scope)
+    taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, PAINT_TOKENS_FALLBACK,
+    // derived memos
+    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups,
+    allVenueData, outdoorVenueList, browseVideos, allVideos,
+    // handlers
+    loadClientSession, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
+    resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
+    getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, loadEvent,
+    buildZonesForFn, buildCombinedCostSheetData, logActivity, saveTR,
+    normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
+    lmsCacheRef,
+    // zone photo filters + upload
+    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
+    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope,
     // app mode + steps
@@ -1723,37 +2781,12 @@ export default function StudioApp() {
       </div>}
 
       {/* STUDIO MODE */}
-      {mode === "studio" && <div style={S.main}>
-        {step === 0 && (
-          <div style={{ textAlign: "center", padding: 60, color: textS }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Event Info</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>{/* TODO slice: StudioEventInfo */}Client + functions setup — rebuilt in a later slice.</div>
-            <button onClick={() => setStep(1)} style={S.btn(true)} className="mt-4">Continue → Browse</button>
-          </div>
-        )}
-        {step === 1 && (
-          <div style={{ textAlign: "center", padding: 60, color: textS }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>🖼️</div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Browse</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>{/* TODO slice: StudioBrowse */}Inspiration gallery — rebuilt in a later slice.</div>
-          </div>
-        )}
-        {step === 2 && (
-          <div style={{ textAlign: "center", padding: 60, color: textS }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>🏗️</div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Build</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>{/* TODO slice: StudioBuild */}Zone + element builder — rebuilt in a later slice.</div>
-          </div>
-        )}
-        {step === 3 && (
-          <div style={{ textAlign: "center", padding: 60, color: textS }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>🧾</div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Summary</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>{/* TODO slice: StudioSummary */}Quote + client presentation — rebuilt in a later slice.</div>
-          </div>
-        )}
-      </div>}
+      {mode === "studio" && <>
+        {step === 0 && <StudioEventInfo ctx={ctx} />}
+        {step === 1 && <StudioBrowse ctx={ctx} />}
+        {step === 2 && <StudioBuild ctx={ctx} />}
+        {step === 3 && <StudioSummary ctx={ctx} />}
+      </>}
 
       {/* DEAL CHECK FULL-PAGE OVERLAY */}
       {authUser && dcFullPageOpen && (
