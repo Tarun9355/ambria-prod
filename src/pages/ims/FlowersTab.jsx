@@ -1,20 +1,12 @@
 import { useState } from "react";
 import { Tabs } from "../../components/ui";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
+import FlowerMandiTab from "./FlowerMandiTab.jsx";
 
 // Faithful to the reference FlowersTab wrapper (Mandi / Recipes / Function Planning /
-// Transfers). Mandi + Recipes render AdminSettingsTab via the `mode` prop (Mandi is LIVE;
-// Recipes lands in keystone slice 3). Planning/Transfers come in a later Flowers slice.
-function Placeholder({ name, note }) {
-  return (
-    <div className="text-center text-gray-400 py-16">
-      <p className="text-lg mb-1">{name}</p>
-      <p className="text-sm">Being rebuilt in a later slice{note ? ` (${note})` : ""}.</p>
-    </div>
-  );
-}
-
-export default function FlowersTab({ settings, setSettings, supervisors, setSupervisors, studio, authUser }) {
+// Transfers). Mandi + Recipes render AdminSettingsTab via the `mode` prop. Planning/Transfers
+// render FlowerMandiTab via the `mode` prop.
+export default function FlowersTab({ settings, setSettings, supervisors, setSupervisors, studio, authUser, functions, setFunctions }) {
   const allTabs = [
     { id: "mandi", label: "🌸 Mandi Prices" },
     { id: "recipes", label: "🌺 Recipes" },
@@ -31,8 +23,8 @@ export default function FlowersTab({ settings, setSettings, supervisors, setSupe
       <Tabs tabs={tabs} active={sub} onChange={setSub} />
       {sub === "mandi" && <AdminSettingsTab mode="mandi" settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} />}
       {sub === "recipes" && <AdminSettingsTab mode="patterns" settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} />}
-      {sub === "planning" && <Placeholder name="📋 Function Planning" note="Flowers planning slice" />}
-      {sub === "transfers" && <Placeholder name="🔄 Transfers" note="Flowers transfers slice" />}
+      {sub === "planning" && <FlowerMandiTab mode="planning" settings={settings} setSettings={setSettings} functions={functions} setFunctions={setFunctions} />}
+      {sub === "transfers" && <FlowerMandiTab mode="transfers" settings={settings} setSettings={setSettings} functions={functions} setFunctions={setFunctions} />}
     </div>
   );
 }

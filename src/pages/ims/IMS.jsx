@@ -759,6 +759,7 @@ export default function IMS() {
         ) : tab === "flowers" ? (
           <FlowersTab
             settings={settings} setSettings={setSettings}
+            functions={functions} setFunctions={setFunctions}
             supervisors={supervisors} setSupervisors={setSupervisors}
             studio={studio} authUser={user}
           />

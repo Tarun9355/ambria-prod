@@ -63,11 +63,12 @@ export const BADGE_COLORS = {
   amber: "bg-amber-100 text-amber-800", red: "bg-red-100 text-red-800",
   purple: "bg-purple-100 text-purple-800", gray: "bg-gray-100 text-gray-700",
   pink: "bg-pink-100 text-pink-800", indigo: "bg-indigo-100 text-indigo-800",
-  teal: "bg-teal-100 text-teal-800",
+  teal: "bg-teal-100 text-teal-800", violet: "bg-violet-100 text-violet-800",
+  orange: "bg-orange-100 text-orange-800",
 };
 
 export function Badge({ color = "gray", children }) {
-  return <span className={"text-xs font-medium px-2 py-0.5 rounded-full " + BADGE_COLORS[color]}>{children}</span>;
+  return <span className={"text-xs font-medium px-2 py-0.5 rounded-full " + (BADGE_COLORS[color] || BADGE_COLORS.gray)}>{children}</span>;
 }
 
 export function TypeBadge({ type }) {
