@@ -18,6 +18,7 @@ import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
+import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeS } from "../../lib/studio/styles";
 import {
@@ -28,7 +29,7 @@ import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
-  calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan,
+  calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
 } from "../../lib/studio/pricing";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
@@ -212,6 +213,16 @@ function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
   return { dims, trT: p.tr || zm.defaultTruss || null, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
+}
+
+// ═══ Active soft-hold lookup (Deal Check inventory-status conflicts) — VERBATIM ═══
+function getActiveSoftHold(softHolds, itemId, currentSalesperson, nowMs) {
+  const h = softHolds?.[itemId];
+  if (!h) return null;
+  const expiryMs = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || "");
+  if (!expiryMs || expiryMs <= (nowMs ?? Date.now())) return null;  // expired
+  if (h.salesperson === currentSalesperson) return null;  // own hold, not a conflict
+  return h;
 }
 
 // ═══ IMS field accessor shim (used by Deal Check cost rollups) — VERBATIM ═══
@@ -2550,6 +2561,15 @@ export default function StudioApp() {
   }, [collectAllFunctionData, buildZonesForFn, calcFunctionBreakdown, clientName, clientPhone, clientBrideGroom, clientLedger, activeClientId, activeFnIdx]);
 
   // ═══════════════════════════════════════════════════════════════
+  // DEAL CHECK orchestration handlers — IMS fetch + AI photo-match loop.
+  // These are heavy async flows ported in a later Studio slice; the Deal Check
+  // overlay's Regenerate button wires to them. Stubbed here so the shell renders.
+  // TODO slice: DealCheck openDealCheck / runDealCheckGenerate
+  // ═══════════════════════════════════════════════════════════════
+  const openDealCheck = useCallback(async () => {}, []);
+  const runDealCheckGenerate = useCallback(async () => {}, []);
+
+  // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
   // ═══════════════════════════════════════════════════════════════
   const isDark = mode === "manage";
@@ -2682,6 +2702,8 @@ export default function StudioApp() {
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown,
+    // deal check orchestration + persistence (overlay)
+    openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     // module helpers exposed for views
     imsField, fetchIMSData, searchLmsLeads, calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan,
     LABOUR, LABOUR_PRESETS, SEASON_MULT, TPL_DEFAULTS, PERM_LABELS, ROLE_DEFAULTS, ROLES, TAX_LABELS,
@@ -2794,16 +2816,7 @@ export default function StudioApp() {
       </>}
 
       {/* DEAL CHECK FULL-PAGE OVERLAY */}
-      {authUser && dcFullPageOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 190, background: isDark ? "#0F0F1A" : "#FAF9F6", display: "flex", flexDirection: "column" }}>
-          {/* TODO slice: DealCheck overlay */}
-          <div style={{ padding: "14px 20px", borderBottom: `1px solid ${border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>⚙ Deal Check</div>
-            <button onClick={() => setDcFullPageOpen(false)} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${border}`, background: "transparent", color: textS, fontSize: 12, cursor: "pointer" }}>✕ Close</button>
-          </div>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: textS, fontSize: 13 }}>Deal Check is being rebuilt in a later Studio slice.</div>
-        </div>
-      )}
+      {authUser && dcFullPageOpen && <DealCheckOverlay ctx={ctx} />}
     </div>
   );
 }
