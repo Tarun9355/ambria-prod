@@ -20,7 +20,7 @@ export default function ManageSettings({ ctx }) {
     // settings routing
     settingsView, setSettingsView,
     // auth
-    authUser, isAdmin, hasPerm,
+    authUser, isAdmin, hasPerm, studioSettingsAllowed,
     // venues
     customInhouse, customOutdoor, saveVenues,
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
@@ -483,17 +483,24 @@ export default function ManageSettings({ ctx }) {
     </div>
   );
 
+  // If the active settings view isn't permitted for this role, jump to the first allowed one.
+  useEffect(() => {
+    if (!studioSettingsAllowed) return;
+    if (studioSettingsAllowed(settingsView)) return;
+    const first = ["users", "clients", "calendar", "venues", "zones", "tags", "priority", "palettes"].find((v) => studioSettingsAllowed(v));
+    if (first && first !== settingsView) setSettingsView(first);
+  }, [settingsView, studioSettingsAllowed, setSettingsView]);
+
   return (
     <div>
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
-        <button onClick={() => setSettingsView("users")} style={{ ...S.btn(settingsView === "users"), fontSize: 11 }}>👥 Users</button>
-        <button onClick={() => setSettingsView("clients")} style={{ ...S.btn(settingsView === "clients"), fontSize: 11 }}>📋 Clients</button>
-        <button onClick={() => setSettingsView("calendar")} style={{ ...S.btn(settingsView === "calendar"), fontSize: 11 }}>📅 Calendar</button>
-        <button onClick={() => setSettingsView("venues")} style={{ ...S.btn(settingsView === "venues"), fontSize: 11 }}>🏛️ Venues</button>
-        <button onClick={() => setSettingsView("zones")} style={{ ...S.btn(settingsView === "zones"), fontSize: 11 }}>📐 Zones</button>
-        <button onClick={() => setSettingsView("tags")} style={{ ...S.btn(settingsView === "tags"), fontSize: 11 }}>🏷️ Tags</button>
-        <button onClick={() => setSettingsView("priority")} style={{ ...S.btn(settingsView === "priority"), fontSize: 11 }}>📊 Photo Priority</button>
-        <button onClick={() => setSettingsView("palettes")} style={{ ...S.btn(settingsView === "palettes"), fontSize: 11 }}>🎨 Palettes</button>
+        {(() => {
+          const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
+          const VIEWS = [["users", "👥 Users"], ["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["palettes", "🎨 Palettes"]];
+          return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
+            <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
+          ));
+        })()}
       </div>
       {settingsView === "palettes" && (
         <div style={{ maxWidth: 650 }}>

@@ -99,10 +99,10 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
   };
   // Studio app — tab/sub-tab access, modelled exactly like the IMS tabs above so this
   // one screen drives both apps. Stored at roleTabs[role].studio.{tabs,subTabs}.
-  const STUDIO_TABS = [{id:"design",label:"🎨 Design Studio"},{id:"manage",label:"⚙️ Manage"}];
+  const STUDIO_TABS = [{id:"design",label:"🎨 Design Studio"},{id:"library",label:"📚 Library & content"},{id:"pricing",label:"💲 Pricing"},{id:"settings",label:"⚙️ Settings"}];
   const STUDIO_SUBTABS = {
     design: [{id:"dealcheck",label:"Deal Check"},{id:"viewpricing",label:"View Pricing & Costs"},{id:"export",label:"Export PDF/PPT"}],
-    manage: [{id:"library",label:"Library & content"},{id:"pricing",label:"Pricing (Rate Card)"},{id:"templates",label:"Templates"},{id:"venues",label:"Venues"},{id:"settings",label:"Settings"},{id:"users",label:"Users"}],
+    settings: [{id:"venues",label:"Venues"},{id:"tags",label:"Tags"},{id:"clients",label:"Clients"},{id:"calendar",label:"Calendar"},{id:"users",label:"Users"},{id:"zones",label:"Zones"},{id:"palettes",label:"Palettes"},{id:"priority",label:"Photo Priority"}],
   };
   const roleTabs = settings?.roleTabs || {};
   const toggleRoleTab = (role, tabId) => {
@@ -222,7 +222,7 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
             })}
             {/* ── Studio app (cross-app access from the same screen) ── */}
             <div className="pt-2 mt-1 border-t border-dashed">
-              <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5 mt-1">🎨 Studio App</p>
+              <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5 mt-1">🎨 Studio App <span className="text-gray-400 normal-case font-normal">· deal builder is included with Studio access; tick areas to grant more</span></p>
               <div className="space-y-2">
                 {STUDIO_TABS.map(tab => {
                   const st = roleTabs[roleEditor]?.studio || {};
