@@ -24,6 +24,7 @@ import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
+import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -1065,6 +1066,7 @@ export default function StudioApp() {
   const [softHolds, setSoftHolds] = useState({});
   const [trussAlloc, setTrussAlloc] = useState({});
   const [dcAmendDiff, setDcAmendDiff] = useState(null);
+  const [amendRequests, setAmendRequests] = useState([]);
   const [dcSavingDraft, setDcSavingDraft] = useState(false);
   const [dcInventoryCache, setDcInventoryCache] = useState([]);
   const [dcBrowseAllOpen, setDcBrowseAllOpen] = useState(null);
@@ -1542,6 +1544,7 @@ export default function StudioApp() {
         if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
       } catch {}
       // Deal Check boot loaders
+      try { const v = await kvGet(AMEND_SK); if (v != null) { const a = parse(v); if (Array.isArray(a) && !cancelled) setAmendRequests(a); } } catch {}
       try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {}
       try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
       try {
@@ -1586,6 +1589,16 @@ export default function StudioApp() {
   const saveClientLedger = useCallback(async (nl) => { setClientLedger(nl); await reliableSave(CLI_SK, JSON.stringify(nl), "Clients"); }, []);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
   const savePremiaConfig = useCallback(async (nc) => { const m = { ...PREMIA_DEFAULTS, ...nc }; setPremiaConfig(m); await reliableSave(PREMIA_CFG_SK, JSON.stringify(m), "Premia config"); }, []);
+  // Submit a last-minute amendment request to the department head. Re-reads the
+  // shared list first so a concurrent IMS-side decision isn't clobbered.
+  const submitAmendRequest = useCallback(async (req) => {
+    let list = [];
+    try { const v = await kvGet(AMEND_SK); if (v != null) { const a = typeof v === "string" ? JSON.parse(v) : v; if (Array.isArray(a)) list = a; } } catch {}
+    const next = [...list, req];
+    setAmendRequests(next);
+    await reliableSave(AMEND_SK, JSON.stringify(next), "Amend requests");
+    return req;
+  }, []);
   const saveEventOrders = useCallback(async (neo) => { setEventOrders(neo); await reliableSave(EO_SK, JSON.stringify(neo), "Event orders"); }, []);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   const saveScanHistory = useCallback(async (nh) => { setScanHistory(nh); await reliableSave(SCAN_HIST_SK, JSON.stringify(nh), "Scan history"); }, []);
@@ -4189,6 +4202,7 @@ Return ONLY JSON:
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcMpOverrides, setDcMpOverrides, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
+    amendRequests, submitAmendRequest, isLastMinute, makeAmendRequest,
     dcInventoryCache, setDcInventoryCache, dcBrowseAllOpen, setDcBrowseAllOpen, dcSwapModal, setDcSwapModal, dcColorModal, setDcColorModal,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,

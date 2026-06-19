@@ -15,6 +15,8 @@ import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
 import FlowersTab from "./FlowersTab.jsx";
 import EventsTab from "./EventsTab.jsx";
+import ApprovalsTab from "./ApprovalsTab.jsx";
+import { AMEND_SK, canApprove } from "../../lib/ims/amend";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
@@ -97,6 +99,7 @@ export default function IMS() {
   const [prodRequests, setProdRequestsState] = useState([]);
   const [eventOrders, setEventOrdersState] = useState([]);
   const [blocks, setBlocksState] = useState({});
+  const [amendRequests, setAmendRequests] = useState([]);
   const [trussAlloc, setTrussAllocState] = useState({});
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
@@ -623,6 +626,18 @@ export default function IMS() {
     setBlocksState(next);
     persistBlocks(next);
   }, []);
+  // Last-minute amendment requests (JSON blob under AMEND_SK, like blocks).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try { const v = await kvGet(AMEND_SK); if (!cancelled && v != null) { const a = typeof v === "string" ? JSON.parse(v) : v; if (Array.isArray(a)) setAmendRequests(a); } } catch { /* none yet */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const saveAmendRequests = useCallback((next) => {
+    setAmendRequests(next);
+    reliableSave(AMEND_SK, JSON.stringify(next || []), "Amend requests");
+  }, []);
 
   // projects — row-level diff persistence to the projects table.
   const setProjects = useCallback((updater) => {
@@ -677,7 +692,12 @@ export default function IMS() {
   // Role-based tab filtering (faithful to reference).
   const roleConfig = (settings?.roleTabs || {})[user?.role] || { tabs: TABS.map((t) => t.id) };
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
-  const allowedTabs = isAdmin ? TABS : TABS.filter((t) => (roleConfig.tabs || []).includes(t.id));
+  let allowedTabs = isAdmin ? TABS : TABS.filter((t) => (roleConfig.tabs || []).includes(t.id));
+  // Department heads (+ Admin) get an Approvals tab for last-minute amendment requests.
+  if (canApprove(user) && !allowedTabs.some((t) => t.id === "approvals")) {
+    const pendN = (amendRequests || []).filter((r) => r.status === "pending").length;
+    allowedTabs = [...allowedTabs, { id: "approvals", label: `✅ Approvals${pendN ? ` (${pendN})` : ""}` }];
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -762,6 +782,12 @@ export default function IMS() {
             functions={functions} setFunctions={setFunctions}
             supervisors={supervisors} setSupervisors={setSupervisors}
             studio={studio} authUser={user}
+          />
+        ) : tab === "approvals" ? (
+          <ApprovalsTab
+            amendRequests={amendRequests} saveAmendRequests={saveAmendRequests}
+            authUser={user} inventory={items}
+            blocks={blocks} setBlocks={setBlocksState} saveBlocks={saveBlocks}
           />
         ) : tab === "events" ? (
           <EventsTab

@@ -8,6 +8,7 @@
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
+import AmendRequestPanel from "./AmendRequestPanel.jsx";
 
 export default function DealCheckOverlay({ ctx }) {
   const {
@@ -350,6 +351,9 @@ export default function DealCheckOverlay({ ctx }) {
               </div>
               {/* MAIN CONTENT */}
               <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
+                {isSold && ctx.isLastMinute && ctx.isLastMinute((() => { const fns = collectAllFunctionData ? collectAllFunctionData() : []; return fns[activeFnIdx]?.fnDate || clientDate; })()) && (
+                  <AmendRequestPanel ctx={ctx} fnIdx={activeFnIdx || 0} fnDate={(() => { const fns = collectAllFunctionData ? collectAllFunctionData() : []; return fns[activeFnIdx]?.fnDate || clientDate; })()} />
+                )}
                 {!activeTabDef.live ? (
                   <div style={{padding:"60px 30px",textAlign:"center",color:textS}}>
                     <div style={{fontSize:42,marginBottom:14}}>{activeTabDef.icon}</div>
