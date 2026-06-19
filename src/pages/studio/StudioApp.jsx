@@ -2249,7 +2249,15 @@ export default function StudioApp() {
     if (!zone || !libItems.length) return { exact: [], similar: [], fallback: [] };
     const tier = videoTag?.tier;
     const libTier = tier === "Silver" ? "Simple" : tier === "Gold" ? "Enhanced" : null;
-    const colors = videoTag?.colors || [];
+    // Resolve the active palette (per function) → its anchor colours + the ★ primary.
+    // When a palette is chosen its colours drive matching (the Build screen has no video
+    // colours otherwise); a photo whose colours include the PRIMARY ranks above one that
+    // matches only a secondary anchor, which falls into the queue below.
+    const activePaletteName = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx - 1]?.palette || "");
+    const activePalette = (imsPaletteCatalogue || []).find(p => p.name === activePaletteName);
+    const paletteColors = activePalette ? (activePalette.anchorColours || []) : [];
+    const primaryColor = activePalette ? (activePalette.primaryColour || "") : "";
+    const colors = paletteColors.length ? paletteColors : (videoTag?.colors || []);
     const styles = videoTag?.styles || [];
     const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
     const io = videoTag?.io || "";
@@ -2266,7 +2274,19 @@ export default function StudioApp() {
         switch (p.id) {
           case "tier": if (libTier && liTier.includes(libTier)) score += weight; break;
           case "style": if (styles.length && styles.some(s => liStyle.includes(s))) score += weight; break;
-          case "color": if (colors.length && colors.some(c => liColor.includes(c))) score += weight; break;
+          case "color":
+            if (colors.length) {
+              if (primaryColor) {
+                // Palette has a designated ★ primary: full weight only when the photo
+                // carries the primary colour; a secondary-anchor match gets a small
+                // weight so those photos queue below the primary-colour ones.
+                if (liColor.includes(primaryColor)) score += weight;
+                else if (colors.some(c => liColor.includes(c))) score += Math.round(weight * 0.2);
+              } else if (colors.some(c => liColor.includes(c))) {
+                score += weight;
+              }
+            }
+            break;
           case "fn": if (fns.length && fns.some(f => liFn.includes(f))) score += weight; break;
           case "io": if (io && liIO.includes(io)) score += weight; break;
         }
@@ -2284,7 +2304,7 @@ export default function StudioApp() {
       overflow = libItems.filter(li => !usedIds.has(li.id)).slice(0, 50 - total);
     }
     return { exact, similar, fallback: [...fallback, ...overflow] };
-  }, [libItems, filterPriority]);
+  }, [libItems, filterPriority, clientPalette, activeFnIdx, extraFunctions, imsPaletteCatalogue]);
 
   // ── All videos (youtube + manual), newest first — VERBATIM ──
   const allVideos = useMemo(() => {

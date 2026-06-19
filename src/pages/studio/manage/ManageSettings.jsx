@@ -533,13 +533,32 @@ export default function ManageSettings({ ctx }) {
                   <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 13, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
                   <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "2px 8px" }}>🗑</span>
                 </div>
-                <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle):</div>
+                <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks the primary colour that drives Build photo order):</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
                   {imsColourCatalogue.filter(c => !c.isNeutral).map(c => {
                     const isAnchor = (p.anchorColours || []).includes(c.name);
-                    return <span key={c.name} onClick={() => { const anchors = p.anchorColours || []; const nextA = isAnchor ? anchors.filter(a => a !== c.name) : [...anchors, c.name]; const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], anchorColours: nextA }; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, border: `1px solid ${isAnchor ? accent : border}`, background: isAnchor ? `${accent}18` : "transparent", color: isAnchor ? accent : textS }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 3, background: c.hex || "#ccc", display: "inline-block", border: "1px solid rgba(0,0,0,0.1)" }} />
-                      {c.name}
+                    const isPrimary = p.primaryColour === c.name;
+                    const toggleAnchor = () => {
+                      const anchors = p.anchorColours || [];
+                      const nextA = isAnchor ? anchors.filter(a => a !== c.name) : [...anchors, c.name];
+                      const next = [...imsPaletteCatalogue];
+                      next[pi] = { ...next[pi], anchorColours: nextA };
+                      if (isAnchor && isPrimary) next[pi].primaryColour = ""; // removed the primary anchor
+                      setImsPaletteCatalogue(next); savePaletteData(null, next);
+                    };
+                    const setPrimary = (e) => {
+                      e.stopPropagation();
+                      const next = [...imsPaletteCatalogue];
+                      next[pi] = { ...next[pi], primaryColour: isPrimary ? "" : c.name };
+                      if (!isPrimary && !isAnchor) next[pi].anchorColours = [...(p.anchorColours || []), c.name];
+                      setImsPaletteCatalogue(next); savePaletteData(null, next);
+                    };
+                    return <span key={c.name} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: `1px solid ${isPrimary ? "#C9A96E" : isAnchor ? accent : border}`, background: isPrimary ? "rgba(201,169,110,0.18)" : isAnchor ? `${accent}18` : "transparent", color: isPrimary ? "#C9A96E" : isAnchor ? accent : textS }}>
+                      <span onClick={toggleAnchor} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 3, background: c.hex || "#ccc", display: "inline-block", border: "1px solid rgba(0,0,0,0.1)" }} />
+                        {c.name}
+                      </span>
+                      {isAnchor && <span onClick={setPrimary} title={isPrimary ? "Primary colour (tap to unset)" : "Mark as primary"} style={{ cursor: "pointer", fontSize: 11, color: isPrimary ? "#C9A96E" : textS }}>{isPrimary ? "★" : "☆"}</span>}
                     </span>;
                   })}
                 </div>

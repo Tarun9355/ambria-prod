@@ -203,10 +203,11 @@ export default function StudioBuild({ ctx }) {
                 <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",flex:1}}>
                   {pObj.anchorColours.map(cn => {
                     const cObj = imsColourCatalogue.find(c => c.name === cn);
+                    const isPrimary = pObj.primaryColour === cn;
                     return (
-                      <div key={cn} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",background:isDark?"rgba(255,255,255,0.05)":"#fff",border:`1px solid rgba(124,58,237,0.2)`,borderRadius:12,fontSize:10}}>
+                      <div key={cn} title={isPrimary ? "Primary colour — drives photo order" : ""} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",background:isPrimary?"rgba(201,169,110,0.18)":(isDark?"rgba(255,255,255,0.05)":"#fff"),border:`1px solid ${isPrimary?"#C9A96E":"rgba(124,58,237,0.2)"}`,borderRadius:12,fontSize:10}}>
                         <span style={{width:11,height:11,borderRadius:6,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc"}} />
-                        <span style={{color:textP,fontWeight:500}}>{cn}</span>
+                        <span style={{color:isPrimary?"#C9A96E":textP,fontWeight:isPrimary?700:500}}>{cn}{isPrimary?" ★":""}</span>
                       </div>
                     );
                   })}
