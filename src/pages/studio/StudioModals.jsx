@@ -25,6 +25,9 @@ export default function StudioModals({ ctx }) {
     rcIsSMB, calcElsCost, zurElSearch, setZurElSearch, applyZoneUpload,
     // previewImg
     previewImg, setPreviewImg,
+    // element gallery (zone photo viewer — grid + full-screen)
+    elGallery, setElGallery, galleryIdx, setGalleryIdx, setElSelectedPhoto, calcPhotoCost,
+    showCosts, elInspo, zoneAiFilling, setZoneAiFilling, aiTagImage, elNotes, setElNotes,
     // paintPickerTarget
     paintPickerTarget, setPaintPickerTarget, zoneElements, setZoneElements,
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
@@ -194,6 +197,122 @@ export default function StudioModals({ ctx }) {
 
       {/* Photo preview */}
       {previewImg&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>setPreviewImg(null)}><img src={previewImg} alt="" style={{maxWidth:"90vw",maxHeight:"85vh",objectFit:"contain",borderRadius:12}}/></div>}
+
+      {/* ═══ Element gallery — zone photo viewer (grid + full-screen single) ═══ */}
+      {elGallery&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}} onClick={()=>{setElGallery(null);setGalleryIdx(null);}}>
+          <div style={{padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            <div>
+              <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>{zoneLabelsD[elGallery.elKey]?.icon} {elGallery.title}</div>
+              <div style={{fontSize:12,color:"#9CA3AF",marginTop:2}}>{elGallery.photos.length} photos · Tap to select · Selected photo sets pricing</div>
+            </div>
+            <button onClick={()=>{setElGallery(null);setGalleryIdx(null);}} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#fff",width:40,height:40,borderRadius:"50%",cursor:"pointer",fontSize:20,fontWeight:700}}>✕</button>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"0 24px 24px"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
+              {elGallery.photos.map((ph,i)=>{
+                const isSelected = elSelectedPhoto[elGallery.elKey]?.src === ph.src;
+                let photoElCost = calcPhotoCost(elGallery.elKey, ph);
+                const catInfo = getCat(getFullCost(ph));
+                return (
+                <div key={i} style={{borderRadius:14,overflow:"hidden",background:isSelected?"#0D2818":"#1A1A2E",border:isSelected?"3px solid #059669":"3px solid transparent",cursor:"pointer",transition:"all 0.15s"}}
+                  onClick={()=>setGalleryIdx(i)}>
+                  <div style={{position:"relative"}}>
+                    <img src={ph.src} alt={ph.eventName||ph.title||""} loading="lazy" style={{width:"100%",height:220,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                    {showCosts&&<div style={{position:"absolute",top:12,left:12,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"5px 12px",borderRadius:8,fontSize:14,fontWeight:700}}>{fmt(photoElCost)}</div>}
+                    {isSelected&&<div style={{position:"absolute",top:12,right:12,background:"#059669",color:"#fff",width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:700}}>✓</div>}
+                    {ph.category&&<div style={{position:"absolute",bottom:12,left:12,display:"flex",gap:6}}>
+                      <span style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:catInfo.bg,color:catInfo.color,fontWeight:600}}>{ph.category}</span>
+                      <span style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:"rgba(0,0,0,0.6)",color:"#fff"}}>{ph.fn} · {ph.space}</span>
+                    </div>}
+                    {ph.isWebResult&&<div style={{position:"absolute",bottom:12,left:12,display:"flex",gap:6}}>
+                      <span style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:"rgba(201,169,110,0.9)",color:"#0F0F1A",fontWeight:700}}>{"🌐"} {ph.source||"Web"}</span>
+                    </div>}
+                  </div>
+                  <div style={{padding:"12px 16px"}}>
+                    <div style={{fontSize:14,fontWeight:600,color:"#fff",marginBottom:4}}>{ph.eventName||ph.title||"Inspiration"}</div>
+                    {ph.desc&&<div style={{fontSize:11,color:"#9CA3AF",lineHeight:1.5,marginBottom:6}}>{ph.desc}</div>}
+                    {ph.tags?.length>0&&<div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>{ph.tags.slice(0,4).map((t,j)=><span key={j} style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:"rgba(201,169,110,0.15)",color:"#C9A96E"}}>{t}</span>)}</div>}
+                  </div>
+                </div>);
+              })}
+            </div>
+            {elInspo[elGallery.elKey]?.length>0&&(<>
+              <div style={{fontSize:14,fontWeight:600,color:"#C9A96E",marginTop:24,marginBottom:12}}>✨ Web Inspiration</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:14}}>
+                {elInspo[elGallery.elKey].map((card,ci)=>(
+                  <div key={card.id||ci} style={{borderRadius:12,overflow:"hidden",background:"#1A1A2E"}}>
+                    <div style={{background:card.blobUrl?`url(${card.blobUrl}) center/cover no-repeat`:card.gradient,height:120,position:"relative",overflow:"hidden"}}>
+                      <span style={{position:"absolute",bottom:6,left:6,fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(0,0,0,0.5)",color:"#fff",zIndex:2}}>{card.source}</span>
+                    </div>
+                    <div style={{padding:"10px 14px"}}>
+                      <div style={{fontSize:13,fontWeight:700,color:"#fff",marginBottom:4}}>{card.title}</div>
+                      <div style={{fontSize:11,color:"#9CA3AF",lineHeight:1.5,marginBottom:8}}>{card.desc}</div>
+                      {card.img&&<button disabled={zoneAiFilling[elGallery.elKey]} onClick={async()=>{
+                        setZoneAiFilling(p=>({...p,[elGallery.elKey]:true}));
+                        try{const result=await Promise.race([aiTagImage(card.img),new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),25000))]);
+                          if(result?.elements?.length){setZoneElements(p=>({...p,[elGallery.elKey]:result.elements}));setElSelectedPhoto(p=>({...p,[elGallery.elKey]:{src:card.img,eventName:card.title}}));showMsg(`✓ ${result.elements.length} elements extracted`,"green");setElGallery(null);}
+                          else{showMsg("Couldn't extract — try another","red");}}catch{showMsg("Failed — try another","red");}
+                        setZoneAiFilling(p=>({...p,[elGallery.elKey]:false}));
+                      }} style={{width:"100%",padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:"linear-gradient(135deg,#C9A96E,#A67C3D)",color:"#0F0F1A"}}>
+                        {zoneAiFilling[elGallery.elKey]?"🔄 Extracting...":"✨ Use This Look → Auto Price"}
+                      </button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>)}
+          </div>
+          {galleryIdx!==null&&elGallery.photos[galleryIdx]&&(()=>{
+            const ph=elGallery.photos[galleryIdx];const total=elGallery.photos.length;
+            const isSelected=elSelectedPhoto[elGallery.elKey]?.src===ph.src;
+            let photoElCost=calcPhotoCost(elGallery.elKey, ph);
+            const goPrev=()=>setGalleryIdx(p=>p>0?p-1:total-1);
+            const goNext=()=>setGalleryIdx(p=>p<total-1?p+1:0);
+            return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.97)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>{setElGallery(null);setGalleryIdx(null);}}>
+              <button onClick={()=>{setElGallery(null);setGalleryIdx(null);}} style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,0.08)",border:"none",color:"rgba(255,255,255,0.5)",width:36,height:36,borderRadius:"50%",cursor:"pointer",fontSize:16,fontWeight:700,zIndex:310}}>✕</button>
+              <button onClick={e=>{e.stopPropagation();goPrev();}} style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"none",color:"rgba(255,255,255,0.6)",fontSize:20,cursor:"pointer",zIndex:310,display:"flex",alignItems:"center",justifyContent:"center"}}>{"◀"}</button>
+              <button onClick={e=>{e.stopPropagation();goNext();}} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"none",color:"rgba(255,255,255,0.6)",fontSize:20,cursor:"pointer",zIndex:310,display:"flex",alignItems:"center",justifyContent:"center"}}>{"▶"}</button>
+              <div onClick={e=>e.stopPropagation()} style={{position:"relative",maxWidth:"92vw",maxHeight:"92vh"}}>
+                <img src={ph.src} alt="" style={{maxWidth:"92vw",maxHeight:"92vh",objectFit:"contain",borderRadius:10,display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                {showCosts&&<div style={{position:"absolute",bottom:16,right:16,background:"rgba(0,0,0,0.65)",backdropFilter:"blur(8px)",padding:"6px 14px",borderRadius:10}}>
+                  <div style={{fontSize:16,fontWeight:700,color:"#C9A96E"}}>{fmt(photoElCost)}</div>
+                </div>}
+                {isSelected&&<div style={{position:"absolute",top:16,left:16,background:"#059669",color:"#fff",padding:"4px 12px",borderRadius:8,fontSize:11,fontWeight:600}}>{"✓"} Selected</div>}
+                {ph.isWebResult&&<div style={{position:"absolute",bottom:16,left:16,right:16,display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:700,color:"#fff",textShadow:"0 1px 4px rgba(0,0,0,0.7)",marginBottom:2}}>{ph.title||ph.eventName}</div>
+                    {ph.desc&&<div style={{fontSize:11,color:"rgba(255,255,255,0.7)",textShadow:"0 1px 4px rgba(0,0,0,0.7)",maxWidth:400}}>{ph.desc}</div>}
+                    {ph.source&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:"rgba(0,0,0,0.5)",color:"rgba(255,255,255,0.8)",marginTop:4,display:"inline-block"}}>{ph.source}</span>}
+                  </div>
+                  <button disabled={zoneAiFilling[elGallery.elKey]} onClick={async(e)=>{
+                    e.stopPropagation();
+                    setZoneAiFilling(p=>({...p,[elGallery.elKey]:true}));
+                    try{const result=await Promise.race([aiTagImage(ph.src),new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),25000))]);
+                      if(result?.elements?.length){setZoneElements(p=>({...p,[elGallery.elKey]:result.elements}));setElSelectedPhoto(p=>({...p,[elGallery.elKey]:{src:ph.src,eventName:ph.title||ph.eventName}}));showMsg(`✓ ${result.elements.length} elements extracted`,"green");setElGallery(null);setGalleryIdx(null);}
+                      else{showMsg("Couldn't extract — try another","red");}}catch{showMsg("Failed — try another","red");}
+                    setZoneAiFilling(p=>({...p,[elGallery.elKey]:false}));
+                  }} style={{padding:"12px 24px",borderRadius:12,border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:"linear-gradient(135deg,#C9A96E,#A67C3D)",color:"#0F0F1A",whiteSpace:"nowrap",opacity:zoneAiFilling[elGallery.elKey]?0.6:1}}>
+                    {zoneAiFilling[elGallery.elKey]?"🔄 Extracting...":"✨ Use This Look"}
+                  </button>
+                </div>}
+              </div>
+              <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",fontSize:11,color:"rgba(255,255,255,0.3)",zIndex:310}}>{galleryIdx+1} / {total}</div>
+            </div>);
+          })()}
+          <div style={{flexShrink:0,padding:"14px 24px",background:"#12121F",borderTop:"1px solid rgba(255,255,255,0.06)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:10,color:"#C9A96E",marginBottom:4,fontWeight:600}}>📝 Client Notes for {zoneLabelsD[elGallery.elKey]?.label}</div>
+                <input value={elNotes[elGallery.elKey]||""} onChange={e=>setElNotes(p=>({...p,[elGallery.elKey]:e.target.value}))}
+                  placeholder={`e.g. "No couch on stage", "Add more roses", "Keep it minimal"...`}
+                  style={{width:"100%",padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"#0F0F1A",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+              <button onClick={()=>{setElGallery(null);setGalleryIdx(null);}} style={{padding:"10px 24px",borderRadius:10,border:"none",background:"#C9A96E",color:"#0F0F1A",fontSize:13,fontWeight:700,cursor:"pointer"}}>Done ✓</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* §23 Phase 2.9d — Paint Allocation Picker (replaces single-colour ColourPicker for elements) */}
       {paintPickerTarget && (() => {
