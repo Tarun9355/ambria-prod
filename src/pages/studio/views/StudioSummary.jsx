@@ -399,7 +399,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   };
 
   const vb=venue&&allVenueData[venue]?allVenueData[venue].base:0;
-  return(<div style={S.main}>
+  return(<>
+    <div style={S.main}>
       <div style={{textAlign:"center",marginBottom:24}}><div style={{fontSize:40,marginBottom:8}}>{"🎉"}</div><div style={{fontSize:28,fontWeight:700}}>Decor Estimate</div>{clientName&&<div style={{fontSize:16,color:accentText,fontWeight:500}}>{clientName}</div>}<div style={{fontSize:14,color:textS}}>{venue} {"·"} {fn}{clientDate&&` · ${new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</div>{activeClient&&<div style={{marginTop:6}}><span style={{fontSize:10,padding:"3px 12px",borderRadius:8,background:accentBg,color:accentText,fontWeight:600}}>Meeting #{meetingNumber} with {activeClient.name}</span></div>}</div>
       {/* ═══ EXPORT ═══ */}
       <div style={{marginBottom:20}}>
@@ -611,5 +612,140 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         <button onClick={()=>setStep(2)} style={S.btn(false)}>{"←"} Adjust</button>
         <button onClick={()=>{setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setNewCzName("");setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");}} style={S.btn(false)}>Start New</button>
       </div>
-    </div>);
+    </div>
+
+    {csData&&(()=>{
+      const csUpdateQty=(fnIdx,zi,ii,newQty)=>{
+        const d=JSON.parse(JSON.stringify(csData));
+        const fnObj=d.functions[fnIdx];
+        if(!fnObj||!fnObj.zones[zi])return;
+        const item=fnObj.zones[zi].items[ii];
+        if(!item)return;
+        item.qty=Math.max(0,newQty);
+        item.total=item.qty*item.rate;
+        fnObj.zones[zi].itemTotal=fnObj.zones[zi].items.reduce((s,i)=>s+i.total,0);
+        fnObj.zones[zi].zoneTotal=fnObj.zones[zi].structTotal+fnObj.zones[zi].itemTotal;
+        fnObj.decorTotal=fnObj.zones.reduce((s,z)=>s+z.zoneTotal,0);
+        fnObj.grand=fnObj.decorTotal+(fnObj.transportTotal||0);
+        d.eventGrandTotal=d.functions.reduce((s,f)=>s+(f.grand||0),0);
+        setCsData(d);
+      };
+      const csExportPDF=()=>{const html=exportPDF(csData);const w=window.open("","_blank");if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),800);}else{showMsg("Open in deployed app for PDF export","blue");}};
+      const csExportPPT=()=>exportPPT(csData);
+      const fmtDate=(iso)=>{if(!iso)return"—";try{return new Date(iso+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"});}catch{return iso;}};
+      const fnLine=(fnObj)=>{const parts=[fnObj.fnType||"Function",fmtDate(fnObj.fnDate),fnObj.fnVenue||"—"];if(fnObj.fnShift)parts.push(fnObj.fnShift);return parts.filter(Boolean).join(" · ");};
+      const fnCount=csData.functions.length;
+      return(
+      <div style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#F5F3EE",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px",background:"#1a1a2e",flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{width:34,height:34,borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#8B7355)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff"}}>A</div>
+            <div><div style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Cost Sheet</div><div style={{fontSize:11,color:"#a5b4fc"}}>{csData.clientName||"Client"} · {fnCount} function{fnCount!==1?"s":""}</div></div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
+            <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
+            <button onClick={csExportPPT} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} PPT</button>
+            <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
+          </div>
+        </div>
+        {/* Scrollable body */}
+        <div style={{flex:1,overflowY:"auto",padding:"20px 24px",maxWidth:960,margin:"0 auto",width:"100%"}}>
+          {/* Stacked function lines (mirrors PPT cover) */}
+          <div style={{textAlign:"center",marginBottom:20}}>
+            {csData.functions.map((fnObj,fi)=>(
+              <div key={fi} style={{fontSize:12,color:textS,marginBottom:3}}>{fnLine(fnObj)}</div>
+            ))}
+          </div>
+          {/* Per-function blocks */}
+          {csData.functions.map((fnObj,fi)=>(
+            <div key={fi} style={{background:isDark?"#12121F":"#fff",borderRadius:14,border:`1px solid ${border}`,marginBottom:20,overflow:"hidden"}}>
+              {/* Function header */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",color:"#fff"}}>
+                <div>
+                  <div style={{fontSize:11,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Function {fi+1} of {fnCount}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:"#C9A96E"}}>{fnLine(fnObj)}</div>
+                  {fnObj.fnPax&&<div style={{fontSize:11,color:"#a5b4fc",marginTop:2}}>{fnObj.fnPax} pax</div>}
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Function Total</div>
+                  <div style={{fontSize:20,fontWeight:700,color:"#C9A96E"}}>{fnObj.isEmpty?"—":fmt(fnObj.grand)}</div>
+                </div>
+              </div>
+              {/* Empty function placeholder */}
+              {fnObj.isEmpty?(
+                <div style={{padding:"32px 20px",textAlign:"center",color:textS}}>
+                  <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>Design pending</div>
+                  <div style={{fontSize:11}}>Zones for this function have not been built yet — it will appear in the PPT as a placeholder slide.</div>
+                </div>
+              ):(
+                <>
+                  {/* Zone sections */}
+                  {fnObj.zones.map((z,zi)=>(
+                    <div key={z.k} style={{borderTop:`1px solid ${border}`}}>
+                      {/* Zone header */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 18px",background:isDark?"rgba(201,169,110,0.04)":"#F9F7F3"}}>
+                        <div><div style={{fontSize:14,fontWeight:700}}>{z.icon} {z.label}</div>{z.dimLabel&&<div style={{fontSize:11,color:textS,marginTop:2}}>{"📐"} {z.dimLabel}</div>}</div>
+                        <div style={{fontSize:16,fontWeight:700,color:accentText}}>{fmt(z.zoneTotal)}</div>
+                      </div>
+                      {/* Zone photo */}
+                      {z.photo&&<div style={{padding:12,background:isDark?"rgba(0,0,0,0.2)":"#FAFAF7"}}>
+                        <img src={z.photo} alt={z.photoName} style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                        {z.photoName&&<div style={{fontSize:10,color:textS,marginTop:6,textAlign:"center"}}>Reference: {z.photoName}</div>}
+                      </div>}
+                      {/* Structure items (not editable) */}
+                      {z.structItems.length>0&&<div style={{padding:"8px 18px",borderTop:`1px solid ${border}`}}>
+                        {z.structItems.map((si,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12,color:textS,fontStyle:"italic"}}><span>{si.name}</span><span style={{fontWeight:600}}>{fmt(si.total)}</span></div>)}
+                      </div>}
+                      {/* Editable items table */}
+                      {z.items.length>0&&<div style={{padding:"0 18px 12px",borderTop:`1px solid ${border}`}}>
+                        <div style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"8px 0 4px",borderBottom:`1px solid ${border}`,fontSize:9,textTransform:"uppercase",letterSpacing:0.5,color:textS,fontWeight:600}}>
+                          <div>Item</div><div style={{textAlign:"center"}}>Size</div><div style={{textAlign:"center"}}>Qty</div><div style={{textAlign:"right"}}>Rate</div><div style={{textAlign:"right"}}>Amount</div>
+                        </div>
+                        {z.items.map((it,ii)=>(
+                          <div key={ii} style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
+                            <div style={{fontWeight:500}}>{it.name}</div>
+                            <div style={{textAlign:"center",color:textS}}>{it.size||"—"}</div>
+                            <div style={{textAlign:"center"}}><input type="number" min="0" value={it.qty} onChange={e=>csUpdateQty(fi,zi,ii,parseInt(e.target.value)||0)} style={{width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
+                            <div style={{textAlign:"right",color:textS,fontSize:11}}>{fmt(it.rate)}/{it.unit}</div>
+                            <div style={{textAlign:"right",fontWeight:600,color:it.qty>0?accentText:textS}}>{fmt(it.total)}</div>
+                          </div>
+                        ))}
+                        <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0 4px",borderTop:`2px solid ${border}`,marginTop:4}}>
+                          <div style={{fontSize:13,fontWeight:700}}>{z.label} Subtotal</div>
+                          <div style={{fontSize:15,fontWeight:700,color:accentText}}>{fmt(z.zoneTotal)}</div>
+                        </div>
+                      </div>}
+                      {/* Note */}
+                      {z.note&&<div style={{padding:"0 18px 12px"}}><div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFDF7",borderRadius:8,padding:"8px 12px",fontSize:11,color:accentText}}>{"📝"} {z.note}</div></div>}
+                    </div>
+                  ))}
+                  {/* Per-function transport (read-only) */}
+                  {fnObj.transport&&(
+                    <div style={{borderTop:`1px solid ${border}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 18px",background:isDark?"rgba(99,102,241,0.04)":"#F0F4FF"}}>
+                        <div style={{fontSize:14,fontWeight:700}}>{"🚛"} Transport & Power</div>
+                        <div style={{fontSize:16,fontWeight:700,color:"#4F46E5"}}>{fmt(fnObj.transport.total)}</div>
+                      </div>
+                      <div style={{padding:"8px 18px 12px"}}>
+                        {(fnObj.transport.breakdown||[]).map((bd,bi)=><div key={bi} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>{bd.label} — {bd.trucks} truck{bd.trucks!==1?"s":""}</span><span style={{fontWeight:600}}>{fmt(bd.trucks*fnObj.transport.tripRate*2)}</span></div>)}
+                        <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12,borderTop:`1px solid ${border}`,marginTop:4,paddingTop:6}}><span style={{color:textS}}>Genset ({fnObj.transport.gensets} × {fmt(fnObj.transport.gensetRate)})</span><span style={{fontWeight:600}}>{fmt(fnObj.transport.gensetCost)}</span></div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+          {/* Event grand total */}
+          <div style={{background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",borderRadius:14,padding:"20px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:700,color:"#fff"}}>Event Grand Total</div>
+            <div style={{fontSize:28,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div>
+          </div>
+          <div style={{textAlign:"center",fontSize:10,color:textS,padding:"8px 0 20px"}}>Edit quantities above — totals update live across all functions. Then export as PDF or PPT.</div>
+        </div>
+      </div>);
+    })()}
+  </>);
 }
