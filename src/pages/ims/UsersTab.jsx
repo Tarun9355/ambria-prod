@@ -97,6 +97,8 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
     finance: [{id:"pl",label:"Event P&L"},{id:"company_pl",label:"Company P&L"},{id:"overheads",label:"Overheads"}],
     admin: [{id:"users",label:"Users"},{id:"vendors",label:"Vendors"},{id:"settings",label:"Settings"}],
   };
+  // Studio app areas (gated per-role too, so this one screen covers both apps).
+  const STUDIO_AREAS = [{id:"dealbuilder",label:"Deal Builder"},{id:"library",label:"Library & content"},{id:"pricing",label:"Pricing"},{id:"settings",label:"Settings"}];
   const roleTabs = settings?.roleTabs || {};
   const toggleRoleTab = (role, tabId) => {
     if (role === "Admin") return; // Admin always has all
@@ -119,6 +121,28 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
       rt[role] = { ...cur, subTabs: { ...(cur.subTabs||{}), [parentTab]: newSubs.length > 0 ? newSubs : undefined } };
       // Clean up undefined entries
       if (!rt[role].subTabs[parentTab]) delete rt[role].subTabs[parentTab];
+      return { ...s, roleTabs: rt };
+    });
+  };
+  // Studio app access for a role: studio.enabled + studio.areas[] (mirrors IMS tab access).
+  const toggleRoleStudio = (role) => {
+    if (role === "Admin") return;
+    setSettings(s => {
+      const rt = {...(s.roleTabs || {})};
+      const cur = rt[role] || { tabs: [], subTabs: {} };
+      const enabled = !(cur.studio?.enabled);
+      rt[role] = { ...cur, studio: { enabled, areas: enabled ? (cur.studio?.areas?.length ? cur.studio.areas : STUDIO_AREAS.map(a=>a.id)) : [] } };
+      return { ...s, roleTabs: rt };
+    });
+  };
+  const toggleRoleStudioArea = (role, areaId) => {
+    if (role === "Admin") return;
+    setSettings(s => {
+      const rt = {...(s.roleTabs || {})};
+      const cur = rt[role] || { tabs: [], subTabs: {} };
+      const curAreas = cur.studio?.areas || [];
+      const areas = curAreas.includes(areaId) ? curAreas.filter(a=>a!==areaId) : [...curAreas, areaId];
+      rt[role] = { ...cur, studio: { enabled: true, areas } };
       return { ...s, roleTabs: rt };
     });
   };
@@ -189,6 +213,38 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
                 </div>
               );
             })}
+            {/* ── Studio app (cross-app access from the same screen) ── */}
+            <div className="pt-2 mt-1 border-t border-dashed">
+              <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5 mt-1">🎨 Studio App</p>
+              {(() => {
+                const rc = roleTabs[roleEditor] || {};
+                const st = rc.studio || {};
+                const hasStudio = roleEditor === "Admin" || !!st.enabled;
+                const areas = roleEditor === "Admin" ? STUDIO_AREAS.map(a=>a.id) : (st.areas || []);
+                return (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className={"flex items-center gap-3 px-3 py-2 cursor-pointer "+(hasStudio?"bg-amber-50":"bg-gray-50")} onClick={()=>toggleRoleStudio(roleEditor)}>
+                      <div className={"w-5 h-5 rounded border-2 flex items-center justify-center text-xs "+(hasStudio?"bg-amber-500 border-amber-500 text-white":"border-gray-300")}>{hasStudio?"✓":""}</div>
+                      <span className={"text-sm font-medium "+(hasStudio?"text-amber-900":"text-gray-500")}>Studio access</span>
+                      <span className="text-[10px] text-gray-400 ml-auto">design studio + manage</span>
+                    </div>
+                    {hasStudio && (
+                      <div className="flex flex-wrap gap-2 px-4 py-2 bg-white border-t">
+                        {STUDIO_AREAS.map(a => {
+                          const on = roleEditor==="Admin" || areas.includes(a.id);
+                          return (
+                            <button key={a.id} onClick={()=>toggleRoleStudioArea(roleEditor, a.id)}
+                              className={"px-3 py-1 rounded-full text-xs font-medium transition-all "+(on?"bg-amber-100 text-amber-700":"bg-gray-100 text-gray-400")}>
+                              {on?"✓ ":""}{a.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}

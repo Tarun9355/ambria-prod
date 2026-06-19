@@ -1282,6 +1282,17 @@ export default function StudioApp() {
     return teamData[authUser.id]?.venueScope || "all";
   }, [authUser, teamData]);
 
+  // Per-role Studio access — configured from IMS → Admin → Users → Tab Access (the
+  // settings.roleTabs[role].studio block). Admin = all; unconfigured non-admin = no manage.
+  const [studioRoleTabs, setStudioRoleTabs] = useState({});
+  useEffect(() => { (async () => { try { const v = await kvGet("roleTabs"); const p = typeof v === "string" ? JSON.parse(v) : v; if (p && typeof p === "object") setStudioRoleTabs(p); } catch { /* ignore */ } })(); }, []);
+  const manageAreas = useMemo(() => {
+    if (isAdmin) return new Set(["library", "pricing", "settings"]);
+    const cfg = studioRoleTabs?.[authUser?.role]?.studio;
+    if (cfg && Array.isArray(cfg.areas)) return new Set(cfg.areas.filter((a) => a !== "dealbuilder"));
+    return new Set(); // unconfigured non-admin → no Manage (least privilege)
+  }, [isAdmin, studioRoleTabs, authUser]);
+
   const toggleFilter = useCallback((arr, setArr, val) => {
     setArr(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
   }, []);
@@ -4178,7 +4189,7 @@ Return ONLY JSON:
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {/* Mode switch */}
           <div style={{ display: "flex", background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 3 }}>
-            {[["studio", "🎨 Studio"], ...(isAdmin || hasPerm("canEditEvents") || hasPerm("canManageLibrary") || hasPerm("canManageTemplates") || hasPerm("canManagePricing") ? [["manage", "⚙️ Manage"]] : [])].map(([id, label]) => (
+            {[["studio", "🎨 Studio"], ...(manageAreas.size > 0 ? [["manage", "⚙️ Manage"]] : [])].map(([id, label]) => (
               <button key={id} onClick={() => setMode(id)} style={{ padding: "6px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: mode === id ? 600 : 400, background: mode === id ? `${accent}22` : "transparent", color: mode === id ? accent : "#6B7280", transition: "all 0.15s" }}>{label}</button>
             ))}
           </div>
@@ -4186,9 +4197,9 @@ Return ONLY JSON:
           {mode === "studio" && <div style={{ display: "flex", gap: 3 }}>{["Event Info", "Browse", "Build", "Summary"].map((l, i) => <div key={i} onClick={() => { if (i <= step) setStep(i); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontWeight: i === step ? 600 : 400, cursor: i <= step ? "pointer" : "default", background: i === step ? "rgba(255,255,255,0.15)" : "transparent", color: i <= step ? "#fff" : "rgba(255,255,255,0.25)" }}>{l}</div>)}</div>}
           {/* Manage tabs */}
           {mode === "manage" && <div style={{ display: "flex", gap: 3 }}>
-            {(hasPerm("canEditEvents") || hasPerm("canManageLibrary")) && <button onClick={() => setManageTab("library")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "library" ? 600 : 400, background: manageTab === "library" ? `${accent}22` : "transparent", color: manageTab === "library" ? accent : "#6B7280" }}>📚 Library & content</button>}
-            {hasPerm("canManagePricing") && <button onClick={() => setManageTab("pricing")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "pricing" ? 600 : 400, background: manageTab === "pricing" ? `${accent}22` : "transparent", color: manageTab === "pricing" ? accent : "#6B7280" }}>💰 Pricing</button>}
-            {isAdmin && <button onClick={() => setManageTab("settings")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "settings" ? 600 : 400, background: manageTab === "settings" ? `${accent}22` : "transparent", color: manageTab === "settings" ? accent : "#6B7280" }}>⚙️ Settings</button>}
+            {manageAreas.has("library") && <button onClick={() => setManageTab("library")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "library" ? 600 : 400, background: manageTab === "library" ? `${accent}22` : "transparent", color: manageTab === "library" ? accent : "#6B7280" }}>📚 Library & content</button>}
+            {manageAreas.has("pricing") && <button onClick={() => setManageTab("pricing")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "pricing" ? 600 : 400, background: manageTab === "pricing" ? `${accent}22` : "transparent", color: manageTab === "pricing" ? accent : "#6B7280" }}>💰 Pricing</button>}
+            {manageAreas.has("settings") && <button onClick={() => setManageTab("settings")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "settings" ? 600 : 400, background: manageTab === "settings" ? `${accent}22` : "transparent", color: manageTab === "settings" ? accent : "#6B7280" }}>⚙️ Settings</button>}
           </div>}
           {/* Live budget — only if canViewPricing */}
           {mode === "studio" && step >= 2 && hasPerm("canViewPricing") && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4229,21 +4240,25 @@ Return ONLY JSON:
       </div>
 
       {/* MANAGE MODE — permission-gated */}
-      {mode === "manage" && authUser && <div style={S.main}>
-        {manageTab === "library" ? (
-          <ManageLibrary ctx={ctx} />
-        ) : manageTab === "pricing" ? (
-          <RateCard rcItems={rcItems} setRcItems={setRcItems} />
-        ) : manageTab === "settings" ? (
-          <ManageSettings ctx={ctx} />
-        ) : (
-          <div style={{ textAlign: "center", padding: 60, color: textS }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>🛠️</div>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>Manage — {manageTab}</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>This section is being rebuilt in a later Studio slice.</div>
-          </div>
-        )}
-      </div>}
+      {mode === "manage" && authUser && (() => {
+        // Resolve the active manage tab to one this role is allowed to see (least privilege).
+        const effManageTab = manageAreas.has(manageTab) ? manageTab : ["library", "pricing", "settings"].find((a) => manageAreas.has(a));
+        return <div style={S.main}>
+          {effManageTab === "library" ? (
+            <ManageLibrary ctx={ctx} />
+          ) : effManageTab === "pricing" ? (
+            <RateCard rcItems={rcItems} setRcItems={setRcItems} />
+          ) : effManageTab === "settings" ? (
+            <ManageSettings ctx={ctx} />
+          ) : (
+            <div style={{ textAlign: "center", padding: 60, color: textS }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>🔒</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>No manage access</div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>Your role has no Manage areas enabled. An admin can grant them in IMS → Admin → Users → Tab Access.</div>
+            </div>
+          )}
+        </div>;
+      })()}
 
       {/* STUDIO MODE */}
       {mode === "studio" && <>
