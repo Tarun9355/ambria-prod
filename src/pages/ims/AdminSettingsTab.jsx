@@ -326,36 +326,37 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
           <p className="text-xs text-gray-400 px-1">⚡ Situational multipliers (Heavy Saya, Event Timing) now live in the 👷 Workforce tab — they multiply all manpower types, not just venue labour.</p>
 
-          <div className="bg-white border rounded-2xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-bold text-gray-900">🏗️ Heavy Element Add-ons</p>
-                <p className="text-xs text-gray-500 mt-0.5">Extra labours added based on heavy inventory items (auto-counted from blocked items)</p>
-              </div>
-              <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: "", freeUpTo: 0, perCount: 10 }] }))} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Heavy Element</button>
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="font-bold text-gray-900 mb-1">🏗️ Heavy Element Add-ons</p>
+            <p className="text-xs text-gray-500 mb-3">Pick the heavy sub-categories that need extra crew. For each: no extra labour up to N elements, then +1 labour per M after that. <span className="text-gray-400">e.g. 0 / 10 → 20 pillars add 2 labours.</span></p>
+
+            {/* Configured sub-categories — chip with its 2 fields (Carpenter-style) */}
+            <div className="flex flex-wrap gap-2 mb-2">
+              {(settings.heavyElementRanges || []).map((her, hi) => {
+                const free = her.freeUpTo ?? 0;
+                const per = her.perCount ?? 10;
+                const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
+                const eg = per > 0 ? Math.floor(Math.max(0, 20 - free) / per) : 0;
+                return (
+                  <div key={hi} className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5">
+                    <span className="text-xs text-indigo-700 font-medium">{her.subCat || "(pick)"}</span>
+                    <span className="text-xs text-gray-400">· up to</span>
+                    <input type="number" min="0" value={free} onChange={(e) => upd({ freeUpTo: parseInt(e.target.value) || 0 })} className="w-11 border border-indigo-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                    <span className="text-xs text-gray-400">+1 / </span>
+                    <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-11 border border-indigo-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                    <span className="text-[10px] text-gray-400 italic">20→+{eg}</span>
+                    <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
+                  </div>
+                );
+              })}
             </div>
-            <p className="text-[11px] text-gray-400 -mt-2">Read as: “no extra up to N, then +1 labour per M”. e.g. 0 / 10 → 20 pillars add 2 labours.</p>
-            {(settings.heavyElementRanges || []).map((her, hi) => {
-              const free = her.freeUpTo ?? 0;
-              const per = her.perCount ?? 10;
-              const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
-              const eg = per > 0 ? Math.floor(Math.max(0, 20 - free) / per) : 0;
-              return (
-                <div key={hi} className="flex items-center gap-2 bg-gray-50 border rounded-lg px-3 py-2 flex-wrap text-sm">
-                  <select value={her.subCat} onChange={(e) => upd({ subCat: e.target.value })} className="border rounded-lg px-2 py-1 text-xs bg-white max-w-[180px]">
-                    <option value="">— Sub-Category —</option>
-                    {studioSubcats.map((sc) => <option key={sc} value={sc}>{sc}</option>)}
-                    {her.subCat && !studioSubcats.includes(her.subCat) && <option value={her.subCat}>{her.subCat} (legacy)</option>}
-                  </select>
-                  <span className="text-xs text-gray-500">— no extra up to</span>
-                  <input type="number" min="0" value={free} onChange={(e) => upd({ freeUpTo: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center font-bold" />
-                  <span className="text-xs text-gray-500">then +1 per</span>
-                  <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center font-bold" />
-                  <span className="text-xs text-gray-400 italic">20 → +{eg}</span>
-                  <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-sm ml-auto">✕</button>
-                </div>
-              );
-            })}
+
+            {/* Add-able sub-categories (everything not yet configured) */}
+            <div className="flex flex-wrap gap-1">
+              {studioSubcats.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
+                <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, freeUpTo: 0, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
+              ))}
+            </div>
           </div>
         </div>
       )}
