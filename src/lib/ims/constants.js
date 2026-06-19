@@ -150,9 +150,9 @@ export const SETTINGS_DEFAULTS = {
     "Ambria Exotica": { min: 5, dumpingLevel: "medium" },
   },
   heavyElementRanges: [
-    { subCat: "Pillars/Columns", ranges: [{ upTo: 10, extra: 0 }, { upTo: 20, extra: 2 }, { upTo: 40, extra: 4 }, { upTo: 9999, extra: 6 }] },
-    { subCat: "Truss Systems", ranges: [{ upTo: 2, extra: 0 }, { upTo: 4, extra: 2 }, { upTo: 9999, extra: 4 }] },
-    { subCat: "Platforms/Risers", ranges: [{ upTo: 2, extra: 0 }, { upTo: 5, extra: 2 }, { upTo: 9999, extra: 4 }] },
+    { subCat: "Pillars/Columns", freeUpTo: 10, perCount: 10 },
+    { subCat: "Truss Systems", freeUpTo: 2, perCount: 2 },
+    { subCat: "Platforms/Risers", freeUpTo: 2, perCount: 3 },
   ],
   situationalMultipliers: {},
   situationalMultiplierCap: 1.8,
@@ -304,3 +304,19 @@ export const PRICE_HISTORY = {
     { vendorId: "V002", vendorName: "Kumar Traders", mobile: "9876500002", price: 52, qty: 50, unit: "Metre", date: "2025-09-10" },
   ],
 };
+
+// Extra labour for a heavy-element rule given the counted quantity.
+// New model: { freeUpTo, perCount } → no extra up to freeUpTo, then +1 labour
+// per perCount thereafter (floor). e.g. freeUpTo 0, perCount 10, qty 20 → 2.
+// Legacy model: { ranges:[{upTo,extra}] } → the extra of the first band the qty fits.
+export function heavyExtraLabour(her, count) {
+  if (!her || !(count > 0)) return 0;
+  if (her.perCount != null || her.freeUpTo != null) {
+    const free = Number(her.freeUpTo) || 0;
+    const per = Number(her.perCount) || 0;
+    if (per <= 0) return 0;
+    return Math.floor(Math.max(0, count - free) / per);
+  }
+  for (const r of (her.ranges || [])) { if (count <= r.upTo) return r.extra || 0; }
+  return 0;
+}

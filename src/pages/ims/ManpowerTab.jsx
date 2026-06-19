@@ -6,6 +6,7 @@ import {
   DUMPING_LEVELS,
   EVENT_TIMINGS,
   SIT_MULT_DEFAULTS,
+  heavyExtraLabour,
 } from "../../lib/ims/constants";
 import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
 import { resolveSizeKey, sizeClassToPatternKey } from "../../lib/ims/flowerHelpers";
@@ -211,11 +212,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
         const inv=(inventory||[]).find(i=>i.id===it.invId);
         return s+(inv?.subCat===her.subCat?it.qty:0);
       },0);
-      if(count>0){
-        for(const r of (her.ranges||[])){
-          if(count<=r.upTo){ heavyExtra+=r.extra; break; }
-        }
-      }
+      heavyExtra += heavyExtraLabour(her, count);
     });
 
     return adjusted+heavyExtra;
@@ -253,7 +250,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       let heavy=0;
       (settings.heavyElementRanges||[]).forEach(her=>{
         const cnt=(otherFn.items||[]).reduce((s,it)=>{const inv=(inventory||[]).find(i=>i.id===it.invId);return s+(inv?.subCat===her.subCat?it.qty:0);},0);
-        if(cnt>0) for(const r of(her.ranges||[])){ if(cnt<=r.upTo){heavy+=r.extra;break;} }
+        heavy += heavyExtraLabour(her, cnt);
       });
       return {fn:otherFn, count:adj+heavy};
     });
@@ -843,7 +840,8 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
                       const heavyBreakdown=[];
                       (settings.heavyElementRanges||[]).forEach(her=>{
                         const cnt=(fn?.items||[]).reduce((s,it)=>{const inv=(inventory||[]).find(i=>i.id===it.invId);return s+(inv?.subCat===her.subCat?it.qty:0);},0);
-                        if(cnt>0){ for(const r of(her.ranges||[])){ if(cnt<=r.upTo){if(r.extra>0){heavyExtra+=r.extra;heavyBreakdown.push(`${her.subCat}: ${cnt} → +${r.extra}`);}break;} } }
+                        const ex = heavyExtraLabour(her, cnt);
+                        if (ex > 0) { heavyExtra += ex; heavyBreakdown.push(`${her.subCat}: ${cnt} → +${ex}`); }
                       });
                       const sameDayFns=fnList.filter(f=>f.date===fn.date&&(f.venue?.name||"")===venueName);
                       return (

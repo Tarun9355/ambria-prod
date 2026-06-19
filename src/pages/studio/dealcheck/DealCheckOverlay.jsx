@@ -9,6 +9,7 @@ import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
+import { heavyExtraLabour } from "../../../lib/ims/constants";
 
 export default function DealCheckOverlay({ ctx }) {
   const {
@@ -189,7 +190,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!dp) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultipliers[shiftToTiming(fn.fnShift)] || 1.0); sm = Math.max(...c, 1.0); }
                   const adj = Math.ceil(base * sm);
                   let he = 0; const sc = {}; walkFn(fn, ({rc, qty}) => { sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
-                  heavyElementRanges.forEach(her => { const cnt = sc[her.subCat]||0; if (cnt > 0) for (const r of (her.ranges||[])) { if (cnt <= r.upTo) { he += r.extra; break; } } });
+                  heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat]||0); });
                   return adj + he;
                 }
                 if (type === "Fabric Bangali") {

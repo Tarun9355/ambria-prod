@@ -5,6 +5,7 @@
 // per-day calculation breakdown panel it drives (15416–15587).
 // ═══════════════════════════════════════════════════════════════
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
+import { heavyExtraLabour } from "../../../../lib/ims/constants";
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -190,11 +191,7 @@ export default function DCManpowerTab({ ctx }) {
                     });
                     heavyElementRanges.forEach(her => {
                       const count = subCounts[her.subCat] || 0;
-                      if (count > 0) {
-                        for (const r of (her.ranges||[])) {
-                          if (count <= r.upTo) { heavyExtra += r.extra; break; }
-                        }
-                      }
+                      heavyExtra += heavyExtraLabour(her, count);
                     });
                     return adjusted + heavyExtra;
                   };
@@ -403,17 +400,8 @@ export default function DCManpowerTab({ ctx }) {
                     const heavyHits = [];
                     heavyElementRanges.forEach(her => {
                       const count = subCounts[her.subCat] || 0;
-                      if (count > 0) {
-                        for (const r of (her.ranges||[])) {
-                          if (count <= r.upTo) {
-                            if (r.extra > 0) {
-                              heavyHits.push({ sub: her.subCat, count, extra: r.extra });
-                              heavyExtra += r.extra;
-                            }
-                            break;
-                          }
-                        }
-                      }
+                      const ex = heavyExtraLabour(her, count);
+                      if (ex > 0) { heavyHits.push({ sub: her.subCat, count, extra: ex }); heavyExtra += ex; }
                     });
                     heavyHits.forEach(h => {
                       steps.push({ label: `+ Heavy add-on · ${h.sub} (${h.count})`, value: `+${h.extra}` });

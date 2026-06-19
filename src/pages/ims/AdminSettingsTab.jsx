@@ -25,6 +25,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const studioLoading = !!studio?.loading;
   const [synNewWords, setSynNewWords] = useState("");
   const [newVenueInput, setNewVenueInput] = useState("");
+  const addVenueMin = () => {
+    const name = newVenueInput.trim();
+    if (!name) return;
+    setSettings((s) => ({ ...s, venueMinLabour: { ...(s.venueMinLabour || {}), [name]: { min: 4, dumpingLevel: "nearby" } } }));
+    setNewVenueInput("");
+  };
   // Mandi panel state
   const [sArtSettingsOpen, setSArtSettingsOpen] = useState(false);
   const [sMandiSearch, setSMandiSearch] = useState("");
@@ -300,8 +306,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               })}
             </div>
             <div className="mt-3 flex gap-2">
-              <input value={newVenueInput} onChange={(e) => setNewVenueInput(e.target.value)} className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Venue name e.g. The Oberoi" />
-              <Btn onClick={() => { if (newVenueInput.trim()) { setSettings((s) => ({ ...s, venueMinLabour: { ...s.venueMinLabour, [newVenueInput.trim()]: { min: 4, dumpingLevel: "nearby" } } })); setNewVenueInput(""); } }} size="sm">+ Add</Btn>
+              <input value={newVenueInput} onChange={(e) => setNewVenueInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addVenueMin(); }} className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Venue name e.g. The Oberoi" />
+              <button type="button" onClick={addVenueMin} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap">+ Add</button>
             </div>
           </div>
 
@@ -339,7 +345,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 <p className="font-bold text-gray-900">🏗️ Heavy Element Add-ons</p>
                 <p className="text-xs text-gray-500 mt-0.5">Extra labours added based on heavy inventory items (auto-counted from blocked items)</p>
               </div>
-              <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: "", ranges: [{ upTo: 5, extra: 0 }, { upTo: 9999, extra: 2 }] }] }))} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Heavy Element</button>
+              <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: "", freeUpTo: 0, perCount: 10 }] }))} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Heavy Element</button>
             </div>
             {(settings.heavyElementRanges || []).map((her, hi) => (
               <div key={hi} className="border rounded-xl p-3 space-y-2">
@@ -351,18 +357,26 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   </select>
                   <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-sm px-2">✕</button>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {(her.ranges || []).map((r, ri) => (
-                    <div key={ri} className="flex items-center gap-1 bg-gray-50 border rounded-lg px-2 py-1">
-                      <span className="text-xs text-gray-500">≤</span>
-                      <input type="number" value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: ranges[hi].ranges.map((rr, rj) => (rj === ri ? { ...rr, upTo: parseInt(e.target.value) || 9999 } : rr)) }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="w-14 border rounded px-1 py-0.5 text-xs text-center" />
-                      <span className="text-xs text-gray-500">→ +</span>
-                      <input type="number" value={r.extra} onChange={(e) => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: ranges[hi].ranges.map((rr, rj) => (rj === ri ? { ...rr, extra: parseInt(e.target.value) || 0 } : rr)) }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="w-12 border rounded px-1 py-0.5 text-xs text-center" />
-                      {(her.ranges || []).length > 1 && <button onClick={() => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: ranges[hi].ranges.filter((_, rj) => rj !== ri) }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="text-red-400 text-xs">×</button>}
+                {(() => {
+                  const free = her.freeUpTo ?? 0;
+                  const per = her.perCount ?? 10;
+                  const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
+                  const eg = per > 0 ? Math.floor(Math.max(0, 20 - free) / per) : 0;
+                  return (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-gray-500 font-medium">No extra labour up to</label>
+                        <input type="number" min="0" value={free} onChange={(e) => upd({ freeUpTo: parseInt(e.target.value) || 0 })} className="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+                        <p className="text-[10px] text-gray-400 mt-0.5">elements before extra manpower starts</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 font-medium">+1 labour per</label>
+                        <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+                        <p className="text-[10px] text-gray-400 mt-0.5">extra elements · e.g. 20 elements → +{eg} labour</p>
+                      </div>
                     </div>
-                  ))}
-                  <button onClick={() => { const ranges = [...(settings.heavyElementRanges || [])]; ranges[hi] = { ...ranges[hi], ranges: [...ranges[hi].ranges, { upTo: 9999, extra: 2 }] }; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); }} className="text-xs text-indigo-500 hover:text-indigo-700 border border-dashed border-indigo-300 px-2 py-1 rounded-lg">+ Range</button>
-                </div>
+                  );
+                })()}
               </div>
             ))}
           </div>

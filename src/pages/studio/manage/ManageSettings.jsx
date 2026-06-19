@@ -533,23 +533,26 @@ export default function ManageSettings({ ctx }) {
                   <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 13, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
                   <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "2px 8px" }}>🗑</span>
                 </div>
-                <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks the primary colour that drives Build photo order):</div>
+                <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks primary colour(s) — you can star more than one — which drive Build photo order):</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
                   {imsColourCatalogue.filter(c => !c.isNeutral).map(c => {
                     const isAnchor = (p.anchorColours || []).includes(c.name);
-                    const isPrimary = p.primaryColour === c.name;
+                    const primaries = Array.isArray(p.primaryColours) ? p.primaryColours : (p.primaryColour ? [p.primaryColour] : []);
+                    const isPrimary = primaries.includes(c.name);
                     const toggleAnchor = () => {
                       const anchors = p.anchorColours || [];
                       const nextA = isAnchor ? anchors.filter(a => a !== c.name) : [...anchors, c.name];
                       const next = [...imsPaletteCatalogue];
-                      next[pi] = { ...next[pi], anchorColours: nextA };
-                      if (isAnchor && isPrimary) next[pi].primaryColour = ""; // removed the primary anchor
+                      next[pi] = { ...next[pi], anchorColours: nextA, primaryColours: isAnchor ? primaries.filter(x => x !== c.name) : primaries };
+                      delete next[pi].primaryColour; // migrate off legacy single field
                       setImsPaletteCatalogue(next); savePaletteData(null, next);
                     };
                     const setPrimary = (e) => {
                       e.stopPropagation();
+                      const nextP = isPrimary ? primaries.filter(x => x !== c.name) : [...primaries, c.name]; // multiple allowed
                       const next = [...imsPaletteCatalogue];
-                      next[pi] = { ...next[pi], primaryColour: isPrimary ? "" : c.name };
+                      next[pi] = { ...next[pi], primaryColours: nextP };
+                      delete next[pi].primaryColour;
                       if (!isPrimary && !isAnchor) next[pi].anchorColours = [...(p.anchorColours || []), c.name];
                       setImsPaletteCatalogue(next); savePaletteData(null, next);
                     };

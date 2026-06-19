@@ -2269,7 +2269,11 @@ export default function StudioApp() {
     const activePaletteName = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx - 1]?.palette || "");
     const activePalette = (imsPaletteCatalogue || []).find(p => p.name === activePaletteName);
     const paletteColors = activePalette ? (activePalette.anchorColours || []) : [];
-    const primaryColor = activePalette ? (activePalette.primaryColour || "") : "";
+    // A palette can have MULTIPLE primary colours; a photo carrying ANY of them is a
+    // full (primary) match. (Legacy single `primaryColour` still read.)
+    const primaryColors = activePalette
+      ? (Array.isArray(activePalette.primaryColours) ? activePalette.primaryColours : (activePalette.primaryColour ? [activePalette.primaryColour] : []))
+      : [];
     const colors = paletteColors.length ? paletteColors : (videoTag?.colors || []);
     const styles = videoTag?.styles || [];
     const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
@@ -2289,11 +2293,11 @@ export default function StudioApp() {
           case "style": if (styles.length && styles.some(s => liStyle.includes(s))) score += weight; break;
           case "color":
             if (colors.length) {
-              if (primaryColor) {
-                // Palette has a designated ★ primary: full weight only when the photo
-                // carries the primary colour; a secondary-anchor match gets a small
-                // weight so those photos queue below the primary-colour ones.
-                if (liColor.includes(primaryColor)) score += weight;
+              if (primaryColors.length) {
+                // Designated ★ primaries: full weight when the photo carries ANY primary
+                // colour; a secondary-anchor-only match gets a small weight so those
+                // photos queue below the primary-colour ones.
+                if (primaryColors.some(pc => liColor.includes(pc))) score += weight;
                 else if (colors.some(c => liColor.includes(c))) score += Math.round(weight * 0.2);
               } else if (colors.some(c => liColor.includes(c))) {
                 score += weight;
