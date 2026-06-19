@@ -97,19 +97,13 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
     finance: [{id:"pl",label:"Event P&L"},{id:"company_pl",label:"Company P&L"},{id:"overheads",label:"Overheads"}],
     admin: [{id:"users",label:"Users"},{id:"vendors",label:"Vendors"},{id:"settings",label:"Settings"}],
   };
-  // Studio app permissions — the reference Studio's 8 canX flags (PERM_LABELS), gated
-  // per-role here so this one screen covers both apps' granular access.
-  const STUDIO_PERMS = [
-    { key: "canViewPricing", label: "View pricing & costs" },
-    { key: "canManagePricing", label: "Manage pricing (Rate Card, Transport)" },
-    { key: "canEditEvents", label: "Add / edit events" },
-    { key: "canManageTemplates", label: "Manage templates" },
-    { key: "canManageLibrary", label: "Manage library" },
-    { key: "canExport", label: "Export data" },
-    { key: "canManageVenues", label: "Manage venues" },
-    { key: "canManageUsers", label: "Manage users" },
-  ];
-  const STUDIO_PERM_DEFAULT = Object.fromEntries(STUDIO_PERMS.map((p) => [p.key, true]));
+  // Studio app — tab/sub-tab access, modelled exactly like the IMS tabs above so this
+  // one screen drives both apps. Stored at roleTabs[role].studio.{tabs,subTabs}.
+  const STUDIO_TABS = [{id:"design",label:"🎨 Design Studio"},{id:"manage",label:"⚙️ Manage"}];
+  const STUDIO_SUBTABS = {
+    design: [{id:"dealcheck",label:"Deal Check"},{id:"viewpricing",label:"View Pricing & Costs"},{id:"export",label:"Export PDF/PPT"}],
+    manage: [{id:"library",label:"Library & content"},{id:"pricing",label:"Pricing (Rate Card)"},{id:"templates",label:"Templates"},{id:"venues",label:"Venues"},{id:"settings",label:"Settings"},{id:"users",label:"Users"}],
+  };
   const roleTabs = settings?.roleTabs || {};
   const toggleRoleTab = (role, tabId) => {
     if (role === "Admin") return; // Admin always has all
@@ -136,24 +130,26 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
     });
   };
   // Studio app access for a role: studio.enabled + studio.areas[] (mirrors IMS tab access).
-  const toggleRoleStudio = (role) => {
+  const toggleRoleStudioTab = (role, tabId) => {
     if (role === "Admin") return;
     setSettings(s => {
       const rt = {...(s.roleTabs || {})};
       const cur = rt[role] || { tabs: [], subTabs: {} };
-      const enabled = !(cur.studio?.enabled);
-      rt[role] = { ...cur, studio: { enabled, perms: enabled ? (cur.studio?.perms && Object.keys(cur.studio.perms).length ? cur.studio.perms : { ...STUDIO_PERM_DEFAULT }) : {} } };
+      const st = cur.studio || { tabs: [], subTabs: {} };
+      const has = (st.tabs || []).includes(tabId);
+      rt[role] = { ...cur, studio: { ...st, tabs: has ? (st.tabs||[]).filter(t=>t!==tabId) : [...(st.tabs||[]), tabId] } };
       return { ...s, roleTabs: rt };
     });
   };
-  const toggleRoleStudioPerm = (role, permKey) => {
+  const toggleRoleStudioSub = (role, parentTab, subId) => {
     if (role === "Admin") return;
     setSettings(s => {
       const rt = {...(s.roleTabs || {})};
       const cur = rt[role] || { tabs: [], subTabs: {} };
-      const perms = { ...(cur.studio?.perms || {}) };
-      perms[permKey] = !perms[permKey];
-      rt[role] = { ...cur, studio: { enabled: true, perms } };
+      const st = cur.studio || { tabs: [], subTabs: {} };
+      const curSubs = st.subTabs?.[parentTab] || [];
+      const has = curSubs.includes(subId);
+      rt[role] = { ...cur, studio: { ...st, subTabs: { ...(st.subTabs||{}), [parentTab]: has ? curSubs.filter(x=>x!==subId) : [...curSubs, subId] } } };
       return { ...s, roleTabs: rt };
     });
   };
@@ -227,34 +223,35 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
             {/* ── Studio app (cross-app access from the same screen) ── */}
             <div className="pt-2 mt-1 border-t border-dashed">
               <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5 mt-1">🎨 Studio App</p>
-              {(() => {
-                const rc = roleTabs[roleEditor] || {};
-                const st = rc.studio || {};
-                const hasStudio = roleEditor === "Admin" || !!st.enabled;
-                const perms = roleEditor === "Admin" ? STUDIO_PERM_DEFAULT : (st.perms || {});
-                return (
-                  <div className="border rounded-lg overflow-hidden">
-                    <div className={"flex items-center gap-3 px-3 py-2 cursor-pointer "+(hasStudio?"bg-amber-50":"bg-gray-50")} onClick={()=>toggleRoleStudio(roleEditor)}>
-                      <div className={"w-5 h-5 rounded border-2 flex items-center justify-center text-xs "+(hasStudio?"bg-amber-500 border-amber-500 text-white":"border-gray-300")}>{hasStudio?"✓":""}</div>
-                      <span className={"text-sm font-medium "+(hasStudio?"text-amber-900":"text-gray-500")}>Studio access</span>
-                      <span className="text-[10px] text-gray-400 ml-auto">toggle granular permissions below</span>
-                    </div>
-                    {hasStudio && (
-                      <div className="flex flex-wrap gap-2 px-4 py-2 bg-white border-t">
-                        {STUDIO_PERMS.map(p => {
-                          const on = roleEditor==="Admin" || !!perms[p.key];
-                          return (
-                            <button key={p.key} onClick={()=>toggleRoleStudioPerm(roleEditor, p.key)}
-                              className={"px-3 py-1 rounded-full text-xs font-medium transition-all "+(on?"bg-amber-100 text-amber-700":"bg-gray-100 text-gray-400")}>
-                              {on?"✓ ":""}{p.label}
-                            </button>
-                          );
-                        })}
+              <div className="space-y-2">
+                {STUDIO_TABS.map(tab => {
+                  const st = roleTabs[roleEditor]?.studio || {};
+                  const hasTab = roleEditor==="Admin" || (st.tabs||[]).includes(tab.id);
+                  const subs = STUDIO_SUBTABS[tab.id];
+                  const rcSubs = st.subTabs?.[tab.id] || [];
+                  return (
+                    <div key={tab.id} className="border rounded-lg overflow-hidden">
+                      <div className={"flex items-center gap-3 px-3 py-2 cursor-pointer "+(hasTab?"bg-amber-50":"bg-gray-50")} onClick={()=>toggleRoleStudioTab(roleEditor, tab.id)}>
+                        <div className={"w-5 h-5 rounded border-2 flex items-center justify-center text-xs "+(hasTab?"bg-amber-500 border-amber-500 text-white":"border-gray-300")}>{hasTab?"✓":""}</div>
+                        <span className={"text-sm font-medium "+(hasTab?"text-amber-900":"text-gray-500")}>{tab.label}</span>
                       </div>
-                    )}
-                  </div>
-                );
-              })()}
+                      {hasTab && subs && (
+                        <div className="flex flex-wrap gap-2 px-4 py-2 bg-white border-t">
+                          {subs.map(sb => {
+                            const on = roleEditor==="Admin" || rcSubs.includes(sb.id);
+                            return (
+                              <button key={sb.id} onClick={()=>toggleRoleStudioSub(roleEditor, tab.id, sb.id)}
+                                className={"px-3 py-1 rounded-full text-xs font-medium transition-all "+(on?"bg-amber-100 text-amber-700":"bg-gray-100 text-gray-400")}>
+                                {on?"✓ ":""}{sb.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>

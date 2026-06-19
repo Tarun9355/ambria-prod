@@ -60,8 +60,9 @@ export function userApps(user, roleTabs = {}) {
   const rc = roleTabs?.[role];
   // IMS: explicit tabs list if present, else role-name default (ops roles get IMS).
   const hasIms = rc && "tabs" in rc ? (rc.tabs || []).length > 0 : role !== "Sales";
-  // Studio: explicit studio.enabled if configured, else role-name default (Sales gets Studio).
-  const hasStudio = rc && rc.studio ? !!rc.studio.enabled : role === "Sales";
+  // Studio: granted if the role has any Studio tab configured (legacy .enabled also honored),
+  // else role-name default (Sales gets Studio).
+  const hasStudio = rc && rc.studio ? ((rc.studio.tabs || []).length > 0 || !!rc.studio.enabled) : role === "Sales";
   const apps = [];
   if (hasStudio) apps.push("studio");
   if (hasIms) apps.push("ims");

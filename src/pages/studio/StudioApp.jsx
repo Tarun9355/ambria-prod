@@ -1277,26 +1277,51 @@ export default function StudioApp() {
   // (settings.roleTabs[role].studio.perms, the 8 canX flags). Drives hasPerm below.
   const [studioRoleTabs, setStudioRoleTabs] = useState({});
   useEffect(() => { (async () => { try { const v = await kvGet("roleTabs"); const p = typeof v === "string" ? JSON.parse(v) : v; if (p && typeof p === "object") setStudioRoleTabs(p); } catch { /* ignore */ } })(); }, []);
-  const studioPerms = useMemo(() => {
-    if (isAdmin) return null; // admin → hasPerm always true
-    return studioRoleTabs?.[authUser?.role]?.studio?.perms || null;
+  // Role's Studio tab/sub-tab config (settings.roleTabs[role].studio). null = admin (all).
+  // Unconfigured non-admin defaults to deal-builder only (matches the reference 'sales' default).
+  const studioCfg = useMemo(() => {
+    if (isAdmin) return null;
+    return studioRoleTabs?.[authUser?.role]?.studio || { tabs: ["design"], subTabs: {} };
   }, [isAdmin, studioRoleTabs, authUser]);
-
+  const hasStudioTab = useCallback((t) => isAdmin || (studioCfg?.tabs || []).includes(t), [isAdmin, studioCfg]);
+  const studioSub = useCallback((parent, sub) => {
+    if (isAdmin) return true;
+    if (!(studioCfg?.tabs || []).includes(parent)) return false;
+    return (studioCfg?.subTabs?.[parent] || []).includes(sub); // explicit grant
+  }, [isAdmin, studioCfg]);
+  // Map the reference's canX perm flags onto the Studio tab/sub-tab grants. Every existing
+  // hasPerm("canX") call site across Studio/views/manage keeps working through this.
   const hasPerm = useCallback((perm) => {
     if (isAdmin) return true;
-    if (studioPerms) return !!studioPerms[perm];        // role-configured studio perms
-    const p = authUser?.perms;                           // fallback: legacy per-user perms
-    if (Array.isArray(p)) return p.includes(perm);       // users.permissions is a text[]
-    return p?.[perm] === true;
-  }, [authUser, isAdmin, studioPerms]);
+    switch (perm) {
+      case "canViewPricing": return studioSub("design", "viewpricing");
+      case "canExport": return studioSub("design", "export");
+      case "canEditEvents":
+      case "canManageLibrary": return studioSub("manage", "library");
+      case "canManagePricing": return studioSub("manage", "pricing");
+      case "canManageTemplates": return studioSub("manage", "templates");
+      case "canManageVenues": return studioSub("manage", "venues");
+      case "canManageUsers": return studioSub("manage", "users");
+      default: {
+        const p = authUser?.perms;
+        if (Array.isArray(p)) return p.includes(perm);
+        return p?.[perm] === true;
+      }
+    }
+  }, [isAdmin, studioSub, authUser]);
 
   const userVenueScope = useMemo(() => {
     if (!authUser) return "all";
     return teamData[authUser.id]?.venueScope || "all";
   }, [authUser, teamData]);
 
-  // Manage button shows if the role can manage anything (faithful to reference gating).
-  const canManageAny = isAdmin || hasPerm("canEditEvents") || hasPerm("canManageLibrary") || hasPerm("canManageTemplates") || hasPerm("canManagePricing");
+  const canManageAny = hasStudioTab("manage");          // Manage mode access
+  const canDesign = isAdmin || hasStudioTab("design");  // Deal-builder (studio mode) access
+  // If the role can't use the active mode, switch to one it can.
+  useEffect(() => {
+    if (mode === "studio" && !canDesign && canManageAny) setMode("manage");
+    else if (mode === "manage" && !canManageAny && canDesign) setMode("studio");
+  }, [mode, canDesign, canManageAny]);
 
   const toggleFilter = useCallback((arr, setArr, val) => {
     setArr(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
@@ -4194,7 +4219,7 @@ Return ONLY JSON:
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {/* Mode switch */}
           <div style={{ display: "flex", background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 3 }}>
-            {[["studio", "🎨 Studio"], ...(canManageAny ? [["manage", "⚙️ Manage"]] : [])].map(([id, label]) => (
+            {[...(canDesign ? [["studio", "🎨 Studio"]] : []), ...(canManageAny ? [["manage", "⚙️ Manage"]] : [])].map(([id, label]) => (
               <button key={id} onClick={() => setMode(id)} style={{ padding: "6px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: mode === id ? 600 : 400, background: mode === id ? `${accent}22` : "transparent", color: mode === id ? accent : "#6B7280", transition: "all 0.15s" }}>{label}</button>
             ))}
           </div>
@@ -4204,7 +4229,7 @@ Return ONLY JSON:
           {mode === "manage" && <div style={{ display: "flex", gap: 3 }}>
             {(hasPerm("canEditEvents") || hasPerm("canManageLibrary")) && <button onClick={() => setManageTab("library")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "library" ? 600 : 400, background: manageTab === "library" ? `${accent}22` : "transparent", color: manageTab === "library" ? accent : "#6B7280" }}>📚 Library & content</button>}
             {hasPerm("canManagePricing") && <button onClick={() => setManageTab("pricing")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "pricing" ? 600 : 400, background: manageTab === "pricing" ? `${accent}22` : "transparent", color: manageTab === "pricing" ? accent : "#6B7280" }}>💰 Pricing</button>}
-            {isAdmin && <button onClick={() => setManageTab("settings")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "settings" ? 600 : 400, background: manageTab === "settings" ? `${accent}22` : "transparent", color: manageTab === "settings" ? accent : "#6B7280" }}>⚙️ Settings</button>}
+            {(isAdmin || studioSub("manage", "settings")) && <button onClick={() => setManageTab("settings")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "settings" ? 600 : 400, background: manageTab === "settings" ? `${accent}22` : "transparent", color: manageTab === "settings" ? accent : "#6B7280" }}>⚙️ Settings</button>}
           </div>}
           {/* Live budget — only if canViewPricing */}
           {mode === "studio" && step >= 2 && hasPerm("canViewPricing") && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4216,7 +4241,7 @@ Return ONLY JSON:
           {/* Cross-app switcher (only for users granted both Studio + IMS) */}
           <AppSwitcher current="studio" />
           {/* Deal Check entry */}
-          {authUser && mode === "studio" && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)", background: "transparent", color: "#6B7280", fontSize: 13, cursor: "pointer", lineHeight: 1 }}>⚙</button>}
+          {authUser && mode === "studio" && (isAdmin || studioSub("design", "dealcheck")) && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)", background: "transparent", color: "#6B7280", fontSize: 13, cursor: "pointer", lineHeight: 1 }}>⚙</button>}
           {/* User badge */}
           {authUser && <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}><div style={{ padding: "5px 12px", borderRadius: 8, background: "rgba(255,255,255,0.06)", fontSize: 11, color: "#fff" }}>{authUser.name}{isAdmin && <span style={{ color: accent, marginLeft: 4, fontSize: 9 }}>ADMIN</span>}{!isAdmin && authUser.role === "manager" && <span style={{ color: "#38BDF8", marginLeft: 4, fontSize: 9 }}>MGR</span>}</div><button onClick={doLogout} style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#6B7280", fontSize: 10, cursor: "pointer" }}>Logout</button></div>}
         </div>
@@ -4249,7 +4274,7 @@ Return ONLY JSON:
         // Resolve the active manage tab to one this role is permitted to see.
         const canLib = hasPerm("canEditEvents") || hasPerm("canManageLibrary");
         const canPrice = hasPerm("canManagePricing");
-        const canSettings = isAdmin;
+        const canSettings = isAdmin || studioSub("manage", "settings");
         const okFor = (t) => (t === "library" && canLib) || (t === "pricing" && canPrice) || (t === "settings" && canSettings);
         const effManageTab = okFor(manageTab) ? manageTab : (canLib ? "library" : canPrice ? "pricing" : canSettings ? "settings" : null);
         return <div style={S.main}>
