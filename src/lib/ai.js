@@ -10,9 +10,11 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const FN_URL = `${SUPABASE_URL}/functions/v1/anthropic`;
 
-export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku-4-5-20251001", maxTokens = 2000 }) {
+export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku-4-5-20251001", maxTokens = 2000, system }) {
   const userContent = contentBlocks;
   try {
+    const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: userContent }] };
+    if (system) body.system = system;
     const resp = await fetch(FN_URL, {
       method: "POST",
       headers: {
@@ -20,7 +22,7 @@ export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku
         Authorization: `Bearer ${ANON_KEY}`,
         apikey: ANON_KEY,
       },
-      body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content: userContent }] }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error(`API ${resp.status}`);
     const data = await resp.json();

@@ -3281,7 +3281,7 @@ Return ONLY JSON:
     showMsg("Resumed session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
   }, [events, allVideos, ytVideoTags, activeFnIdx]);
 
-  // ── AI tag an image (Claude vision) — VERBATIM (routes via /api/anthropic) ──
+  // ── AI tag an image (Claude vision) — routes via callClaudeStreaming (Supabase Edge Fn) ──
   const aiTagImage = async (url) => {
     const STRUCTURAL_CATS = new Set(["truss", "platform", "masking", "fixed"]);
     const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
@@ -3331,18 +3331,13 @@ Return ONLY JSON:
       const msgContent = b64
         ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: prompt }]
         : [{ type: "image", source: { type: "url", url } }, { type: "text", text: prompt }];
-      const r = await fetch("/api/anthropic", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1500,
-          system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
-          messages: [{ role: "user", content: msgContent }]
-        })
+      const txt = await callClaudeStreaming({
+        contentBlocks: msgContent,
+        model: "claude-sonnet-4-20250514",
+        maxTokens: 1500,
+        system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
       });
-      const d = await r.json();
-      if (d.error) { showMsg("API error: " + (d.error.message || JSON.stringify(d.error)), "red"); return null; }
-      const txt = d.content?.map(c => c.text || "").join("") || "";
-      if (!txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
+      if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
       if (parsed.elements && rcItems.length) {
