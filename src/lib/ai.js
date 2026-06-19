@@ -24,8 +24,11 @@ export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku
       },
       body: JSON.stringify(body),
     });
-    if (!resp.ok) throw new Error(`API ${resp.status}`);
-    const data = await resp.json();
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.error) {
+      const msg = data?.error?.message || data?.error || `HTTP ${resp.status}`;
+      throw new Error(`API ${resp.status}: ${typeof msg === "string" ? msg : JSON.stringify(msg)}`);
+    }
     return (data.content || []).map((b) => b.text || "").join("");
   } catch (e) {
     throw new Error("Claude API: " + e.message);

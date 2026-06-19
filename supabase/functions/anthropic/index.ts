@@ -34,10 +34,12 @@ Deno.serve(async (req) => {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  const { model = "claude-haiku-4-5-20251001", max_tokens = 2000, messages } = body || {};
+  const { model = "claude-haiku-4-5-20251001", max_tokens = 2000, messages, system } = body || {};
   if (!Array.isArray(messages)) return json({ error: "messages[] required" }, 400);
 
   try {
+    const payload: Record<string, unknown> = { model, max_tokens, messages };
+    if (system) payload.system = system;
     const resp = await fetch(ANTHROPIC_URL, {
       method: "POST",
       headers: {
@@ -45,7 +47,7 @@ Deno.serve(async (req) => {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ model, max_tokens, messages }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
     return json(data, resp.status);

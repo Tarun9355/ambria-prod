@@ -3305,31 +3305,38 @@ Return ONLY JSON:
       img.onerror = () => { clearTimeout(timer); reject(new Error("Image load failed")); };
       img.src = imgUrl;
     });
+    // Returns { data, type } so the media_type sent to Claude matches the actual bytes
+    // (sending PNG/WebP bytes labelled image/jpeg makes the API reject the request).
     const fetchBase64 = async (imgUrl) => {
       const resp = await fetch(imgUrl, { mode: "cors" });
       if (!resp.ok) throw new Error("Fetch failed: " + resp.status);
       const blob = await resp.blob();
+      const type = /^image\/(jpeg|png|gif|webp)$/.test(blob.type) ? blob.type : "image/jpeg";
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(",")[1]);
+        reader.onloadend = () => resolve({ data: reader.result.split(",")[1], type });
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
     };
     try {
-      let b64 = null;
+      let b64 = null, mediaType = "image/jpeg";
       if (url.startsWith("data:image")) {
         b64 = url.split(",")[1];
+        const m = url.match(/^data:(image\/[a-z]+)/);
+        if (m) mediaType = m[1];
         showMsg("Image loaded, analyzing...", "green");
       } else {
-        try { b64 = await toBase64(url); showMsg("Image loaded, analyzing...", "green"); } catch (e1) {
-          try { b64 = await fetchBase64(url); showMsg("Image fetched, analyzing...", "green"); } catch (e2) {
+        // Prefer fetchBase64 (preserves real bytes + media type). Canvas re-encode (always
+        // jpeg) is the fallback for hosts that block fetch CORS but allow <img> crossOrigin.
+        try { const r = await fetchBase64(url); b64 = r.data; mediaType = r.type; showMsg("Image fetched, analyzing...", "green"); } catch (e1) {
+          try { b64 = await toBase64(url); mediaType = "image/jpeg"; showMsg("Image loaded, analyzing...", "green"); } catch (e2) {
             showMsg("CORS blocked — trying direct URL...", "orange");
           }
         }
       }
       const msgContent = b64
-        ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } }, { type: "text", text: prompt }]
+        ? [{ type: "image", source: { type: "base64", media_type: mediaType, data: b64 } }, { type: "text", text: prompt }]
         : [{ type: "image", source: { type: "url", url } }, { type: "text", text: prompt }];
       const txt = await callClaudeStreaming({
         contentBlocks: msgContent,
