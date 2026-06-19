@@ -903,6 +903,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               })}
               <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: [...sizeData.flowers, { flowerId: "", qty: 0 }] } } }))}
                 className="text-xs text-indigo-500 hover:text-indigo-700 border border-dashed border-indigo-200 rounded px-2 py-0.5 w-full mt-1">+ flower</button>
+              {/* Flowerist productivity — units one flowerist completes per dihari (8-hr shift)
+                  for this size. Drives the Manpower Tier-1 flowerist headcount. */}
+              <div className="mt-2">
+                <label className="text-[10px] text-gray-500" title="Units one flowerist completes per dihari (8-hr shift) for this size. Used by Planning → Manpower (Tier 1) to compute flowerist headcount from the function's flower orders.">👷 1 flowerist / dihari</label>
+                <div className="mt-1 flex items-center gap-1">
+                  <input type="number" min="0" step="0.1" value={sizeData.unitsPerFlowerist ?? ""}
+                    onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, unitsPerFlowerist: v } } })); }}
+                    placeholder="—"
+                    className="flex-1 border rounded px-2 py-1 text-xs font-semibold text-blue-700 text-center" />
+                  <span className="text-[9px] text-gray-400 w-12 truncate">{studioUnitLabel(studioItem.unit) || "/unit"}</span>
+                </div>
+              </div>
               {(() => {
                 const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue);
                 if (cost === null) return <div className="mt-2 border-t border-dashed pt-2 text-[10px] text-gray-400 italic text-center">Empty — no cost</div>;
