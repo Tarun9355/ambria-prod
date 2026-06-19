@@ -195,7 +195,9 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       // Heavy Saya from season calendar
       const fnDate=fn?.date||"";
       const season=(settings.seasonMap||{})[fnDate];
-      if(season==="kings") candidates.push(settings.sayaMultiplier||1.3);
+      // Heavy Saya now uses the per-type factor (Workforce tab); single scalar removed.
+      const heavySayaOn=season==="kings"||(settings.datePricing?.markedDates||{})[fnDate]==="heavy_saya";
+      if(heavySayaOn) candidates.push((settings.situationalMultipliers?.heavySaya||{})[type]||SIT_MULT_DEFAULTS.heavySaya[type]||1.3);
       // Event timing — THIS function's start time determines pressure
       const fnTiming=getEventTimingFromTime(fn?.eventStartTime);
       const fnTimingMult=(settings.eventTimingMultipliers||{})[fnTiming.id]||fnTiming.mult;
@@ -239,7 +241,8 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       if(!dp){
         const cands=[tempDump];
         const season=(settings.seasonMap||{})[otherFn.date||""];
-        if(season==="kings") cands.push(settings.sayaMultiplier||1.3);
+        const heavySayaOn=season==="kings"||(settings.datePricing?.markedDates||{})[otherFn.date||""]==="heavy_saya";
+        if(heavySayaOn) cands.push((settings.situationalMultipliers?.heavySaya||{}).Labours||SIT_MULT_DEFAULTS.heavySaya.Labours||1.3);
         // Event timing — this function's own start time
         const otherTiming=getEventTimingFromTime(otherFn.eventStartTime);
         const otherTimingMult=(settings.eventTimingMultipliers||{})[otherTiming.id]||otherTiming.mult;
@@ -488,7 +491,16 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       factors.push({label:dayPriorTentative?"🟡 Tentative (calc as same-day)":"📅 Same-Day",mult:1.0});
     }
 
-    const rawMult=dateMult*segMult*timingMult;
+    // Factor 4 — Event Timing (lunch/brunch/sundowner): tighter setup window multiplies
+    // ALL manpower types. Skipped on day-prior confirmed (extra day removes the pressure).
+    let evtTimingMult=1.0;
+    if(!dayPriorConfirmed){
+      const ev=getEventTimingFromTime(fn?.eventStartTime);
+      evtTimingMult=(settings.eventTimingMultipliers||{})[ev.id]||ev.mult||1.0;
+      if(evtTimingMult!==1.0) factors.push({label:`⏰ ${ev.label||ev.id}`,mult:evtTimingMult});
+    }
+
+    const rawMult=dateMult*segMult*timingMult*evtTimingMult;
     const cappedMult=Math.min(rawMult, cap);
     const wasCapped=rawMult>cap;
     const adjusted=Math.max(1, Math.ceil(baseQty*cappedMult));

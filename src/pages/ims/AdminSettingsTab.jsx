@@ -274,6 +274,19 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   </div>
                 );
               })}
+              {/* Event Timing — tighter setup window for early events; multiplies ALL manpower types */}
+              <div className="bg-white border border-amber-200 rounded-lg p-3">
+                <div className="mb-2"><span className="text-xs font-bold text-gray-800">⏰ Event Timing</span><span className="text-xs text-gray-400 ml-2">Earlier events have a tighter setup window → multiplies ALL manpower types. Dinner & late-night need no multiplier (planning already covers them).</span></div>
+                <div className="grid grid-cols-3 gap-2">
+                  {EVENT_TIMINGS.filter((t) => t.id !== "dinner" && t.id !== "latenight").map((t) => (
+                    <div key={t.id} className="bg-gray-50 border rounded-lg p-2 text-center">
+                      <p className="text-xs font-medium text-gray-700 mb-0.5">{t.label}</p>
+                      <p className="text-[10px] text-gray-400 mb-1">{t.setupWindow}</p>
+                      <input type="number" min="1" max="2" step="0.05" value={(settings.eventTimingMultipliers || {})[t.id] || t.mult} onChange={(e) => setSettings((s) => ({ ...s, eventTimingMultipliers: { ...s.eventTimingMultipliers, [t.id]: parseFloat(e.target.value) || 1 } }))} className="w-full border rounded px-2 py-1 text-sm text-center font-bold" />
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -311,33 +324,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
           </div>
 
-          <div className="bg-white border rounded-2xl p-5 space-y-4">
-            <p className="font-bold text-gray-900 mb-1">⚡ Situational Multipliers</p>
-            <p className="text-xs text-gray-500">Only the HIGHEST of Dumping/Saya/Timing applies (not stacked). Excluded entirely if day-prior setup.</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs text-gray-500 font-medium">👑 Heavy Saya Multiplier (Kings dates)</label>
-                <input type="number" min="1" max="3" step="0.1" value={settings.sayaMultiplier || 1.3} onChange={(e) => setSettings((s) => ({ ...s, sayaMultiplier: parseFloat(e.target.value) || 1.3 }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 font-medium">⏰ Event Timing Multipliers (auto-mapped from Event Start Time)</label>
-              <p className="text-xs text-gray-400 mb-2">Salesperson enters event start time per function. System auto-categorizes and applies the multiplier.</p>
-              <div className="grid grid-cols-5 gap-2 mt-2">
-                {EVENT_TIMINGS.map((t, i) => {
-                  const prevHour = i > 0 ? EVENT_TIMINGS[i - 1].beforeHour : 0;
-                  return (
-                    <div key={t.id} className="bg-gray-50 border rounded-lg p-2 text-center">
-                      <p className="text-xs font-medium text-gray-700 mb-1">{t.label}</p>
-                      <p className="text-xs text-gray-400 mb-0.5">{prevHour > 0 ? prevHour + ":00" : "Start"}–{t.beforeHour}:00</p>
-                      <p className="text-xs text-gray-400 mb-1.5">{t.setupWindow}</p>
-                      <input type="number" min="1" max="3" step="0.05" value={(settings.eventTimingMultipliers || {})[t.id] || t.mult} onChange={(e) => setSettings((s) => ({ ...s, eventTimingMultipliers: { ...s.eventTimingMultipliers, [t.id]: parseFloat(e.target.value) || 1 } }))} className="w-full border rounded px-2 py-1 text-sm text-center font-bold" />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          <p className="text-xs text-gray-400 px-1">⚡ Situational multipliers (Heavy Saya, Event Timing) now live in the 👷 Workforce tab — they multiply all manpower types, not just venue labour.</p>
 
           <div className="bg-white border rounded-2xl p-5 space-y-4">
             <div className="flex items-center justify-between">
