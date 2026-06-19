@@ -43,6 +43,10 @@ export async function cldAdmin(action, params = {}) {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${_ANON_KEY}`, apikey: _ANON_KEY },
     body: JSON.stringify({ action, ...params }),
   });
-  if (!r.ok) throw new Error(`Cloudinary ${r.status}`);
-  return r.json();
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.error) {
+    const msg = data?.error?.message || data?.error || data?.message || `HTTP ${r.status}`;
+    throw new Error(`Cloudinary ${r.status}: ${typeof msg === "string" ? msg : JSON.stringify(msg)}`);
+  }
+  return data;
 }
