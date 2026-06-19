@@ -566,7 +566,7 @@ async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
     if (signal?.aborted) return { primary: null, alternatives: [], aborted: true };
     const text = await callClaudeStreaming({
       contentBlocks: prompt,
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       maxTokens: 800,
     });
     const clean = (text || "").replace(/```json|```/g, "").trim();
@@ -620,7 +620,7 @@ async function matchPhotoWithAI(photoUrl, photoMetadata, inventoryList) {
         { type: "image", source: { type: "url", url: photoUrl } },
         { type: "text", text: prompt },
       ],
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       maxTokens: 1000,
     });
     const clean = (text || "").replace(/```json|```/g, "").trim();
@@ -2617,7 +2617,7 @@ Return ONLY JSON:
       showMsg("🤖 AI analyzing video...", "blue");
       const txt = await callClaudeStreaming({
         contentBlocks: prompt,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         maxTokens: 500,
       });
       const clean = (txt || "").replace(/```json|```/g, "").trim();
@@ -3340,7 +3340,7 @@ Return ONLY JSON:
         : [{ type: "image", source: { type: "url", url } }, { type: "text", text: prompt }];
       const txt = await callClaudeStreaming({
         contentBlocks: msgContent,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         maxTokens: 1500,
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
       });

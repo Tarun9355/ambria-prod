@@ -344,7 +344,7 @@ Respond ONLY with a JSON array, no other text:
 
       // Migration: the reference posted to the Vercel /api/anthropic route; this SPA proxies
       // through the Supabase `anthropic` Edge Function via callClaudeStreaming (same contract).
-      const text=await callClaudeStreaming({contentBlocks,model:"claude-sonnet-4-20250514",maxTokens:4000});
+      const text=await callClaudeStreaming({contentBlocks,model:"claude-sonnet-4-6",maxTokens:4000});
 
       // Parse AI response
       let elements=[];

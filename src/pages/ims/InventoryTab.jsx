@@ -120,7 +120,7 @@ Rules:
 - itemClass: discrete if countable (1 arch), bulk if by weight/length (kg roses, metres ribbon)
 - confidence: Low if unclear` },
       ];
-      const text = await callClaudeStreaming({ contentBlocks: photoBlocks, model: "claude-sonnet-4-20250514", maxTokens: 600 });
+      const text = await callClaudeStreaming({ contentBlocks: photoBlocks, model: "claude-sonnet-4-6", maxTokens: 600 });
       const clean = text.replace(/```json|```/g, "").trim();
       const ai = JSON.parse(clean);
       const validCats = studioCatLabels.length > 0 ? studioCatLabels : INV_CATS;

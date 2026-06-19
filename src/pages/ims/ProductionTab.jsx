@@ -100,7 +100,7 @@ Compare the two and return ONLY JSON:
 - Partial: structure matches but some differences in colour/size/detail
 - Different: significantly different from reference` },
       ];
-      const text = await callClaudeStreaming({ contentBlocks: compBlocks, model: "claude-sonnet-4-20250514", maxTokens: 200 });
+      const text = await callClaudeStreaming({ contentBlocks: compBlocks, model: "claude-sonnet-4-6", maxTokens: 200 });
       return JSON.parse(text.replace(/```json|```/g, "").trim());
     } catch (e) {
       return { result: "Unknown", reason: "AI comparison failed: " + e.message };
