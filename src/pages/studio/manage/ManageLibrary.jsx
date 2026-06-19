@@ -45,7 +45,7 @@ export default function ManageLibrary({ ctx }) {
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
-    cldOpen, setCldOpen, cldFolders, cldPath, cldImages, setCldImages, cldLoading,
+    cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading,
     cldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
     cldSelectMode, setCldSelectMode, cldSelected, setCldSelected, cldDeleting,
     fetchCldFolders, cldNavigate, cldGoBack, handleCldUpload, handleCldBulkDelete, handleCldDeleteFolder,
