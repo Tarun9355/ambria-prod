@@ -35,6 +35,8 @@ export default function StudioModals({ ctx }) {
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
+    // premiaGate (👑 Sr. Designer / Platinum gate)
+    premiaGate, setPremiaGate, premiaConfig,
   } = ctx;
 
   return (<>
@@ -430,5 +432,22 @@ export default function StudioModals({ ctx }) {
           />
         );
       })()}
+
+      {premiaGate&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setPremiaGate(null)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#1a1a2e":"#fff",borderRadius:14,maxWidth:440,width:"100%",overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+          <div style={{background:isDark?"#0F0F1A":"#F5F3EE",padding:"22px 26px 16px",borderBottom:`1px solid ${border}`}}>
+            <div style={{display:"inline-block",background:"#26215C",color:"#CECBF6",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:5,letterSpacing:"0.04em",marginBottom:10}}>{premiaConfig.badge}</div>
+            <div style={{fontSize:19,fontWeight:600,color:isDark?"#F5F5F0":"#1a1a2e"}}>{premiaConfig.title}</div>
+            <div style={{fontSize:12,color:textS,marginTop:3}}>{premiaConfig.subtitle}</div>
+          </div>
+          <div style={{padding:"18px 26px 14px",whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7,color:isDark?"#E5E5E5":"#1a1a2e"}}>
+            {premiaConfig.body}
+          </div>
+          <div style={{padding:"12px 26px 22px",display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
+            <button onClick={()=>setPremiaGate(null)} style={{background:"transparent",border:`1px solid ${border}`,color:isDark?"#E5E5E5":"#1a1a2e",padding:"9px 18px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>{premiaConfig.closeLabel||"Close"}</button>
+            {premiaConfig.ctaLabel&&premiaConfig.ctaUrl&&<a href={premiaConfig.ctaUrl} target="_blank" rel="noopener noreferrer" onClick={()=>setPremiaGate(null)} style={{background:"#26215C",border:"1px solid #26215C",color:"#EEEDFE",padding:"9px 18px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",textDecoration:"none"}}>{premiaConfig.ctaLabel}</a>}
+          </div>
+        </div>
+      </div>}
   </>);
 }
