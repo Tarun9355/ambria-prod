@@ -233,7 +233,11 @@ Rules:
     setAddModal(false);
   }
 
-  function deleteItem(id) { setInventory((prev) => prev.filter((i) => i.id !== id), [id]); }
+  function deleteItem(id) {
+    const it = inventory.find((i) => i.id === id);
+    if (!window.confirm(`Delete "${it?.name || "this item"}" from inventory?\n\nThis permanently removes the item and cannot be undone.`)) return;
+    setInventory((prev) => prev.filter((i) => i.id !== id), [id]);
+  }
 
   // ── Edit handlers ────────────────────────────────────────────────────────
   function openEdit(itemId) {

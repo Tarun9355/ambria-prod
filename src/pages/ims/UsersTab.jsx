@@ -71,7 +71,11 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
     setCredsShown({ name: form.name.trim(), username, password: form.password.trim(), isReset: false });
   }
   function toggleActive(id){ setUsers(prev=>prev.map(u=>u.id===id?{...u,active:!u.active}:u)); }
-  function deleteUser(id){ setUsers(prev=>prev.filter(u=>u.id!==id), [id]); }
+  function deleteUser(id){
+    const u = users.find(x=>x.id===id);
+    if(!window.confirm(`Delete user "${u?.name || u?.username || "this user"}"?\n\nThis cannot be undone.`)) return;
+    setUsers(prev=>prev.filter(u=>u.id!==id), [id]);
+  }
 
   // Reset Password flow
   function openReset(u){ setResetFor(u); setResetPw(""); }

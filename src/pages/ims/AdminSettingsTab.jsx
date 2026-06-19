@@ -52,7 +52,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     setSupervisors([...supervisors, { id, name: "New Supervisor", phone: "", active: true }]);
   }
   function updateSupervisor(id, field, val) { setSupervisors((prev) => prev.map((s) => s.id === id ? { ...s, [field]: val } : s)); }
-  function removeSupervisor(id) { setSupervisors((prev) => prev.filter((s) => s.id !== id), [id]); }
+  function removeSupervisor(id) {
+    const sup = supervisors.find((s) => s.id === id);
+    if (!window.confirm(`Delete supervisor "${sup?.name || "this supervisor"}"?\n\nThis cannot be undone.`)) return;
+    setSupervisors((prev) => prev.filter((s) => s.id !== id), [id]);
+  }
 
   return (
     <div className="space-y-4">
