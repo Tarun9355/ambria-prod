@@ -5,9 +5,9 @@ import { userApps } from "../lib/auth";
 // Cross-app header toggle. Only renders for users granted BOTH apps; one click
 // navigates between Studio and IMS (same SPA, HashRouter). `current` is the active app id.
 export default function AppSwitcher({ current }) {
-  const { user } = useAuth();
+  const { user, roleTabs } = useAuth();
   const navigate = useNavigate();
-  const apps = userApps(user);
+  const apps = userApps(user, roleTabs);
   if (apps.length < 2) return null;
   const tabs = [
     { id: "studio", to: "/studio", label: "🎨 Studio" },
