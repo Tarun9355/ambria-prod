@@ -16,6 +16,7 @@ import AppSwitcher from "../../components/AppSwitcher.jsx";
 import RateCard from "./RateCard.jsx";
 import ManageLibrary from "./manage/ManageLibrary.jsx";
 import ManageSettings from "./manage/ManageSettings.jsx";
+import PremiaEditor from "./manage/PremiaEditor.jsx";
 import StudioModals from "./StudioModals.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
@@ -4130,7 +4131,7 @@ Return ONLY JSON:
     zoneDefs, setZoneDefs, saveZD, zoneMeta, zoneKeys, zoneLabelsD, zdEditZone, setZdEditZone,
     // premia
     premiaConfig, setPremiaConfig, savePremiaConfig, premiaGate, setPremiaGate, premiaDraft, setPremiaDraft,
-    premiaEditorOpen, setPremiaEditorOpen, premiaPreview, setPremiaPreview, isPremiaPlatinum,
+    premiaEditorOpen, setPremiaEditorOpen, premiaPreview, setPremiaPreview, isPremiaPlatinum, PREMIA_DEFAULTS,
     // youtube
     ytVideos, setYtVideos, ytPlaylists, setYtPlaylists, ytLoading, setYtLoading, ytSearch, setYtSearch, ytFilterPL, setYtFilterPL,
     loadAllYT, searchYT, fetchYTPlaylist, untaggedVideoCount, cldAdmin,
@@ -4281,7 +4282,10 @@ Return ONLY JSON:
           {effManageTab === "library" ? (
             <ManageLibrary ctx={ctx} />
           ) : effManageTab === "pricing" ? (
-            <RateCard rcItems={rcItems} setRcItems={setRcItems} />
+            <div>
+              <RateCard rcItems={rcItems} setRcItems={setRcItems} />
+              <PremiaEditor ctx={ctx} />
+            </div>
           ) : effManageTab === "settings" ? (
             <ManageSettings ctx={ctx} />
           ) : (

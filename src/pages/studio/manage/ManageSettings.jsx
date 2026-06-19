@@ -487,7 +487,7 @@ export default function ManageSettings({ ctx }) {
   useEffect(() => {
     if (!studioSettingsAllowed) return;
     if (studioSettingsAllowed(settingsView)) return;
-    const first = ["users", "clients", "calendar", "venues", "zones", "tags", "priority", "palettes"].find((v) => studioSettingsAllowed(v));
+    const first = ["clients", "calendar", "venues", "zones", "tags", "priority", "palettes"].find((v) => studioSettingsAllowed(v));
     if (first && first !== settingsView) setSettingsView(first);
   }, [settingsView, studioSettingsAllowed, setSettingsView]);
 
@@ -496,7 +496,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["users", "👥 Users"], ["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["palettes", "🎨 Palettes"]];
+          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["palettes", "🎨 Palettes"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
@@ -800,7 +800,6 @@ export default function ManageSettings({ ctx }) {
           </div>
         </div>;
       })()}
-      {settingsView === "users" && (typeof AdminUsers === "function" ? AdminUsers() : null)}
       {settingsView === "venues" && AdminVenues()}
       {settingsView === "tags" && AdminTags()}
       {settingsView === "priority" && <div style={{maxWidth:500}}>
