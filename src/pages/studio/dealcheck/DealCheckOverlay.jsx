@@ -878,6 +878,9 @@ export default function DealCheckOverlay({ ctx }) {
                                   const rental = item ? imsField.rentalCost(item) : 0;
                                   const dims = item ? imsField.sizeText(item) : "";
                                   const sub = item ? imsField.subcategory(item) : "";
+                                  // Hard cap: you can't block more than is available at this venue.
+                                  const _vName = (fns[fnIdx] || {}).fnVenue || "";
+                                  const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [] }, _vName, item))) : 0;
                                   return (
                                     <div key={mi.manualId} style={{padding:"11px 12px",borderRadius:9,background:"rgba(193,154,107,0.05)",border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
                                       {photo ? <img src={photo} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:textS,flexShrink:0}}>?</div>}
@@ -889,11 +892,13 @@ export default function DealCheckOverlay({ ctx }) {
                                         </div>
                                         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:textS}}>
                                           <span>Qty:</span>
-                                          <input type="number" min="1" value={mi.qty} onChange={e=>{
-                                            const v = Math.max(1, Number(e.target.value)||1);
+                                          <input type="number" min="1" max={_avail || undefined} value={mi.qty} onChange={e=>{
+                                            const raw = Math.max(1, Number(e.target.value)||1);
+                                            const v = _avail > 0 ? Math.min(raw, _avail) : raw;
+                                            if (raw > v) showMsg && showMsg(`Only ${_avail} available — capped at ${_avail}`, "orange");
                                             setDcManualItems(prev => prev.map(x => x.manualId === mi.manualId ? {...x, qty: v} : x));
-                                          }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${border}`,background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:11}}/>
-                                          <span style={{opacity:0.7}}>· ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
+                                          }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${mi.qty>=_avail&&_avail>0?"#F59E0B":border}`,background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:11}}/>
+                                          <span style={{opacity:0.7}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
                                           {dims && <span style={{opacity:0.7}}>· {dims}</span>}
                                         </div>
                                       </div>
