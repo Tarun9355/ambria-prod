@@ -9,6 +9,7 @@ import {
   heavyExtraLabour,
 } from "../../lib/ims/constants";
 import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
+import { heavyElementExtraForFn } from "../../lib/ims/fixedVenues";
 import { resolveSizeKey, sizeClassToPatternKey } from "../../lib/ims/flowerHelpers";
 
 // ─── Local helpers (copied verbatim from reference) ───────────────────────────
@@ -206,16 +207,8 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
     }
     const adjusted=Math.ceil(base*situationalMult);
 
-    // Step 4 — Heavy Element Add-ons
-    let heavyExtra=0;
-    const items=fn?.items||[];
-    (settings.heavyElementRanges||[]).forEach(her=>{
-      const count=items.reduce((s,it)=>{
-        const inv=(inventory||[]).find(i=>i.id===it.invId);
-        return s+(inv?.subCat===her.subCat?it.qty:0);
-      },0);
-      heavyExtra += heavyExtraLabour(her, count);
-    });
+    // Step 4 — Heavy Element Add-ons (nets out fixed-venue standing inventory)
+    const heavyExtra = heavyElementExtraForFn(fn, settings, inventory).total;
 
     return adjusted+heavyExtra;
   }
@@ -250,11 +243,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
         sitMult=Math.max(...cands,1.0);
       }
       const adj=Math.ceil(base*sitMult);
-      let heavy=0;
-      (settings.heavyElementRanges||[]).forEach(her=>{
-        const cnt=(otherFn.items||[]).reduce((s,it)=>{const inv=(inventory||[]).find(i=>i.id===it.invId);return s+(inv?.subCat===her.subCat?it.qty:0);},0);
-        heavy += heavyExtraLabour(her, cnt);
-      });
+      const heavy = heavyElementExtraForFn(otherFn, settings, inventory).total;
       return {fn:otherFn, count:adj+heavy};
     });
     return Math.max(...counts.map(c=>c.count));
@@ -848,13 +837,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
                       const sitCandidates=dayPrior?[1.0]:[dumpMult,sayaMult,timingMult];
                       const sitMax=Math.max(...sitCandidates,1.0);
                       const sitWinner=dayPrior?"none (day-prior ✓)":sitMax===dumpMult&&dumpMult>1?"Dumping ×"+dumpMult:sitMax===sayaMult&&sayaMult>1?"Saya ×"+sayaMult:sitMax===timingMult&&timingMult>1?timingLabel+" ×"+timingMult:"none";
-                      let heavyExtra=0;
-                      const heavyBreakdown=[];
-                      (settings.heavyElementRanges||[]).forEach(her=>{
-                        const cnt=(fn?.items||[]).reduce((s,it)=>{const inv=(inventory||[]).find(i=>i.id===it.invId);return s+(inv?.subCat===her.subCat?it.qty:0);},0);
-                        const ex = heavyExtraLabour(her, cnt);
-                        if (ex > 0) { heavyExtra += ex; heavyBreakdown.push(`${her.subCat}: ${cnt} → +${ex}`); }
-                      });
+                      const { total: heavyExtra, breakdown: heavyBreakdown } = heavyElementExtraForFn(fn, settings, inventory);
                       const sameDayFns=fnList.filter(f=>f.date===fn.date&&(f.venue?.name||"")===venueName);
                       return (
                         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
