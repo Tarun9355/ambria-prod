@@ -131,34 +131,33 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         </div>
                       </div>
                     )}
+                    {type === "Labours" && (
+                      <div className="mt-2 pt-2 border-t border-gray-200">
+                        <p className="text-xs text-gray-500 mb-1.5">🏗️ Heavy Element Add-ons <span className="text-gray-400">(extra Labours by quantity — 1 per N, summed across elements then rounded up once)</span>:</p>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {(settings.heavyElementRanges || []).map((her, hi) => {
+                            const per = her.perCount ?? 10;
+                            const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; delete cur.freeUpTo; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
+                            return (
+                              <div key={hi} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1">
+                                <span className="text-xs text-indigo-700 font-medium">{her.subCat || "(pick)"}</span>
+                                <span className="text-xs text-gray-400">→ 1:</span>
+                                <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-10 border rounded px-1 py-0.5 text-xs text-center" />
+                                <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {studioSubcats.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
+                            <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
-            </div>
-
-            {/* Heavy Element Labour — extra crew by quantity, like the Tier-2 sub-category batches */}
-            <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-xl p-4">
-              <p className="text-sm font-bold text-indigo-800 mb-0.5">🏗️ Heavy Element Labour</p>
-              <p className="text-xs text-indigo-600 mb-2.5">Sub-categories that add crew by quantity — <b>1 labour per N</b> each, summed with the tiers and rounded up once. <span className="text-indigo-400">e.g. 1 per 10 → 30 pillars = +3.</span></p>
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {(settings.heavyElementRanges || []).map((her, hi) => {
-                  const per = her.perCount ?? 10;
-                  const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; delete cur.freeUpTo; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
-                  return (
-                    <div key={hi} className="inline-flex items-center gap-1.5 bg-white border border-indigo-200 rounded-lg px-2.5 py-1">
-                      <span className="text-xs text-indigo-700 font-medium">{her.subCat || "(pick)"}</span>
-                      <span className="text-xs text-gray-400">1 / </span>
-                      <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-11 border border-indigo-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                      <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {studioSubcats.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
-                  <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
-                ))}
-              </div>
             </div>
 
             {/* Tier 3 globals */}
