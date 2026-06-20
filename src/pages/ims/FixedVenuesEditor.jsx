@@ -45,6 +45,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     if (qty > 0) truss[kind][size] = qty; else delete truss[kind][size];
     updVenue(vid, { truss });
   };
+  // Pieces of a truss size available to assign HERE = stock (Planning) minus what other
+  // fixed venues already hold standing.
+  const trussAvail = (kind, size, vid) => {
+    const stock = Number(trussInv?.[kind]?.[size]?.stock) || 0;
+    const otherStanding = fixedVenues.filter((x) => x.id !== vid).reduce((s, x) => s + (Number(x.truss?.[kind]?.[size]) || 0), 0);
+    return Math.max(0, stock - otherStanding);
+  };
 
   return (
     <div className="bg-white border rounded-2xl p-5">
@@ -110,31 +117,40 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               </datalist>
             </div>
 
-            {/* Standing truss — pillars/beams permanently installed here (totals per size) */}
-            <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing truss <span className="font-normal text-gray-400 normal-case">— installed pillars/beams (no build labour on reuse)</span></div>
-            {(pillarSizes.length > 0 || beamSizes.length > 0) ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-gray-500 w-14">🔩 Pillars</span>
-                  {pillarSizes.map((sz) => (
-                    <span key={sz} className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
-                      <span className="text-xs text-teal-700 font-medium">{sz}ft</span>
-                      <input type="number" min="0" value={v.truss?.pillars?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "pillars", sz, parseInt(e.target.value) || 0)} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                    </span>
-                  ))}
-                  <span className="text-[10px] text-gray-400">total {Object.values(v.truss?.pillars || {}).reduce((s, q) => s + (Number(q) || 0), 0)} pillars</span>
+            {/* Standing truss — pillars/beams installed here (totals per size, sizes live from Planning) */}
+            <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing truss <span className="font-normal text-gray-400 normal-case">— installed pillars/beams · “/N” = pieces free to assign here</span></div>
+            {(() => {
+              // Sizes come live from Planning truss inventory; also keep any size this venue
+              // already uses (so a size removed in Planning can still be zeroed, not lost).
+              const vPillars = [...new Set([...pillarSizes, ...Object.keys(v.truss?.pillars || {})])].sort((a, b) => Number(b) - Number(a));
+              const vBeams = [...new Set([...beamSizes, ...Object.keys(v.truss?.beams || {})])].sort((a, b) => Number(b) - Number(a));
+              if (vPillars.length === 0 && vBeams.length === 0) return <div className="text-xs text-gray-400 italic">Truss sizes load from Planning → Truss inventory. Add sizes there first.</div>;
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-gray-500 w-14">🔩 Pillars</span>
+                    {vPillars.map((sz) => { const avail = trussAvail("pillars", sz, v.id); return (
+                      <span key={sz} className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
+                        <span className="text-xs text-teal-700 font-medium">{sz}ft</span>
+                        <input type="number" min="0" max={avail} value={v.truss?.pillars?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "pillars", sz, Math.min(parseInt(e.target.value) || 0, avail))} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                        <span className="text-[10px] text-gray-400">/{avail}</span>
+                      </span>
+                    ); })}
+                    <span className="text-[10px] text-gray-400">total {Object.values(v.truss?.pillars || {}).reduce((s, q) => s + (Number(q) || 0), 0)} pillars</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-gray-500 w-14">➖ Beams</span>
+                    {vBeams.map((sz) => { const avail = trussAvail("beams", sz, v.id); return (
+                      <span key={sz} className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                        <span className="text-xs text-amber-700 font-medium">{sz}ft</span>
+                        <input type="number" min="0" max={avail} value={v.truss?.beams?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "beams", sz, Math.min(parseInt(e.target.value) || 0, avail))} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                        <span className="text-[10px] text-gray-400">/{avail}</span>
+                      </span>
+                    ); })}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-gray-500 w-14">➖ Beams</span>
-                  {beamSizes.map((sz) => (
-                    <span key={sz} className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-                      <span className="text-xs text-amber-700 font-medium">{sz}ft</span>
-                      <input type="number" min="0" value={v.truss?.beams?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "beams", sz, parseInt(e.target.value) || 0)} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : <div className="text-xs text-gray-400 italic">Truss sizes load from Planning → Truss inventory.</div>}
+              );
+            })()}
           </div>
         ))}
       </div>
