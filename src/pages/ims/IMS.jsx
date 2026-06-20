@@ -746,7 +746,7 @@ export default function IMS() {
             vendors={vendors} setVendors={setVendors} functions={functions}
             settings={settings} setSettings={setSettings}
             supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
-            users={users} setUsers={setUsers}
+            users={users} setUsers={setUsers} inventory={items}
           />
         ) : tab === "supply" ? (
           <SupplyTab

@@ -4,6 +4,7 @@ import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, DUMPING_LEVELS, EVENT_TIMINGS } from "../../lib/ims/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
+import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
@@ -20,7 +21,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [] }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [synNewWords, setSynNewWords] = useState("");
@@ -328,23 +329,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
           <div className="bg-white border rounded-2xl p-5">
             <p className="font-bold text-gray-900 mb-1">🏗️ Heavy Element Add-ons</p>
-            <p className="text-xs text-gray-500 mb-3">Pick the heavy sub-categories that need extra crew. For each: no extra labour up to N elements, then +1 labour per M after that. <span className="text-gray-400">e.g. 0 / 10 → 20 pillars add 2 labours.</span></p>
+            <p className="text-xs text-gray-500 mb-3">Pick the heavy sub-categories that need extra crew, and set <b>1 labour per N</b> of each. Applied uniformly to whatever is built this event. <span className="text-gray-400">e.g. 1 per 10 → 30 pillars add 3 labours.</span></p>
 
             {/* Configured sub-categories — chip with its 2 fields (Carpenter-style) */}
             <div className="flex flex-wrap gap-2 mb-2">
               {(settings.heavyElementRanges || []).map((her, hi) => {
-                const free = her.freeUpTo ?? 0;
                 const per = her.perCount ?? 10;
-                const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
-                const eg = per > 0 ? Math.floor(Math.max(0, 20 - free) / per) : 0;
+                const upd = (patch) => { const ranges = [...(settings.heavyElementRanges || [])]; const cur = { ...ranges[hi], ...patch }; delete cur.ranges; delete cur.freeUpTo; ranges[hi] = cur; setSettings((s) => ({ ...s, heavyElementRanges: ranges })); };
                 return (
                   <div key={hi} className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5">
                     <span className="text-xs text-indigo-700 font-medium">{her.subCat || "(pick)"}</span>
-                    <span className="text-xs text-gray-400">· up to</span>
-                    <input type="number" min="0" value={free} onChange={(e) => upd({ freeUpTo: parseInt(e.target.value) || 0 })} className="w-11 border border-indigo-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                    <span className="text-xs text-gray-400">+1 / </span>
-                    <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-11 border border-indigo-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                    <span className="text-[10px] text-gray-400 italic">20→+{eg}</span>
+                    <span className="text-xs text-gray-400">· 1 labour per</span>
+                    <input type="number" min="1" value={per} onChange={(e) => upd({ perCount: parseInt(e.target.value) || 0 })} className="w-12 border border-indigo-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
                     <button onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: (s.heavyElementRanges || []).filter((_, j) => j !== hi) }))} className="text-red-400 hover:text-red-600 text-xs ml-0.5">×</button>
                   </div>
                 );
@@ -354,10 +350,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             {/* Add-able sub-categories (everything not yet configured) */}
             <div className="flex flex-wrap gap-1">
               {studioSubcats.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
-                <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, freeUpTo: 0, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
+                <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
               ))}
             </div>
           </div>
+
+          {/* ═══ FIXED VENUES — standing inventory (own structure, no build labour, discounted rental) ═══ */}
+          <FixedVenuesEditor settings={settings} setSettings={setSettings} inventory={inventory} />
         </div>
       )}
       {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}
