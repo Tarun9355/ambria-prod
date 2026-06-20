@@ -68,9 +68,19 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
 
             <div className="text-xs font-semibold text-gray-500 uppercase mb-1.5">Standing inventory <span className="font-normal text-gray-400 normal-case">— specific items installed here (location = {v.name})</span></div>
             <div className="space-y-1.5 mb-2">
-              {v.items.map((it) => (
+              {v.items.map((it) => {
+                const inv = inventory.find((i) => i.id === it.invId);
+                const img = inv?.img || inv?.photoUrls?.[0] || "";
+                const dims = inv?.dims_LxWxH || inv?.size || inv?.dims?.lxwxh || inv?.dims?.size || "";
+                return (
                 <div key={it.invId} className="flex items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 flex-wrap">
-                  <span className="text-sm text-gray-800 flex-1 min-w-[140px]">{it.name}</span>
+                  {img
+                    ? <img src={img} alt="" className="w-11 h-11 rounded object-cover border flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                    : <div className="w-11 h-11 rounded bg-gray-100 border flex-shrink-0 flex items-center justify-center text-gray-300 text-lg">🖼️</div>}
+                  <div className="flex-1 min-w-[140px]">
+                    <div className="text-sm text-gray-800">{it.name}</div>
+                    <div className="text-[10px] text-gray-400">{dims ? `📐 ${dims}` : "no dimensions"}{inv?.qty != null ? ` · stock ${inv.qty}` : ""}</div>
+                  </div>
                   <span className="text-xs text-gray-400">qty</span>
                   <input type="number" min="1" value={it.qty} onChange={(e) => updItem(v.id, it.invId, { qty: parseInt(e.target.value) || 1 })} className="w-16 border rounded px-2 py-1 text-sm text-center font-bold" />
                   <span className="text-xs text-gray-400">rent @</span>
@@ -78,7 +88,8 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                   <span className="text-xs text-gray-400">% off</span>
                   <button onClick={() => delItem(v.id, it.invId)} className="text-red-400 hover:text-red-600 text-xs ml-auto">×</button>
                 </div>
-              ))}
+                );
+              })}
               {v.items.length === 0 && <div className="text-xs text-gray-400 italic">No standing items yet — add the specific designs installed at {v.name}.</div>}
             </div>
 
