@@ -1,221 +1,201 @@
-import { useState, useMemo, useEffect } from "react";
-import { RC_UNITS, RC_CATS_DEFAULT } from "../../lib/studio/constants";
+// Studio → Pricing → Rate Card Manager v2 — faithful dark-theme transcription of
+// the reference AdminRates (App_latest.jsx ~7480), driven off ctx. Holds the
+// Rate Card / Transport & Power toggle; the Transport tab renders TransportEditor.
+import TransportEditor from "./TransportEditor.jsx";
 
 const NUM_FIELDS = ["inhouseFlat", "inhouseS", "inhouseM", "inhouseB", "outS", "outM", "outB", "artificialFlat", "artificialS", "artificialM", "artificialB", "defaultRealPct"];
 
-// Studio → Pricing → Rate Card editor (faithful functional rebuild of AdminRates, in Tailwind).
-// Deferred (deal-builder/cross-app coupled): floral pricing-mode pills, IMS-driven lock.
-export default function RateCard({ rcItems, setRcItems, rcCats = RC_CATS_DEFAULT, setRcCats, saveRcCats }) {
-  const [rcCat, setRcCat] = useState(rcCats[0]?.id || "truss");
-  const [rcSearch, setRcSearch] = useState("");
-  const [rcEditId, setRcEditId] = useState(null);
-  const [catEdit, setCatEdit] = useState(false);
-  // If the active category isn't in the (migrated) list, snap to the first real one.
-  useEffect(() => { if (rcCats.length && !rcCats.some((c) => c.id === rcCat)) setRcCat(rcCats[0].id); }, [rcCats, rcCat]);
-  const canEditCats = typeof setRcCats === "function";
+export default function RateCard({ ctx }) {
+  const {
+    S, isDark, accent, border, textP, textS, cardBg, showMsg, floralRatio,
+    rcItems, saveRC, rcCats, setRcCats, saveRcCats,
+    rcCat, setRcCat, rcSearch, setRcSearch, rcEditId, setRcEditId, rcTab, setRcTab,
+    rcCatEditMode, setRcCatEditMode, rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen,
+    rcNewForm, setRcNewForm, RC_UNITS, rcIsSMB, getFloralMode,
+  } = ctx;
 
-  const rcUpd = (id, f, v) => {
-    const isN = NUM_FIELDS.includes(f);
-    setRcItems((prev) => prev.map((i) => (i.id === id ? { ...i, [f]: isN ? Number(v) || 0 : v } : i)));
-  };
-  const rcDel = (id) => setRcItems((prev) => prev.filter((i) => i.id !== id), [id]);
-  const addItem = () => {
-    const id = "RC" + Date.now();
-    setRcItems((prev) => [...prev, { id, cat: rcCat, sub: "General", name: "New Item", unit: "pc", inhouseMode: "flat", inhouseFlat: 0, outEnabled: false, notes: "" }]);
-    setRcEditId(id);
+  const isNotRated = (i) => i.unit !== "included" && i.unit !== "multiplier" && (i.inhouseFlat || 0) === 0 && (i.inhouseS || 0) === 0 && (i.inhouseM || 0) === 0 && (i.inhouseB || 0) === 0;
+  const rcFmt = (n) => { const v = Number(n) || 0; return v >= 100000 ? `₹${(v / 100000).toFixed(1)}L` : `₹${v.toLocaleString("en-IN")}`; };
+  const rcStats = { t: rcItems.length, nr: rcItems.filter(isNotRated).length };
+  const rcUpd = (id, f, v) => { const isN = NUM_FIELDS.includes(f); saveRC(rcItems.map((i) => (i.id === id ? { ...i, [f]: isN ? Number(v) || 0 : v } : i))); };
+  const rcDel = (id) => { const it = rcItems.find((i) => i.id === id); if (!window.confirm(`Delete "${it?.name || "item"}"? This cannot be undone.`)) return; saveRC(rcItems.filter((i) => i.id !== id)); };
+  const rcAddItem = () => {
+    if (!(rcNewForm.name || "").trim()) { showMsg && showMsg("Item needs a name", "red"); return; }
+    const item = { ...rcNewForm, id: "RC" + Date.now().toString(36), cat: rcNewForm.cat || rcCat, sub: rcNewForm.sub || "General", name: rcNewForm.name.trim() };
+    saveRC([...rcItems, item]);
+    setRcAddMode(false); setRcSubOpen(false);
+    setRcNewForm({ cat: rcCat, sub: "", name: "", unit: "pc", inhouseMode: "flat", inhouseFlat: 0, inhouseS: 0, inhouseM: 0, inhouseB: 0, outEnabled: false, outS: 0, outM: 0, outB: 0, notes: "", artificialFlat: 0, artificialS: 0, artificialM: 0, artificialB: 0, defaultRealPct: 100, floralMode: "ratio" });
+    showMsg && showMsg("✓ Item added", "green");
   };
 
-  const rcFiltered = useMemo(() => rcItems.filter((i) => {
+  const rcFiltered = rcItems.filter((i) => {
     if (i.cat !== rcCat) return false;
-    if (rcSearch.trim()) { const q = rcSearch.toLowerCase(); return i.name.toLowerCase().includes(q) || (i.sub || "").toLowerCase().includes(q); }
+    if (rcSearch.trim()) { const q = rcSearch.toLowerCase(); return (i.name || "").toLowerCase().includes(q) || (i.sub || "").toLowerCase().includes(q); }
     return true;
-  }), [rcItems, rcCat, rcSearch]);
-  const rcGrouped = useMemo(() => { const g = {}; rcFiltered.forEach((i) => { const k = i.sub || "General"; (g[k] = g[k] || []).push(i); }); return g; }, [rcFiltered]);
-
-  const notRated = (i) => i.unit !== "included" && i.unit !== "multiplier" && (i.inhouseFlat || 0) === 0 && (i.inhouseS || 0) === 0 && (i.inhouseM || 0) === 0 && (i.inhouseB || 0) === 0;
+  });
+  const rcGrouped = {}; rcFiltered.forEach((i) => { const k = i.sub || "General"; (rcGrouped[k] = rcGrouped[k] || []).push(i); });
 
   const RCP = ({ item }) => {
-    if (item.unit === "included") return <span className="text-sm font-semibold text-emerald-600">Included</span>;
-    if (item.unit === "multiplier") return <span className="text-base font-bold text-indigo-600">×{item.inhouseFlat || 0}</span>;
-    if (notRated(item)) return <span className="text-xs font-semibold text-amber-500">⚠ not set</span>;
-    const u = RC_UNITS.find((x) => x.id === item.unit)?.l || "";
-    if (item.inhouseMode === "smb") {
-      const vals = [item.inhouseS, item.inhouseM, item.inhouseB].filter((x) => x > 0);
-      const lo = Math.min(...vals), hi = Math.max(...vals);
-      return <span className="text-sm font-bold text-gray-800">₹{lo === hi ? lo : `${lo}–${hi}`}<span className="text-xs text-gray-400 font-normal">{u}</span></span>;
-    }
-    return <span className="text-sm font-bold text-gray-800">₹{(item.inhouseFlat || 0).toLocaleString("en-IN")}<span className="text-xs text-gray-400 font-normal">{u}</span></span>;
+    const nr = isNotRated(item);
+    if (item.unit === "included") return <span style={{ fontSize: 13, fontWeight: 600, color: "#059669" }}>Included</span>;
+    if (item.unit === "multiplier") return <span style={{ fontSize: 16, fontWeight: 700, color: accent }}>×{item.inhouseFlat || 0}</span>;
+    if (rcIsSMB(item)) return <div style={{ display: "flex", gap: 6 }}>{[["S", item.inhouseS], ["M", item.inhouseM], ["B", item.inhouseB]].map(([l, v]) => <div key={l} style={{ textAlign: "center" }}><div style={{ fontSize: 8, color: textS, fontWeight: 700 }}>{l}</div><div style={{ fontSize: 13, fontWeight: 700, color: (v || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#111") }}>{(v || 0) === 0 ? "⚠️" : rcFmt(v)}</div></div>)}</div>;
+    return <span style={{ fontSize: 16, fontWeight: 700, color: nr ? "#F59E0B" : (isDark ? "#fff" : "#111") }}>{nr ? "⚠️ Set" : rcFmt(item.inhouseFlat)}</span>;
   };
 
-  const cur = rcCats.find((c) => c.id === rcCat);
-  const rcStats = useMemo(() => ({ total: rcItems.length, nr: rcItems.filter(notRated).length }), [rcItems]);
+  const curCat = rcCats.find((c) => c.id === rcCat);
 
-  // Category editor helpers (only when setRcCats provided)
-  const updCat = (idx, patch) => setRcCats(rcCats.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
-  const moveCat = (idx, dir) => { const nc = [...rcCats]; const j = idx + dir; if (j < 0 || j >= nc.length) return; [nc[idx], nc[j]] = [nc[j], nc[idx]]; setRcCats(nc); };
-  const delCat = (idx) => { const c = rcCats[idx]; const n = rcItems.filter((i) => i.cat === c.id).length; if (n > 0) { alert(`Cannot delete — ${n} item(s) use "${c.l}". Move them first.`); return; } if (!window.confirm(`Delete category "${c.l}"?`)) return; const nc = rcCats.filter((_, i) => i !== idx); (saveRcCats || setRcCats)(nc); if (rcCat === c.id && nc.length) setRcCat(nc[0].id); };
-  const addCat = () => setRcCats([...rcCats, { id: "cat_" + Date.now().toString(36).slice(-5), l: "New Category", icon: "📦", c: "#9CA3AF", d: "" }]);
-
-  return (
-    <div>
-      {/* Header + stats */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h2 className="text-xl font-bold text-amber-600">💰 Rate Card Manager v2</h2>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-gray-400">{rcStats.total} items</span>
-          {rcStats.nr > 0 && <span className="text-amber-500 font-semibold">⚠ {rcStats.nr} need rates</span>}
-        </div>
+  return (<div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: accent }}>💰 Rate Card Manager v2</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {[["ratecard", "💰 Rate Card"], ["transport", "🚛 Transport & Power"]].map(([t, l]) => (
+          <button key={t} onClick={() => setRcTab(t)} style={{ padding: "8px 18px", borderRadius: 20, border: rcTab === t ? `2px solid ${accent}` : "2px solid transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, background: rcTab === t ? "rgba(201,169,110,0.08)" : "rgba(255,255,255,0.04)", color: rcTab === t ? accent : textS }}>{l}</button>
+        ))}
+        <span style={{ fontSize: 11, color: textS }}>{rcStats.t} items</span>
+        {rcStats.nr > 0 && <span style={{ fontSize: 11, color: "#F59E0B", fontWeight: 600 }}>⚠ {rcStats.nr} need rates</span>}
       </div>
+    </div>
 
-      <div className="flex gap-4">
-      {/* Category sidebar */}
-      <div className="w-60 flex-shrink-0 space-y-1">
-        <div className="flex items-center justify-between px-1 mb-1">
-          <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Categories</span>
-          {canEditCats && <button onClick={() => setCatEdit((e) => !e)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">{catEdit ? "✓ Done" : "✎ Edit"}</button>}
+    {rcTab === "ratecard" && <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20 }}>
+      {/* Sidebar */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: textS }}>Categories</span>
+          <button onClick={() => setRcCatEditMode(!rcCatEditMode)} style={{ padding: "3px 8px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 600, cursor: "pointer", background: rcCatEditMode ? "rgba(201,169,110,0.15)" : "rgba(255,255,255,0.04)", color: rcCatEditMode ? accent : textS }}>{rcCatEditMode ? "✓ Done" : "✏️ Edit"}</button>
         </div>
-        {catEdit && canEditCats ? (
-          <>
-            {rcCats.map((c, idx) => {
-              const n = rcItems.filter((i) => i.cat === c.id).length;
-              return (
-                <div key={c.id} className="bg-white border border-gray-200 rounded-lg p-2 flex items-center gap-1.5">
-                  <input value={c.icon} onChange={(e) => updCat(idx, { icon: e.target.value })} maxLength={2} className="w-8 border rounded px-1 py-0.5 text-sm text-center" />
-                  <div className="flex-1 min-w-0">
-                    <input value={c.l} onChange={(e) => updCat(idx, { l: e.target.value })} className="w-full border rounded px-1.5 py-0.5 text-xs font-semibold" />
-                    <input value={c.d || ""} onChange={(e) => updCat(idx, { d: e.target.value })} placeholder="description…" className="w-full border rounded px-1.5 py-0.5 text-[10px] text-gray-500 mt-0.5" />
-                  </div>
-                  <input type="color" value={c.c || "#9CA3AF"} onChange={(e) => updCat(idx, { c: e.target.value })} className="w-6 h-6 border-0 p-0 rounded cursor-pointer" />
-                  <div className="flex flex-col">
-                    <button onClick={() => moveCat(idx, -1)} disabled={idx === 0} className="text-[9px] text-gray-400 hover:text-gray-700 disabled:opacity-30 leading-none">▲</button>
-                    <button onClick={() => moveCat(idx, 1)} disabled={idx === rcCats.length - 1} className="text-[9px] text-gray-400 hover:text-gray-700 disabled:opacity-30 leading-none">▼</button>
-                  </div>
-                  <button onClick={() => delCat(idx)} title={n > 0 ? `${n} items use this` : "Delete"} className={"text-xs " + (n > 0 ? "text-gray-300" : "text-red-400 hover:text-red-600")}>🗑️</button>
-                </div>
-              );
-            })}
-            <button onClick={addCat} className="w-full py-1.5 rounded-lg border border-dashed border-indigo-300 text-indigo-600 text-xs font-medium hover:bg-indigo-50">+ Add Category</button>
-            <button onClick={() => { (saveRcCats || setRcCats)(rcCats); setCatEdit(false); }} className="w-full py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold mt-1">💾 Save Categories</button>
-          </>
-        ) : (
-          rcCats.map((c) => {
-            const items = rcItems.filter((i) => i.cat === c.id);
-            const nr = items.filter(notRated).length;
-            const active = rcCat === c.id;
-            return (
-              <button key={c.id} onClick={() => { setRcCat(c.id); setRcSearch(""); }}
-                className={"w-full text-left px-3 py-2 rounded-xl border transition-all " + (active ? "bg-indigo-50 border-indigo-300" : "bg-white border-gray-200 hover:border-indigo-200")}>
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-2"><span>{c.icon}</span><span className={"text-sm " + (active ? "font-semibold text-indigo-700" : "text-gray-700")}>{c.l}</span></span>
-                  <span className="flex items-center gap-1.5"><span className="text-xs text-gray-400">{items.length}</span>{nr > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title={`${nr} not rated`} />}</span>
-                </div>
-              </button>
-            );
-          })
-        )}
+        {rcCatEditMode && <div>
+          {rcCats.map((c, idx) => { const n = rcItems.filter((i) => i.cat === c.id).length; return <div key={c.id} style={{ padding: "8px 10px", borderRadius: 10, marginBottom: 4, background: cardBg, border: `1px solid ${border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+              <input value={c.icon} onChange={(e) => { const nc = [...rcCats]; nc[idx] = { ...nc[idx], icon: e.target.value }; setRcCats(nc); }} style={{ width: 30, padding: "3px 2px", borderRadius: 4, border: `1px solid ${border}`, background: "transparent", color: textP, fontSize: 14, textAlign: "center", outline: "none", fontFamily: "inherit" }} maxLength={2} />
+              <input value={c.l} onChange={(e) => { const nc = [...rcCats]; nc[idx] = { ...nc[idx], l: e.target.value }; setRcCats(nc); }} style={{ flex: 1, padding: "3px 6px", borderRadius: 4, border: `1px solid ${border}`, background: "transparent", color: textP, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit" }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+              <input type="color" value={c.c || "#C9A96E"} onChange={(e) => { const nc = [...rcCats]; nc[idx] = { ...nc[idx], c: e.target.value }; setRcCats(nc); }} style={{ width: 22, height: 22, border: "none", borderRadius: 4, cursor: "pointer", padding: 0, background: "transparent" }} />
+              <input value={c.d || ""} onChange={(e) => { const nc = [...rcCats]; nc[idx] = { ...nc[idx], d: e.target.value }; setRcCats(nc); }} placeholder="Description..." style={{ flex: 1, padding: "3px 6px", borderRadius: 4, border: `1px solid ${border}`, background: "transparent", color: textS, fontSize: 9, outline: "none", fontFamily: "inherit" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+              <div style={{ display: "flex", gap: 3 }}>
+                {idx > 0 && <button onClick={() => { const nc = [...rcCats];[nc[idx - 1], nc[idx]] = [nc[idx], nc[idx - 1]]; setRcCats(nc); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", fontSize: 9, cursor: "pointer", background: "rgba(255,255,255,0.06)", color: textS }}>▲</button>}
+                {idx < rcCats.length - 1 && <button onClick={() => { const nc = [...rcCats];[nc[idx], nc[idx + 1]] = [nc[idx + 1], nc[idx]]; setRcCats(nc); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", fontSize: 9, cursor: "pointer", background: "rgba(255,255,255,0.06)", color: textS }}>▼</button>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 9, color: textS }}>{n} items</span>
+                <button onClick={() => { if (n > 0) { showMsg(`Cannot delete — ${n} items use this category. Move them first.`, "red"); return; } if (!window.confirm(`Delete "${c.l}"?`)) return; const nc = rcCats.filter((_, i) => i !== idx); saveRcCats(nc); if (rcCat === c.id && nc.length) setRcCat(nc[0].id); }} style={{ padding: "2px 5px", borderRadius: 4, border: "none", fontSize: 9, cursor: "pointer", background: n > 0 ? "rgba(255,255,255,0.03)" : "rgba(248,113,113,0.1)", color: n > 0 ? textS + "60" : "#F87171" }}>🗑️</button>
+              </div>
+            </div>
+          </div>; })}
+          <button onClick={() => { const newId = "cat_" + Date.now().toString(36).slice(-5); setRcCats([...rcCats, { id: newId, l: "New Category", icon: "📦", c: "#9CA3AF", d: "" }]); }} style={{ width: "100%", padding: "8px 0", borderRadius: 8, border: `1px dashed ${accent}40`, background: "transparent", color: accent, fontSize: 11, fontWeight: 600, cursor: "pointer", marginTop: 4 }}>+ Add Category</button>
+          <button onClick={() => saveRcCats(rcCats)} style={{ width: "100%", padding: "8px 0", borderRadius: 8, border: "none", background: accent, color: "#0F0F1A", fontSize: 11, fontWeight: 700, cursor: "pointer", marginTop: 8 }}>💾 Save Categories</button>
+        </div>}
+        {!rcCatEditMode && rcCats.map((c) => { const n = rcItems.filter((i) => i.cat === c.id).length; const nr = rcItems.filter((i) => i.cat === c.id && isNotRated(i)).length;
+            return <div key={c.id} onClick={() => { setRcCat(c.id); setRcSearch(""); }} style={{ padding: "8px 12px", borderRadius: 10, marginBottom: 4, cursor: "pointer", background: rcCat === c.id ? "rgba(201,169,110,0.1)" : cardBg, border: `1px solid ${rcCat === c.id ? accent + "40" : border}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 13 }}>{c.icon}</span><span style={{ fontSize: 11, fontWeight: rcCat === c.id ? 600 : 400, color: rcCat === c.id ? accent : textP }}>{c.l}</span></div><div style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ fontSize: 10, color: textS }}>{n}</span>{nr > 0 && <span style={{ width: 5, height: 5, borderRadius: 3, background: "#F59E0B" }} />}</div></div>
+            </div>; })}
+        <div style={{ marginTop: 12, padding: 12, background: cardBg, borderRadius: 10, border: `1px solid ${border}` }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: accent, marginBottom: 6 }}>📊 Health</div>
+          {[["Total", rcStats.t, isDark ? "#fff" : "#111"], ["Priced", rcStats.t - rcStats.nr, "#059669"], ["Need Rates", rcStats.nr, rcStats.nr > 0 ? "#F59E0B" : "#059669"]].map(([l, v, col]) => (<div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}><span style={{ color: textS }}>{l}</span><span style={{ fontWeight: 700, color: col }}>{v}</span></div>))}
+        </div>
       </div>
 
       {/* Items */}
-      <div className="flex-1 min-w-0 space-y-4">
-        <div className="flex items-center gap-3">
-          <div>
-            <h3 className="text-lg font-bold" style={{ color: cur?.c }}>{cur?.icon} {cur?.l}</h3>
-            <p className="text-xs text-gray-500">{cur?.d}</p>
-          </div>
-          <input value={rcSearch} onChange={(e) => setRcSearch(e.target.value)} placeholder="🔍 Search..." className="ml-auto border rounded-lg px-3 py-2 text-sm w-44" />
-          <button onClick={addItem} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>
+      <div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          <div style={{ flex: 1, position: "relative" }}><input value={rcSearch} onChange={(e) => setRcSearch(e.target.value)} placeholder="Search items..." style={{ ...S.input, paddingLeft: 36 }} /><span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 13, opacity: 0.4 }}>🔍</span></div>
+          <button onClick={() => { setRcNewForm((p) => ({ ...p, cat: rcCat })); setRcAddMode(!rcAddMode); setRcSubOpen(false); }} style={{ ...S.btn(true), padding: "10px 16px", fontSize: 12 }}>+ Add Item</button>
         </div>
 
-        {Object.keys(rcGrouped).length === 0 && (
-          <div className="text-center py-12 text-gray-400 text-sm border border-dashed rounded-xl">{rcSearch ? "No matches" : "No items in this category"}</div>
-        )}
+        {rcAddMode && <div style={{ background: cardBg, borderRadius: 12, padding: 16, marginBottom: 14, border: `2px solid ${accent}40` }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: accent, marginBottom: 12 }}>Add New Item to {curCat?.l}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div><div style={S.label}>Sub-Category *</div><input value={rcNewForm.sub} onChange={(e) => setRcNewForm((p) => ({ ...p, sub: e.target.value }))} placeholder="e.g. Sofa" list="rc-sub-list" style={S.input} /><datalist id="rc-sub-list">{[...new Set(rcItems.map((i) => i.sub).filter(Boolean))].map((s) => <option key={s} value={s} />)}</datalist></div>
+            <div><div style={S.label}>Item Name *</div><input value={rcNewForm.name} onChange={(e) => setRcNewForm((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. 3-Seater" style={S.input} /></div>
+            <div><div style={S.label}>Unit</div><select value={rcNewForm.unit} onChange={(e) => setRcNewForm((p) => ({ ...p, unit: e.target.value }))} style={S.select}>{RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select></div>
+          </div>
+          <div style={{ background: isDark ? "#0F0F1A" : "#fff", borderRadius: 8, padding: 12, marginBottom: 10, border: `1px solid ${border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#059669" }}>🏠 Inhouse</span>
+              <div style={{ display: "flex", gap: 3 }}>{["flat", "smb"].map((m) => <button key={m} onClick={() => setRcNewForm((p) => ({ ...p, inhouseMode: m }))} style={{ padding: "3px 10px", borderRadius: 5, border: "none", fontSize: 10, fontWeight: 600, cursor: "pointer", background: rcNewForm.inhouseMode === m ? "#059669" : "rgba(255,255,255,0.04)", color: rcNewForm.inhouseMode === m ? "#fff" : textS }}>{m === "flat" ? "Flat" : "S/M/B"}</button>)}</div>
+            </div>
+            {rcNewForm.inhouseMode === "flat"
+              ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ color: textS }}>₹</span><input type="number" value={rcNewForm.inhouseFlat} onChange={(e) => setRcNewForm((p) => ({ ...p, inhouseFlat: Number(e.target.value) || 0 }))} style={{ ...S.input, width: 120, fontWeight: 700, textAlign: "right" }} /></div>
+              : <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>{[["Small", "inhouseS"], ["Medium", "inhouseM"], ["Big", "inhouseB"]].map(([l, f]) => <div key={f}><div style={{ fontSize: 9, color: textS, textAlign: "center", marginBottom: 2 }}>{l}</div><input type="number" value={rcNewForm[f]} onChange={(e) => setRcNewForm((p) => ({ ...p, [f]: Number(e.target.value) || 0 }))} style={{ ...S.input, textAlign: "center", fontWeight: 700 }} /></div>)}</div>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <div onClick={() => setRcNewForm((p) => ({ ...p, outEnabled: !p.outEnabled }))} style={{ width: 36, height: 20, borderRadius: 10, background: rcNewForm.outEnabled ? "#F59E0B" : "#374151", position: "relative", cursor: "pointer" }}><div style={{ width: 16, height: 16, borderRadius: 8, background: "#fff", position: "absolute", top: 2, left: rcNewForm.outEnabled ? 18 : 2, transition: "left 0.2s" }} /></div>
+            <span style={{ fontSize: 11, color: rcNewForm.outEnabled ? "#F59E0B" : textS, fontWeight: 600 }}>🏭 Outsource S/M/B</span>
+          </div>
+          {rcNewForm.outEnabled && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>{[["S", "outS"], ["M", "outM"], ["B", "outB"]].map(([l, f]) => <div key={f}><div style={{ fontSize: 9, color: textS, textAlign: "center", marginBottom: 2 }}>{l}</div><input type="number" value={rcNewForm[f]} onChange={(e) => setRcNewForm((p) => ({ ...p, [f]: Number(e.target.value) || 0 }))} style={{ ...S.input, textAlign: "center", fontWeight: 700 }} /></div>)}</div>}
+          <div><div style={S.label}>Notes</div><input value={rcNewForm.notes} onChange={(e) => setRcNewForm((p) => ({ ...p, notes: e.target.value }))} style={S.input} placeholder="Optional notes..." /></div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+            <button onClick={() => { setRcAddMode(false); setRcSubOpen(false); }} style={S.btn(false)}>Cancel</button>
+            <button onClick={rcAddItem} style={S.btn(true)}>✓ Add Item</button>
+          </div>
+        </div>}
 
         {Object.entries(rcGrouped).map(([sub, items]) => (
-          <div key={sub}>
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="w-1 h-3 rounded" style={{ background: cur?.c }} />
-              <div className="text-sm font-bold" style={{ color: cur?.c }}>{sub}</div>
-              <div className="text-xs text-gray-400">({items.length})</div>
-            </div>
-            {items.map((item) => {
-              const isO = rcEditId === item.id;
-              return (
-                <div key={item.id} className={"bg-white rounded-xl mb-1.5 overflow-hidden border " + (isO ? "border-2 border-indigo-400" : "border-gray-200")}>
-                  <div className="flex justify-between items-center px-3.5 py-2.5 cursor-pointer" onClick={() => setRcEditId(isO ? null : item.id)}>
-                    <span className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-900">{item.name}</span>
-                      {item.outEnabled && <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600 font-bold">+OUT</span>}
-                    </span>
-                    <span className="flex items-center gap-2.5"><RCP item={item} /><button onClick={(e) => { e.stopPropagation(); rcDel(item.id); }} className="text-red-400 hover:text-red-600 text-xs">🗑️</button></span>
+          <div key={sub} style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><div style={{ width: 3, height: 12, borderRadius: 2, background: curCat?.c || accent }} /><div style={{ fontSize: 13, fontWeight: 700, color: curCat?.c || accent }}>{sub}</div><div style={{ fontSize: 10, color: textS }}>({items.length})</div></div>
+            {items.map((item) => { const isO = rcEditId === item.id; const isFloral = (item.cat || "").toLowerCase() === "florals"; return (
+              <div key={item.id} style={{ ...S.card, marginBottom: 5, overflow: "hidden", border: isO ? `2px solid ${accent}` : `1px solid ${border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", cursor: "pointer" }} onClick={() => setRcEditId(isO ? null : item.id)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: textP }}>{item.name}</span>
+                    {item.outEnabled && <span style={{ fontSize: 8, padding: "2px 5px", borderRadius: 3, background: "rgba(245,158,11,0.1)", color: "#F59E0B", fontWeight: 700 }}>+OUT</span>}
+                    {item._imsDriven && <span title="Auto-priced from IMS recipe" style={{ fontSize: 8, padding: "2px 6px", borderRadius: 3, background: "rgba(16,185,129,0.18)", color: "#10B981", fontWeight: 700 }}>🔒 IMS-DRIVEN</span>}
+                    {isFloral && (() => { const m = getFloralMode(item); return m === "real" ? <span style={{ fontSize: 8, padding: "2px 6px", borderRadius: 3, background: "rgba(16,185,129,0.18)", color: "#10B981", fontWeight: 700 }}>🎯 100% REAL</span> : m === "artificial" ? <span style={{ fontSize: 8, padding: "2px 6px", borderRadius: 3, background: "rgba(236,72,153,0.18)", color: "#EC4899", fontWeight: 700 }}>🎯 100% ARTIFICIAL</span> : <span style={{ fontSize: 8, padding: "2px 6px", borderRadius: 3, background: "rgba(148,163,184,0.15)", color: "#94A3B8", fontWeight: 700 }}>🌐 RATIO-DRIVEN</span>; })()}
                   </div>
-                  {!isO && item.notes && <div className={"px-3.5 pb-1.5 text-[10px] " + (item.notes.includes("⚠") || item.notes.includes("Set") ? "text-amber-600" : "text-gray-400")}>{item.notes}</div>}
-                  {isO && (
-                    <div className="px-4 py-3.5 border-t bg-gray-50 space-y-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        <div><label className="text-[10px] text-gray-500">Category</label>
-                          <select value={item.cat || ""} onChange={(e) => rcUpd(item.id, "cat", e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm">{rcCats.map((c) => <option key={c.id} value={c.id}>{c.l}</option>)}</select></div>
-                        <div><label className="text-[10px] text-gray-500">Name</label><input defaultValue={item.name} onBlur={(e) => rcUpd(item.id, "name", e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
-                        <div><label className="text-[10px] text-gray-500">Sub-Category</label><input defaultValue={item.sub || ""} onBlur={(e) => rcUpd(item.id, "sub", e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
-                        <div><label className="text-[10px] text-gray-500">Unit</label>
-                          <select value={item.unit} onChange={(e) => rcUpd(item.id, "unit", e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm">{RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select></div>
-                      </div>
-                      {/* Inhouse */}
-                      <div className="bg-white rounded-lg p-3 border">
-                        <div className="flex justify-between items-center mb-2">
-                          <div className="text-xs font-bold text-emerald-700">🏠 Inhouse</div>
-                          <div className="flex gap-1">{["flat", "smb"].map((m) => (
-                            <button key={m} onClick={() => rcUpd(item.id, "inhouseMode", m)} className={"px-2.5 py-1 rounded text-[10px] font-semibold " + (item.inhouseMode === m ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-500")}>{m === "flat" ? "Flat" : "S/M/B"}</button>
-                          ))}</div>
-                        </div>
-                        {item.inhouseMode === "flat"
-                          ? <div className="flex items-center gap-1.5"><span className="text-gray-500">₹</span><input type="number" value={item.inhouseFlat || 0} onChange={(e) => rcUpd(item.id, "inhouseFlat", e.target.value)} className="w-36 border rounded-lg px-2 py-1.5 text-base font-bold text-right" /></div>
-                          : <div className="grid grid-cols-3 gap-2">{[["Small", "inhouseS"], ["Medium", "inhouseM"], ["Big", "inhouseB"]].map(([l, f]) => (
-                              <div key={f}><div className="text-[10px] text-gray-500 text-center font-semibold">{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm font-bold text-center" /></div>
-                            ))}</div>}
-                      </div>
-                      {/* Outsource */}
-                      <div className={"rounded-lg p-3 border " + (item.outEnabled ? "bg-white border-amber-200" : "bg-gray-100 opacity-60")}>
-                        <div className="flex justify-between items-center" style={{ marginBottom: item.outEnabled ? 8 : 0 }}>
-                          <div className={"text-xs font-bold " + (item.outEnabled ? "text-amber-600" : "text-gray-500")}>🏭 Outsource</div>
-                          <button onClick={() => rcUpd(item.id, "outEnabled", !item.outEnabled)} className={"w-9 h-5 rounded-full relative transition-colors " + (item.outEnabled ? "bg-amber-500" : "bg-gray-300")}>
-                            <span className={"absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all " + (item.outEnabled ? "left-[18px]" : "left-0.5")} />
-                          </button>
-                        </div>
-                        {item.outEnabled && <div className="grid grid-cols-3 gap-2">{[["S", "outS"], ["M", "outM"], ["B", "outB"]].map(([l, f]) => (
-                          <div key={f}><div className="text-[10px] text-gray-500 text-center font-semibold">{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm font-bold text-center" /></div>
-                        ))}</div>}
-                      </div>
-                      {/* Floral pricing — real (inhouse above) + artificial + mode */}
-                      {item.cat === "florals" && (
-                        <div className="bg-pink-50 rounded-lg p-3 border border-pink-200 space-y-2.5">
-                          <div className="flex items-center justify-between">
-                            <div className="text-xs font-bold text-pink-700">🌸 Floral pricing</div>
-                            <div className="flex gap-1">{[["ratio", "Ratio"], ["real", "Real"], ["artificial", "Artificial"], ["mix", "Mix"]].map(([m, l]) => (
-                              <button key={m} onClick={() => rcUpd(item.id, "floralMode", m)} className={"px-2 py-1 rounded text-[10px] font-semibold " + ((item.floralMode || "ratio") === m ? "bg-pink-600 text-white" : "bg-white border border-pink-200 text-pink-600")}>{l}</button>
-                            ))}</div>
-                          </div>
-                          <div className="text-[10px] text-gray-500">Artificial rates <span className="text-gray-400">(real rate uses 🏠 Inhouse above)</span></div>
-                          {item.inhouseMode === "flat"
-                            ? <div className="flex items-center gap-1.5"><span className="text-gray-500">₹</span><input type="number" value={item.artificialFlat || 0} onChange={(e) => rcUpd(item.id, "artificialFlat", e.target.value)} className="w-36 border rounded-lg px-2 py-1.5 text-base font-bold text-right" /></div>
-                            : <div className="grid grid-cols-3 gap-2">{[["Small", "artificialS"], ["Medium", "artificialM"], ["Big", "artificialB"]].map(([l, f]) => (
-                                <div key={f}><div className="text-[10px] text-gray-500 text-center font-semibold">{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm font-bold text-center" /></div>
-                              ))}</div>}
-                          {(item.floralMode || "ratio") === "mix" && (
-                            <div className="flex items-center gap-2"><label className="text-[10px] text-gray-500">Default Real %</label><input type="number" min="0" max="100" value={item.defaultRealPct ?? 100} onChange={(e) => rcUpd(item.id, "defaultRealPct", e.target.value)} className="w-20 border rounded-lg px-2 py-1 text-sm font-bold text-center" /><span className="text-[10px] text-gray-400">rest is artificial</span></div>
-                          )}
-                          <div className="text-[10px] text-gray-400 leading-snug">Ratio = global slider drives real/artificial · Real = 100% real · Artificial = 100% artificial · Mix = use Default Real %.</div>
-                        </div>
-                      )}
-                      <div><label className="text-[10px] text-gray-500">Notes</label><input defaultValue={item.notes || ""} onBlur={(e) => rcUpd(item.id, "notes", e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
-                    </div>
-                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}><RCP item={item} /><button onClick={(e) => { e.stopPropagation(); rcDel(item.id); }} style={{ background: "rgba(255,255,255,0.04)", border: "none", color: "#F87171", borderRadius: 4, padding: "3px 5px", cursor: "pointer", fontSize: 10 }}>🗑️</button></div>
                 </div>
-              );
-            })}
+                {!isO && item.notes && <div style={{ padding: "0 14px 6px", fontSize: 10, color: item.notes.includes("⚠") || item.notes.includes("Set") ? "#F59E0B" : textS }}>{item.notes}</div>}
+                {isO && <div style={{ padding: "14px 18px", borderTop: `1px solid ${border}`, background: isDark ? "#0D0D18" : "#F9F9F6" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    <div><div style={S.label}>Category</div><select value={item.cat || ""} onChange={(e) => rcUpd(item.id, "cat", e.target.value)} style={S.select}>{rcCats.map((c) => <option key={c.id} value={c.id}>{c.l}</option>)}</select></div>
+                    <div><div style={S.label}>Name</div><input defaultValue={item.name} onBlur={(e) => rcUpd(item.id, "name", e.target.value)} key={item.id + "-name"} style={S.input} /></div>
+                    <div><div style={S.label}>Sub-Category</div><input defaultValue={item.sub || ""} onBlur={(e) => rcUpd(item.id, "sub", e.target.value)} key={item.id + "-sub"} style={S.input} /></div>
+                    <div><div style={S.label}>Unit</div><select value={item.unit} onChange={(e) => rcUpd(item.id, "unit", e.target.value)} style={S.select}>{RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select></div>
+                  </div>
+                  {/* Inhouse */}
+                  <div style={{ background: isDark ? "#0F0F1A" : "#fff", borderRadius: 10, padding: 12, marginBottom: 10, border: `1px solid ${item._imsDriven ? "#10B98180" : border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#059669" }}>🏠 Inhouse</div>
+                      <div style={{ display: "flex", gap: 3 }}>{["flat", "smb"].map((m) => <button key={m} disabled={!!item._imsDriven} onClick={() => { if (item._imsDriven) return; rcUpd(item.id, "inhouseMode", m); }} style={{ padding: "3px 10px", borderRadius: 5, border: "none", fontSize: 10, fontWeight: 600, cursor: item._imsDriven ? "not-allowed" : "pointer", background: item.inhouseMode === m ? "#059669" : "rgba(255,255,255,0.04)", color: item.inhouseMode === m ? "#fff" : textS, opacity: item._imsDriven ? 0.5 : 1 }}>{m === "flat" ? "Flat" : "S/M/B"}</button>)}</div>
+                    </div>
+                    {item.inhouseMode === "flat"
+                      ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ color: textS }}>₹</span><input type="number" readOnly={!!item._imsDriven} value={item.inhouseFlat || 0} onChange={(e) => { if (item._imsDriven) return; rcUpd(item.id, "inhouseFlat", e.target.value); }} style={{ ...S.input, width: 140, fontSize: 16, fontWeight: 700, textAlign: "right", opacity: item._imsDriven ? 0.7 : 1 }} /></div>
+                      : <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>{[["Small", "inhouseS"], ["Medium", "inhouseM"], ["Big", "inhouseB"]].map(([l, f]) => <div key={f}><div style={{ fontSize: 10, color: textS, textAlign: "center", fontWeight: 600 }}>{l}</div><input type="number" readOnly={!!item._imsDriven} value={item[f] || 0} onChange={(e) => { if (item._imsDriven) return; rcUpd(item.id, f, e.target.value); }} style={{ ...S.input, textAlign: "center", fontSize: 14, fontWeight: 700, opacity: item._imsDriven ? 0.7 : 1 }} /></div>)}</div>}
+                  </div>
+                  {/* Floral pricing */}
+                  {isFloral && (() => { const mode = getFloralMode(item); const pill = (active, color) => ({ padding: "5px 10px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700, cursor: "pointer", background: active ? color : "rgba(255,255,255,0.04)", color: active ? "#fff" : textS, whiteSpace: "nowrap" }); const setMode = (m) => { rcUpd(item.id, "floralMode", m); if (m === "real") rcUpd(item.id, "defaultRealPct", 100); else if (m === "artificial") rcUpd(item.id, "defaultRealPct", 0); }; const help = mode === "ratio" ? `Global slider (currently ${100 - floralRatio}% real / ${floralRatio}% artificial) drives default.` : mode === "real" ? "Default 100% real — salesperson can override per event." : "Default 100% artificial — salesperson can override per event."; return <div style={{ background: isDark ? "#0F0F1A" : "#fff", borderRadius: 10, padding: 12, marginBottom: 10, border: `1px solid ${border}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#EC4899", marginBottom: 8 }}>🌸 Pricing mode</div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+                      <button onClick={() => setMode("ratio")} style={pill(mode === "ratio", "#94A3B8")}>🌐 Global ratio</button>
+                      <button onClick={() => setMode("real")} style={pill(mode === "real", "#10B981")}>🎯 100% Real</button>
+                      <button onClick={() => setMode("artificial")} style={pill(mode === "artificial", "#EC4899")}>🎯 100% Artificial</button>
+                    </div>
+                    <div style={{ fontSize: 10, color: textS, marginBottom: 10, lineHeight: 1.4 }}>{help}</div>
+                    <div style={{ fontSize: 10, color: textS, fontWeight: 600, marginBottom: 6 }}>Artificial rate (required — used in all modes)</div>
+                    {item.inhouseMode === "flat"
+                      ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ color: textS }}>₹</span><input type="number" value={item.artificialFlat || 0} onChange={(e) => rcUpd(item.id, "artificialFlat", e.target.value)} style={{ ...S.input, width: 140, fontSize: 16, fontWeight: 700, textAlign: "right" }} /></div>
+                      : <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>{[["Small", "artificialS"], ["Medium", "artificialM"], ["Big", "artificialB"]].map(([l, f]) => <div key={f}><div style={{ fontSize: 10, color: textS, textAlign: "center", fontWeight: 600 }}>{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} style={{ ...S.input, textAlign: "center", fontSize: 14, fontWeight: 700 }} /></div>)}</div>}
+                  </div>; })()}
+                  {/* Outsource */}
+                  <div style={{ background: isDark ? (item.outEnabled ? "#0F0F1A" : "#0A0A12") : (item.outEnabled ? "#fff" : "#F5F5F5"), borderRadius: 10, padding: 12, marginBottom: 10, border: `1px solid ${item.outEnabled ? "#F59E0B30" : border}`, opacity: item.outEnabled ? 1 : 0.5 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: item.outEnabled ? 8 : 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: item.outEnabled ? "#F59E0B" : textS }}>🏭 Outsource</div>
+                      <div onClick={() => rcUpd(item.id, "outEnabled", !item.outEnabled)} style={{ width: 36, height: 20, borderRadius: 10, background: item.outEnabled ? "#F59E0B" : "#374151", position: "relative", cursor: "pointer" }}><div style={{ width: 16, height: 16, borderRadius: 8, background: "#fff", position: "absolute", top: 2, left: item.outEnabled ? 18 : 2, transition: "left 0.2s" }} /></div>
+                    </div>
+                    {item.outEnabled && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>{[["S", "outS"], ["M", "outM"], ["B", "outB"]].map(([l, f]) => <div key={f}><div style={{ fontSize: 10, color: textS, textAlign: "center", fontWeight: 600 }}>{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} style={{ ...S.input, textAlign: "center", fontSize: 14, fontWeight: 700 }} /></div>)}</div>}
+                  </div>
+                  <div><div style={S.label}>Notes</div><input defaultValue={item.notes || ""} onBlur={(e) => rcUpd(item.id, "notes", e.target.value)} key={item.id + "-notes"} style={S.input} /></div>
+                </div>}
+              </div>); })}
           </div>
         ))}
+        {Object.keys(rcGrouped).length === 0 && <div style={{ textAlign: "center", padding: 40, color: textS }}>{rcSearch ? "No matches" : "No items in this category"}</div>}
       </div>
-      </div>
-    </div>
-  );
+    </div>}
+
+    {rcTab === "transport" && <TransportEditor ctx={ctx} />}
+  </div>);
 }

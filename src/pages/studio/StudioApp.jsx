@@ -17,7 +17,6 @@ import RateCard from "./RateCard.jsx";
 import ManageLibrary from "./manage/ManageLibrary.jsx";
 import ManageSettings from "./manage/ManageSettings.jsx";
 import PremiaEditor from "./manage/PremiaEditor.jsx";
-import TransportEditor from "./TransportEditor.jsx";
 import StudioModals from "./StudioModals.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
@@ -4324,14 +4323,8 @@ Return ONLY JSON:
             <ManageLibrary ctx={ctx} />
           ) : effManageTab === "pricing" ? (
             <div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-                {[["ratecard", "💰 Rate Card"], ["transport", "🚛 Transport & Power"]].map(([t, l]) => (
-                  <button key={t} onClick={() => setRcTab(t)} style={{ padding: "7px 16px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: rcTab === t ? 700 : 500, background: rcTab === t ? `${accent}22` : "transparent", color: rcTab === t ? accent : "#6B7280" }}>{l}</button>
-                ))}
-              </div>
-              {rcTab === "transport"
-                ? <TransportEditor ctx={ctx} />
-                : <><RateCard rcItems={rcItems} setRcItems={setRcItems} rcCats={rcCats} setRcCats={setRcCats} saveRcCats={saveRcCats} /><PremiaEditor ctx={ctx} /></>}
+              <RateCard ctx={ctx} />
+              {rcTab !== "transport" && <PremiaEditor ctx={ctx} />}
             </div>
           ) : effManageTab === "settings" ? (
             <ManageSettings ctx={ctx} />

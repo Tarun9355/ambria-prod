@@ -1,115 +1,135 @@
-// Studio → Pricing → Transport & Power editor. Edits the transport config blob
-// (RC_SK_TR): venues (trip rate + gensets), truck capacities, genset rate,
-// floral-per-truck, and budget buffer tiers. Persists via ctx.saveTR (per-slice).
-import { useState } from "react";
+// Studio → Pricing → Transport & Power tab. Faithful dark-theme transcription of
+// the reference AdminRates transport tab (App_latest.jsx ~7645), driven off ctx.
+// Edits the transport blob (RC_SK_TR) via ctx.saveTR (per-slice persistence).
 
 export default function TransportEditor({ ctx }) {
-  const { trVenues, truckCap, floralPerTruck, gensetRate, bufferTiers, saveTR } = ctx;
-  const [open, setOpen] = useState("venues"); // accordion section
+  const {
+    S, isDark, accent, border, textP, textS, showMsg,
+    trVenues, truckCap, floralPerTruck, gensetRate, bufferTiers, saveTR,
+    newVenue, setNewVenue, newTC, setNewTC, TR_TIERS, TC_UNITS,
+  } = ctx;
 
-  const Section = ({ id, title, count, children }) => (
-    <div className="bg-white border rounded-2xl overflow-hidden mb-3">
-      <button onClick={() => setOpen((o) => (o === id ? "" : id))} className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50">
-        <span className="font-bold text-gray-900">{title}{count != null && <span className="text-xs text-gray-400 font-normal ml-2">{count}</span>}</span>
-        <span className="text-gray-400">{open === id ? "▴" : "▾"}</span>
-      </button>
-      {open === id && <div className="px-5 pb-5 pt-1">{children}</div>}
-    </div>
-  );
-
-  const numI = "w-24 border rounded px-2 py-1 text-sm text-center";
-  const txtI = "border rounded px-2 py-1 text-sm";
-
-  // ── Venues ──
-  const updV = (id, patch) => saveTR(trVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-  const addV = () => saveTR([...trVenues, { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name: "New Venue", rate: 0, gensets: 1, tier: "outdoor" }]);
-  const delV = (id) => { if (!window.confirm("Delete this venue's transport entry?")) return; saveTR(trVenues.filter((v) => v.id !== id)); };
-
-  // ── Truck capacities ──
-  const updTC = (id, patch) => saveTR(null, truckCap.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  const addTC = () => saveTR(null, [...truckCap, { id: "TC" + Date.now().toString(36).slice(-5).toUpperCase(), item: "New item", unit: "pc", perTruck: 0 }]);
-  const delTC = (id) => saveTR(null, truckCap.filter((t) => t.id !== id));
-
-  // ── Buffer tiers ──
-  const updBT = (id, patch) => saveTR(null, null, undefined, bufferTiers.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  // Venues
+  const updTrVenue = (id, f, v) => { const num = f === "rate" || f === "gensets"; saveTR(trVenues.map((x) => (x.id === id ? { ...x, [f]: num ? Number(v) || 0 : v } : x))); };
+  const delTrVenue = (id) => saveTR(trVenues.filter((x) => x.id !== id));
+  const addTrVenue = (tierId) => {
+    if (newVenue.tier !== tierId || !(newVenue.name || "").trim()) { showMsg && showMsg("Enter a venue name", "red"); return; }
+    saveTR([...trVenues, { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), tier: tierId, name: newVenue.name.trim(), rate: newVenue.rate || 0, gensets: newVenue.gensets || 1 }]);
+    setNewVenue({ tier: "", name: "", rate: 0, gensets: 1 });
+  };
+  // Truck capacities
+  const updTrTC = (id, f, v) => { const num = f === "perTruck"; saveTR(null, truckCap.map((x) => (x.id === id ? { ...x, [f]: num ? Number(v) || 0 : v } : x))); };
+  const delTrTC = (id) => saveTR(null, truckCap.filter((x) => x.id !== id));
+  const addTrTC = () => { if (!(newTC.item || "").trim()) { showMsg && showMsg("Enter an item name", "red"); return; } saveTR(null, [...truckCap, { id: "TC" + Date.now().toString(36).slice(-5).toUpperCase(), item: newTC.item.trim(), perTruck: newTC.perTruck || 0, unit: newTC.unit || "pc" }]); setNewTC({ item: "", perTruck: 0, unit: "pc" }); };
+  // Buffer tiers
+  const updBT = (id, f, v) => saveTR(null, null, undefined, bufferTiers.map((x) => (x.id === id ? { ...x, [f]: f === "label" ? v : Number(v) || 0 } : x)));
   const addBT = () => { const last = bufferTiers[bufferTiers.length - 1]; saveTR(null, null, undefined, [...bufferTiers, { id: "BT" + Date.now().toString(36).slice(-5).toUpperCase(), label: "New tier", minBudget: last ? last.maxBudget : 0, maxBudget: (last ? last.maxBudget : 0) + 500000, bufferTrucks: 1 }]); };
-  const delBT = (id) => { if (bufferTiers.length <= 1) return; saveTR(null, null, undefined, bufferTiers.filter((b) => b.id !== id)); };
+  const delBT = (id) => { if (bufferTiers.length <= 1) { showMsg && showMsg("Need at least 1 tier", "red"); return; } saveTR(null, null, undefined, bufferTiers.filter((x) => x.id !== id)); };
 
-  const fmtINR = (n) => "₹" + (Number(n) || 0).toLocaleString("en-IN");
+  const numInput = { padding: "6px 10px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: isDark ? "#fff" : "#000", fontSize: 14, fontWeight: 700, textAlign: "right", outline: "none", fontFamily: "inherit" };
 
-  return (
-    <div>
-      <h2 className="text-xl font-bold text-amber-600 mb-4">🚛 Transport & Power</h2>
+  return (<div style={{ maxWidth: 900 }}>
+    <div style={{ fontSize: 20, fontWeight: 700, color: textP, marginBottom: 4 }}>🚛 Transport & Power</div>
+    <div style={{ fontSize: 12, color: textS, marginBottom: 24 }}>Venue tier pricing · Genset per venue · Truck capacity rules · Auto-estimate trips</div>
 
-      <Section id="venues" title="🏛️ Venue Trip Rates & Gensets" count={`${trVenues.length} venues`}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-gray-400 uppercase"><tr><th className="text-left py-1.5">Venue</th><th className="text-center">Tier</th><th className="text-center">Trip rate ₹</th><th className="text-center">Gensets</th><th></th></tr></thead>
-            <tbody>
-              {trVenues.map((v) => (
-                <tr key={v.id} className="border-t">
-                  <td className="py-1.5"><input value={v.name || ""} onChange={(e) => updV(v.id, { name: e.target.value })} className={txtI + " w-44"} /></td>
-                  <td className="text-center"><select value={v.tier || "outdoor"} onChange={(e) => updV(v.id, { tier: e.target.value })} className="border rounded px-2 py-1 text-xs"><option value="inhouse">In-house</option><option value="outdoor">Outdoor</option><option value="other">Other</option></select></td>
-                  <td className="text-center"><input type="number" value={v.rate || 0} onChange={(e) => updV(v.id, { rate: Number(e.target.value) || 0 })} className={numI} /></td>
-                  <td className="text-center"><input type="number" value={v.gensets ?? 1} onChange={(e) => updV(v.id, { gensets: Number(e.target.value) || 0 })} className="w-16 border rounded px-2 py-1 text-sm text-center" /></td>
-                  <td className="text-center"><button onClick={() => delV(v.id)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    {/* Venue Tiers */}
+    {(TR_TIERS || []).map((tier) => { const tv = trVenues.filter((v) => v.tier === tier.id); return (
+      <div key={tier.id} style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>{tier.icon} {tier.label}</div>
+          <span style={{ fontSize: 11, color: textS }}>{tv.length} venues</span>
         </div>
-        <button onClick={addV} className="mt-3 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Venue</button>
-      </Section>
-
-      <Section id="trucks" title="📦 Truck Capacities" count={`${truckCap.length} items`}>
-        <p className="text-xs text-gray-500 mb-2">How many of each item fit on one truck — drives truck-count estimates.</p>
-        <div className="flex flex-wrap gap-2">
-          {truckCap.map((t) => (
-            <div key={t.id} className="inline-flex items-center gap-1.5 bg-gray-50 border rounded-lg px-2.5 py-1.5">
-              <input value={t.item || ""} onChange={(e) => updTC(t.id, { item: e.target.value })} className="w-28 border rounded px-1.5 py-0.5 text-xs font-medium" />
-              <span className="text-xs text-gray-400">/ truck:</span>
-              <input type="number" value={t.perTruck || 0} onChange={(e) => updTC(t.id, { perTruck: Number(e.target.value) || 0 })} className="w-16 border rounded px-1 py-0.5 text-xs text-center font-bold" />
-              <input value={t.unit || ""} onChange={(e) => updTC(t.id, { unit: e.target.value })} placeholder="unit" className="w-12 border rounded px-1 py-0.5 text-xs" />
-              <button onClick={() => delTC(t.id)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+        <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>{tier.desc}</div>
+        {tv.map((v) => (
+          <div key={v.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${border}` }}>
+            <span style={{ fontSize: 14, color: textP, minWidth: 120 }}>{v.name}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, color: textS }}>₹</span>
+              <input type="number" value={v.rate} onChange={(e) => updTrVenue(v.id, "rate", e.target.value)} style={{ ...numInput, width: 70 }} />
+              <span style={{ fontSize: 11, color: textS }}>/trip</span>
+              <div style={{ width: 1, height: 20, background: border, margin: "0 4px" }} />
+              <span style={{ fontSize: 11, color: "#F59E0B" }}>⚡</span>
+              <input type="number" step="0.5" min="0" value={v.gensets ?? 1} onChange={(e) => updTrVenue(v.id, "gensets", e.target.value)} style={{ ...numInput, width: 50, color: "#F59E0B", textAlign: "center" }} />
+              <span style={{ fontSize: 10, color: textS }}>genset</span>
+              <button onClick={() => delTrVenue(v.id)} style={{ background: "transparent", border: "none", color: "#F87171", cursor: "pointer", fontSize: 14, padding: "2px 6px" }}>✖</button>
             </div>
-          ))}
-        </div>
-        <button onClick={addTC} className="mt-3 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Item</button>
-      </Section>
-
-      <Section id="power" title="⚡ Power & Florals">
-        <div className="grid grid-cols-2 gap-4 max-w-md">
-          <div>
-            <label className="text-xs text-gray-500 font-medium">Genset rate (₹ each)</label>
-            <input type="number" value={gensetRate || 0} onChange={(e) => saveTR(null, null, undefined, null, Number(e.target.value) || 0)} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-bold" />
           </div>
-          <div>
-            <label className="text-xs text-gray-500 font-medium">Floral value per truck (₹)</label>
-            <input type="number" value={floralPerTruck || 0} onChange={(e) => saveTR(null, null, Number(e.target.value) || 0)} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm font-bold" />
-            <p className="text-[10px] text-gray-400 mt-0.5">1 floral truck per this much floral cost</p>
-          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+          <input value={newVenue.tier === tier.id ? newVenue.name : ""} onChange={(e) => setNewVenue((p) => ({ ...p, tier: tier.id, name: e.target.value }))} placeholder="Venue name" style={{ ...S.input, flex: 1, minWidth: 140 }} />
+          <span style={{ fontSize: 11, color: textS }}>₹</span>
+          <input type="number" value={newVenue.tier === tier.id ? newVenue.rate : ""} onChange={(e) => setNewVenue((p) => ({ ...p, tier: tier.id, rate: Number(e.target.value) || 0 }))} placeholder="0" style={{ ...numInput, width: 70 }} />
+          <span style={{ fontSize: 11, color: "#F59E0B" }}>⚡</span>
+          <input type="number" step="0.5" min="0" value={newVenue.tier === tier.id ? (newVenue.gensets || 1) : 1} onChange={(e) => setNewVenue((p) => ({ ...p, tier: tier.id, gensets: Number(e.target.value) || 1 }))} style={{ ...numInput, width: 44, color: "#F59E0B", textAlign: "center" }} />
+          <button onClick={() => addTrVenue(tier.id)} style={{ ...S.btn(true), padding: "8px 16px", flexShrink: 0 }}>+ Add</button>
         </div>
-      </Section>
+      </div>
+    ); })}
 
-      <Section id="buffer" title="🪣 Budget Buffer Tiers" count={`${bufferTiers.length} tiers`}>
-        <p className="text-xs text-gray-500 mb-2">Extra buffer trucks added based on total decor budget.</p>
-        <div className="space-y-2">
-          {bufferTiers.map((b) => (
-            <div key={b.id} className="flex items-center gap-2 bg-gray-50 border rounded-lg px-3 py-2 flex-wrap">
-              <input value={b.label || ""} onChange={(e) => updBT(b.id, { label: e.target.value })} className={txtI + " w-32"} />
-              <span className="text-xs text-gray-400">from</span>
-              <input type="number" value={b.minBudget || 0} onChange={(e) => updBT(b.id, { minBudget: Number(e.target.value) || 0 })} className={numI} title={fmtINR(b.minBudget)} />
-              <span className="text-xs text-gray-400">to</span>
-              <input type="number" value={b.maxBudget || 0} onChange={(e) => updBT(b.id, { maxBudget: Number(e.target.value) || 0 })} className={numI} title={fmtINR(b.maxBudget)} />
-              <span className="text-xs text-gray-400">→ +</span>
-              <input type="number" value={b.bufferTrucks || 0} onChange={(e) => updBT(b.id, { bufferTrucks: Number(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center font-bold" />
-              <span className="text-xs text-gray-400">trucks</span>
-              <button onClick={() => delBT(b.id)} className="text-red-400 hover:text-red-600 text-xs ml-auto">✕</button>
-            </div>
-          ))}
-        </div>
-        <button onClick={addBT} className="mt-3 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Tier</button>
-      </Section>
+    {/* Genset rate */}
+    <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div><div style={{ fontSize: 16, fontWeight: 700, color: "#F59E0B", marginBottom: 4 }}>⚡ Genset Rate</div><div style={{ fontSize: 11, color: textS }}>Cost per genset (125 KVA) per event — multiplied by venue genset count</div></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 13, color: textS }}>₹</span><input type="number" value={gensetRate} onChange={(e) => saveTR(null, null, undefined, null, Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} /><span style={{ fontSize: 11, color: textS }}>/event</span></div>
+      </div>
     </div>
-  );
+
+    {/* Truck capacities */}
+    <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: accent, marginBottom: 4 }}>🚚 Truck Capacity Rules</div>
+      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Items per truck — used to auto-estimate truck count</div>
+      {truckCap.map((tc) => (
+        <div key={tc.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${border}` }}>
+          <input value={tc.item} onChange={(e) => updTrTC(tc.id, "item", e.target.value)} style={{ fontSize: 14, color: textP, background: "transparent", border: "none", outline: "none", fontFamily: "inherit", flex: 1, minWidth: 0, padding: "4px 0" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <input type="number" value={tc.perTruck} onChange={(e) => updTrTC(tc.id, "perTruck", e.target.value)} style={{ ...numInput, width: 70, color: (tc.perTruck || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000"), fontSize: 15 }} />
+            <select value={tc.unit || "pc"} onChange={(e) => updTrTC(tc.id, "unit", e.target.value)} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }]).map((u) => <option key={u.id} value={u.id}>{u.l}/truck</option>)}</select>
+            <button onClick={() => delTrTC(tc.id)} style={{ background: "transparent", border: "none", color: "#F87171", cursor: "pointer", fontSize: 14, padding: "2px 6px" }}>✖</button>
+          </div>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+        <input value={newTC.item} onChange={(e) => setNewTC((p) => ({ ...p, item: e.target.value }))} placeholder="Item name" style={{ ...S.input, flex: 1, minWidth: 140 }} />
+        <input type="number" value={newTC.perTruck || ""} onChange={(e) => setNewTC((p) => ({ ...p, perTruck: Number(e.target.value) || 0 }))} placeholder="0" style={{ ...numInput, width: 70 }} />
+        <select value={newTC.unit || "pc"} onChange={(e) => setNewTC((p) => ({ ...p, unit: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }]).map((u) => <option key={u.id} value={u.id}>{u.l}/truck</option>)}</select>
+        <button onClick={addTrTC} style={{ ...S.btn(true), padding: "8px 16px", flexShrink: 0 }}>+ Add</button>
+      </div>
+    </div>
+
+    {/* Florals truck rule */}
+    <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: "#EC4899", marginBottom: 4 }}>🌸 Florals Truck Rule</div>
+      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Florals are small items — truck count estimated by total floral budget, not per piece.</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: isDark ? "#0F0F1A" : "#F9FAFB", borderRadius: 10, border: `1px solid ${border}`, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, color: textP, fontWeight: 600 }}>Every</span>
+        <span style={{ color: textS }}>₹</span>
+        <input type="number" value={floralPerTruck} onChange={(e) => saveTR(null, null, Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} />
+        <span style={{ fontSize: 13, color: textP, fontWeight: 600 }}>of floral cost = 1 truck</span>
+      </div>
+    </div>
+
+    {/* Buffer tiers */}
+    <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#3B82F6" }}>🛡️ Buffer Trucks by Budget</div>
+        <button onClick={addBT} style={{ ...S.btn(true), padding: "6px 14px", fontSize: 11 }}>+ Add Tier</button>
+      </div>
+      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Extra trucks auto-added based on project budget — covers last-minute requirements.</div>
+      {bufferTiers.map((bt) => (
+        <div key={bt.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${border}`, flexWrap: "wrap" }}>
+          <input value={bt.label} onChange={(e) => updBT(bt.id, "label", e.target.value)} style={{ width: 130, padding: "6px 10px", borderRadius: 8, border: `1px solid ${border}`, background: "transparent", color: textP, fontSize: 13, fontWeight: 600, outline: "none", fontFamily: "inherit" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: textS }}>
+            <span>₹</span><input type="number" value={bt.minBudget} onChange={(e) => updBT(bt.id, "minBudget", e.target.value)} style={{ ...numInput, width: 80, fontSize: 12 }} />
+            <span>→</span><span>₹</span><input type="number" value={bt.maxBudget} onChange={(e) => updBT(bt.id, "maxBudget", e.target.value)} style={{ ...numInput, width: 80, fontSize: 12 }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+            <span style={{ fontSize: 11, color: textS }}>Buffer:</span>
+            <input type="number" value={bt.bufferTrucks} onChange={(e) => updBT(bt.id, "bufferTrucks", e.target.value)} style={{ ...numInput, width: 50, fontSize: 18, textAlign: "center", color: bt.bufferTrucks > 0 ? "#3B82F6" : "#F59E0B" }} />
+            <span style={{ fontSize: 11, color: textS }}>truck{bt.bufferTrucks !== 1 ? "s" : ""}</span>
+            <button onClick={() => delBT(bt.id)} style={{ background: "transparent", border: "none", color: "#F87171", cursor: "pointer", fontSize: 14, padding: "2px 6px" }}>✖</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>);
 }
