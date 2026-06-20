@@ -1580,6 +1580,10 @@ export default function StudioApp() {
   // ═══════════════════════════════════════════════════════════════
   const save = useCallback(async (evs) => { setEvents(evs); await reliableSave(STORAGE_KEY, JSON.stringify(evs), "Events"); }, []);
   const saveVenues = useCallback(async (ih, od) => { setCustomInhouse(ih); setCustomOutdoor(od); await reliableSave(STORAGE_KEY + "-venues", JSON.stringify({ inhouse: ih, outdoor: od }), "Venues"); }, []);
+  // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
+  // Persisted to settings so IMS reads it too.
+  const venueParents = useMemo(() => Object.fromEntries((customInhouse || []).filter(v => v.name).map(v => [v.name, v.parent || v.name])), [customInhouse]);
+  useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   const saveRC = useCallback(async (ni) => { setRcItems(ni); await reliableSave(RC_SK, JSON.stringify(ni), "Rate card"); }, []);
   const saveRcCats = useCallback(async (nc) => { setRcCats(nc); await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
@@ -3777,7 +3781,7 @@ Return ONLY JSON:
       for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch {} } }
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [] });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], venueParents });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
@@ -3940,7 +3944,7 @@ Return ONLY JSON:
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const cardSpecs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
         const venueName = fn.fnVenue || "";
-        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [] };
+        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || venueParents };
         for (const spec of cardSpecs) {
           // Hide inventory locked to OTHER fixed venues; surface THIS venue's standing items first.
           const scoped = filterImsBySubcategory(inventory, spec.subcategory)

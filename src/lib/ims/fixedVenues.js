@@ -4,12 +4,28 @@
 // built beyond the standing qty, a swapped design, or any other venue → full.
 import { heavyExtraLabour } from "./constants";
 
-// Resolve the fixed-venue config for a venue name (case-insensitive). null if not fixed.
+// Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim.
+function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim(); }
+
+// Sub-venue → parent map (e.g. Aura → Exotica). Stored by Studio; may be a JSON string.
+function parentMap(settings) {
+  let p = settings?.venueParents || {};
+  if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = {}; } }
+  return p || {};
+}
+
+// Resolve the fixed-venue config for a venue name. Parent-aware: a function at a
+// sub-venue (Aura) matches a fixed venue keyed by its parent (Exotica / "Ambria
+// Exotica"), with "Ambria " prefix ignored. null if not a fixed venue.
 export function fixedVenueFor(settings, venueName) {
   if (!venueName) return null;
-  return (settings?.fixedVenues || []).find(
-    (v) => (v.name || "").toLowerCase() === String(venueName).toLowerCase()
-  ) || null;
+  const fvs = settings?.fixedVenues || [];
+  if (!fvs.length) return null;
+  const parents = parentMap(settings);
+  const cands = [venueName];
+  if (parents[venueName]) cands.push(parents[venueName]);
+  const candNorms = cands.map(normVenue);
+  return fvs.find((v) => candNorms.includes(normVenue(v.name))) || null;
 }
 
 // Standing qty of a specific inventory item at a venue (0 if venue isn't fixed or item isn't standing).
@@ -48,9 +64,10 @@ export function rentalSplit(settings, venueName, invId, qty) {
 // fixed stock; only genuinely free units (e.g. at Production House) are offered.
 export function availableAtVenue(settings, venueName, item) {
   const total = Number(item?.qty ?? item?.qtyOwned) || 0;
+  const own = fixedVenueFor(settings, venueName); // parent-aware "this venue"
   let lockedElsewhere = 0;
   (settings?.fixedVenues || []).forEach((v) => {
-    if ((v.name || "").toLowerCase() === String(venueName || "").toLowerCase()) return; // own venue → available
+    if (own && v === own) return; // own venue → its standing stock is available here
     const it = (v.items || []).find((i) => i.invId === item?.id);
     if (it) lockedElsewhere += Number(it.qty) || 0;
   });

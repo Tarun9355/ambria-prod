@@ -192,7 +192,7 @@ export default function DCManpowerTab({ ctx }) {
                       subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
                     // Net fixed-venue standing inventory (by matched item id) — mirrors IMS.
-                    const reduction = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [] }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                    const reduction = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     heavyElementRanges.forEach(her => {
                       const count = Math.max(0, (subCounts[her.subCat] || 0) - (reduction[her.subCat] || 0));
                       heavyExtra += heavyExtraLabour(her, count);
@@ -279,7 +279,7 @@ export default function DCManpowerTab({ ctx }) {
                       });
                     }
                     // Net the venue's standing (installed) pillars — reused truss adds no labour.
-                    pillars = Math.max(0, pillars - standingPillarCount({ fixedVenues: dealCheckData?.fixedVenues || [] }, fn.fnVenue || ""));
+                    pillars = Math.max(0, pillars - standingPillarCount({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || ""));
                     if (pillars <= 0 || trussLabourRanges.length === 0) return 0;
                     for (const r of trussLabourRanges) {
                       if (pillars <= r.upTo) return r.labour || 0;
@@ -405,7 +405,7 @@ export default function DCManpowerTab({ ctx }) {
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => { const s = rc.sub || ""; subCounts[s] = (subCounts[s] || 0) + qty; });
                     const heavyHits = [];
-                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [] }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     heavyElementRanges.forEach(her => {
                       const count = Math.max(0, (subCounts[her.subCat] || 0) - (reductionB[her.subCat] || 0));
                       const ex = heavyExtraLabour(her, count);
