@@ -185,6 +185,27 @@ export default function RateCard({ rcItems, setRcItems, rcCats = RC_CATS_DEFAULT
                           <div key={f}><div className="text-[10px] text-gray-500 text-center font-semibold">{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm font-bold text-center" /></div>
                         ))}</div>}
                       </div>
+                      {/* Floral pricing — real (inhouse above) + artificial + mode */}
+                      {item.cat === "florals" && (
+                        <div className="bg-pink-50 rounded-lg p-3 border border-pink-200 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs font-bold text-pink-700">🌸 Floral pricing</div>
+                            <div className="flex gap-1">{[["ratio", "Ratio"], ["real", "Real"], ["artificial", "Artificial"], ["mix", "Mix"]].map(([m, l]) => (
+                              <button key={m} onClick={() => rcUpd(item.id, "floralMode", m)} className={"px-2 py-1 rounded text-[10px] font-semibold " + ((item.floralMode || "ratio") === m ? "bg-pink-600 text-white" : "bg-white border border-pink-200 text-pink-600")}>{l}</button>
+                            ))}</div>
+                          </div>
+                          <div className="text-[10px] text-gray-500">Artificial rates <span className="text-gray-400">(real rate uses 🏠 Inhouse above)</span></div>
+                          {item.inhouseMode === "flat"
+                            ? <div className="flex items-center gap-1.5"><span className="text-gray-500">₹</span><input type="number" value={item.artificialFlat || 0} onChange={(e) => rcUpd(item.id, "artificialFlat", e.target.value)} className="w-36 border rounded-lg px-2 py-1.5 text-base font-bold text-right" /></div>
+                            : <div className="grid grid-cols-3 gap-2">{[["Small", "artificialS"], ["Medium", "artificialM"], ["Big", "artificialB"]].map(([l, f]) => (
+                                <div key={f}><div className="text-[10px] text-gray-500 text-center font-semibold">{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm font-bold text-center" /></div>
+                              ))}</div>}
+                          {(item.floralMode || "ratio") === "mix" && (
+                            <div className="flex items-center gap-2"><label className="text-[10px] text-gray-500">Default Real %</label><input type="number" min="0" max="100" value={item.defaultRealPct ?? 100} onChange={(e) => rcUpd(item.id, "defaultRealPct", e.target.value)} className="w-20 border rounded-lg px-2 py-1 text-sm font-bold text-center" /><span className="text-[10px] text-gray-400">rest is artificial</span></div>
+                          )}
+                          <div className="text-[10px] text-gray-400 leading-snug">Ratio = global slider drives real/artificial · Real = 100% real · Artificial = 100% artificial · Mix = use Default Real %.</div>
+                        </div>
+                      )}
                       <div><label className="text-[10px] text-gray-500">Notes</label><input defaultValue={item.notes || ""} onBlur={(e) => rcUpd(item.id, "notes", e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
                     </div>
                   )}
