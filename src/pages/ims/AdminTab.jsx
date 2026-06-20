@@ -5,7 +5,7 @@ import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import UsersTab from "./UsersTab.jsx";
 
 // Faithful to the reference AdminTabWrapper (sub-tabs: Users / Vendors / Settings).
-export default function AdminTab({ users, setUsers, vendors, setVendors, functions, settings, setSettings, supervisors, setSupervisors, studio, inventory }) {
+export default function AdminTab({ users, setUsers, vendors, setVendors, functions, settings, setSettings, supervisors, setSupervisors, studio, inventory, trussInv }) {
   const [sub, setSub] = useState("vendors");
   const tabs = [
     { id: "users", label: "👤 Users & Roles" },
@@ -17,7 +17,7 @@ export default function AdminTab({ users, setUsers, vendors, setVendors, functio
       <Tabs tabs={tabs} active={sub} onChange={setSub} />
       {sub === "users" && <UsersTab users={users} setUsers={setUsers} settings={settings} setSettings={setSettings} />}
       {sub === "vendors" && <VendorsTab vendors={vendors} setVendors={setVendors} functions={functions} settings={settings} />}
-      {sub === "settings" && <AdminSettingsTab settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} inventory={inventory} />}
+      {sub === "settings" && <AdminSettingsTab settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} inventory={inventory} trussInv={trussInv} />}
     </div>
   );
 }

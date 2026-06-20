@@ -57,6 +57,14 @@ export function availableAtVenue(settings, venueName, item) {
   return Math.max(0, total - lockedElsewhere);
 }
 
+// Total standing PILLARS installed at a fixed venue (sum across sizes) — drives the
+// pillar-count truss-labour table (reused installed pillars add no truss labour).
+export function standingPillarCount(settings, venueName) {
+  const fv = fixedVenueFor(settings, venueName);
+  if (!fv?.truss?.pillars) return 0;
+  return Object.values(fv.truss.pillars).reduce((s, q) => s + (Number(q) || 0), 0);
+}
+
 // True if this item is part of `venueName`'s own standing inventory.
 export function isStandingAt(settings, venueName, invId) {
   return standingQty(settings, venueName, invId) > 0;

@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour } from "../../../../lib/ims/constants";
-import { standingReductionBySubcat } from "../../../../lib/ims/fixedVenues";
+import { standingReductionBySubcat, standingPillarCount } from "../../../../lib/ims/fixedVenues";
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -278,6 +278,8 @@ export default function DCManpowerTab({ ctx }) {
                         } catch {}
                       });
                     }
+                    // Net the venue's standing (installed) pillars — reused truss adds no labour.
+                    pillars = Math.max(0, pillars - standingPillarCount({ fixedVenues: dealCheckData?.fixedVenues || [] }, fn.fnVenue || ""));
                     if (pillars <= 0 || trussLabourRanges.length === 0) return 0;
                     for (const r of trussLabourRanges) {
                       if (pillars <= r.upTo) return r.labour || 0;

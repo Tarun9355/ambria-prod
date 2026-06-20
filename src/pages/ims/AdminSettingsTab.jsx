@@ -356,7 +356,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
 
           {/* ═══ FIXED VENUES — standing inventory (own structure, no build labour, discounted rental) ═══ */}
-          <FixedVenuesEditor settings={settings} setSettings={setSettings} inventory={inventory} />
+          <FixedVenuesEditor settings={settings} setSettings={setSettings} inventory={inventory} trussInv={trussInv} />
         </div>
       )}
       {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}

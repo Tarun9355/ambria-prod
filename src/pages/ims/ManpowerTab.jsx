@@ -9,7 +9,7 @@ import {
   heavyExtraLabour,
 } from "../../lib/ims/constants";
 import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
-import { heavyElementExtraForFn } from "../../lib/ims/fixedVenues";
+import { heavyElementExtraForFn, standingPillarCount } from "../../lib/ims/fixedVenues";
 import { resolveSizeKey, sizeClassToPatternKey } from "../../lib/ims/flowerHelpers";
 
 // ─── Local helpers (copied verbatim from reference) ───────────────────────────
@@ -291,8 +291,9 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
     return {qty:last?.labour||3, reason:`${sqft} sqft → ${last?.labour} (max range)`};
   }
 
-  // Get pillar count and truss sqft from function data
-  const fnPillarCount=fn?.trussPillarCount||0;
+  // Get pillar count and truss sqft from function data.
+  // Net out the venue's standing (installed) pillars — reused truss adds no build labour.
+  const fnPillarCount=Math.max(0,(fn?.trussPillarCount||0) - standingPillarCount(settings, fn?.venue?.name));
   function setFnPillarCount(count){
     setFunctions(prev=>prev.map(f=>f.id===selFn?{...f,trussPillarCount:count}:f));
   }

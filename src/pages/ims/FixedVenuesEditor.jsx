@@ -6,7 +6,9 @@
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
 import { useState } from "react";
 
-export default function FixedVenuesEditor({ settings, setSettings, inventory = [] }) {
+export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
+  const pillarSizes = Object.keys(trussInv?.pillars || {}).sort((a, b) => Number(b) - Number(a));
+  const beamSizes = Object.keys(trussInv?.beams || {}).sort((a, b) => Number(b) - Number(a));
   const fixedVenues = settings.fixedVenues || [];
   const save = (next) => setSettings((s) => ({ ...s, fixedVenues: next }));
 
@@ -37,6 +39,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   };
   const updItem = (vid, invId, patch) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.map((it) => (it.invId === invId ? { ...it, ...patch } : it)) }); };
   const delItem = (vid, invId) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
+  const updTruss = (vid, kind, size, qty) => {
+    const v = fixedVenues.find((x) => x.id === vid);
+    const truss = { pillars: { ...(v.truss?.pillars || {}) }, beams: { ...(v.truss?.beams || {}) } };
+    if (qty > 0) truss[kind][size] = qty; else delete truss[kind][size];
+    updVenue(vid, { truss });
+  };
 
   return (
     <div className="bg-white border rounded-2xl p-5">
@@ -101,6 +109,32 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 {inventory.filter((i) => !v.items.some((it) => it.invId === i.id)).map((i) => <option key={i.id} value={i.name}>{i.cat ? `${i.cat}${i.subCat ? " · " + i.subCat : ""}` : ""}</option>)}
               </datalist>
             </div>
+
+            {/* Standing truss — pillars/beams permanently installed here (totals per size) */}
+            <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing truss <span className="font-normal text-gray-400 normal-case">— installed pillars/beams (no build labour on reuse)</span></div>
+            {(pillarSizes.length > 0 || beamSizes.length > 0) ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-gray-500 w-14">🔩 Pillars</span>
+                  {pillarSizes.map((sz) => (
+                    <span key={sz} className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
+                      <span className="text-xs text-teal-700 font-medium">{sz}ft</span>
+                      <input type="number" min="0" value={v.truss?.pillars?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "pillars", sz, parseInt(e.target.value) || 0)} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                    </span>
+                  ))}
+                  <span className="text-[10px] text-gray-400">total {Object.values(v.truss?.pillars || {}).reduce((s, q) => s + (Number(q) || 0), 0)} pillars</span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-gray-500 w-14">➖ Beams</span>
+                  {beamSizes.map((sz) => (
+                    <span key={sz} className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                      <span className="text-xs text-amber-700 font-medium">{sz}ft</span>
+                      <input type="number" min="0" value={v.truss?.beams?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "beams", sz, parseInt(e.target.value) || 0)} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : <div className="text-xs text-gray-400 italic">Truss sizes load from Planning → Truss inventory.</div>}
           </div>
         ))}
       </div>
