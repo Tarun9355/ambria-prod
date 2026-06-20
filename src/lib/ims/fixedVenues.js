@@ -64,6 +64,22 @@ export function locationBreakdown(settings, item) {
   return out;
 }
 
+// Standing-qty reduction per sub-category for a Studio Deal Check function, using the
+// matched cards (which carry the inventory id) — so a reused standing design is netted
+// but a swapped design (different id) is not. cards = { cardKey: { imsId, qty } }.
+export function standingReductionBySubcat(settings, venueName, cards, inventory) {
+  const out = {};
+  Object.values(cards || {}).forEach((c) => {
+    if (!c?.imsId) return;
+    const inv = (inventory || []).find((i) => i.id === c.imsId);
+    const sub = inv?.subCat ?? inv?.subcategory;
+    if (!sub) return;
+    const red = Math.min(Number(c.qty) || 0, standingQty(settings, venueName, c.imsId));
+    if (red > 0) out[sub] = (out[sub] || 0) + red;
+  });
+  return out;
+}
+
 // Heavy-element extra labour for a function, netting out standing inventory at fixed venues.
 // Returns { total, breakdown: string[] }.
 export function heavyElementExtraForFn(fn, settings, inventory) {

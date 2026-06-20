@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour } from "../../../../lib/ims/constants";
+import { standingReductionBySubcat } from "../../../../lib/ims/fixedVenues";
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -14,7 +15,7 @@ export default function DCManpowerTab({ ctx }) {
     // build / fn state
     collectAllFunctionData,
     // settings + zone meta + rate card
-    dealCheckData, rcItems, zoneMeta,
+    dealCheckData, rcItems, zoneMeta, dcCards,
     // pricing helpers (module-exposed via ctx)
     calcZoneTrussPreview,
     // manpower state
@@ -189,8 +190,10 @@ export default function DCManpowerTab({ ctx }) {
                       const sub = rc.sub || "";
                       subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
+                    // Net fixed-venue standing inventory (by matched item id) — mirrors IMS.
+                    const reduction = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [] }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     heavyElementRanges.forEach(her => {
-                      const count = subCounts[her.subCat] || 0;
+                      const count = Math.max(0, (subCounts[her.subCat] || 0) - (reduction[her.subCat] || 0));
                       heavyExtra += heavyExtraLabour(her, count);
                     });
                     return adjusted + heavyExtra;
@@ -398,8 +401,9 @@ export default function DCManpowerTab({ ctx }) {
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => { const s = rc.sub || ""; subCounts[s] = (subCounts[s] || 0) + qty; });
                     const heavyHits = [];
+                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [] }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     heavyElementRanges.forEach(her => {
-                      const count = subCounts[her.subCat] || 0;
+                      const count = Math.max(0, (subCounts[her.subCat] || 0) - (reductionB[her.subCat] || 0));
                       const ex = heavyExtraLabour(her, count);
                       if (ex > 0) { heavyHits.push({ sub: her.subCat, count, extra: ex }); heavyExtra += ex; }
                     });
