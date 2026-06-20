@@ -48,6 +48,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     if (qty > 0) truss[kind][size] = qty; else delete truss[kind][size];
     updVenue(vid, { truss });
   };
+  // Pieces of an inventory item free to assign HERE = stock minus what other fixed venues hold.
+  const invAvail = (invId, vid) => {
+    const inv = inventory.find((i) => i.id === invId);
+    const stock = Number(inv?.qty ?? inv?.qtyOwned) || 0;
+    const otherStanding = fixedVenues.filter((x) => x.id !== vid).reduce((s, x) => s + (Number((x.items || []).find((it) => it.invId === invId)?.qty) || 0), 0);
+    return Math.max(0, stock - otherStanding);
+  };
   // Pieces of a truss size available to assign HERE = stock (Planning) minus what other
   // fixed venues already hold standing.
   const trussAvail = (kind, size, vid) => {
@@ -89,7 +96,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               {v.items.map((it) => {
                 const inv = inventory.find((i) => i.id === it.invId);
                 const img = inv?.img || inv?.photoUrls?.[0] || "";
-                const dims = inv?.dims_LxWxH || inv?.size || inv?.dims?.lxwxh || inv?.dims?.size || "";
+                const dimsRaw = inv?.dims_LxWxH ?? inv?.dims?.lxwxh;
+                let dims = "";
+                if (typeof dimsRaw === "string") dims = dimsRaw;
+                else if (dimsRaw && typeof dimsRaw === "object") dims = [dimsRaw.l, dimsRaw.w, dimsRaw.h].filter((x) => x != null && x !== "").join("×");
+                if (!dims) dims = (typeof inv?.size === "string" ? inv.size : "") || "";
+                const avail = invAvail(it.invId, v.id);
                 return (
                 <div key={it.invId} className="flex items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 flex-wrap">
                   {img
@@ -100,7 +112,8 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     <div className="text-[10px] text-gray-400">{dims ? `📐 ${dims}` : "no dimensions"}{inv?.qty != null ? ` · stock ${inv.qty}` : ""}</div>
                   </div>
                   <span className="text-xs text-gray-400">qty</span>
-                  <input type="number" min="1" value={it.qty} onChange={(e) => updItem(v.id, it.invId, { qty: parseInt(e.target.value) || 1 })} className="w-16 border rounded px-2 py-1 text-sm text-center font-bold" />
+                  <input type="number" min="1" max={avail || undefined} value={it.qty} onChange={(e) => { const raw = parseInt(e.target.value) || 1; updItem(v.id, it.invId, { qty: avail > 0 ? Math.min(raw, avail) : raw }); }} className={"w-16 border rounded px-2 py-1 text-sm text-center font-bold " + (it.qty >= avail && avail > 0 ? "border-amber-400" : "")} />
+                  <span className="text-[10px] text-gray-400">/{avail}</span>
                   <span className="text-xs text-gray-400">rent @</span>
                   <input type="number" min="0" max="100" value={it.discountPct ?? v.discountPct ?? 70} onChange={(e) => updItem(v.id, it.invId, { discountPct: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" />
                   <span className="text-xs text-gray-400">% off</span>
