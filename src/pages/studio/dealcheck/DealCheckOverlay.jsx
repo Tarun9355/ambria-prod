@@ -702,6 +702,11 @@ export default function DealCheckOverlay({ ctx }) {
                                   const photo = item ? imsField.photos(item)[0] : null;
                                   const rental = item ? imsField.rentalCost(item) : 0;
                                   const dims = item ? imsField.sizeText(item) : "";
+                                  // Fixed-venue rental discount on this card's matched item.
+                                  const _cVenue = (fns[fnIdx] || {}).fnVenue || "";
+                                  const _cSplit = (item && card.imsId) ? rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [] }, _cVenue, card.imsId, Number(card.qty) || 1) : null;
+                                  const _cDisc = _cSplit && _cSplit.standingUnits > 0 && _cSplit.discountPct > 0;
+                                  const _cEff = _cSplit ? (_cSplit.freshUnits * rental + _cSplit.standingUnits * rental * (1 - (_cSplit.discountPct || 0) / 100)) : rental * (Number(card.qty) || 1);
                                   const hold = card.imsId ? getActiveSoftHold(softHolds, card.imsId, authUser?.name, Date.now()) : null;
                                   const sourceMeta = {
                                     "name-match": { icon: "📋", color: "#94A3B8", label: "name match" },
@@ -726,7 +731,15 @@ export default function DealCheckOverlay({ ctx }) {
                                         {card.imsId && item ? (
                                           <div style={{fontSize:11,color:textS,marginBottom:6}}>
                                             → <span style={{color:"#fff",fontWeight:600}}>{card.imsName || item.name}</span>
-                                            <span style={{marginLeft:8,opacity:0.7}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
+                                            {_cDisc ? (
+                                              <span style={{marginLeft:8}}>
+                                                <span style={{opacity:0.45,textDecoration:"line-through"}}>₹{(rental*(Number(card.qty)||1)).toLocaleString("en-IN")}</span>
+                                                <span style={{marginLeft:6,color:"#10B981",fontWeight:700}}>₹{Math.round(_cEff).toLocaleString("en-IN")}</span>
+                                                <span style={{marginLeft:6,fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700}}>🏛️ {_cSplit.standingUnits} installed · {_cSplit.discountPct}% off</span>
+                                              </span>
+                                            ) : (
+                                              <span style={{marginLeft:8,opacity:0.7}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
+                                            )}
                                             {dims && <span style={{marginLeft:8,opacity:0.7}}>· {dims}</span>}
                                           </div>
                                         ) : (
@@ -898,7 +911,9 @@ export default function DealCheckOverlay({ ctx }) {
                                             if (raw > v) showMsg && showMsg(`Only ${_avail} available — capped at ${_avail}`, "orange");
                                             setDcManualItems(prev => prev.map(x => x.manualId === mi.manualId ? {...x, qty: v} : x));
                                           }} style={{width:60,padding:"3px 6px",borderRadius:4,border:`1px solid ${mi.qty>=_avail&&_avail>0?"#F59E0B":border}`,background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:11}}/>
-                                          <span style={{opacity:0.7}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
+                                          {(() => { const sp = item ? rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [] }, _vName, mi.imsId, Number(mi.qty) || 1) : null; const disc = sp && sp.standingUnits > 0 && sp.discountPct > 0; const eff = sp ? (sp.freshUnits * rental + sp.standingUnits * rental * (1 - (sp.discountPct || 0) / 100)) : rental * (Number(mi.qty) || 1); return disc
+                                            ? <span style={{opacity:0.85}}>of {_avail} avail · <span style={{opacity:0.45,textDecoration:"line-through"}}>₹{(rental*mi.qty).toLocaleString("en-IN")}</span> <span style={{color:"#10B981",fontWeight:700}}>₹{Math.round(eff).toLocaleString("en-IN")}</span> <span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700}}>🏛️ {sp.standingUnits} installed · {sp.discountPct}% off</span></span>
+                                            : <span style={{opacity:0.7}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>; })()}
                                           {dims && <span style={{opacity:0.7}}>· {dims}</span>}
                                         </div>
                                       </div>
