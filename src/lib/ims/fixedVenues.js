@@ -43,6 +43,25 @@ export function rentalSplit(settings, venueName, invId, qty) {
   return { standingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId) };
 }
 
+// Units of an item AVAILABLE to an event at `venueName` = total minus units that are
+// standing (installed) at OTHER fixed venues. So another venue can't book a venue's
+// fixed stock; only genuinely free units (e.g. at Production House) are offered.
+export function availableAtVenue(settings, venueName, item) {
+  const total = Number(item?.qty ?? item?.qtyOwned) || 0;
+  let lockedElsewhere = 0;
+  (settings?.fixedVenues || []).forEach((v) => {
+    if ((v.name || "").toLowerCase() === String(venueName || "").toLowerCase()) return; // own venue → available
+    const it = (v.items || []).find((i) => i.invId === item?.id);
+    if (it) lockedElsewhere += Number(it.qty) || 0;
+  });
+  return Math.max(0, total - lockedElsewhere);
+}
+
+// True if this item is part of `venueName`'s own standing inventory.
+export function isStandingAt(settings, venueName, invId) {
+  return standingQty(settings, venueName, invId) > 0;
+}
+
 // Derived location split for an inventory item: each fixed venue that holds a
 // standing qty of this item, plus the remainder at the item's base location.
 // Single source of truth = the fixed-venue config (no separate per-item storage).

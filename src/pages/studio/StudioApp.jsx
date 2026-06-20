@@ -25,6 +25,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
+import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -3938,8 +3939,14 @@ Return ONLY JSON:
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const cardSpecs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
+        const venueName = fn.fnVenue || "";
+        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [] };
         for (const spec of cardSpecs) {
-          const scoped = filterImsBySubcategory(inventory, spec.subcategory);
+          // Hide inventory locked to OTHER fixed venues; surface THIS venue's standing items first.
+          const scoped = filterImsBySubcategory(inventory, spec.subcategory)
+            .filter((it) => availableAtVenue(fvCfg, venueName, it) > 0)
+            .slice()
+            .sort((a, b) => (isStandingAt(fvCfg, venueName, b.id) ? 1 : 0) - (isStandingAt(fvCfg, venueName, a.id) ? 1 : 0));
           const nm = nameMatchUnique(spec.rcName, scoped);
           let primary = null, alternatives = [], source = null;
           if (nm.matched) {
