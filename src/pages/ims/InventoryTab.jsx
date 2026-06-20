@@ -5,6 +5,7 @@ import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_O
 import { findAlternatives, getEffectivePricing } from "../../lib/inventory/helpers";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
 import { callClaudeStreaming } from "../../lib/ai";
+import { locationBreakdown } from "../../lib/ims/fixedVenues";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio }) {
   // Studio sub-categories (Tier 1.1 source of truth · flat list · empty during boot)
@@ -572,7 +573,7 @@ Rules:
                       }
                     </td>
                     <td className="px-4 py-3 text-amber-700">{i.blocked || 0}</td>
-                    <td className="px-4 py-3 text-gray-500">{i.loc}</td>
+                    <td className="px-4 py-3 text-gray-500">{(() => { const b = locationBreakdown(settings, i); if (b.length <= 1) return b[0]?.loc || i.loc || "—"; return <div className="space-y-0.5">{b.map((x, k) => <div key={k} className="text-xs whitespace-nowrap">{x.fixed && <span title="Installed / standing at this venue">🏛️ </span>}{x.loc}: <b className="text-gray-700">{x.qty}</b></div>)}</div>; })()}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {i.price ? (() => {
                         const today = new Date().toISOString().split("T")[0];

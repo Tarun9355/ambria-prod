@@ -43,6 +43,27 @@ export function rentalSplit(settings, venueName, invId, qty) {
   return { standingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId) };
 }
 
+// Derived location split for an inventory item: each fixed venue that holds a
+// standing qty of this item, plus the remainder at the item's base location.
+// Single source of truth = the fixed-venue config (no separate per-item storage).
+export function locationBreakdown(settings, item) {
+  const total = Number(item?.qty ?? item?.qtyOwned) || 0;
+  const out = [];
+  let allocated = 0;
+  (settings?.fixedVenues || []).forEach((v) => {
+    const it = (v.items || []).find((i) => i.invId === item?.id);
+    const want = it ? Number(it.qty) || 0 : 0;
+    if (want <= 0) return;
+    const q = Math.min(want, Math.max(0, total - allocated));
+    if (q > 0) { out.push({ loc: v.name, qty: q, fixed: true }); allocated += q; }
+  });
+  const remainder = Math.max(0, total - allocated);
+  if (remainder > 0 || out.length === 0) {
+    out.push({ loc: item?.loc || item?.location || "—", qty: remainder, fixed: false });
+  }
+  return out;
+}
+
 // Heavy-element extra labour for a function, netting out standing inventory at fixed venues.
 // Returns { total, breakdown: string[] }.
 export function heavyElementExtraForFn(fn, settings, inventory) {

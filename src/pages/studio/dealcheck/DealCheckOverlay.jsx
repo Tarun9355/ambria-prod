@@ -10,6 +10,7 @@ import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour } from "../../../lib/ims/constants";
+import { rentalSplit } from "../../../lib/ims/fixedVenues";
 
 export default function DealCheckOverlay({ ctx }) {
   const {
@@ -74,7 +75,13 @@ export default function DealCheckOverlay({ ctx }) {
               if (!c.imsId) return;
               const item = dcInventoryCache.find(x => x.id === c.imsId);
               if (!item) return;
-              rental += imsField.rentalCost(item) * (c.qty || 1);
+              // Fixed-venue rental discount: standing units (already installed here) bill at a
+              // discount; fresh units / other venues / swapped designs bill full rate-card.
+              const baseR = imsField.rentalCost(item);
+              const qty = c.qty || 1;
+              const venueName = fn.fnVenue || fn.venue || "";
+              const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [] }, venueName, c.imsId, qty);
+              rental += sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
             });
             try { florals += calcFnFloralSourcingCost(fn).grandTotal; } catch {}
             try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) transport += bd.transportTotal; } catch {}
