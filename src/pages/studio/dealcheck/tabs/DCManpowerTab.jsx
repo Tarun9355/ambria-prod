@@ -127,9 +127,9 @@ export default function DCManpowerTab({ ctx }) {
                       let comp = sizes[sizeKey] || sizes.medium;
                       if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
                       const upf = Number(comp?.unitsPerFlowerist || 0);
-                      if (upf > 0) total += Math.ceil(qty / upf);
+                      if (upf > 0) total += qty / upf; // fractional, ceil once below
                     });
-                    return total;
+                    return Math.ceil(total);
                   };
                   // Mirror of IMS calcTier1Electrician (line 1729).
                   const calcPeopleElectricians = (fn) => {
@@ -142,9 +142,9 @@ export default function DCManpowerTab({ ctx }) {
                       if (!prod) return;
                       const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
                       const upe = Number(prod.sizes?.[sizeKey]) || Number(prod.sizes?.medium) || 0;
-                      if (upe > 0) total += Math.ceil(qty / upe);
+                      if (upe > 0) total += qty / upe; // fractional, ceil once below
                     });
-                    return total;
+                    return Math.ceil(total);
                   };
                   // Mirror of IMS calcTier2 (line 1738). Tier 2 = sub-cat batches.
                   const calcPeopleTier2 = (fn, type) => {
@@ -155,12 +155,13 @@ export default function DCManpowerTab({ ctx }) {
                       const sub = rc.sub || "";
                       if (batches[sub]) subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
-                    let total = 0;
+                    // Sum fractional need across sub-categories, THEN round up once.
+                    let frac = 0;
                     Object.entries(subCounts).forEach(([sc, count]) => {
                       const b = batches[sc] || 3;
-                      total += Math.ceil(count / b);
+                      frac += count / b;
                     });
-                    return Math.max(cfg.minimum || 1, total);
+                    return Math.max(cfg.minimum || 1, Math.ceil(frac));
                   };
                   // Mirror of IMS calcTier3 (line 1756). Tier 3 = venue + event + situational + heavy.
                   const calcPeopleTier3Labours = (fn) => {
@@ -327,11 +328,11 @@ export default function DCManpowerTab({ ctx }) {
                       let comp = sizes[sizeKey] || sizes.medium;
                       if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
                       const upf = Number(comp?.unitsPerFlowerist || 0);
-                      const need = upf > 0 ? Math.ceil(qty / upf) : 0;
+                      const need = upf > 0 ? qty / upf : 0;
                       total += need;
-                      items.push({ name: rc.name, size: sizeKey, qty, productivity: upf, need, missing: upf <= 0 ? "no productivity" : null });
+                      items.push({ name: rc.name, size: sizeKey, qty, productivity: upf, need: Math.round(need * 100) / 100, missing: upf <= 0 ? "no productivity" : null });
                     });
-                    return { kind: "element_table", header: ["Floral element","Qty","Per flwr","Need"], items, total, formula: "⌈qty ÷ productivity⌉ per element, summed (Tier 1)" };
+                    return { kind: "element_table", header: ["Floral element","Qty","Per flwr","Need"], items, total: Math.ceil(total), formula: "⌈Σ(qty ÷ productivity)⌉ — sum then round up (Tier 1)" };
                   };
                   const traceElectricians = (fn) => {
                     const items = []; let total = 0;
@@ -343,11 +344,11 @@ export default function DCManpowerTab({ ctx }) {
                       if (!prod) { items.push({ name: rc.name, qty, productivity: null, need: 0, missing: "no productivity" }); return; }
                       const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
                       const upe = Number(prod.sizes?.[sizeKey]) || Number(prod.sizes?.medium) || 0;
-                      const need = upe > 0 ? Math.ceil(qty / upe) : 0;
+                      const need = upe > 0 ? qty / upe : 0;
                       total += need;
-                      items.push({ name: rc.name, size: sizeKey, qty, productivity: upe, need, missing: upe <= 0 ? "no productivity" : null });
+                      items.push({ name: rc.name, size: sizeKey, qty, productivity: upe, need: Math.round(need * 100) / 100, missing: upe <= 0 ? "no productivity" : null });
                     });
-                    return { kind: "element_table", header: ["Lighting element","Qty","Per electr","Need"], items, total, formula: "⌈qty ÷ productivity⌉ per element, summed (Tier 1)" };
+                    return { kind: "element_table", header: ["Lighting element","Qty","Per electr","Need"], items, total: Math.ceil(total), formula: "⌈Σ(qty ÷ productivity)⌉ — sum then round up (Tier 1)" };
                   };
                   const traceTier2 = (fn, type) => {
                     const cfg = labourTiers[type] || { minimum:1, subCatBatches:{} };
@@ -357,15 +358,16 @@ export default function DCManpowerTab({ ctx }) {
                       const sub = rc.sub || "";
                       if (batches[sub]) subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
-                    const rows = []; let sum = 0;
+                    const rows = []; let frac = 0;
                     Object.entries(subCounts).forEach(([sc, count]) => {
                       const b = batches[sc] || 3;
-                      const need = Math.ceil(count / b);
-                      rows.push({ sub: sc, count, batch: b, need });
-                      sum += need;
+                      const part = count / b;
+                      rows.push({ sub: sc, count, batch: b, need: Math.round(part * 100) / 100 }); // fractional contribution
+                      frac += part;
                     });
+                    const sum = Math.ceil(frac);
                     const total = Math.max(cfg.minimum || 1, sum);
-                    return { kind: "subcat_table", header: ["Sub-category","Count","Batch","Need"], rows, sum, minimum: cfg.minimum || 1, total, formula: "max(min, Σ ⌈count ÷ batch⌉) (Tier 2)" };
+                    return { kind: "subcat_table", header: ["Sub-category","Count","Batch","Need"], rows, sum, frac: Math.round(frac * 100) / 100, minimum: cfg.minimum || 1, total, formula: "max(min, ⌈Σ(count ÷ batch)⌉) (Tier 2)" };
                   };
                   const traceTier3Labours = (fn) => {
                     const venueName = fn.fnVenue || "—";
@@ -836,7 +838,7 @@ export default function DCManpowerTab({ ctx }) {
                                                             </tr>
                                                           ))}
                                                           <tr style={{borderTop:`1px solid ${border}`}}>
-                                                            <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:textS}}>max(min {trace.minimum}, sum {trace.sum}):</td>
+                                                            <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:textS}}>Σ {trace.frac} → ⌈⌉ {trace.sum} · max(min {trace.minimum}):</td>
                                                             <td style={{textAlign:"right",padding:"5px 4px",color:"#FBBF24",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
                                                           </tr>
                                                         </tbody>

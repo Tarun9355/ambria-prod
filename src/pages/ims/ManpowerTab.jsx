@@ -104,7 +104,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
         missingProductivity++;
         return;
       }
-      total += Math.ceil((Number(o.qty)||0) / productivity);
+      total += (Number(o.qty)||0) / productivity; // accumulate fractional need
     });
     if (missingProductivity > 0) {
       // Surface in console — Tarun fills in IMS Settings → Flower Patterns
@@ -112,7 +112,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       // eslint-disable-next-line no-console
       console.warn(`[tier16] ${missingProductivity} flower order(s) missing unitsPerFlowerist productivity — flowerist count under-reports.`);
     }
-    return total;
+    return Math.ceil(total); // round up once across all elements
   }
 
   function calcTier1Electrician(fnArg){
@@ -137,13 +137,13 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
         missingProductivity++;
         return;
       }
-      total += Math.ceil((Number(it.qty)||0) / productivity);
+      total += (Number(it.qty)||0) / productivity; // accumulate fractional need
     });
     if (missingProductivity > 0) {
       // eslint-disable-next-line no-console
       console.warn(`[tier16] ${missingProductivity} Lighting item(s) missing electrician productivity — electrician count under-reports.`);
     }
-    return total;
+    return Math.ceil(total); // round up once across all elements
   }
 
   function calcTier1(type){
@@ -162,13 +162,15 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       const inv=inventory?.find(i=>i.id===it.invId);
       if(inv&&batches[inv.subCat]) subCatCounts[inv.subCat]=(subCatCounts[inv.subCat]||0)+it.qty;
     });
-    // Calculate workers needed per sub-category, then sum
-    let total=0;
+    // Sum the fractional worker-need across sub-categories, THEN round up once
+    // (e.g. 5/15 + 2/15 + 64/10 = 6.87 → 7, not 1+1+7=9). A partial worker in one
+    // sub-category isn't a whole extra person.
+    let frac=0;
     Object.entries(subCatCounts).forEach(([sc,count])=>{
       const batch=batches[sc]||3;
-      total+=Math.ceil(count/batch);
+      frac += count/batch;
     });
-    return Math.max(cfg.minimum||1, total);
+    return Math.max(cfg.minimum||1, Math.ceil(frac));
   }
 
   function calcTier3(type){
