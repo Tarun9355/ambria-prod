@@ -10,7 +10,7 @@ import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour } from "../../../lib/ims/constants";
-import { rentalSplit } from "../../../lib/ims/fixedVenues";
+import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fixedVenues";
 
 export default function DealCheckOverlay({ ctx }) {
   const {
@@ -931,9 +931,13 @@ export default function DealCheckOverlay({ ctx }) {
                                           {matches.map(item => {
                                             const itemPhoto = imsField.photos(item)[0];
                                             const itemSub = imsField.subcategory(item);
-                                            const itemQty = Number(imsField.qtyOwned(item)) || 0;
+                                            const _venueName = (fns[fnIdx] || {}).fnVenue || "";
+                                            const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [] };
+                                            const itemQty = availableAtVenue(_fvCfg, _venueName, item); // venue-scoped total (locked stock at other venues excluded)
                                             const itemBlocked = Number(item?.blocked) || 0;
                                             const free = Math.max(0, itemQty - itemBlocked);
+                                            const _standing = isStandingAt(_fvCfg, _venueName, item.id);
+                                            const _dims = item?.dims_LxWxH || item?.size || item?.dims?.lxwxh || item?.dims?.size || "";
                                             return (
                                               <div key={item.id} onClick={()=>{
                                                 const newItem = {
@@ -951,8 +955,8 @@ export default function DealCheckOverlay({ ctx }) {
                                               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                                                 {itemPhoto ? <img src={itemPhoto} alt="" style={{width:36,height:36,borderRadius:5,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:36,height:36,borderRadius:5,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:textS,flexShrink:0}}>?</div>}
                                                 <div style={{flex:1,minWidth:0}}>
-                                                  <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
-                                                  <div style={{fontSize:9,color:textS,marginTop:1}}>{itemSub || "—"} · {free} free of {itemQty}</div>
+                                                  <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{_standing && <span style={{marginLeft:6,fontSize:8,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#10B981",fontWeight:700,letterSpacing:0.3}}>🏛️ INSTALLED HERE</span>}</div>
+                                                  <div style={{fontSize:9,color:textS,marginTop:1}}>{itemSub || "—"}{_dims ? ` · 📐 ${_dims}` : ""} · {free} free of {itemQty}</div>
                                                 </div>
                                                 <span style={{fontSize:10,color:"#C19A6B",fontWeight:700,letterSpacing:0.3}}>+ ADD</span>
                                               </div>
