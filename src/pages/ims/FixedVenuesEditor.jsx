@@ -12,14 +12,17 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const fixedVenues = settings.fixedVenues || [];
   const save = (next) => setSettings((s) => ({ ...s, fixedVenues: next }));
 
-  // Venue names must match what Studio uses for a function's venue (the labour calc keys
-  // off venueMinLabour[fn.venue.name]). So source the dropdown from those exact names —
-  // venues configured in Venue Min Labour + any inventory locations + already-added ones.
+  // Venue names must match what Studio uses for a function's venue. Source the dropdown
+  // from the Studio venue catalogue (synced as venueParents — sub-venues + parents) plus
+  // inventory locations, legacy venue-min keys, and already-added fixed venues.
+  const parentsObj = (() => { let p = settings?.venueParents; if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = {}; } } return p || {}; })();
   const venueOptions = [...new Set([
+    ...Object.keys(parentsObj),
+    ...Object.values(parentsObj), // parent/group names too (e.g. Exotica)
     ...Object.keys(settings.venueMinLabour || {}),
     ...(inventory || []).map((i) => i.loc || i.location).filter(Boolean),
     ...fixedVenues.map((v) => v.name).filter(Boolean),
-  ])].sort((a, b) => a.localeCompare(b));
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
 
   const addVenue = (name) => {

@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour } from "../../../../lib/ims/constants";
-import { standingReductionBySubcat, standingPillarCount } from "../../../../lib/ims/fixedVenues";
+import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -166,9 +166,9 @@ export default function DCManpowerTab({ ctx }) {
                   // Mirror of IMS calcTier3 (line 1756). Tier 3 = venue + event + situational + heavy.
                   const calcPeopleTier3Labours = (fn) => {
                     const venueName = fn.fnVenue || "";
-                    const venueConfig = venueMinLabour[venueName];
-                    const venueMin = (venueConfig && typeof venueConfig === "object" ? venueConfig.min : (typeof venueConfig === "number" ? venueConfig : null)) || defaultMinLabour;
-                    const dumpingLevel = (venueConfig && typeof venueConfig === "object" ? venueConfig.dumpingLevel : null) || "nearby";
+                    const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                    const venueMin = fixedVenueFor(_fvCfg, venueName)?.minLabour ?? defaultMinLabour; // fixed venue's own min, else default
+                    const dumpingLevel = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const segment = "outdoor_budgeted"; // default (Studio has no segment field)
                     const eventMult = eventTypeMultipliers[segment] || 1;
@@ -373,9 +373,9 @@ export default function DCManpowerTab({ ctx }) {
                   };
                   const traceTier3Labours = (fn) => {
                     const venueName = fn.fnVenue || "—";
-                    const venueConfig = venueMinLabour[venueName];
-                    const venueMin = (venueConfig && typeof venueConfig === "object" ? venueConfig.min : (typeof venueConfig === "number" ? venueConfig : null)) || defaultMinLabour;
-                    const dumpingLevel = (venueConfig && typeof venueConfig === "object" ? venueConfig.dumpingLevel : null) || "nearby";
+                    const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                    const venueMin = fixedVenueFor(_fvCfg, venueName)?.minLabour ?? defaultMinLabour;
+                    const dumpingLevel = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const segment = "outdoor_budgeted";
                     const eventMult = eventTypeMultipliers[segment] || 1;

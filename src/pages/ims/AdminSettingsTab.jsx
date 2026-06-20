@@ -24,6 +24,14 @@ function Placeholder({ name, note }) {
 export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [] }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
+  // All venues (for the Venue Dumping tab) — from the Studio venue catalogue (synced as
+  // venueParents) + any legacy venueMinLabour / venueDumping keys.
+  const venueParentsObj = (() => { let p = settings?.venueParents; if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = {}; } } return p || {}; })();
+  const venueDumpingList = [...new Set([
+    ...Object.keys(venueParentsObj),
+    ...Object.keys(settings?.venueMinLabour || {}),
+    ...Object.keys(settings?.venueDumping || {}),
+  ])].sort((a, b) => a.localeCompare(b));
   const [synNewWords, setSynNewWords] = useState("");
   const [newVenueInput, setNewVenueInput] = useState("");
   const addVenueMin = () => {
@@ -47,7 +55,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
   const panels = forcedMode ? [] : [
     { id: "labourtiers", label: "👷 Workforce" },
-    { id: "venuemin", label: "🏢 Venue Min Labour" },
+    { id: "venuemin", label: "🏛️ Fixed Venues" },
+    { id: "venuedumping", label: "🚛 Venue Dumping" },
     { id: "dihari", label: "💰 Dihari Timings" },
     { id: "supervisors", label: "👷 Supervisors" },
     { id: "subcats", label: "📂 Sub-Categories" },
@@ -290,48 +299,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               </div>
             </div>
           </div>
-        </div>
-      )}
-      {activePanel === "venuemin" && (
-        <div className="space-y-4">
+
+          {/* Heavy Element Labour — it's labour calc, so it lives in Workforce */}
           <div className="bg-white border rounded-2xl p-5">
-            <p className="font-bold text-gray-900 mb-1">🏢 Venue Minimum Labour & Dumping</p>
-            <p className="text-xs text-gray-500 mb-4">Set minimum labour and dumping point multiplier per venue. Unknown venues use default ({settings.defaultMinLabour || 4}, dumping ×1.0).</p>
-            <div className="space-y-2">
-              {Object.entries(settings.venueMinLabour || {}).map(([venue, cfg]) => {
-                const min = typeof cfg === "object" ? (cfg.min || 4) : (typeof cfg === "number" ? cfg : 4);
-                const dumpLevel = typeof cfg === "object" ? (cfg.dumpingLevel || "nearby") : "nearby";
-                return (
-                  <div key={venue} className="flex items-center gap-3 bg-gray-50 border rounded-lg px-3 py-2.5 flex-wrap">
-                    <span className="flex-1 text-sm font-medium text-gray-800 min-w-[120px]">{venue}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">Min:</span>
-                      <input type="number" min="1" value={min} onChange={(e) => setSettings((s) => ({ ...s, venueMinLabour: { ...s.venueMinLabour, [venue]: { min: parseInt(e.target.value) || 4, dumpingLevel: dumpLevel } } }))} className="w-14 border rounded px-2 py-1.5 text-sm text-center" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">🚛 Dump:</span>
-                      <select value={dumpLevel} onChange={(e) => setSettings((s) => ({ ...s, venueMinLabour: { ...s.venueMinLabour, [venue]: { min, dumpingLevel: e.target.value } } }))} className="border rounded px-2 py-1.5 text-xs bg-white">
-                        {DUMPING_LEVELS.map((d) => <option key={d.id} value={d.id}>{d.label} (×{d.mult})</option>)}
-                      </select>
-                    </div>
-                    <button onClick={() => setSettings((s) => { const v = { ...s.venueMinLabour }; delete v[venue]; return { ...s, venueMinLabour: v }; })} className="text-red-400 hover:text-red-600 text-sm">✕</button>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex gap-2">
-              <input value={newVenueInput} onChange={(e) => setNewVenueInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addVenueMin(); }} className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Venue name e.g. The Oberoi" />
-              <button type="button" onClick={addVenueMin} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap">+ Add</button>
-            </div>
-          </div>
-
-          <p className="text-xs text-gray-400 px-1">⚡ Situational multipliers (Heavy Saya, Event Timing) now live in the 👷 Workforce tab — they multiply all manpower types, not just venue labour.</p>
-
-          <div className="bg-white border rounded-2xl p-5">
-            <p className="font-bold text-gray-900 mb-1">🏗️ Heavy Element Add-ons</p>
-            <p className="text-xs text-gray-500 mb-3">Pick the heavy sub-categories that need extra crew, and set <b>1 labour per N</b> of each. Applied uniformly to whatever is built this event. <span className="text-gray-400">e.g. 1 per 10 → 30 pillars add 3 labours.</span></p>
-
-            {/* Configured sub-categories — chip with its 2 fields (Carpenter-style) */}
+            <p className="font-bold text-gray-900 mb-1">🏗️ Heavy Element Labour</p>
+            <p className="text-xs text-gray-500 mb-3">Sub-categories that add crew by quantity — set <b>1 labour per N</b> of each. Summed with the other labour and rounded up once. <span className="text-gray-400">e.g. 1 per 10 → 30 pillars add 3 labours.</span></p>
             <div className="flex flex-wrap gap-2 mb-2">
               {(settings.heavyElementRanges || []).map((her, hi) => {
                 const per = her.perCount ?? 10;
@@ -346,17 +318,38 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 );
               })}
             </div>
-
-            {/* Add-able sub-categories (everything not yet configured) */}
             <div className="flex flex-wrap gap-1">
               {studioSubcats.filter((sc) => !(settings.heavyElementRanges || []).some((h) => h.subCat === sc)).map((sc) => (
                 <button key={sc} onClick={() => setSettings((s) => ({ ...s, heavyElementRanges: [...(s.heavyElementRanges || []), { subCat: sc, perCount: 10 }] }))} className="text-xs px-2 py-0.5 rounded-full border bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600 transition-all">+ {sc}</button>
               ))}
             </div>
           </div>
-
-          {/* ═══ FIXED VENUES — standing inventory (own structure, no build labour, discounted rental) ═══ */}
+        </div>
+      )}
+      {activePanel === "venuemin" && (
+        <div className="space-y-4">
           <FixedVenuesEditor settings={settings} setSettings={setSettings} inventory={inventory} trussInv={trussInv} />
+        </div>
+      )}
+      {activePanel === "venuedumping" && (
+        <div className="bg-white border rounded-2xl p-5">
+          <p className="font-bold text-gray-900 mb-1">🚛 Venue Dumping</p>
+          <p className="text-xs text-gray-500 mb-4">Dumping-point distance per venue → labour multiplier. All venues are listed automatically; unset venues default to Nearby (×1.0).</p>
+          <div className="space-y-2">
+            {venueDumpingList.map((venue) => {
+              const level = (settings.venueDumping || {})[venue] || "nearby";
+              return (
+                <div key={venue} className="flex items-center gap-3 bg-gray-50 border rounded-lg px-3 py-2.5 flex-wrap">
+                  <span className="flex-1 text-sm font-medium text-gray-800 min-w-[140px]">{venue}</span>
+                  <span className="text-xs text-gray-500">🚛 Dump:</span>
+                  <select value={level} onChange={(e) => setSettings((s) => ({ ...s, venueDumping: { ...(s.venueDumping || {}), [venue]: e.target.value } }))} className="border rounded px-2 py-1.5 text-xs bg-white">
+                    {DUMPING_LEVELS.map((d) => <option key={d.id} value={d.id}>{d.label} (×{d.mult})</option>)}
+                  </select>
+                </div>
+              );
+            })}
+            {venueDumpingList.length === 0 && <div className="text-xs text-gray-400 italic">No venues synced yet — open Studio once to populate the venue list.</div>}
+          </div>
         </div>
       )}
       {activePanel === "dihari" && <DihariTimingsPanel settings={settings} setSettings={setSettings} />}

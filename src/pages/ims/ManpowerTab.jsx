@@ -9,7 +9,7 @@ import {
   heavyExtraLabour,
 } from "../../lib/ims/constants";
 import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
-import { heavyElementExtraForFn, standingPillarCount } from "../../lib/ims/fixedVenues";
+import { heavyElementExtraForFn, standingPillarCount, fixedVenueFor } from "../../lib/ims/fixedVenues";
 import { resolveSizeKey, sizeClassToPatternKey } from "../../lib/ims/flowerHelpers";
 
 // ─── Local helpers (copied verbatim from reference) ───────────────────────────
@@ -176,12 +176,12 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
   function calcTier3(type){
     if(type==="Helpers") return 0;
     const venueName=fn?.venue?.name||"";
-    const venueConfig=(settings.venueMinLabour||{})[venueName];
-    const venueMin=typeof venueConfig==="object"?(venueConfig?.min||4):((typeof venueConfig==="number"?venueConfig:null)||settings.defaultMinLabour||4);
-    // Dumping: function override → project default → venue setting
+    // Base crew: fixed venues use their own min; everyone else uses the global default.
+    const venueMin=fixedVenueFor(settings, venueName)?.minLabour ?? settings.defaultMinLabour ?? 4;
+    // Dumping: function override → project default → per-venue setting (Venue Dumping tab)
     const fnDumping=fn?.dumpingSpace;
     const projDumping=proj?.dumpingSpace;
-    const venueDumping=typeof venueConfig==="object"?venueConfig?.dumpingLevel:null;
+    const venueDumping=(settings.venueDumping||{})[venueName]||null;
     const dumpingLevel=fnDumping||projDumping||venueDumping||"nearby";
     const dumpingMult=(DUMPING_LEVELS.find(d=>d.id===dumpingLevel)||{}).mult||1.0;
     const segment=proj?.segment||"outdoor_budgeted";
@@ -225,9 +225,8 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
     const counts=sameDaySameVenueFns.map(otherFn=>{
       const savedFn=fn; const savedPhase=selPhase;
       // Temporarily compute for otherFn using same logic
-      const tempVenueConfig=(settings.venueMinLabour||{})[otherFn.venue?.name||""];
-      const tempMin=typeof tempVenueConfig==="object"?(tempVenueConfig?.min||4):((typeof tempVenueConfig==="number"?tempVenueConfig:null)||settings.defaultMinLabour||4);
-      const otherDumpLevel=otherFn.dumpingSpace||proj?.dumpingSpace||(typeof tempVenueConfig==="object"?tempVenueConfig?.dumpingLevel:null)||"nearby";
+      const tempMin=fixedVenueFor(settings, otherFn.venue?.name||"")?.minLabour ?? settings.defaultMinLabour ?? 4;
+      const otherDumpLevel=otherFn.dumpingSpace||proj?.dumpingSpace||(settings.venueDumping||{})[otherFn.venue?.name||""]||"nearby";
       const tempDump=(DUMPING_LEVELS.find(d=>d.id===otherDumpLevel)||{}).mult||1.0;
       const eventMult=(settings.eventTypeMultipliers||{})[proj?.segment||"outdoor_budgeted"]||1;
       const base=Math.ceil(tempMin*eventMult);
