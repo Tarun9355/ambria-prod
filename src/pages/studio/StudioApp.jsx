@@ -4323,7 +4323,7 @@ Return ONLY JSON:
             <ManageLibrary ctx={ctx} />
           ) : effManageTab === "pricing" ? (
             <div>
-              <RateCard rcItems={rcItems} setRcItems={setRcItems} />
+              <RateCard rcItems={rcItems} setRcItems={setRcItems} rcCats={rcCats} setRcCats={setRcCats} saveRcCats={saveRcCats} />
               <PremiaEditor ctx={ctx} />
             </div>
           ) : effManageTab === "settings" ? (

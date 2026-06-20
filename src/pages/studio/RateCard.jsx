@@ -1,14 +1,18 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { RC_UNITS, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 
 const NUM_FIELDS = ["inhouseFlat", "inhouseS", "inhouseM", "inhouseB", "outS", "outM", "outB", "artificialFlat", "artificialS", "artificialM", "artificialB", "defaultRealPct"];
 
 // Studio → Pricing → Rate Card editor (faithful functional rebuild of AdminRates, in Tailwind).
 // Deferred (deal-builder/cross-app coupled): floral pricing-mode pills, IMS-driven lock.
-export default function RateCard({ rcItems, setRcItems, rcCats = RC_CATS_DEFAULT }) {
+export default function RateCard({ rcItems, setRcItems, rcCats = RC_CATS_DEFAULT, setRcCats, saveRcCats }) {
   const [rcCat, setRcCat] = useState(rcCats[0]?.id || "truss");
   const [rcSearch, setRcSearch] = useState("");
   const [rcEditId, setRcEditId] = useState(null);
+  const [catEdit, setCatEdit] = useState(false);
+  // If the active category isn't in the (migrated) list, snap to the first real one.
+  useEffect(() => { if (rcCats.length && !rcCats.some((c) => c.id === rcCat)) setRcCat(rcCats[0].id); }, [rcCats, rcCat]);
+  const canEditCats = typeof setRcCats === "function";
 
   const rcUpd = (id, f, v) => {
     const isN = NUM_FIELDS.includes(f);
@@ -44,25 +48,71 @@ export default function RateCard({ rcItems, setRcItems, rcCats = RC_CATS_DEFAULT
   };
 
   const cur = rcCats.find((c) => c.id === rcCat);
+  const rcStats = useMemo(() => ({ total: rcItems.length, nr: rcItems.filter(notRated).length }), [rcItems]);
+
+  // Category editor helpers (only when setRcCats provided)
+  const updCat = (idx, patch) => setRcCats(rcCats.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  const moveCat = (idx, dir) => { const nc = [...rcCats]; const j = idx + dir; if (j < 0 || j >= nc.length) return; [nc[idx], nc[j]] = [nc[j], nc[idx]]; setRcCats(nc); };
+  const delCat = (idx) => { const c = rcCats[idx]; const n = rcItems.filter((i) => i.cat === c.id).length; if (n > 0) { alert(`Cannot delete — ${n} item(s) use "${c.l}". Move them first.`); return; } if (!window.confirm(`Delete category "${c.l}"?`)) return; const nc = rcCats.filter((_, i) => i !== idx); (saveRcCats || setRcCats)(nc); if (rcCat === c.id && nc.length) setRcCat(nc[0].id); };
+  const addCat = () => setRcCats([...rcCats, { id: "cat_" + Date.now().toString(36).slice(-5), l: "New Category", icon: "📦", c: "#9CA3AF", d: "" }]);
 
   return (
-    <div className="flex gap-4">
+    <div>
+      {/* Header + stats */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 className="text-xl font-bold text-amber-600">💰 Rate Card Manager v2</h2>
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-gray-400">{rcStats.total} items</span>
+          {rcStats.nr > 0 && <span className="text-amber-500 font-semibold">⚠ {rcStats.nr} need rates</span>}
+        </div>
+      </div>
+
+      <div className="flex gap-4">
       {/* Category sidebar */}
-      <div className="w-56 flex-shrink-0 space-y-1">
-        {rcCats.map((c) => {
-          const items = rcItems.filter((i) => i.cat === c.id);
-          const nr = items.filter(notRated).length;
-          const active = rcCat === c.id;
-          return (
-            <button key={c.id} onClick={() => { setRcCat(c.id); setRcSearch(""); }}
-              className={"w-full text-left px-3 py-2 rounded-xl border transition-all " + (active ? "bg-indigo-50 border-indigo-300" : "bg-white border-gray-200 hover:border-indigo-200")}>
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2"><span>{c.icon}</span><span className={"text-sm " + (active ? "font-semibold text-indigo-700" : "text-gray-700")}>{c.l}</span></span>
-                <span className="flex items-center gap-1.5"><span className="text-xs text-gray-400">{items.length}</span>{nr > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title={`${nr} not rated`} />}</span>
-              </div>
-            </button>
-          );
-        })}
+      <div className="w-60 flex-shrink-0 space-y-1">
+        <div className="flex items-center justify-between px-1 mb-1">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Categories</span>
+          {canEditCats && <button onClick={() => setCatEdit((e) => !e)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">{catEdit ? "✓ Done" : "✎ Edit"}</button>}
+        </div>
+        {catEdit && canEditCats ? (
+          <>
+            {rcCats.map((c, idx) => {
+              const n = rcItems.filter((i) => i.cat === c.id).length;
+              return (
+                <div key={c.id} className="bg-white border border-gray-200 rounded-lg p-2 flex items-center gap-1.5">
+                  <input value={c.icon} onChange={(e) => updCat(idx, { icon: e.target.value })} maxLength={2} className="w-8 border rounded px-1 py-0.5 text-sm text-center" />
+                  <div className="flex-1 min-w-0">
+                    <input value={c.l} onChange={(e) => updCat(idx, { l: e.target.value })} className="w-full border rounded px-1.5 py-0.5 text-xs font-semibold" />
+                    <input value={c.d || ""} onChange={(e) => updCat(idx, { d: e.target.value })} placeholder="description…" className="w-full border rounded px-1.5 py-0.5 text-[10px] text-gray-500 mt-0.5" />
+                  </div>
+                  <input type="color" value={c.c || "#9CA3AF"} onChange={(e) => updCat(idx, { c: e.target.value })} className="w-6 h-6 border-0 p-0 rounded cursor-pointer" />
+                  <div className="flex flex-col">
+                    <button onClick={() => moveCat(idx, -1)} disabled={idx === 0} className="text-[9px] text-gray-400 hover:text-gray-700 disabled:opacity-30 leading-none">▲</button>
+                    <button onClick={() => moveCat(idx, 1)} disabled={idx === rcCats.length - 1} className="text-[9px] text-gray-400 hover:text-gray-700 disabled:opacity-30 leading-none">▼</button>
+                  </div>
+                  <button onClick={() => delCat(idx)} title={n > 0 ? `${n} items use this` : "Delete"} className={"text-xs " + (n > 0 ? "text-gray-300" : "text-red-400 hover:text-red-600")}>🗑️</button>
+                </div>
+              );
+            })}
+            <button onClick={addCat} className="w-full py-1.5 rounded-lg border border-dashed border-indigo-300 text-indigo-600 text-xs font-medium hover:bg-indigo-50">+ Add Category</button>
+            <button onClick={() => { (saveRcCats || setRcCats)(rcCats); setCatEdit(false); }} className="w-full py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold mt-1">💾 Save Categories</button>
+          </>
+        ) : (
+          rcCats.map((c) => {
+            const items = rcItems.filter((i) => i.cat === c.id);
+            const nr = items.filter(notRated).length;
+            const active = rcCat === c.id;
+            return (
+              <button key={c.id} onClick={() => { setRcCat(c.id); setRcSearch(""); }}
+                className={"w-full text-left px-3 py-2 rounded-xl border transition-all " + (active ? "bg-indigo-50 border-indigo-300" : "bg-white border-gray-200 hover:border-indigo-200")}>
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2"><span>{c.icon}</span><span className={"text-sm " + (active ? "font-semibold text-indigo-700" : "text-gray-700")}>{c.l}</span></span>
+                  <span className="flex items-center gap-1.5"><span className="text-xs text-gray-400">{items.length}</span>{nr > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title={`${nr} not rated`} />}</span>
+                </div>
+              </button>
+            );
+          })
+        )}
       </div>
 
       {/* Items */}
@@ -143,6 +193,7 @@ export default function RateCard({ rcItems, setRcItems, rcCats = RC_CATS_DEFAULT
             })}
           </div>
         ))}
+      </div>
       </div>
     </div>
   );
