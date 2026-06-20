@@ -10,10 +10,21 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const fixedVenues = settings.fixedVenues || [];
   const save = (next) => setSettings((s) => ({ ...s, fixedVenues: next }));
 
-  const addVenue = () => {
-    const name = window.prompt("Fixed venue name (e.g. Ambria Exotica):");
-    if (!name || !name.trim()) return;
-    save([...fixedVenues, { id: "fv_" + Date.now().toString(36).slice(-6), name: name.trim(), minLabour: 4, discountPct: 70, items: [] }]);
+  // Venue names must match what Studio uses for a function's venue (the labour calc keys
+  // off venueMinLabour[fn.venue.name]). So source the dropdown from those exact names —
+  // venues configured in Venue Min Labour + any inventory locations + already-added ones.
+  const venueOptions = [...new Set([
+    ...Object.keys(settings.venueMinLabour || {}),
+    ...(inventory || []).map((i) => i.loc || i.location).filter(Boolean),
+    ...fixedVenues.map((v) => v.name).filter(Boolean),
+  ])].sort((a, b) => a.localeCompare(b));
+  const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
+
+  const addVenue = (name) => {
+    if (!name || fixedVenues.some((v) => v.name === name)) return;
+    const cfg = settings.venueMinLabour?.[name];
+    const min = (cfg && typeof cfg === "object" ? cfg.min : (typeof cfg === "number" ? cfg : null)) || 4;
+    save([...fixedVenues, { id: "fv_" + Date.now().toString(36).slice(-6), name, minLabour: min, discountPct: 70, items: [] }]);
   };
   const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; save(fixedVenues.filter((x) => x.id !== id)); };
@@ -31,7 +42,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     <div className="bg-white border rounded-2xl p-5">
       <div className="flex items-center justify-between mb-1">
         <p className="font-bold text-gray-900">🏛️ Fixed Venues (standing inventory)</p>
-        <button onClick={addVenue} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Fixed Venue</button>
+        {addable.length > 0
+          ? <select value="" onChange={(e) => { addVenue(e.target.value); e.target.value = ""; }} className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg font-medium border-none cursor-pointer">
+              <option value="">+ Add Fixed Venue…</option>
+              {addable.map((n) => <option key={n} value={n} className="bg-white text-gray-800">{n}</option>)}
+            </select>
+          : <span className="text-xs text-gray-400">Add venues in “Venue Min Labour” above first</span>}
       </div>
       <p className="text-xs text-gray-500 mb-4">Inhouse venues that own permanently-installed structure. Reusing a standing item = no build labour + discounted rental. Swapping to a different item, or extras beyond the standing qty, bill full labour + full rental.</p>
 
@@ -41,7 +57,10 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
         {fixedVenues.map((v) => (
           <div key={v.id} className="border rounded-xl p-4 bg-gray-50">
             <div className="flex items-center gap-3 flex-wrap mb-3">
-              <input value={v.name} onChange={(e) => updVenue(v.id, { name: e.target.value })} className="border rounded-lg px-3 py-1.5 text-sm font-semibold flex-1 min-w-[160px]" />
+              <select value={v.name} onChange={(e) => updVenue(v.id, { name: e.target.value })} className="border rounded-lg px-3 py-1.5 text-sm font-semibold flex-1 min-w-[160px] bg-white">
+                {venueOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                {!venueOptions.includes(v.name) && <option value={v.name}>{v.name} (not in venue list)</option>}
+              </select>
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Min labour</span><input type="number" min="0" value={v.minLabour ?? 4} onChange={(e) => updVenue(v.id, { minLabour: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Default discount</span><input type="number" min="0" max="100" value={v.discountPct ?? 70} onChange={(e) => updVenue(v.id, { discountPct: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /><span className="text-xs text-gray-400">%</span></div>
               <button onClick={() => delVenue(v.id)} className="text-red-400 hover:text-red-600 text-sm ml-auto">🗑️</button>
