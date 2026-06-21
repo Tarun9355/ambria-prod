@@ -382,9 +382,8 @@ export default function IMS() {
     if (!trussInv || !trussInv.pillars) return;
     (async () => {
       try {
-        let alreadyDone = false;
-        try { alreadyDone = localStorage.getItem(TRUSS_P3_BACKFILLED_SK) === "1"; } catch { /* ignore */ }
-        if (!alreadyDone) { const redisFlag = await kvGet(TRUSS_P3_BACKFILLED_SK); alreadyDone = redisFlag === "1" || redisFlag === '"1"'; }
+        const flag = await kvGet(TRUSS_P3_BACKFILLED_SK); // DB flag only — no localStorage
+        const alreadyDone = flag === "1" || flag === '"1"';
         if (alreadyDone) { trussBackfilledRef.current = true; return; }
         const soldEos = eventOrders.filter((eo) => eo && eo.id && eo.status && eo.status !== "pending");
         const eosToBackfill = soldEos.filter((eo) => {
@@ -394,7 +393,6 @@ export default function IMS() {
         });
         if (eosToBackfill.length === 0) {
           await reliableSave(TRUSS_P3_BACKFILLED_SK, "1", "Phase 3 backfill flag");
-          try { localStorage.setItem(TRUSS_P3_BACKFILLED_SK, "1"); } catch { /* ignore */ }
           trussBackfilledRef.current = true;
           return;
         }
@@ -419,7 +417,6 @@ export default function IMS() {
         datesChanged.forEach((d) => { nextAlloc = allocateForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "phase3-backfill"); });
         setTrussAlloc(nextAlloc);
         await reliableSave(TRUSS_P3_BACKFILLED_SK, "1", "Phase 3 backfill flag");
-        try { localStorage.setItem(TRUSS_P3_BACKFILLED_SK, "1"); } catch { /* ignore */ }
         trussBackfilledRef.current = true;
         await appendTrussAudit({ date: "ALL", event: "phase3-backfill", eventCount: eosToBackfill.length, datesAffected: datesChanged.size });
       } catch (e) {
