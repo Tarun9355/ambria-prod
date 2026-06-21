@@ -25,6 +25,7 @@ import { kvGet, reliableSave } from "../../lib/ims/kv";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 const BLOCKS_SK = "ambria-ims-blocks-v1"; // blocks document blob (faithful to reference Redis key)
+const RC_SK = "ambria-ratecard-v4"; // Studio Rate Card blob — the live source the Studio app writes
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -163,7 +164,20 @@ export default function IMS() {
   useEffect(() => { trussAllocRef.current = trussAlloc; }, [trussAlloc]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
-  // ── Initial load + inventory Realtime subscription ──
+  // Apply settings-table rows → blocks blob, Studio rate-card mirror (RC_SK), settings object.
+  // Shared by the initial load and the settings Realtime subscription so config syncs live.
+  const applySettingsRows = useCallback((setRows) => {
+    const blocksRow = setRows.find((r) => r.key === BLOCKS_SK);
+    if (blocksRow?.value != null) { try { setBlocksState(typeof blocksRow.value === "string" ? JSON.parse(blocksRow.value) : blocksRow.value); } catch { /* keep */ } }
+    const rcBlob = setRows.find((r) => r.key === RC_SK);
+    if (rcBlob?.value != null) { let a = rcBlob.value; if (typeof a === "string") { try { a = JSON.parse(a); } catch { a = null; } } if (Array.isArray(a)) setStudioRcItems(a); }
+    const settingsObj = { ...SETTINGS_DEFAULTS };
+    for (const r of setRows) { if (!/^ambria-/.test(r.key)) settingsObj[r.key] = r.value; }
+    settingsRef.current = settingsObj;
+    setSettingsState(settingsObj);
+  }, []);
+
+  // ── Initial load + Realtime subscriptions ──
   useEffect(() => {
     let active = true;
     (async () => {
@@ -199,18 +213,14 @@ export default function IMS() {
         setProdRequestsState(prodRows.map(rowToProd));
         setEventOrdersState(eoRows.map(rowToEO));
         setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
-        // blocks document — stored as one JSON-string blob under BLOCKS_SK (settings table).
-        const blocksRow = setRows.find((r) => r.key === BLOCKS_SK);
-        if (blocksRow?.value) { try { setBlocksState(typeof blocksRow.value === "string" ? JSON.parse(blocksRow.value) : blocksRow.value); } catch { /* keep {} */ } }
-        setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
         const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
         if (trussRow?.data) setTrussInvState(trussRow.data);
         setCats(catRows.map((c) => c.name).filter(Boolean));
-        const settingsObj = { ...SETTINGS_DEFAULTS };
-        // Skip internal KV blobs (truss overrides/simulations/audit, blocks) — those are
-        // read directly via kvGet by their owners and shouldn't pollute the settings object.
-        for (const r of setRows) { if (!/^ambria-/.test(r.key)) settingsObj[r.key] = r.value; }
-        setSettingsState(settingsObj);
+        // blocks blob, Studio rate-card mirror, and the settings object — applied via the
+        // shared helper (also used by the settings Realtime subscription below).
+        applySettingsRows(setRows);
+        // Fallback: if Studio hasn't written the rate-card blob yet, seed from the table.
+        if (!setRows.some((r) => r.key === RC_SK)) setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
@@ -229,7 +239,35 @@ export default function IMS() {
       })
       .subscribe();
 
-    return () => { active = false; supabase.removeChannel(channel); };
+    // ── Realtime for the rest of the shared data — re-fetch the table and re-apply on any
+    // change so Studio ⇄ IMS stay in sync live (no refresh needed). ──
+    const extraChannels = [];
+    const liveTable = (table, apply) => {
+      const ch = supabase
+        .channel(`realtime:${table}`)
+        .on("postgres_changes", { event: "*", schema: "public", table }, async () => {
+          const rows = await fetchAll(table).catch(() => null);
+          if (rows && active) apply(rows);
+        })
+        .subscribe();
+      extraChannels.push(ch);
+    };
+    liveTable("settings", (rows) => applySettingsRows(rows));
+    liveTable("event_orders", (rows) => setEventOrdersState(rows.map(rowToEO)));
+    liveTable("functions", (rows) => setFns(rows.map(rowToFn)));
+    liveTable("projects", (rows) => setProjectsState(rows.map(rowToProject)));
+    liveTable("truss_allocations", (rows) => setTrussAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
+    liveTable("truss_inventory", (rows) => { const tr = rows.find((r) => r.key === "main") || rows[0]; if (tr?.data) setTrussInvState(tr.data); });
+    liveTable("categories", (rows) => setCats(rows.map((c) => c.name).filter(Boolean)));
+    liveTable("supervisors", (rows) => setSupervisorsState(rows.map(rowToSupervisor)));
+    liveTable("vendors", (rows) => setVendorsState(rows.map(rowToVendor)));
+    liveTable("purchase_orders", (rows) => setPurchaseState(rows.map(rowToPurchase)));
+    liveTable("production_requests", (rows) => setProdRequestsState(rows.map(rowToProd)));
+    liveTable("users", (rows) => setUsersState(rows.map(rowToUser)));
+    liveTable("boxes", (rows) => setBoxesState(rows.map(rowToBox)));
+    liveTable("overheads", (rows) => setOverheadsState(rows.map(rowToOverhead)));
+
+    return () => { active = false; supabase.removeChannel(channel); extraChannels.forEach((ch) => supabase.removeChannel(ch)); };
   }, []);
 
   // Refresh in-memory state from the Supabase cache (instant — no LMS pagination) + season.

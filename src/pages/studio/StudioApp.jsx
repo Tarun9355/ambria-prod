@@ -1589,6 +1589,26 @@ export default function StudioApp() {
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   const saveRC = useCallback(async (ni) => { setRcItems(ni); await reliableSave(RC_SK, JSON.stringify(ni), "Rate card"); }, []);
   const saveRcCats = useCallback(async (nc) => { setRcCats(nc); await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
+  // ── Realtime: reload shared config blobs live when changed (other device or IMS) ──
+  useEffect(() => {
+    const pj = (v) => { try { return typeof v === "string" ? JSON.parse(v) : v; } catch { return null; } };
+    const ch = supabase
+      .channel("studio:settings")
+      .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, async (payload) => {
+        const key = payload?.new?.key || payload?.old?.key;
+        if (!key) return;
+        try {
+          if (key === RC_SK) { const a = pj(await kvGet(RC_SK)); if (Array.isArray(a)) setRcItems(a.map((i) => ({ zones: [], ...i }))); }
+          else if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
+          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
+          else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
+          else if (key === CLI_SK) { const a = pj(await kvGet(CLI_SK)); if (Array.isArray(a)) setClientLedger(a); }
+          else if (key === LIB_SK) { const a = pj(await kvGet(LIB_SK)); if (Array.isArray(a)) setLibItems(a); }
+        } catch { /* ignore */ }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
   const saveZD = useCallback(async (nd) => { setZoneDefs(nd); await reliableSave(ZONE_DEF_SK, JSON.stringify(nd), "Zone config"); }, []);
   const saveLib = useCallback(async (nl) => { setLibItems(nl); await reliableSave(LIB_SK, JSON.stringify(nl), "Library"); }, []);
