@@ -6,6 +6,11 @@ import {
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 
+// Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
+// can push a corrected element list back to the master library photo ("Save correction to
+// master"). Flip to false (one-line deploy) once all photos are verified to remove the button.
+const CORRECTION_MODE = true;
+
 export default function StudioBuild({ ctx }) {
   const {
     // theme / chrome
@@ -48,7 +53,7 @@ export default function StudioBuild({ ctx }) {
     // video modal
     setVideoModal, setVideoPlaying,
     // misc
-    showMsg,
+    showMsg, saveLib, authUser,
   } = ctx;
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
@@ -472,6 +477,24 @@ export default function StudioBuild({ ctx }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:11,fontWeight:600,color:"#666"}}>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  {/* Permanent correction (Phase 1b) — push the corrected element list back to the
+                      master library photo so the fix sticks for everyone. Shows only for a selected
+                      library photo while CORRECTION_MODE is on. Past quotes keep their own numbers. */}
+                  {CORRECTION_MODE && elSelectedPhoto[k]?.isLibrary && elSelectedPhoto[k]?.eventId && (()=>{
+                    const libId = elSelectedPhoto[k].eventId;
+                    const master = libItems.find(i => i.id === libId);
+                    const verified = !!master?._verified;
+                    return <button onClick={()=>{
+                      if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
+                      if(!window.confirm(`Save this corrected element list to the MASTER photo "${master.name||"photo"}"?\n\nIt updates the photo for everyone in future quotes (quotes already given keep their own numbers).`))return;
+                      const corrected = { ...master, elements: JSON.parse(JSON.stringify(zoneElements[k]||[])), _verified:true, _verifiedBy: authUser?.name||"—", _verifiedAt: Date.now(), _correctedOn:"build" };
+                      saveLib(libItems.map(i => i.id === libId ? corrected : i));
+                      showMsg("✅ Correction saved to master — thanks!","green");
+                    }} title="Save this corrected element list back to the shared library photo (permanent, for everyone)"
+                      style={{...S.btn(false),fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
+                      💾 {verified?"Update master":"Save correction to master"}
+                    </button>;
+                  })()}
                   {elSelectedPhoto[k]?.src && <button disabled={zoneAiFilling[k]} onClick={async()=>{
                     const url=elSelectedPhoto[k]?.src;if(!url)return;
                     setZoneAiFilling(p=>({...p,[k]:true}));
