@@ -41,7 +41,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -119,43 +119,13 @@ export default function ManageLibrary({ ctx }) {
   const [corrUser, setCorrUser] = useState("");          // contributions panel user filter
   const untaggedCount = useMemo(() => libItems.filter(i => i.url && photoStatus(i) === "untagged").length, [libItems]);
 
-  // Bulk "Tag all untagged" — sequential AI pass over every untagged photo. Resumable (skips
-  // already-tagged/verified), stoppable, and saves in chunks so progress survives a stop.
-  const [tagAll, setTagAll] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0 });
-  const tagAllStop = useRef(false);
-  const runTagAll = async () => {
-    const targets = libItems.filter(i => i.url && photoStatus(i) === "untagged");
-    if (!targets.length) { showMsg("Nothing to tag — every photo is already AI-tagged or verified.", "green"); return; }
-    if (!window.confirm(`AI-tag ${targets.length} untagged photo(s)?\n\nRuns in the background (~3–5s each). You can stop anytime. Tags become usable immediately; a person still reviews/verifies them afterwards.`)) return;
-    tagAllStop.current = false;
-    setTagAll({ running: true, done: 0, total: targets.length, ok: 0, fail: 0 });
-    const base = libItems.slice();          // working snapshot; merged + saved in chunks
-    const patch = {};                        // id -> updated item
-    let ok = 0, fail = 0;
-    const flush = () => saveLib(base.map(i => patch[i.id] || i));
-    for (let n = 0; n < targets.length; n++) {
-      if (tagAllStop.current) break;
-      const img = targets[n];
-      try {
-        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        const upd = { ...img, _aiTagged: true, _aiTaggedAt: Date.now() };
-        if (result) {
-          const tagSrc = result.tags || result;
-          if (tagSrc) { upd.tags = { ...(upd.tags || {}) }; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) upd.tags[k] = tagSrc[k]; }); }
-          if (result.name && (!upd.name || upd.name.startsWith("img ") || upd.name === "Untitled")) upd.name = result.name;
-          if (Array.isArray(result.elements) && result.elements.length > 0) upd.elements = result.elements;
-          const d = result.dims || {};
-          if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(upd.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || upd.dims?.plH || "", mkT: d.mkT || upd.dims?.mkT || "", mkWalls: d.mkWalls || upd.dims?.mkWalls || {} };
-          ok++;
-        } else { fail++; }
-        patch[img.id] = upd;
-      } catch { patch[img.id] = { ...img, _aiTagged: true, _aiTaggedAt: Date.now() }; fail++; }
-      setTagAll({ running: true, done: n + 1, total: targets.length, ok, fail });
-      if ((n + 1) % 8 === 0) flush();        // checkpoint every 8 photos
-    }
-    flush();                                  // final save
-    setTagAll((s) => ({ ...s, running: false }));
-    showMsg(`AI tagging ${tagAllStop.current ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed/empty. Review & verify them below.`, "green");
+  // Bulk "Tag all untagged" now runs APP-WIDE (in StudioApp) so it keeps going while you move
+  // between Studio screens, with a global progress pill + completion toast. This just confirms
+  // and kicks it off. `bulkTag` (progress) / `stopBulkTag` come from ctx.
+  const startTagAll = () => {
+    if (untaggedCount === 0) { showMsg("Nothing to tag — every photo is already AI-tagged or verified.", "green"); return; }
+    if (!window.confirm(`AI-tag ${untaggedCount} untagged photo(s)?\n\nRuns in the background — keep working in the app (other Studio screens) and watch progress in the corner. Stop anytime; it resumes where it left off. A person still reviews/verifies afterwards.`)) return;
+    runBulkTag?.();
   };
 
   // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
@@ -229,17 +199,17 @@ export default function ManageLibrary({ ctx }) {
           })}
           <div style={{ flex: 1 }} />
           <div style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "center" }}>
-            {tagAll.running ? (
+            {bulkTag?.running ? (
               <>
-                <span style={{ fontSize: 10, color: textS }}>Tagging {tagAll.done}/{tagAll.total} · {tagAll.ok}✓ {tagAll.fail}✕</span>
-                <button onClick={() => { tagAllStop.current = true; }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px", color: "#E11D48" }}>■ Stop</button>
+                <span style={{ fontSize: 10, color: textS }}>Tagging {bulkTag.done}/{bulkTag.total} · {bulkTag.ok}✓ {bulkTag.fail}✕</span>
+                <button onClick={() => stopBulkTag?.()} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px", color: "#E11D48" }}>■ Stop</button>
               </>
             ) : (
-              untaggedCount > 0 && <button onClick={runTagAll} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#7C3AED" }}>🤖 Tag all untagged ({untaggedCount})</button>
+              untaggedCount > 0 && <button onClick={startTagAll} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#7C3AED" }}>🤖 Tag all untagged ({untaggedCount})</button>
             )}
           </div>
         </div>
-        {tagAll.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${tagAll.total ? (tagAll.done / tagAll.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
+        {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
         <div style={{ fontSize: 11, color: textS, marginBottom: 8 }}>Showing {libVisible.length} of {libItems.length} images</div>
         {libFiltered.length === 0 && libItems.length === 0 && (
           <div style={{ textAlign: "center", padding: 60, color: textS }}>

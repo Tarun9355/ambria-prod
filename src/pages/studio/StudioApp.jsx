@@ -862,6 +862,10 @@ export default function StudioApp() {
   const [libItems, setLibItems] = useState([]);
   const [corrLog, setCorrLog] = useState([]); // append-only photo-correction log (who/what/when)
   const corrLogRef = useRef([]);
+  const libItemsRef = useRef([]); // latest library array, for the background bulk-tagger to merge into
+  const [bulkTag, setBulkTag] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk AI tagging progress
+  const bulkTagStop = useRef(false);
+  useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
   const [libSearch, setLibSearch] = useState("");
   const [libFilters, setLibFilters] = useState({});
   const [libVenueGroup, setLibVenueGroup] = useState("all");
@@ -3459,6 +3463,48 @@ Return ONLY JSON:
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
   };
 
+  // ── App-wide background bulk AI tagging ─────────────────────────────────────
+  // Tags every untagged library photo. Lives at the app root so it keeps running while you move
+  // between Studio screens, with a global progress pill + a completion toast. Results merge into
+  // the LATEST library by id (only the untagged photos), so parallel edits elsewhere aren't lost.
+  // Checkpoints every 8 photos; stoppable; resumable (skips already-tagged on the next run).
+  const stopBulkTag = useCallback(() => { bulkTagStop.current = true; }, []);
+  const runBulkTag = useCallback(async () => {
+    const isUntagged = (i) => i.url && !i._verified && !i._aiTagged && !(i.elements || []).length && !Object.values(i.tags || {}).some(v => Array.isArray(v) && v.length);
+    const targets = (libItemsRef.current || []).filter(isUntagged);
+    if (!targets.length) { showMsg("Nothing to tag — every photo is already AI-tagged or verified.", "green"); return null; }
+    bulkTagStop.current = false;
+    setBulkTag({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
+    const patch = {}; // id -> changed fields only
+    let ok = 0, fail = 0;
+    const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); libItemsRef.current = merged; saveLib(merged); };
+    for (let n = 0; n < targets.length; n++) {
+      if (bulkTagStop.current) break;
+      const img = targets[n];
+      try {
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const upd = { _aiTagged: true, _aiTaggedAt: Date.now() };
+        if (result) {
+          const tagSrc = result.tags || result;
+          if (tagSrc) { const t = { ...(img.tags || {}) }; let any = false; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) { t[k] = tagSrc[k]; any = true; } }); if (any) upd.tags = t; }
+          if (result.name && (!img.name || img.name.startsWith("img ") || img.name === "Untitled")) upd.name = result.name;
+          if (Array.isArray(result.elements) && result.elements.length > 0) upd.elements = result.elements;
+          const d = result.dims || {};
+          if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
+          ok++;
+        } else { fail++; }
+        patch[img.id] = upd;
+      } catch { patch[img.id] = { _aiTagged: true, _aiTaggedAt: Date.now() }; fail++; }
+      setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
+      if ((n + 1) % 8 === 0) flush();
+    }
+    flush();
+    const stopped = bulkTagStop.current;
+    setBulkTag({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
+    showMsg(`🤖 AI tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed/empty. Review them in Library → Needs review.`, "green");
+    return { ok, fail };
+  }, [aiTagImage, saveLib, showMsg, taxonomy]);
+
   // ── Zone upload (Cloudinary → AI tag → review) — VERBATIM ──
   const handleZoneUpload = async (elKey, file) => {
     if (!file || zoneUploading) return;
@@ -4165,7 +4211,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,
@@ -4297,6 +4343,19 @@ Return ONLY JSON:
       {/* TOAST */}
       {toast && (
         <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", zIndex: 100000, padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#fff", background: toast.color === "red" ? "#dc2626" : toast.color === "green" ? "#16a34a" : "#374151" }}>{toast.msg}</div>
+      )}
+
+      {/* GLOBAL BULK-TAG PROGRESS PILL — visible on every Studio screen while tagging runs */}
+      {bulkTag.running && (
+        <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 100000, background: "#1f2937", color: "#fff", padding: "10px 14px", borderRadius: 12, fontSize: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.12)", minWidth: 220 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontWeight: 700 }}>🤖 AI tagging…</span>
+            <span style={{ marginLeft: "auto", opacity: 0.9 }}>{bulkTag.done}/{bulkTag.total}</span>
+            <button onClick={stopBulkTag} style={{ background: "rgba(239,68,68,0.95)", color: "#fff", border: "none", borderRadius: 6, padding: "2px 9px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Stop</button>
+          </div>
+          <div style={{ height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>
+          <div style={{ fontSize: 10, opacity: 0.8, marginTop: 5 }}>{bulkTag.ok}✓ {bulkTag.fail}✕ · keep working — this runs in the background</div>
+        </div>
       )}
 
       {/* HEADER */}
