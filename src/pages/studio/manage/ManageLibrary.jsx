@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState, useRef } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 
 // ═══ MANAGE: LIBRARY & CONTENT ═══
@@ -41,7 +41,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB,
     // misc
-    showMsg, aiTagImage,
+    showMsg, aiTagImage, authUser,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -107,6 +107,58 @@ export default function ManageLibrary({ ctx }) {
   const toggleLibVenueName = (name) => setLibVenueNames(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   const clearLibFilters = () => { setLibFilters({}); setLibSearch(""); setLibVenueGroup("all"); setLibVenueNames([]); };
 
+  // ── Tagging status (Phase 1a) ──────────────────────────────────────────────
+  // A photo is "Verified" once a human saves/corrects it; "AI-tagged" (needs review) once an
+  // AI pass has filled it but no human has confirmed; otherwise "Untagged". This lets the team
+  // use AI tags immediately while a person — or salespeople on the build screen — cleans them up.
+  const photoStatus = (img) => img?._verified ? "verified"
+    : (img?._aiTagged || (img?.elements || []).length > 0 || Object.values(img?.tags || {}).some(v => Array.isArray(v) && v.length)) ? "review"
+    : "untagged";
+  const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
+  const untaggedCount = useMemo(() => libItems.filter(i => i.url && photoStatus(i) === "untagged").length, [libItems]);
+
+  // Bulk "Tag all untagged" — sequential AI pass over every untagged photo. Resumable (skips
+  // already-tagged/verified), stoppable, and saves in chunks so progress survives a stop.
+  const [tagAll, setTagAll] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0 });
+  const tagAllStop = useRef(false);
+  const runTagAll = async () => {
+    const targets = libItems.filter(i => i.url && photoStatus(i) === "untagged");
+    if (!targets.length) { showMsg("Nothing to tag — every photo is already AI-tagged or verified.", "green"); return; }
+    if (!window.confirm(`AI-tag ${targets.length} untagged photo(s)?\n\nRuns in the background (~3–5s each). You can stop anytime. Tags become usable immediately; a person still reviews/verifies them afterwards.`)) return;
+    tagAllStop.current = false;
+    setTagAll({ running: true, done: 0, total: targets.length, ok: 0, fail: 0 });
+    const base = libItems.slice();          // working snapshot; merged + saved in chunks
+    const patch = {};                        // id -> updated item
+    let ok = 0, fail = 0;
+    const flush = () => saveLib(base.map(i => patch[i.id] || i));
+    for (let n = 0; n < targets.length; n++) {
+      if (tagAllStop.current) break;
+      const img = targets[n];
+      try {
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const upd = { ...img, _aiTagged: true, _aiTaggedAt: Date.now() };
+        if (result) {
+          const tagSrc = result.tags || result;
+          if (tagSrc) { upd.tags = { ...(upd.tags || {}) }; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) upd.tags[k] = tagSrc[k]; }); }
+          if (result.name && (!upd.name || upd.name.startsWith("img ") || upd.name === "Untitled")) upd.name = result.name;
+          if (Array.isArray(result.elements) && result.elements.length > 0) upd.elements = result.elements;
+          const d = result.dims || {};
+          if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(upd.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || upd.dims?.plH || "", mkT: d.mkT || upd.dims?.mkT || "", mkWalls: d.mkWalls || upd.dims?.mkWalls || {} };
+          ok++;
+        } else { fail++; }
+        patch[img.id] = upd;
+      } catch { patch[img.id] = { ...img, _aiTagged: true, _aiTaggedAt: Date.now() }; fail++; }
+      setTagAll({ running: true, done: n + 1, total: targets.length, ok, fail });
+      if ((n + 1) % 8 === 0) flush();        // checkpoint every 8 photos
+    }
+    flush();                                  // final save
+    setTagAll((s) => ({ ...s, running: false }));
+    showMsg(`AI tagging ${tagAllStop.current ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed/empty. Review & verify them below.`, "green");
+  };
+
+  // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
+  const libVisible = libStatus === "all" ? libFiltered : libFiltered.filter(i => photoStatus(i) === libStatus);
+
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   const LibraryBrowse = () => (
     <div style={{ display: "flex", gap: 16, minHeight: "70vh" }}>
@@ -159,7 +211,23 @@ export default function ManageLibrary({ ctx }) {
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name..." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
-        <div style={{ fontSize: 11, color: textS, marginBottom: 8 }}>Showing {libFiltered.length} of {libItems.length} images</div>
+        {/* ── Status filter + bulk AI tag (Phase 1a) ── */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          {[["all", `All (${libFiltered.length})`], ["review", `🤖 Needs review (${libFiltered.filter(i => photoStatus(i) === "review").length})`], ["verified", `✅ Verified (${libFiltered.filter(i => photoStatus(i) === "verified").length})`], ["untagged", `❓ Untagged (${libFiltered.filter(i => photoStatus(i) === "untagged").length})`]].map(([k, label]) => (
+            <span key={k} onClick={() => setLibStatus(k)} style={{ padding: "4px 10px", fontSize: 10, borderRadius: 12, cursor: "pointer", fontWeight: libStatus === k ? 700 : 500, border: `1px solid ${libStatus === k ? accent : border}`, background: libStatus === k ? `${accent}18` : "transparent", color: libStatus === k ? accent : textS }}>{label}</span>
+          ))}
+          <div style={{ flex: 1 }} />
+          {tagAll.running ? (
+            <>
+              <span style={{ fontSize: 10, color: textS }}>Tagging {tagAll.done}/{tagAll.total} · {tagAll.ok}✓ {tagAll.fail}✕</span>
+              <button onClick={() => { tagAllStop.current = true; }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px", color: "#E11D48" }}>■ Stop</button>
+            </>
+          ) : (
+            untaggedCount > 0 && <button onClick={runTagAll} style={{ ...S.btn(true), fontSize: 10, padding: "4px 12px", background: "#7C3AED" }}>🤖 Tag all untagged ({untaggedCount})</button>
+          )}
+        </div>
+        {tagAll.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${tagAll.total ? (tagAll.done / tagAll.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
+        <div style={{ fontSize: 11, color: textS, marginBottom: 8 }}>Showing {libVisible.length} of {libItems.length} images</div>
         {libFiltered.length === 0 && libItems.length === 0 && (
           <div style={{ textAlign: "center", padding: 60, color: textS }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📸</div>
@@ -168,11 +236,12 @@ export default function ManageLibrary({ ctx }) {
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
-          {libFiltered.map(img => (
+          {libVisible.map(img => (
             <div key={img.id} onClick={() => setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: cardBg, position: "relative" }}>
               <img src={img.url} alt="" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
+              {(() => { const st = photoStatus(img); const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" }; return <div title={st === "verified" ? "Verified by a person" : st === "review" ? "AI-tagged — needs review" : "Untagged"} style={{ position: "absolute", top: 6, left: 6, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>; })()}
               {(img.linkedTemplates || []).length > 0 && <div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
-              {(img.elements || []).length > 0 && <div style={{ position: "absolute", top: 6, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(124,58,237,0.8)", fontSize: 9, color: "#fff" }}>📋 {(img.elements || []).length}</div>}
+              {(img.elements || []).length > 0 && <div style={{ position: "absolute", top: 28, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(124,58,237,0.8)", fontSize: 9, color: "#fff" }}>📋 {(img.elements || []).length}</div>}
               <div style={{ padding: "6px 8px" }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginTop: 3 }}>
@@ -222,11 +291,15 @@ export default function ManageLibrary({ ctx }) {
                         showMsg("🪡 Drape Density required for Full Box photos — pick Minimum, Moderate, or Dense", "red");
                         return;
                       }
-                      saveLib(libItems.map(i => i.id === libEditImg.id ? libEditImg : i));
+                      // A human save = Verified: stamps who/when so it leaves the "needs review" pile.
+                      const verified = { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
+                      saveLib(libItems.map(i => i.id === libEditImg.id ? verified : i));
+                      setLibEditImg(verified);
+                      showMsg("✅ Saved & verified", "green");
                     }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px",
                       // Dim the Save button when Full Box + no density to give visual cue
                       opacity: (libEditImg.dims?.trussL && libEditImg.dims?.trussW && libEditImg.dims?.trussH && !libEditImg.dims?.drapeDensity) ? 0.45 : 1
-                    }}>Save</button>
+                    }}>{libEditImg._verified ? "✅ Save" : "✅ Save & Verify"}</button>
                     <button onClick={() => { saveLib(libItems.filter(i => i.id !== libEditImg.id), [libEditImg.id]); setLibEditImg(null); }} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px", color: "#E11D48" }}>Delete</button>
                     <button onClick={() => setLibEditImg(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Close</button>
                   </div>
