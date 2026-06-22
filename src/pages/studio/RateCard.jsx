@@ -1,6 +1,7 @@
 // Studio → Pricing → Rate Card Manager v2 — faithful dark-theme transcription of
 // the reference AdminRates (App_latest.jsx ~7480), driven off ctx. Holds the
 // Rate Card / Transport & Power toggle; the Transport tab renders TransportEditor.
+import { useState } from "react";
 import TransportEditor from "./TransportEditor.jsx";
 
 const NUM_FIELDS = ["inhouseFlat", "inhouseS", "inhouseM", "inhouseB", "outS", "outM", "outB", "artificialFlat", "artificialS", "artificialM", "artificialB", "defaultRealPct"];
@@ -28,12 +29,24 @@ export default function RateCard({ ctx }) {
     showMsg && showMsg("✓ Item added", "green");
   };
 
+  // Quick sub-category filter (local — resets naturally when the category has no such sub).
+  const [subFilter, setSubFilter] = useState("");
+
   const rcFiltered = rcItems.filter((i) => {
     if (i.cat !== rcCat) return false;
     if (rcSearch.trim()) { const q = rcSearch.toLowerCase(); return (i.name || "").toLowerCase().includes(q) || (i.sub || "").toLowerCase().includes(q); }
     return true;
   });
   const rcGrouped = {}; rcFiltered.forEach((i) => { const k = i.sub || "General"; (rcGrouped[k] = rcGrouped[k] || []).push(i); });
+  // Sub-category chips: every sub present (search-aware), sorted A→Z. activeSub auto-clears when
+  // it isn't valid for the current view (e.g. after switching category or typing a search).
+  const subOptions = Object.keys(rcGrouped).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  const activeSub = subFilter && subOptions.includes(subFilter) ? subFilter : "";
+  // Groups to render: A→Z, narrowed to the chosen sub when one is active.
+  const groupEntries = subOptions
+    .filter((sub) => !activeSub || sub === activeSub)
+    .map((sub) => [sub, rcGrouped[sub]]);
+  const subChip = (active) => ({ padding: "5px 11px", borderRadius: 14, border: `1px solid ${active ? accent : border}`, cursor: "pointer", fontSize: 11, fontWeight: 600, background: active ? "rgba(201,169,110,0.15)" : "rgba(255,255,255,0.04)", color: active ? accent : textS, whiteSpace: "nowrap" });
 
   const RCP = ({ item }) => {
     const nr = isNotRated(item);
@@ -105,6 +118,16 @@ export default function RateCard({ ctx }) {
           <button onClick={() => { setRcNewForm((p) => ({ ...p, cat: rcCat })); setRcAddMode(!rcAddMode); setRcSubOpen(false); }} style={{ ...S.btn(true), padding: "10px 16px", fontSize: 12 }}>+ Add Item</button>
         </div>
 
+        {/* Sub-category quick filter — A→Z chips so a long list is easy to jump within */}
+        {subOptions.length > 1 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14, alignItems: "center" }}>
+            <button onClick={() => setSubFilter("")} style={subChip(!activeSub)}>All ({rcFiltered.length})</button>
+            {subOptions.map((s) => (
+              <button key={s} onClick={() => setSubFilter(activeSub === s ? "" : s)} style={subChip(activeSub === s)}>{s} <span style={{ opacity: 0.6 }}>({rcGrouped[s].length})</span></button>
+            ))}
+          </div>
+        )}
+
         {rcAddMode && <div style={{ background: cardBg, borderRadius: 12, padding: 16, marginBottom: 14, border: `2px solid ${accent}40` }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: accent, marginBottom: 12 }}>Add New Item to {curCat?.l}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
@@ -133,7 +156,7 @@ export default function RateCard({ ctx }) {
           </div>
         </div>}
 
-        {Object.entries(rcGrouped).map(([sub, items]) => (
+        {groupEntries.map(([sub, items]) => (
           <div key={sub} style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><div style={{ width: 3, height: 12, borderRadius: 2, background: curCat?.c || accent }} /><div style={{ fontSize: 13, fontWeight: 700, color: curCat?.c || accent }}>{sub}</div><div style={{ fontSize: 10, color: textS }}>({items.length})</div></div>
             {items.map((item) => { const isO = rcEditId === item.id; const isFloral = (item.cat || "").toLowerCase() === "florals"; return (
@@ -192,7 +215,7 @@ export default function RateCard({ ctx }) {
               </div>); })}
           </div>
         ))}
-        {Object.keys(rcGrouped).length === 0 && <div style={{ textAlign: "center", padding: 40, color: textS }}>{rcSearch ? "No matches" : "No items in this category"}</div>}
+        {groupEntries.length === 0 && <div style={{ textAlign: "center", padding: 40, color: textS }}>{rcSearch ? "No matches" : "No items in this category"}</div>}
       </div>
     </div>}
 
