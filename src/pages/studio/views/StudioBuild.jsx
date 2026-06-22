@@ -23,6 +23,8 @@ export default function StudioBuild({ ctx }) {
     clientPalette, setClientPalette, activeFnIdx,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
+    // venues (for named-venue correction)
+    allInhouseVenues = [], customOutdoor = [],
     // date demand
     dateTypes, clientLedger, activeClientId,
     // build canvas
@@ -59,6 +61,7 @@ export default function StudioBuild({ ctx }) {
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // "Correct photo tags" modal target — { libId, zoneKey, name, tags } (Phase 1b: full-tag correction)
   const [correctPhoto, setCorrectPhoto] = useState(null);
+  const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
 
   // Strict category filter: Simple=Silver ONLY, Enhanced=Gold ONLY
   // No mixing — each tab shows ONLY its category's photos
@@ -489,6 +492,8 @@ export default function StudioBuild({ ctx }) {
                     return <button onClick={()=>{
                       if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
                       // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
+                      const mv=master.tags?.venue||"";
+                      setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
                       setCorrectPhoto({ libId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
                     }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
                       style={{...S.btn(false),fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
@@ -1172,6 +1177,26 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:9,color:textS,marginTop:6}}>📋 {(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements (from your edits above)</div>
             </div>
           </div>
+          {/* Specific named venue (2-level: Inhouse / Outside) */}
+          {(()=>{
+            const curVenue=correctPhoto.tags?.venue||"";
+            const setV=(val)=>setCorrectPhoto(p=>({...p,tags:{...p.tags,venue:val||""}}));
+            const pill=(on)=>({padding:"3px 10px",borderRadius:8,fontSize:10,cursor:"pointer",fontWeight:on?700:500,border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",color:on?accent:textS});
+            return <div style={{marginBottom:10}}>
+              <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>Venue (specific)</div>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
+                <span onClick={()=>setCorrVenueGrp("inhouse")} style={pill(corrVenueGrp==="inhouse")}>Inhouse</span>
+                <span onClick={()=>setCorrVenueGrp("outside")} style={pill(corrVenueGrp==="outside")}>Outside</span>
+                {curVenue&&<span onClick={()=>setV("")} style={{padding:"3px 9px",borderRadius:8,fontSize:9,cursor:"pointer",color:"#E11D48",border:`1px dashed ${border}`}}>✕ {curVenue}</span>}
+              </div>
+              {corrVenueGrp==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {allInhouseVenues.map(vn=>{const on=curVenue===vn;return <span key={vn} onClick={()=>setV(on?"":vn)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{vn}</span>;})}
+              </div>}
+              {corrVenueGrp==="outside"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {customOutdoor.map(o=>{const on=curVenue===o.name;return <span key={o.name} onClick={()=>setV(on?"":o.name)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</span>;})}
+              </div>}
+            </div>;
+          })()}
           {Object.keys(taxonomy).map(key=>{
             const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name):taxonomy[key];
             return <div key={key} style={{marginBottom:8}}>

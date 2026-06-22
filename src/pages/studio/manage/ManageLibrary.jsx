@@ -117,6 +117,8 @@ export default function ManageLibrary({ ctx }) {
   const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
   const [corrRange, setCorrRange] = useState("today"); // contributions panel date range
   const [corrUser, setCorrUser] = useState("");          // contributions panel user filter
+  const [corrKind, setCorrKind] = useState("all");       // all | photo | video
+  const [corrSearch, setCorrSearch] = useState("");      // search by person or photo/video name
   const untaggedCount = useMemo(() => libItems.filter(i => i.url && photoStatus(i) === "untagged").length, [libItems]);
 
   // Bulk "Tag all untagged" now runs APP-WIDE (in StudioApp) so it keeps going while you move
@@ -632,43 +634,61 @@ export default function ManageLibrary({ ctx }) {
     const now = Date.now();
     const startOfToday = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })();
     const since = { today: startOfToday, "7d": now - 7 * 86400000, "30d": now - 30 * 86400000, all: 0 }[corrRange] ?? 0;
-    const rangeAll = (corrLog || []).filter(e => (e.ts || 0) >= since);
-    const inRange = rangeAll.filter(e => !corrUser || e.user === corrUser);
+    const q = corrSearch.trim().toLowerCase();
+    const kindOf = (e) => e.kind === "video" ? "video" : "photo";
+    // Range + kind + text-search (search matches person OR photo/video name). User filter applied only to the detail list.
+    const base = (corrLog || []).filter(e => (e.ts || 0) >= since
+      && (corrKind === "all" || kindOf(e) === corrKind)
+      && (!q || (e.user || "").toLowerCase().includes(q) || (e.photoName || "").toLowerCase().includes(q)));
+    const inRange = base.filter(e => !corrUser || e.user === corrUser);
     const byUser = {};
-    rangeAll.forEach(e => { byUser[e.user || "—"] = (byUser[e.user || "—"] || 0) + 1; });
-    const userRows = Object.entries(byUser).sort((a, b) => b[1] - a[1]);
+    base.forEach(e => { const u = e.user || "—"; const b = byUser[u] || (byUser[u] = { total: 0, photo: 0, video: 0 }); b.total++; b[kindOf(e)]++; });
+    const userRows = Object.entries(byUser).sort((a, b) => b[1].total - a[1].total);
     const fmtTs = (ts) => new Date(ts).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
     return (
       <div>
-        <div style={{ fontSize: 12, color: textS, marginBottom: 10 }}>Every "Save correction to master" (build screen) and "Save & Verify" (library) is logged here — so you can see who corrected how many photos, and when. Click a person to see only their corrections.</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: textS, marginBottom: 10 }}>Every photo correction ("Save correction to master" / "Save & Verify") and video tag verification is logged here — see who corrected how many photos and videos, and when. Click a person to see only their work; search by name; switch Photos/Videos.</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
           {[["today", "Today"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["all", "All time"]].map(([k, l]) => (
             <span key={k} onClick={() => setCorrRange(k)} style={{ padding: "4px 12px", fontSize: 11, borderRadius: 14, cursor: "pointer", fontWeight: corrRange === k ? 700 : 500, border: `1px solid ${corrRange === k ? accent : border}`, background: corrRange === k ? `${accent}18` : "transparent", color: corrRange === k ? accent : textS }}>{l}</span>
           ))}
-          <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 11, color: textS }}>{rangeAll.length} correction{rangeAll.length === 1 ? "" : "s"}{corrUser ? ` · ${corrUser}` : ""}</span>
-          {corrUser && <span onClick={() => setCorrUser("")} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>✕ clear</span>}
+          <span style={{ width: 1, height: 18, background: border, margin: "0 2px" }} />
+          {[["all", "All"], ["photo", "📷 Photos"], ["video", "🎬 Videos"]].map(([k, l]) => (
+            <span key={k} onClick={() => setCorrKind(k)} style={{ padding: "4px 12px", fontSize: 11, borderRadius: 14, cursor: "pointer", fontWeight: corrKind === k ? 700 : 500, border: `1px solid ${corrKind === k ? accent : border}`, background: corrKind === k ? `${accent}18` : "transparent", color: corrKind === k ? accent : textS }}>{l}</span>
+          ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 14 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+          <input value={corrSearch} onChange={e => setCorrSearch(e.target.value)} placeholder="🔍 Search by person or photo/video name…" style={{ ...S.input, fontSize: 12, marginBottom: 0, flex: 1, minWidth: 220 }} />
+          <span style={{ fontSize: 11, color: textS }}>{base.length} item{base.length === 1 ? "" : "s"}{corrUser ? ` · ${corrUser}` : ""}</span>
+          {(corrUser || corrSearch) && <span onClick={() => { setCorrUser(""); setCorrSearch(""); }} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>✕ clear</span>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 14 }}>
           <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 14, alignSelf: "start" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>👥 Corrections by person</div>
-            {userRows.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>No corrections in this period yet.</div> :
+            <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>👥 By person</div>
+            {userRows.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>No contributions in this period yet.</div> :
               userRows.map(([u, c], i) => (
                 <div key={u} onClick={() => setCorrUser(corrUser === u ? "" : u)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 8px", borderRadius: 8, cursor: "pointer", background: corrUser === u ? `${accent}14` : "transparent", borderBottom: `1px solid ${border}` }}>
                   <span style={{ fontSize: 12, color: textP }}><span style={{ color: textS, marginRight: 6 }}>{i + 1}.</span>{u}</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: accent }}>{c}</span>
+                  <span style={{ fontSize: 10, color: textS, display: "flex", gap: 6, alignItems: "baseline" }}>
+                    {c.photo > 0 && <span title="photos">📷 {c.photo}</span>}
+                    {c.video > 0 && <span title="videos">🎬 {c.video}</span>}
+                    <span style={{ fontSize: 14, fontWeight: 700, color: accent }}>{c.total}</span>
+                  </span>
                 </div>
               ))}
           </div>
           <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>📝 Recent corrections{corrUser ? ` — ${corrUser}` : ""}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>📝 Recent{corrUser ? ` — ${corrUser}` : ""}</div>
             <div style={{ maxHeight: 460, overflowY: "auto" }}>
-              {inRange.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>Nothing in this period.</div> :
+              {inRange.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>Nothing matches.</div> :
                 inRange.slice(0, 400).map(e => (
                   <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${border}` }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.photoName || e.photoId || "(photo)"}</div>
-                      <div style={{ fontSize: 9, color: textS }}>{e.user} · {e.source === "build" ? "build screen" : "library"}</div>
+                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 12 }}>{kindOf(e) === "video" ? "🎬" : "📷"}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.photoName || e.photoId || "(item)"}</div>
+                        <div style={{ fontSize: 9, color: textS }}>{e.user} · {e.source === "build" ? "build screen" : e.source === "video" ? "video" : "library"}</div>
+                      </div>
                     </div>
                     <span style={{ fontSize: 9, color: textS, whiteSpace: "nowrap" }}>{fmtTs(e.ts)}</span>
                   </div>
@@ -1308,6 +1328,8 @@ export default function ManageLibrary({ ctx }) {
                     </button>
                     {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();if(!confirm("Delete this video from app?"))return;saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]);const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);setYtTagEdit(null);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
                     {hasTag&&<button onClick={()=>{const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
+                    {/* Verify video tags — marks reviewed + logs a video contribution */}
+                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()}};saveYtTags(nt);logCorrection?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
                     <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>

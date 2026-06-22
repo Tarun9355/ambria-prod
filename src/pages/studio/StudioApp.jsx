@@ -1624,7 +1624,7 @@ export default function StudioApp() {
   // Append one human correction to the shared log (who/what/when) for contribution reporting.
   // Best-effort append (same shared-blob model as the rest of the app); capped to the latest 5000.
   const logCorrection = useCallback((info) => {
-    const entry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), user: authUser?.name || "—", userId: authUser?.id || "", photoId: info?.photoId || "", photoName: info?.photoName || "", source: info?.source || "build", ts: Date.now() };
+    const entry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), user: authUser?.name || "—", userId: authUser?.id || "", photoId: info?.photoId || "", photoName: info?.photoName || "", source: info?.source || "build", kind: info?.kind || "photo", ts: Date.now() };
     const next = [entry, ...corrLogRef.current].slice(0, 5000);
     corrLogRef.current = next;
     setCorrLog(next);
