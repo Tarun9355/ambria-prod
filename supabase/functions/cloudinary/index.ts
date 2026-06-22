@@ -11,7 +11,8 @@
 //   # optional overrides (defaults match CLAUDE.md): CLD_CLOUD, CLD_API_KEY
 //
 // Client POSTs { action, ...params }. action ∈
-//   folders { path? } · list { prefix?, max_results? } · list_video { prefix?, max_results? }
+//   folders { path? } · list { prefix?, max_results?, next_cursor? } · list_video { prefix?, max_results?, next_cursor? }
+//   · list_by_folder { asset_folder, max_results?, next_cursor? }  (asset-folder tree, dynamic-folder accounts)
 //   · delete { public_id } · delete_bulk { public_ids[] } · delete_folder { prefix }
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -50,7 +51,19 @@ Deno.serve(async (req) => {
       const kind = action === "list_video" ? "video" : "image";
       const prefix = String(p.prefix || "");
       const max = Number(p.max_results) || (kind === "video" ? 100 : 200);
-      const u = `${BASE}/resources/${kind}?type=upload&prefix=${encodeURIComponent(prefix)}&max_results=${max}`;
+      // Forward next_cursor so the client can page through >max results (was previously dropped).
+      const cursor = p.next_cursor ? `&next_cursor=${encodeURIComponent(String(p.next_cursor))}` : "";
+      const u = `${BASE}/resources/${kind}?type=upload&prefix=${encodeURIComponent(prefix)}&max_results=${max}${cursor}`;
+      const r = await fetch(u, { headers: { Authorization: auth } });
+      return json(await r.json(), r.status);
+    }
+    // List assets by ASSET FOLDER (dynamic-folder accounts) — matches the Media Library tree,
+    // unlike public_id `prefix`. Not recursive (one folder); the client walks the tree. Paginated.
+    if (action === "list_by_folder") {
+      const folder = String(p.asset_folder || p.folder || "");
+      const max = Number(p.max_results) || 500;
+      const cursor = p.next_cursor ? `&next_cursor=${encodeURIComponent(String(p.next_cursor))}` : "";
+      const u = `${BASE}/resources/by_asset_folder?asset_folder=${encodeURIComponent(folder)}&max_results=${max}${cursor}`;
       const r = await fetch(u, { headers: { Authorization: auth } });
       return json(await r.json(), r.status);
     }

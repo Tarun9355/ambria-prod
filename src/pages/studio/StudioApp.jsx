@@ -3515,20 +3515,50 @@ Return ONLY JSON:
     const KW = { stage: "Stage", entry: "Entry Passage", passage: "Entry Passage", vedi: "Vedi", mandap: "Vedi", lounge: "Centre Lounge", "side lounge": "Side Lounge", photobooth: "Photobooth", "photo booth": "Photobooth", centrepiece: "Centre Pieces", "centre piece": "Centre Pieces", "center piece": "Centre Pieces", prop: "Props", install: "Installations" };
     const detectZone = (f) => { const s = f.toLowerCase(); let z = zones.find(zn => s.includes(zn.toLowerCase())); if (z) return z; for (const [k, zn] of Object.entries(KW)) { if (s.includes(k) && zones.includes(zn)) return zn; } return ""; };
     const existUrls = new Set((libItemsRef.current || []).map(l => l.url));
+    const seen = new Set();           // secure_urls collected this run (dedupe)
     const fresh = [];
-    let cursor = "", scanned = 0;
+    let scanned = 0;
+    const take = (res) => { (res || []).forEach(r => {
+      if (!r.secure_url || r.resource_type === "video") return;
+      scanned++;
+      if (existUrls.has(r.secure_url) || seen.has(r.secure_url)) return;
+      seen.add(r.secure_url); fresh.push(r);
+    }); };
     try {
-      for (let i = 0; i < 60; i++) { // up to 60 pages × 500 = 30k images
-        const data = await cldAdmin("list", { prefix, max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
-        const res = data.resources || [];
-        scanned += res.length;
-        res.forEach(r => { if (r.secure_url && !existUrls.has(r.secure_url)) { existUrls.add(r.secure_url); fresh.push(r); } });
-        if (!data.next_cursor) break;
-        cursor = data.next_cursor;
+      // 1) Walk the whole folder TREE under the prefix (asset-folder based — matches the Media
+      //    Library you see in the Cloudinary console, which the old public_id prefix missed).
+      const folders = [prefix];
+      const queue = [prefix];
+      let guard = 0;
+      while (queue.length && guard++ < 500) {
+        const f = queue.shift();
+        try {
+          const fd = await cldAdmin("folders", { path: f });
+          (fd.folders || []).forEach(sub => { const full = sub.path || `${f}/${sub.name}`; if (!folders.includes(full)) { folders.push(full); queue.push(full); } });
+        } catch { /* skip unreadable folder */ }
+      }
+      // 2) List each folder by asset-folder, paginated.
+      for (let fi = 0; fi < folders.length; fi++) {
+        let cursor = "";
+        for (let pg = 0; pg < 40; pg++) {
+          const d = await cldAdmin("list_by_folder", { asset_folder: folders[fi], max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
+          take(d.resources);
+          if (!d.next_cursor) break;
+          cursor = d.next_cursor;
+        }
+        if (fi % 4 === 0) showMsg(`Scanning "${eventName}" — ${folders.length} folders, ${fresh.length} new so far…`, "blue");
+      }
+      // 3) Also page the public_id prefix (catches any fixed-mode assets not under an asset folder).
+      let pc = "";
+      for (let pg = 0; pg < 60; pg++) {
+        const d = await cldAdmin("list", { prefix, max_results: 500, ...(pc ? { next_cursor: pc } : {}) });
+        take(d.resources);
+        if (!d.next_cursor) break;
+        pc = d.next_cursor;
       }
     } catch (e) { showMsg("Folder import failed: " + (e.message || "Cloudinary error"), "red"); return null; }
     const skipped = scanned - fresh.length;
-    if (!fresh.length) { showMsg(`Nothing new — all ${scanned} photo(s) under "${eventName}" are already in the Library.`, "orange"); return { added: 0, skipped, scanned, eventName }; }
+    if (!fresh.length) { showMsg(`Nothing new — all photo(s) under "${eventName}" are already in the Library.`, "orange"); return { added: 0, skipped, scanned, eventName }; }
     const stamp = Date.now().toString(36);
     const newImgs = fresh.map((r, ix) => {
       const fname = (r.public_id || "").split("/").pop().replace(/[-_]/g, " ");
@@ -3538,7 +3568,7 @@ Return ONLY JSON:
     const merged = [...(libItemsRef.current || []), ...newImgs];
     libItemsRef.current = merged;
     saveLib(merged);
-    showMsg(`✓ Imported ${newImgs.length} new photo(s) from "${eventName}" (incl. subfolders)${skipped ? ` · skipped ${skipped} already in library` : ""}. Run "Tag all untagged" to AI-tag them.`, "green");
+    showMsg(`✓ Imported ${newImgs.length} new photo(s) from "${eventName}" (whole folder tree)${skipped ? ` · skipped ${skipped} already in library` : ""}. Run "Tag all untagged" to AI-tag them.`, "green");
     return { added: newImgs.length, skipped, scanned, eventName };
   }, [cldAdmin, saveLib, showMsg, taxonomy]);
 
