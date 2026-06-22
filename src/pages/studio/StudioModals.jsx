@@ -198,7 +198,7 @@ export default function StudioModals({ ctx }) {
       </div>}
 
       {/* Photo preview */}
-      {previewImg&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>setPreviewImg(null)}><img src={previewImg} alt="" style={{maxWidth:"90vw",maxHeight:"85vh",objectFit:"contain",borderRadius:12}}/></div>}
+      {previewImg&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:100001,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>setPreviewImg(null)}><img src={previewImg} alt="" style={{maxWidth:"90vw",maxHeight:"85vh",objectFit:"contain",borderRadius:12}}/></div>}
 
       {/* ═══ Element gallery — zone photo viewer (grid + full-screen single) ═══ */}
       {elGallery&&(
