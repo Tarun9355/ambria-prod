@@ -61,6 +61,7 @@ export const ZONE_DEF_SK = "ambria-zonedefs-v3";
 export const TEAM_SK = "ambria-team-v1";
 export const LIB_SK = "ambria-library-v2";
 export const TAX_SK = "ambria-taxonomy-v2";
+export const CORR_SK = "ambria-correction-log-v1"; // append-only log of human photo corrections (who/what/when) for contribution reporting
 export const PREMIA_CFG_SK = "ambria-premia-config-v1";
 
 export const DEFAULT_FILTER_PRIORITY = [
