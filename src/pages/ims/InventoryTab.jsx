@@ -184,7 +184,6 @@ Rules:
   }
 
   async function addItem() {
-    const id = "I" + String(inventory.length + 10).padStart(3, "0");
     let img = form.img || "";
     // Upload base64 to Cloudinary instead of storing raw (prevents 413 payload-too-large)
     if (img && img.startsWith("data:")) {
@@ -207,29 +206,40 @@ Rules:
     const costNum = parseFloat(form.cost) || 0;
     const breakNum = parseFloat(form.breakagePct) || 0;
     const paintNum = form.paintCost ? (parseFloat(form.paintCost) || 0) : 0;
-    const code = form.cat.slice(0, 3).toUpperCase() + "-" + String(inventory.length + 1).padStart(5, "0");
-    setInventory([...inventory, {
-      id, code, img,
-      // Superset schema — write BOTH legacy + new field names (matches saveEdit)
-      name: form.name,
-      cat: form.cat, category: form.cat,
-      subCat: form.subCat, subcategory: form.subCat,
-      type: form.type, tier: form.type,
-      itemClass: form.itemClass,
-      qty: qtyNum, qtyOwned: qtyNum,
-      unit: form.unit,
-      loc: form.loc, location: form.loc,
-      price: priceNum, rentalCost: priceNum,
-      cost: costNum,
-      breakagePct: breakNum,
-      baseColour: form.baseColour || "",
-      paintCost: paintNum,
-      notes: form.notes || "",
-      blocked: 0,
-      source: "manual",
-      dims_LxWxH, printable_LxW, size,
-      photoUrls: img ? [img] : [],
-    }]);
+    // Append against the CANONICAL list (prev), not the stale `inventory` closure, and mint a
+    // collision-proof id. The old "I"+(length+10) scheme reused ids after deletes — and gave two
+    // people adding at once the SAME id — so the upsert (onConflict:"id") silently OVERWROTE an
+    // existing row instead of inserting, and the new item "showed as added" but never appeared in
+    // the list. A unique id guarantees a real INSERT every time.
+    setInventory((prev) => {
+      const taken = new Set(prev.map((i) => String(i.id)));
+      const mint = () => "I" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 10) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
+      let id = mint(); while (taken.has(id)) id = mint();
+      const maxCodeNum = prev.reduce((m, i) => { const n = parseInt(String(i.code || "").split("-")[1], 10); return Number.isFinite(n) && n > m ? n : m; }, 0);
+      const code = form.cat.slice(0, 3).toUpperCase() + "-" + String(maxCodeNum + 1).padStart(5, "0");
+      return [...prev, {
+        id, code, img,
+        // Superset schema — write BOTH legacy + new field names (matches saveEdit)
+        name: form.name,
+        cat: form.cat, category: form.cat,
+        subCat: form.subCat, subcategory: form.subCat,
+        type: form.type, tier: form.type,
+        itemClass: form.itemClass,
+        qty: qtyNum, qtyOwned: qtyNum,
+        unit: form.unit,
+        loc: form.loc, location: form.loc,
+        price: priceNum, rentalCost: priceNum,
+        cost: costNum,
+        breakagePct: breakNum,
+        baseColour: form.baseColour || "",
+        paintCost: paintNum,
+        notes: form.notes || "",
+        blocked: 0,
+        source: "manual",
+        dims_LxWxH, printable_LxW, size,
+        photoUrls: img ? [img] : [],
+      }];
+    });
     setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
     setAddModal(false);
   }
