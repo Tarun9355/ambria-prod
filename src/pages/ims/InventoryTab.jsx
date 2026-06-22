@@ -28,18 +28,21 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   // searching/filtering finds them all — without rewriting the DB. Case-insensitive matching
   // alone fixes "fabric" vs "Fabric"; the floral family is mapped explicitly per Tarun's example.
   const FLORAL_ALIASES = new Set(["flower", "flowers", "floral", "florals"]);
-  const FLORAL_LABEL = studioCatLabels.find((l) => /floral/i.test(l)) || "Florals";
+  // Canonical floral spelling, taken from the live Studio lists so the migration writes whatever
+  // Studio currently uses (category label vs sub-cat label can differ), with sensible fallbacks.
+  const FLORAL_CAT_LABEL = studioCatLabels.find((l) => /floral|flower/i.test(l)) || "Florals";
+  const FLORAL_SUB_LABEL = studioSubcats.find((s) => /floral|flower/i.test(s)) || "Floral";
   const normCat = (c) => {
     const raw = String(c ?? "").trim();
     if (!raw) return "";
-    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_LABEL;
+    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_CAT_LABEL;
     const hit = studioCatLabels.find((l) => l.toLowerCase() === raw.toLowerCase());
     return hit || raw;
   };
   const normSub = (s) => {
     const raw = String(s ?? "").trim();
     if (!raw) return "";
-    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_LABEL;
+    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_SUB_LABEL;
     const hit = studioSubcats.find((l) => l.toLowerCase() === raw.toLowerCase());
     return hit || raw;
   };
@@ -176,6 +179,42 @@ Rules:
   // Tier 1.2 — sub-cat options scoped to the selected filter cat (falls back to flat list when "All" or unknown)
   const subCatOptions = (filterCat === "All" || !studioSubcatsByCat[filterCat]) ? studioSubcats : studioSubcatsByCat[filterCat];
   const needsReviewCount = inventory.filter((i) => i?._needsCatMigration).length;
+
+  // ── One-click category/sub-cat normalisation (permanent DB rewrite) ────────
+  // Computes the rows whose stored cat/sub-cat spelling differs from the current canonical one
+  // (e.g. "Flower" → "Florals"/"Floral"). Conservative: a row is listed ONLY when normalisation
+  // actually changes a value, so untouched/unknown categories are never disturbed.
+  const normaliseTargets = inventory.filter((i) => {
+    const nc = normCat(i.cat), ns = normSub(i.subCat);
+    const catChanged = nc && nc !== String(i.cat ?? "");
+    const subChanged = ns && ns !== String(i.subCat ?? "");
+    return catChanged || subChanged;
+  });
+  function normaliseCategories() {
+    if (normaliseTargets.length === 0) { alert("✅ All categories already match the current spellings — nothing to normalise."); return; }
+    // Build a short preview of the distinct mappings so the user sees exactly what will change.
+    const mapSet = new Map();
+    for (const i of normaliseTargets) {
+      const nc = normCat(i.cat), ns = normSub(i.subCat);
+      if (nc && nc !== String(i.cat ?? "")) mapSet.set(`cat:${i.cat}»${nc}`, `Category "${i.cat}" → "${nc}"`);
+      if (ns && ns !== String(i.subCat ?? "")) mapSet.set(`sub:${i.subCat}»${ns}`, `Sub-category "${i.subCat}" → "${ns}"`);
+    }
+    const preview = [...mapSet.values()].slice(0, 12).join("\n");
+    const more = mapSet.size > 12 ? `\n…and ${mapSet.size - 12} more mapping(s)` : "";
+    if (!window.confirm(`Permanently update ${normaliseTargets.length} item(s) to the current spellings?\n\n${preview}${more}\n\nThis rewrites the database rows (reports/exports will use the new spellings). Cannot be auto-undone.`)) return;
+    const ids = new Set(normaliseTargets.map((i) => i.id));
+    setInventory((prev) => prev.map((i) => {
+      if (!ids.has(i.id)) return i;
+      const nc = normCat(i.cat) || i.cat;
+      const ns = normSub(i.subCat);
+      const next = { ...i, cat: nc, category: nc };
+      if (ns) { next.subCat = ns; next.subcategory = ns; }
+      // A normalised cat is, by definition, no longer a legacy spelling needing review.
+      if (!isLegacyCat(nc)) { delete next._needsCatMigration; delete next._legacyCat; delete next._catAutoMigrated; }
+      return next;
+    }));
+    alert(`✅ Normalised ${normaliseTargets.length} item(s) to current spellings.`);
+  }
   // Smart search: tokenised (every word must hit somewhere) + null-safe across all useful fields.
   // The old code did i.name.toLowerCase() unguarded — a single imported row with a missing name
   // threw inside .filter() and broke typing-search entirely. String(v ?? "") makes it crash-proof.
@@ -568,6 +607,12 @@ Rules:
             <button onClick={() => { setFilterNeedsReview(!filterNeedsReview); setInvPage(0); }}
               className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 " + (filterNeedsReview ? "bg-amber-500 text-white border-amber-600" : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100")}>
               🏷️ Needs Review ({needsReviewCount})
+            </button>
+          )}
+          {normaliseTargets.length > 0 && (
+            <button onClick={normaliseCategories} title="Permanently rewrite old spellings (e.g. Flower → Florals) to the current Studio categories"
+              className="px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100">
+              ✨ Normalise categories ({normaliseTargets.length})
             </button>
           )}
           <div className="ml-auto flex gap-2">
