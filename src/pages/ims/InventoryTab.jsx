@@ -21,6 +21,28 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   };
   // Legacy cat names that still need migration — used to highlight items in UI
   const isLegacyCat = (cat) => cat === "Stage" || cat === "Structural" || cat === "Consumable" || cat === "Floral" || cat === "Lighting" || cat === "Furniture" || cat === "Fabric" || cat === "Props";
+
+  // ── Category/sub-cat normalization (non-destructive display layer) ─────────
+  // Data imported from the old Supabase uses different spellings ("Flower" vs the current
+  // "Floral"/"Florals"). We canonicalise on read so old + new rows collapse onto ONE chip and
+  // searching/filtering finds them all — without rewriting the DB. Case-insensitive matching
+  // alone fixes "fabric" vs "Fabric"; the floral family is mapped explicitly per Tarun's example.
+  const FLORAL_ALIASES = new Set(["flower", "flowers", "floral", "florals"]);
+  const FLORAL_LABEL = studioCatLabels.find((l) => /floral/i.test(l)) || "Florals";
+  const normCat = (c) => {
+    const raw = String(c ?? "").trim();
+    if (!raw) return "";
+    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_LABEL;
+    const hit = studioCatLabels.find((l) => l.toLowerCase() === raw.toLowerCase());
+    return hit || raw;
+  };
+  const normSub = (s) => {
+    const raw = String(s ?? "").trim();
+    if (!raw) return "";
+    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_LABEL;
+    const hit = studioSubcats.find((l) => l.toLowerCase() === raw.toLowerCase());
+    return hit || raw;
+  };
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
@@ -28,6 +50,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [filterType, setFilterType] = useState("All");
   const [filterNeedsReview, setFilterNeedsReview] = useState(false); // Tier 1.2 — show only items flagged for cat-migration review
   const [invPage, setInvPage] = useState(0);
+  const [justAddedId, setJustAddedId] = useState(null); // briefly highlight the row we just added so it's never "invisible"
   const INV_PAGE_SIZE = 30;
   const [detailItem, setDetailItem] = useState(null);
   const [addModal, setAddModal] = useState(false);
@@ -153,11 +176,16 @@ Rules:
   // Tier 1.2 — sub-cat options scoped to the selected filter cat (falls back to flat list when "All" or unknown)
   const subCatOptions = (filterCat === "All" || !studioSubcatsByCat[filterCat]) ? studioSubcats : studioSubcatsByCat[filterCat];
   const needsReviewCount = inventory.filter((i) => i?._needsCatMigration).length;
+  // Smart search: tokenised (every word must hit somewhere) + null-safe across all useful fields.
+  // The old code did i.name.toLowerCase() unguarded — a single imported row with a missing name
+  // threw inside .filter() and broke typing-search entirely. String(v ?? "") makes it crash-proof.
+  const searchTokens = search.toLowerCase().split(/\s+/).filter(Boolean);
   const filtered = inventory.filter((i) => {
-    const q = search.toLowerCase();
-    const matchSearch = !q || i.name.toLowerCase().includes(q) || i.cat.toLowerCase().includes(q) || (i.subCat || "").toLowerCase().includes(q) || (i.code || "").toLowerCase().includes(q);
-    const matchCat = filterCat === "All" || i.cat === filterCat;
-    const matchSubCat = filterSubCat === "All" || !filterSubCat || (i.subCat || "") === filterSubCat;
+    const haystack = [i.name, i.cat, i.subCat, i.subcategory, i.code, i.id, i.loc, i.location, i.notes, i.unit, i.type]
+      .map((v) => String(v ?? "").toLowerCase()).join(" ");
+    const matchSearch = searchTokens.every((t) => haystack.includes(t));
+    const matchCat = filterCat === "All" || normCat(i.cat) === filterCat;
+    const matchSubCat = filterSubCat === "All" || !filterSubCat || normSub(i.subCat) === normSub(filterSubCat);
     const matchType = filterType === "All" || i.type === filterType;
     const matchReview = !filterNeedsReview || i?._needsCatMigration;
     return matchSearch && matchCat && matchType && matchSubCat && matchReview;
@@ -211,10 +239,14 @@ Rules:
     // people adding at once the SAME id — so the upsert (onConflict:"id") silently OVERWROTE an
     // existing row instead of inserting, and the new item "showed as added" but never appeared in
     // the list. A unique id guarantees a real INSERT every time.
+    let newId = null;          // captured from the (synchronous) updater so we can reveal the row after
+    let newTotal = 0;
     setInventory((prev) => {
       const taken = new Set(prev.map((i) => String(i.id)));
       const mint = () => "I" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 10) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
       let id = mint(); while (taken.has(id)) id = mint();
+      newId = id;
+      newTotal = prev.length + 1;
       const maxCodeNum = prev.reduce((m, i) => { const n = parseInt(String(i.code || "").split("-")[1], 10); return Number.isFinite(n) && n > m ? n : m; }, 0);
       const code = form.cat.slice(0, 3).toUpperCase() + "-" + String(maxCodeNum + 1).padStart(5, "0");
       return [...prev, {
@@ -242,6 +274,13 @@ Rules:
     });
     setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
     setAddModal(false);
+    // Reveal the new row: the item is appended at the END, so with active filters or while on
+    // page 1 of 20+ it would be off-screen — making a successful save look like "added but not
+    // shown". Clear filters and jump to the last page (where it lands), then highlight it.
+    setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false);
+    setInvPage(Math.max(0, Math.ceil(newTotal / INV_PAGE_SIZE) - 1));
+    setJustAddedId(newId);
+    setTimeout(() => setJustAddedId((cur) => (cur === newId ? null : cur)), 6000);
   }
 
   function deleteItem(id) {
@@ -462,6 +501,13 @@ Rules:
 
   function doImport() {
     let added = 0, updated = 0, skipped = 0;
+    // Collision-proof id minting (same scheme as addItem). The old "I"+(length+added+10)
+    // scheme reused ids after deletes and collided with existing rows, so the upsert
+    // (onConflict:"id") silently OVERWROTE a real row instead of inserting — the import
+    // reported "added" but the item never appeared. `taken` accumulates across this run so
+    // duplicates within one import can't clash either.
+    const taken = new Set(inventory.map((i) => String(i.id)));
+    const mintId = () => "I" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 10) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
     importRows.forEach((row, i) => {
       if (!importChecked[i]) return;
       const name = String(row[importMap.name] || "").trim();
@@ -474,7 +520,8 @@ Rules:
         updated++;
       } else {
         if (importMode === "update") return;
-        const id = "I" + String(inventory.length + added + 10).padStart(3, "0");
+        let id = mintId(); while (taken.has(id)) id = mintId();
+        taken.add(id);
         const newItem = {
           id, name, cat: String(row[importMap.cat] || "Floral"), type: String(row[importMap.type] || "Budgeted"), itemClass: "discrete",
           qty, unit: String(row[importMap.unit] || "Piece"), loc: String(row[importMap.loc] || ""), boxId: String(row[importMap.boxId] || ""),
@@ -489,53 +536,98 @@ Rules:
     setImportStep(4);
   }
 
-  const cats = ["All", ...[...new Set(inventory.map((i) => i.cat))]];
+  // Category chips: normalised + counted so "Flower"/"Floral"/"Florals" collapse to one chip.
+  const catCounts = {};
+  for (const i of inventory) { const c = normCat(i.cat) || "Uncategorised"; catCounts[c] = (catCounts[c] || 0) + 1; }
+  const catChips = Object.keys(catCounts).sort((a, b) => catCounts[b] - catCounts[a]); // busiest first
   const selItem = inventory.find((i) => i.id === detailItem);
   const blockInv = inventory.find((i) => i.id === blockModal);
 
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <input value={search} onChange={(e) => { setSearch(e.target.value); setInvPage(0); }} placeholder="🔍 Search items..." className="border rounded-lg px-3 py-2 text-sm w-48" />
-        <select value={filterCat} onChange={(e) => { setFilterCat(e.target.value); setFilterSubCat("All"); setInvPage(0); }} className="border rounded-lg px-3 py-2 text-sm">
-          {cats.map((c) => <option key={c}>{c}</option>)}
-        </select>
-        {needsReviewCount > 0 && (
-          <button onClick={() => { setFilterNeedsReview(!filterNeedsReview); setInvPage(0); }}
-            className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 " + (filterNeedsReview ? "bg-amber-500 text-white border-amber-600" : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100")}>
-            🏷️ Needs Review ({needsReviewCount})
+      {/* Toolbar — smart search + chip filters */}
+      <div className="space-y-2.5">
+        {/* Row 1: search box + result count + Add */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="relative w-72 max-w-full">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+            <input value={search} onChange={(e) => { setSearch(e.target.value); setInvPage(0); }}
+              placeholder="Search name, code, location, notes…"
+              className="w-full border rounded-lg pl-9 pr-8 py-2 text-sm focus:border-indigo-400 outline-none" />
+            {search && (
+              <button onClick={() => { setSearch(""); setInvPage(0); }} title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-sm">✕</button>
+            )}
+          </div>
+          <span className="text-xs text-gray-500 font-medium">{filtered.length} of {inventory.length}</span>
+          {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview) && (
+            <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setInvPage(0); }}
+              className="text-xs text-indigo-600 hover:underline">Clear all filters</button>
+          )}
+          {needsReviewCount > 0 && (
+            <button onClick={() => { setFilterNeedsReview(!filterNeedsReview); setInvPage(0); }}
+              className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 " + (filterNeedsReview ? "bg-amber-500 text-white border-amber-600" : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100")}>
+              🏷️ Needs Review ({needsReviewCount})
+            </button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>
+          </div>
+        </div>
+
+        {/* Row 2: Category chips (replaces the dropdown) */}
+        <div className="flex flex-wrap gap-1.5 items-center">
+          <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setInvPage(0); }}
+            className={"px-2.5 py-1 rounded-full text-xs font-semibold transition-all " + (filterCat === "All" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+            All ({inventory.length})
           </button>
-        )}
-        {INV_TYPES.map((t) => (
-          <button key={t} onClick={() => { setFilterType(t); setInvPage(0); }}
-            className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all " + (filterType === t ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
-            {t === "Premium" ? "★ " : t === "In-house" ? "🏠 " : t === "Budgeted" ? "$ " : ""}{t} ({t === "All" ? inventory.length : inventory.filter((i) => i.type === t).length})
-          </button>
-        ))}
-        <div className="ml-auto flex gap-2">
-          <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm">+ Add Item</button>
+          {catChips.map((c) => (
+            <button key={c} onClick={() => { setFilterCat(c); setFilterSubCat("All"); setInvPage(0); }}
+              className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterCat === c ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+              {c} <span className="opacity-60">({catCounts[c]})</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Row 3: Type chips */}
+        <div className="flex flex-wrap gap-1.5">
+          {INV_TYPES.map((t) => (
+            <button key={t} onClick={() => { setFilterType(t); setInvPage(0); }}
+              className={"px-3 py-1 rounded-full text-xs font-medium transition-all " + (filterType === t ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+              {t === "Premium" ? "★ " : t === "In-house" ? "🏠 " : t === "Budgeted" ? "$ " : ""}{t} ({t === "All" ? inventory.length : inventory.filter((i) => i.type === t).length})
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Sub-Category filter strip */}
-      {filterCat !== "All" && subCatOptions.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          <button onClick={() => setFilterSubCat("All")}
-            className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterSubCat === "All" ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200")}>
-            All {filterCat}
-          </button>
-          {subCatOptions.map((sc) => {
-            const count = inventory.filter((i) => i.cat === filterCat && i.subCat === sc).length;
-            return (
-              <button key={sc} onClick={() => setFilterSubCat(sc)}
-                className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterSubCat === sc ? "bg-violet-600 text-white" : "bg-white text-gray-600 hover:bg-violet-50 border border-gray-200 hover:border-violet-300")}>
-                {sc} {count > 0 && <span className="opacity-60">({count})</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* Sub-Category filter strip — Studio sub-cats + any normalised ones actually present */}
+      {filterCat !== "All" && (() => {
+        const itemsInCat = inventory.filter((i) => normCat(i.cat) === filterCat);
+        const subCounts = {};
+        for (const i of itemsInCat) { const s = normSub(i.subCat); if (s) subCounts[s] = (subCounts[s] || 0) + 1; }
+        // Studio sub-cats first (in order), then any extra spellings present in the data.
+        const ordered = [...subCatOptions, ...Object.keys(subCounts).filter((s) => !subCatOptions.includes(s))];
+        const seen = new Set();
+        const chips = ordered.filter((s) => { if (seen.has(s)) return false; seen.add(s); return true; });
+        if (chips.length === 0) return null;
+        return (
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={() => setFilterSubCat("All")}
+              className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterSubCat === "All" ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200")}>
+              All {filterCat}
+            </button>
+            {chips.map((sc) => {
+              const count = subCounts[sc] || 0;
+              return (
+                <button key={sc} onClick={() => setFilterSubCat(sc)}
+                  className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterSubCat === sc ? "bg-violet-600 text-white" : "bg-white text-gray-600 hover:bg-violet-50 border border-gray-200 hover:border-violet-300")}>
+                  {sc} {count > 0 && <span className="opacity-60">({count})</span>}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Table */}
       <div className="bg-white border rounded-2xl overflow-hidden overflow-x-auto">
@@ -550,7 +642,7 @@ Rules:
               const low = avail > 0 && avail <= 2;
               return (
                 <React.Fragment key={i.id}>
-                  <tr className={"border-t cursor-pointer " + (zero ? "bg-red-50 hover:bg-red-100" : low ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-gray-50")} onClick={() => setDetailItem(i.id)}>
+                  <tr className={"border-t cursor-pointer " + (i.id === justAddedId ? "bg-green-100 ring-2 ring-green-400 ring-inset animate-pulse" : zero ? "bg-red-50 hover:bg-red-100" : low ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-gray-50")} onClick={() => setDetailItem(i.id)}>
                     <td className="px-3 py-2">
                       {i.img
                         ? <div className="relative w-14 h-14">

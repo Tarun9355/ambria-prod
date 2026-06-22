@@ -26,6 +26,7 @@ import { kvGet, reliableSave } from "../../lib/ims/kv";
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 const BLOCKS_SK = "ambria-ims-blocks-v1"; // blocks document blob (faithful to reference Redis key)
 const RC_SK = "ambria-ratecard-v4"; // Studio Rate Card blob — the live source the Studio app writes
+const RC_SK_CATS = "ambria-rccats-v1"; // Studio Rate Card *categories* — the team edits/adds these in Studio
 
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
@@ -106,6 +107,7 @@ export default function IMS() {
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [studioRcItems, setStudioRcItems] = useState([]);
+  const [studioRcCats, setStudioRcCats] = useState(RC_CATS_DEFAULT); // Studio's LIVE categories (RC_SK_CATS) — falls back to defaults until loaded
   const [lmsContracts, setLmsContracts] = useState([]);
   const [lmsSyncing, setLmsSyncing] = useState(false);
   // Season date-categories ({ "YYYY-MM-DD": "Heavy Saya"|... }) — auto-synced from the
@@ -118,20 +120,33 @@ export default function IMS() {
   // rate_card table (the Studio Rate Card). Powers Inventory categories, the Admin
   // Sub-Categories viewer, and Flowers → Recipes.
   const studio = useMemo(() => {
-    const catById = Object.fromEntries(RC_CATS_DEFAULT.map((c) => [c.id, c.l]));
+    // Use Studio's LIVE categories (RC_SK_CATS) — NOT the hardcoded defaults — so categories the
+    // team adds in Studio (e.g. Fabric, Birthday, Printing) flow through to IMS. Fall back to the
+    // seed list only until the live blob loads.
+    const liveCats = Array.isArray(studioRcCats) && studioRcCats.length ? studioRcCats : RC_CATS_DEFAULT;
+    const catById = Object.fromEntries(liveCats.map((c) => [c.id, c.l]));
+    // Ordered label list, de-duped, starting from the live category order.
+    const labelOrder = [];
+    const seenLabel = new Set();
+    const pushLabel = (l) => { if (l && !seenLabel.has(l)) { seenLabel.add(l); labelOrder.push(l); } };
+    liveCats.forEach((c) => pushLabel(c.l));
     const byCat = {};
     const flat = new Set();
     for (const it of studioRcItems) {
+      // Map a rate-card item's category id → label. If the id isn't in the live cats yet
+      // (orphan / freshly-added before the cats blob synced), surface it under its raw id so its
+      // sub-cats are NEVER dropped — being dynamic means losing nothing.
       const label = catById[it.cat] || it.cat;
       if (!label) continue;
+      pushLabel(label);
       if (!byCat[label]) byCat[label] = new Set();
       if (it.sub) { byCat[label].add(it.sub); flat.add(it.sub); }
     }
     const subcatsByCat = Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, [...v]]));
     const floralsItems = studioRcItems.filter((i) => i.cat === "florals").map((i) => ({ name: i.name, sub: i.sub, unit: i.unit, inhouseMode: i.inhouseMode }));
     const floralsSubcats = [...new Set(floralsItems.map((i) => i.sub).filter(Boolean))];
-    return { subcats: [...flat], catLabels: RC_CATS_DEFAULT.map((c) => c.l), subcatsByCat, floralsItems, floralsSubcats, loading: false };
-  }, [studioRcItems]);
+    return { subcats: [...flat], catLabels: labelOrder, subcatsByCat, floralsItems, floralsSubcats, loading: false };
+  }, [studioRcItems, studioRcCats]);
 
   const itemsRef = useRef([]);
   const fnsRef = useRef([]);
@@ -171,6 +186,10 @@ export default function IMS() {
     if (blocksRow?.value != null) { try { setBlocksState(typeof blocksRow.value === "string" ? JSON.parse(blocksRow.value) : blocksRow.value); } catch { /* keep */ } }
     const rcBlob = setRows.find((r) => r.key === RC_SK);
     if (rcBlob?.value != null) { let a = rcBlob.value; if (typeof a === "string") { try { a = JSON.parse(a); } catch { a = null; } } if (Array.isArray(a)) setStudioRcItems(a); }
+    // Studio Rate Card *categories* — load the live list the team edits in Studio (adds like
+    // Fabric / Birthday / Printing) so IMS sub-categories stay in sync instead of frozen on the seed.
+    const rcCatsBlob = setRows.find((r) => r.key === RC_SK_CATS);
+    if (rcCatsBlob?.value != null) { let c = rcCatsBlob.value; if (typeof c === "string") { try { c = JSON.parse(c); } catch { c = null; } } if (Array.isArray(c) && c.length) setStudioRcCats(c); }
     const settingsObj = { ...SETTINGS_DEFAULTS };
     for (const r of setRows) { if (!/^ambria-/.test(r.key)) settingsObj[r.key] = r.value; }
     settingsRef.current = settingsObj;
@@ -201,7 +220,9 @@ export default function IMS() {
           fetchAll("settings").catch(() => []),
         ]);
         if (!active) return;
-        setItems(invRows.map(rowToItem));
+        const loadedItems = invRows.map(rowToItem);
+        itemsRef.current = loadedItems; // keep the ref in lockstep from the very first paint
+        setItems(loadedItems);
         setFns(fnRows.map(rowToFn));
         setProjectsState(projRows.map(rowToProject));
         setVendorsState(venRows.map(rowToVendor));
@@ -230,12 +251,21 @@ export default function IMS() {
     const channel = supabase
       .channel("realtime:inventory")
       .on("postgres_changes", { event: "*", schema: "public", table: "inventory" }, (payload) => {
-        setItems((prev) => {
-          if (payload.eventType === "DELETE") return prev.filter((r) => r.id !== payload.old.id);
-          const next = rowToItem(payload.new);
-          if (prev.some((r) => r.id === next.id)) return prev.map((r) => (r.id === next.id ? next : r));
-          return [...prev, next];
-        });
+        // Reconcile against itemsRef (the synchronous source of truth shared with setInventory),
+        // NOT React's possibly-batched `prev`, and update the ref synchronously. Otherwise a local
+        // add reading a stale ref would clobber this echo with a plain snapshot — the just-added
+        // item disappears and the "All (N)" count never moves. Keeping the ref in lockstep here
+        // closes that race for the 40 concurrent ops users.
+        const prev = itemsRef.current;
+        let next;
+        if (payload.eventType === "DELETE") {
+          next = prev.filter((r) => r.id !== payload.old.id);
+        } else {
+          const item = rowToItem(payload.new);
+          next = prev.some((r) => r.id === item.id) ? prev.map((r) => (r.id === item.id ? item : r)) : [...prev, item];
+        }
+        itemsRef.current = next;
+        setItems(next);
       })
       .subscribe();
 
