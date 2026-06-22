@@ -1200,6 +1200,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   <div className="px-3 py-4 text-xs text-gray-400 italic text-center">No colours added yet. Tap + Add Colour to start.</div>
                 ) : (
                   <table className="w-full text-xs">
+                    <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
                     <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Stock ({qtyLabel})</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
                       {stock.map((row, i) => {
@@ -1208,10 +1209,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
                             <td className="px-2 py-1.5"><div className="w-5 h-5 rounded border border-gray-300" style={{ background: cObj?.hex || "#ccc" }} /></td>
                             <td className="px-2 py-1.5">
-                              <select value={row.colour || ""} onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`}>
-                                <option value="">— pick —</option>
-                                {colourCat.map((cn) => <option key={cn} value={cn}>{cn}</option>)}
-                              </select>
+                              <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
                             </td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-24 border border-${themeColor}-200 rounded px-2 py-1 text-xs font-bold text-center`} /></td>
                             <td className="px-2 py-1.5 text-center"><button onClick={() => removeStockRow(which, i)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
