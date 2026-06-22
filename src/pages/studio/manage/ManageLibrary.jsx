@@ -1267,28 +1267,37 @@ export default function ManageLibrary({ ctx }) {
                       })}
                     </div>
                   </div>
-                  {/* ═══ PHOTOS BY ZONE — tap zone to open Library picker ═══ */}
+                  {/* ═══ PHOTOS BY ZONE (Phase 2) — every zone on one screen, ranked candidates, one-click assign ═══ */}
                   <div style={{marginBottom:8,borderTop:`1px solid ${border}`,paddingTop:10}}>
-                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — tap zone to pick from Library</div>
-                    <div style={{borderRadius:8,border:`1px solid ${border}`,overflow:"hidden"}}>
-                      {(taxonomy.areasElements||[]).map((zone,zi)=>{
-                        const zp=tag.zonePhotos||{};
-                        const libId=zp[zone];
-                        const libItem=libId?libItems.find(li=>li.id===libId):null;
-                        return <div key={zone} onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]});}} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderBottom:zi<(taxonomy.areasElements||[]).length-1?`1px solid ${border}`:"none",cursor:"pointer",background:libItem?(isDark?"rgba(201,169,110,0.06)":"rgba(201,169,110,0.04)"):"transparent"}}>
+                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — best matches shown first; tap one to assign. "More…" opens the full picker with filters.</div>
+                    {(taxonomy.areasElements||[]).map((zone,zi)=>{
+                      const zp=tag.zonePhotos||{};
+                      const libId=zp[zone];
+                      const chosen=libId?libItems.find(li=>li.id===libId):null;
+                      const {exact,similar}=getLibPhotosForZone(zone,tag);
+                      const cands=[...exact,...similar];
+                      // keep the chosen photo visible even if it isn't in the top matches
+                      const stripList=[...(chosen&&!cands.find(c=>c.id===chosen.id)?[chosen]:[]),...cands].slice(0,14);
+                      const setZonePhoto=(id)=>{const np={...zp};if(id)np[zone]=id;else delete np[zone];const nt={...ytVideoTags,[v.id]:{...tag,zonePhotos:np}};saveYtTags(nt);};
+                      return <div key={zone} style={{padding:"8px 0",borderBottom:zi<(taxonomy.areasElements||[]).length-1?`1px solid ${border}`:"none"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                           <span style={{fontSize:14,width:20,textAlign:"center"}}>{ZONE_ICONS[zone]||"📍"}</span>
                           <span style={{fontSize:11,fontWeight:600,color:textP,flex:1}}>{zone}</span>
-                          {libItem?<>
-                            <img src={libItem.url} alt="" style={{width:48,height:34,objectFit:"cover",borderRadius:4,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
-                            <span onClick={(e2)=>{e2.stopPropagation();const np={...zp};delete np[zone];const nt={...ytVideoTags,[v.id]:{...tag,zonePhotos:np}};saveYtTags(nt);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>×</span>
-                          </>:<>
-                            <div style={{width:48,height:34,borderRadius:4,border:`1px dashed ${border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:textS,flexShrink:0}}>+</div>
-                          </>}
-                          <span style={{fontSize:10,color:accent,fontWeight:600,flexShrink:0}}>{libItem?"Change":"Select"}</span>
-                        </div>;
-                      })}
-                    </div>
-                    {Object.keys(tag.zonePhotos||{}).length>0&&<div style={{fontSize:9,color:textS,marginTop:4}}>{Object.keys(tag.zonePhotos||{}).length} of {(taxonomy.areasElements||[]).length} zones assigned</div>}
+                          {chosen?<span style={{fontSize:9,color:"#059669",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {chosen.name||"selected"}</span>:<span style={{fontSize:9,color:textS}}>{cands.length} match{cands.length===1?"":"es"}</span>}
+                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]});}} style={{fontSize:9,color:accent,fontWeight:600,cursor:"pointer",flexShrink:0}}>More…</span>
+                          {chosen&&<span onClick={(e)=>{e.stopPropagation();setZonePhoto(null);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>× clear</span>}
+                        </div>
+                        {stripList.length===0
+                          ? <div style={{fontSize:9,color:textS,paddingLeft:28}}>No matching photos yet — use "More…" or tag more library photos for this zone.</div>
+                          : <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,paddingLeft:28}} onClick={e=>e.stopPropagation()}>
+                              {stripList.map(li=>{const isSel=li.id===libId;return <div key={li.id} onClick={()=>setZonePhoto(isSel?null:li.id)} title={li.name||""} style={{flexShrink:0,width:92,borderRadius:8,overflow:"hidden",cursor:"pointer",border:isSel?"2px solid #059669":`1px solid ${border}`,background:cardBg}}>
+                                <img src={li.url} alt="" loading="lazy" style={{width:92,height:60,objectFit:"cover",display:"block",opacity:isSel?1:0.92}} onError={e=>{e.target.style.display="none"}}/>
+                                <div style={{padding:"3px 5px",fontSize:8,fontWeight:isSel?700:500,color:isSel?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isSel?"✓ ":""}{li.name||"Untitled"}</div>
+                              </div>;})}
+                            </div>}
+                      </div>;
+                    })}
+                    {Object.keys(tag.zonePhotos||{}).length>0&&<div style={{fontSize:9,color:textS,marginTop:6}}>{Object.keys(tag.zonePhotos||{}).length} of {(taxonomy.areasElements||[]).length} zones assigned</div>}
                   </div>
                   {/* Quick actions */}
                   <div style={{display:"flex",gap:6,justifyContent:"flex-end",flexWrap:"wrap"}}>
