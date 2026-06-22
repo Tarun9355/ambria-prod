@@ -128,10 +128,17 @@ export default function RateCard({ ctx }) {
           </div>
         )}
 
+        {/* Shared sub-category suggestions — rendered always so BOTH the add form and the inline
+            edit field get type-ahead. (Edit-field autocomplete regressed after the migration because
+            its datalist lived only inside the add block.) Current category first, then the rest. */}
+        <datalist id="rc-sub-list">
+          {[...new Set([...rcItems.filter((i) => i.cat === rcCat).map((i) => i.sub), ...rcItems.map((i) => i.sub)].filter(Boolean))].map((s) => <option key={s} value={s} />)}
+        </datalist>
+
         {rcAddMode && <div style={{ background: cardBg, borderRadius: 12, padding: 16, marginBottom: 14, border: `2px solid ${accent}40` }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: accent, marginBottom: 12 }}>Add New Item to {curCat?.l}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <div><div style={S.label}>Sub-Category *</div><input value={rcNewForm.sub} onChange={(e) => setRcNewForm((p) => ({ ...p, sub: e.target.value }))} placeholder="e.g. Sofa" list="rc-sub-list" style={S.input} /><datalist id="rc-sub-list">{[...new Set(rcItems.map((i) => i.sub).filter(Boolean))].map((s) => <option key={s} value={s} />)}</datalist></div>
+            <div><div style={S.label}>Sub-Category *</div><input value={rcNewForm.sub} onChange={(e) => setRcNewForm((p) => ({ ...p, sub: e.target.value }))} placeholder="e.g. Sofa" list="rc-sub-list" style={S.input} /></div>
             <div><div style={S.label}>Item Name *</div><input value={rcNewForm.name} onChange={(e) => setRcNewForm((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. 3-Seater" style={S.input} /></div>
             <div><div style={S.label}>Unit</div><select value={rcNewForm.unit} onChange={(e) => setRcNewForm((p) => ({ ...p, unit: e.target.value }))} style={S.select}>{RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select></div>
           </div>
@@ -175,7 +182,7 @@ export default function RateCard({ ctx }) {
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
                     <div><div style={S.label}>Category</div><select value={item.cat || ""} onChange={(e) => rcUpd(item.id, "cat", e.target.value)} style={S.select}>{rcCats.map((c) => <option key={c.id} value={c.id}>{c.l}</option>)}</select></div>
                     <div><div style={S.label}>Name</div><input defaultValue={item.name} onBlur={(e) => rcUpd(item.id, "name", e.target.value)} key={item.id + "-name"} style={S.input} /></div>
-                    <div><div style={S.label}>Sub-Category</div><input defaultValue={item.sub || ""} onBlur={(e) => rcUpd(item.id, "sub", e.target.value)} key={item.id + "-sub"} style={S.input} /></div>
+                    <div><div style={S.label}>Sub-Category</div><input defaultValue={item.sub || ""} onBlur={(e) => rcUpd(item.id, "sub", e.target.value)} key={item.id + "-sub"} list="rc-sub-list" style={S.input} /></div>
                     <div><div style={S.label}>Unit</div><select value={item.unit} onChange={(e) => rcUpd(item.id, "unit", e.target.value)} style={S.select}>{RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select></div>
                   </div>
                   {/* Inhouse */}

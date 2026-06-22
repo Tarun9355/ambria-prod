@@ -229,24 +229,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               })}
             </div>
 
-            {/* Tier 3 globals */}
-            <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
-              <p className="text-sm font-bold text-blue-800">🏢 Tier 3 Global Settings</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div><label className="text-xs text-gray-500">Default Min Labour</label><input type="number" value={settings.defaultMinLabour || 4} onChange={(e) => setSettings((s) => ({ ...s, defaultMinLabour: parseInt(e.target.value) || 4 }))} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" /></div>
-              </div>
-              <div><p className="text-xs text-gray-500 mb-2">Event Type Multipliers:</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {[["outdoor_premium", "Premium ×"], ["outdoor_budgeted", "Budgeted ×"], ["inhouse", "In-house ×"]].map(([k, l]) => (
-                    <div key={k} className="flex items-center gap-2">
-                      <span className="text-xs text-gray-600 w-20">{l}</span>
-                      <input type="number" step="0.1" value={(settings.eventTypeMultipliers || {})[k] || 1} onChange={(e) => setSettings((s) => ({ ...s, eventTypeMultipliers: { ...s.eventTypeMultipliers, [k]: parseFloat(e.target.value) || 1 } }))} className="w-16 border rounded px-2 py-1 text-xs" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
             {/* Carpet Fresh Markup */}
             <div className="mt-4 bg-rose-50 border border-rose-100 rounded-xl p-4 space-y-3">
               <p className="text-sm font-bold text-rose-800">🟥 Carpet Fresh Markup</p>
