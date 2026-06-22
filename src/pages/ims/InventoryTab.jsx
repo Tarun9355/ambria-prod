@@ -531,7 +531,7 @@ Rules:
       <div className="bg-white border rounded-2xl overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
-            <tr>{["Photo", "Item", "Type", "Category", "Sub-Category", "Qty", "Available", "Blocked", "Location", "Price", "Actions"].map((h) => <th key={h} className="px-4 py-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr>
+            <tr>{["Photo", "Item", "Type", "Category", "Sub-Cat", "Qty", "Avail", "Blkd", "Location", "Price", ""].map((h) => <th key={h} className="px-2.5 py-2 text-left font-medium align-bottom">{h}</th>)}</tr>
           </thead>
           <tbody>
             {paged.map((i) => {
@@ -555,15 +555,15 @@ Rules:
                           </div>
                       }
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2.5 py-2">
                       <p className="font-medium text-gray-900">{i.name}</p>
                       <p className="text-xs text-gray-400">{i.code || i.id} · {i.unit}{i.size ? ` · ${i.size}` : ""}</p>
                     </td>
-                    <td className="px-4 py-3"><TypeBadge type={i.type} /></td>
-                    <td className="px-4 py-3"><Badge color="gray">{i.cat}</Badge></td>
-                    <td className="px-4 py-3">{i.subCat ? <span className="text-xs text-violet-600 font-medium">{i.subCat}</span> : <span className="text-xs text-gray-300">—</span>}</td>
-                    <td className="px-4 py-3 font-medium">{i.qty}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-2.5 py-2"><TypeBadge type={i.type} /></td>
+                    <td className="px-2.5 py-2"><Badge color="gray">{i.cat}</Badge></td>
+                    <td className="px-2.5 py-2">{i.subCat ? <span className="text-xs text-violet-600 font-medium">{i.subCat}</span> : <span className="text-xs text-gray-300">—</span>}</td>
+                    <td className="px-2.5 py-2 font-medium">{i.qty}</td>
+                    <td className="px-2.5 py-2">
                       {zero
                         ? <span className="inline-flex items-center gap-1 font-bold text-red-600 text-xs bg-red-100 px-2 py-0.5 rounded-full">🚫 Out of stock</span>
                         : low
@@ -571,28 +571,24 @@ Rules:
                           : <span className="font-medium text-green-700">{avail}</span>
                       }
                     </td>
-                    <td className="px-4 py-3 text-amber-700">{i.blocked || 0}</td>
-                    <td className="px-4 py-3 text-gray-500">{(() => { const b = locationBreakdown(settings, i); if (b.length <= 1) return b[0]?.loc || i.loc || "—"; return <div className="space-y-0.5">{b.map((x, k) => <div key={k} className="text-xs whitespace-nowrap">{x.fixed && <span title="Installed / standing at this venue">🏛️ </span>}{x.loc}: <b className="text-gray-700">{x.qty}</b></div>)}</div>; })()}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-2.5 py-2 text-amber-700">{i.blocked || 0}</td>
+                    <td className="px-2.5 py-2 text-gray-500">{(() => { const b = locationBreakdown(settings, i); if (b.length <= 1) return b[0]?.loc || i.loc || "—"; return <div className="space-y-0.5">{b.map((x, k) => <div key={k} className="text-xs whitespace-nowrap">{x.fixed && <span title="Installed / standing at this venue">🏛️ </span>}{x.loc}: <b className="text-gray-700">{x.qty}</b></div>)}</div>; })()}</td>
+                    <td className="px-2 py-2 align-top">
                       {i.price ? (() => {
-                        const today = new Date().toISOString().split("T")[0];
                         const dp = settings?.datePricing;
-                        const tiers = dp ? Object.entries(dp.categories || {}).map(([k, cat]) => {
-                          getEffectivePricing(i.price, today, { datePricing: { ...dp, markedDates: { [today]: k } } });
-                          return { k, label: cat.label, price: Math.round(i.price * cat.multiplier), mult: cat.multiplier };
-                        }) : [];
-                        return (<div className="space-y-0.5">
-                          <p className="text-xs text-gray-400 font-medium">Base: {fmt(i.price)}</p>
+                        const tiers = dp ? Object.entries(dp.categories || {}).map(([k, cat]) => ({ k, label: cat.label, price: Math.round(i.price * cat.multiplier), mult: cat.multiplier })) : [];
+                        return (<div className="flex flex-col gap-0.5 items-start">
+                          <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">Base {fmt(i.price)}</span>
                           {tiers.map((t) => (
-                            <p key={t.k} className={"text-xs px-1.5 py-0.5 rounded inline-block mr-1 " + PRICING_CAT_STYLES[t.k]}>
+                            <span key={t.k} className={"text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap " + PRICING_CAT_STYLES[t.k]}>
                               {t.mult}× {fmt(t.price)}
-                            </p>
+                            </span>
                           ))}
                         </div>);
                       })()
                         : i.itemClass === "bulk" ? <span className="text-gray-600 text-sm">{i.usageChargePct || 5}% usage</span> : <span className="text-gray-400">-</span>}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2.5 py-2">
                       <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => { setBlockModal(i.id); setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" }); }}
                           className={"text-xs hover:underline whitespace-nowrap " + (zero ? "text-gray-400" : "text-indigo-600")}>🔒 Block</button>
@@ -774,7 +770,7 @@ Rules:
                   ✅ Add to Inventory
                 </button>
                 <button onClick={() => setPhotoModal(false)}
-                  className="px-4 py-3 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+                  className="px-2.5 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">
                   Cancel
                 </button>
               </div>
