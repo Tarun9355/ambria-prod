@@ -3505,6 +3505,43 @@ Return ONLY JSON:
     return { ok, fail };
   }, [aiTagImage, saveLib, showMsg, taxonomy]);
 
+  // ── Recursive Cloudinary folder import ──────────────────────────────────────
+  // Pulls EVERY image under a folder prefix (all subfolders, paginated) into the library,
+  // deduped by URL so re-importing the same folder is safe (already-added photos are skipped —
+  // no duplicates). Stamps each with the event (folder) name + best-effort zone from filename.
+  const importCloudinaryFolder = useCallback(async (prefix) => {
+    const eventName = (String(prefix || "").split("/").pop() || "Event");
+    const zones = taxonomy.areasElements || [];
+    const KW = { stage: "Stage", entry: "Entry Passage", passage: "Entry Passage", vedi: "Vedi", mandap: "Vedi", lounge: "Centre Lounge", "side lounge": "Side Lounge", photobooth: "Photobooth", "photo booth": "Photobooth", centrepiece: "Centre Pieces", "centre piece": "Centre Pieces", "center piece": "Centre Pieces", prop: "Props", install: "Installations" };
+    const detectZone = (f) => { const s = f.toLowerCase(); let z = zones.find(zn => s.includes(zn.toLowerCase())); if (z) return z; for (const [k, zn] of Object.entries(KW)) { if (s.includes(k) && zones.includes(zn)) return zn; } return ""; };
+    const existUrls = new Set((libItemsRef.current || []).map(l => l.url));
+    const fresh = [];
+    let cursor = "", scanned = 0;
+    try {
+      for (let i = 0; i < 60; i++) { // up to 60 pages × 500 = 30k images
+        const data = await cldAdmin("list", { prefix, max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
+        const res = data.resources || [];
+        scanned += res.length;
+        res.forEach(r => { if (r.secure_url && !existUrls.has(r.secure_url)) { existUrls.add(r.secure_url); fresh.push(r); } });
+        if (!data.next_cursor) break;
+        cursor = data.next_cursor;
+      }
+    } catch (e) { showMsg("Folder import failed: " + (e.message || "Cloudinary error"), "red"); return null; }
+    const skipped = scanned - fresh.length;
+    if (!fresh.length) { showMsg(`Nothing new — all ${scanned} photo(s) under "${eventName}" are already in the Library.`, "orange"); return { added: 0, skipped, scanned, eventName }; }
+    const stamp = Date.now().toString(36);
+    const newImgs = fresh.map((r, ix) => {
+      const fname = (r.public_id || "").split("/").pop().replace(/[-_]/g, " ");
+      const zone = detectZone(fname);
+      return { id: "LIB" + stamp + ix.toString(36) + Math.random().toString(36).slice(2, 4), url: r.secure_url, name: fname, tags: { eventType: [], venueType: [], venue: "", areasElements: zone ? [zone] : [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] }, elements: [], addedAt: Date.now(), source: "folder-import", _event: eventName };
+    });
+    const merged = [...(libItemsRef.current || []), ...newImgs];
+    libItemsRef.current = merged;
+    saveLib(merged);
+    showMsg(`✓ Imported ${newImgs.length} new photo(s) from "${eventName}" (incl. subfolders)${skipped ? ` · skipped ${skipped} already in library` : ""}. Run "Tag all untagged" to AI-tag them.`, "green");
+    return { added: newImgs.length, skipped, scanned, eventName };
+  }, [cldAdmin, saveLib, showMsg, taxonomy]);
+
   // ── Zone upload (Cloudinary → AI tag → review) — VERBATIM ──
   const handleZoneUpload = async (elKey, file) => {
     if (!file || zoneUploading) return;
@@ -4211,7 +4248,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,

@@ -41,7 +41,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -119,6 +119,7 @@ export default function ManageLibrary({ ctx }) {
   const [corrUser, setCorrUser] = useState("");          // contributions panel user filter
   const [corrKind, setCorrKind] = useState("all");       // all | photo | video
   const [corrSearch, setCorrSearch] = useState("");      // search by person or photo/video name
+  const [importingFolder, setImportingFolder] = useState(false); // recursive folder import in progress
   const untaggedCount = useMemo(() => libItems.filter(i => i.url && photoStatus(i) === "untagged").length, [libItems]);
 
   // Bulk "Tag all untagged" now runs APP-WIDE (in StudioApp) so it keeps going while you move
@@ -836,6 +837,13 @@ export default function ManageLibrary({ ctx }) {
           <button onClick={()=>cldUploadRef.current?.click()} disabled={cldUploading} style={{...S.btn(true),fontSize:11,padding:"7px 16px",opacity:cldUploading?0.5:1}}>📤 Upload Photos</button>
           <button onClick={()=>cldFolderUploadRef.current?.click()} disabled={cldUploading} style={{...S.btn(false),fontSize:11,padding:"7px 16px",opacity:cldUploading?0.5:1,border:`1px solid ${accent}`}}>📂 Upload Folder</button>
           {cldImages.length>0&&<button onClick={()=>{setCldSelectMode(!cldSelectMode);setCldSelected(new Set());}} style={{...S.btn(cldSelectMode),fontSize:11,padding:"7px 16px",border:`1px solid ${cldSelectMode?"#E11D48":border}`,color:cldSelectMode?"#E11D48":textS}}>{cldSelectMode?"✕ Cancel":"☑️ Select"}</button>}
+          {/* Recursive import: pull EVERY photo under this folder (all subfolders), deduped */}
+          <button onClick={async()=>{
+            const prefix=cldPath.join("/");
+            if(!window.confirm(`Import ALL photos under "${prefix}" — including every subfolder — into the Library?\n\nAlready-imported photos are skipped automatically (no duplicates). Then run "Tag all untagged".`))return;
+            setImportingFolder(true);
+            try{ await importCloudinaryFolder?.(prefix); } finally { setImportingFolder(false); }
+          }} disabled={importingFolder||cldUploading} style={{...S.btn(true),fontSize:11,padding:"7px 16px",background:"#7C3AED",opacity:(importingFolder||cldUploading)?0.5:1}}>{importingFolder?"⏳ Importing…":"📁 Import folder + subfolders"}</button>
           <span style={{fontSize:10,color:textS}}>→ {cldPath.join("/")}</span>
         </div>}
         {/* Select mode toolbar */}
