@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import {
   TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   MASK_OPTS, PLAT_OPTS, CARP_OPTS,
@@ -57,6 +57,8 @@ export default function StudioBuild({ ctx }) {
   } = ctx;
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
+  // "Correct photo tags" modal target — { libId, zoneKey, name, tags } (Phase 1b: full-tag correction)
+  const [correctPhoto, setCorrectPhoto] = useState(null);
 
   // Strict category filter: Simple=Silver ONLY, Enhanced=Gold ONLY
   // No mixing — each tab shows ONLY its category's photos
@@ -486,14 +488,11 @@ export default function StudioBuild({ ctx }) {
                     const verified = !!master?._verified;
                     return <button onClick={()=>{
                       if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
-                      if(!window.confirm(`Save this corrected element list to the MASTER photo "${master.name||"photo"}"?\n\nIt updates the photo for everyone in future quotes (quotes already given keep their own numbers).`))return;
-                      const corrected = { ...master, elements: JSON.parse(JSON.stringify(zoneElements[k]||[])), _verified:true, _verifiedBy: authUser?.name||"—", _verifiedAt: Date.now(), _correctedOn:"build" };
-                      saveLib(libItems.map(i => i.id === libId ? corrected : i));
-                      logCorrection?.({ photoId: libId, photoName: master.name, source: "build" });
-                      showMsg("✅ Correction saved to master — thanks!","green");
-                    }} title="Save this corrected element list back to the shared library photo (permanent, for everyone)"
+                      // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
+                      setCorrectPhoto({ libId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
+                    }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
                       style={{...S.btn(false),fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
-                      💾 {verified?"Update master":"Save correction to master"}
+                      ✏️ {verified?"Correct & update master":"Correct & save to master"}
                     </button>;
                   })()}
                   {elSelectedPhoto[k]?.src && <button disabled={zoneAiFilling[k]} onClick={async()=>{
@@ -1141,6 +1140,52 @@ export default function StudioBuild({ ctx }) {
           {invalidZones.map(z => <div key={z.zk}>• <strong>{z.label}</strong>: {z.error}</div>)}
         </div>
         <div style={{fontSize:10,color:"#A16207",marginTop:6,fontStyle:"italic"}}>You can continue, but the cost preview won't include truss for these zones until dimensions are fixed.</div>
+      </div>;
+    })()}
+
+    {/* ═══ CORRECT PHOTO TAGS → save to master (full tagging, mirrors the Library editor) ═══ */}
+    {correctPhoto && (()=>{
+      const master = libItems.find(i=>i.id===correctPhoto.libId);
+      const taxLabel=(key)=>({eventType:"Event type",venueType:"Venue type",areasElements:"Areas / zones",colorPalette:"Palette",categoryTier:"Category tier",tier:"Tier",designStyle:"Design style",timeSetting:"Time / setting"}[key]||key);
+      const toggle=(key,val)=>setCorrectPhoto(p=>{const cur=p.tags?.[key]||[];const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val];return {...p,tags:{...p.tags,[key]:next}};});
+      const save=()=>{
+        if(!master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
+        const elems=JSON.parse(JSON.stringify(zoneElements[correctPhoto.zoneKey]||master.elements||[]));
+        const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,_verified:true,_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now(),_correctedOn:"build"};
+        saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
+        logCorrection?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
+        showMsg("✅ Correction saved to master — thanks!","green");
+        setCorrectPhoto(null);
+      };
+      return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:620,maxHeight:"90vh",overflow:"auto",border:`1px solid ${border}`,padding:18}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:15,fontWeight:700,color:textP}}>✏️ Correct photo tags</div>
+            <span onClick={()=>setCorrectPhoto(null)} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700}}>✕</span>
+          </div>
+          <div style={{fontSize:11,color:textS,marginBottom:12}}>Fix any tags below — they save to the shared library photo for everyone (future quotes). Element quantities come from your edits in the build card above. Quotes already given keep their own numbers.</div>
+          <div style={{display:"flex",gap:12,marginBottom:12}}>
+            {master?.url&&<img src={master.url} alt="" style={{width:120,height:84,objectFit:"cover",borderRadius:10,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
+              <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>
+              <div style={{fontSize:9,color:textS,marginTop:6}}>📋 {(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements (from your edits above)</div>
+            </div>
+          </div>
+          {Object.keys(taxonomy).map(key=>{
+            const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name):taxonomy[key];
+            return <div key={key} style={{marginBottom:8}}>
+              <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                {(vals||[]).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
+              </div>
+            </div>;
+          })}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+            <button onClick={()=>setCorrectPhoto(null)} style={{...S.btn(false),fontSize:12}}>Cancel</button>
+            <button onClick={save} style={{...S.btn(true),fontSize:12,background:"#7C3AED"}}>💾 Save to master</button>
+          </div>
+        </div>
       </div>;
     })()}
 
