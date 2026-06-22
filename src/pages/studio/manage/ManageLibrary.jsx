@@ -238,9 +238,10 @@ export default function ManageLibrary({ ctx }) {
             </div>
           ))}
         </div>
-        {/* Detail panel */}
+        {/* Detail panel — opens as a centered popup so you don't scroll past the whole grid */}
         {libEditImg && (
-          <div style={{ marginTop: 16, background: cardBg, borderRadius: 14, border: `1px solid ${border}`, padding: 16 }}>
+          <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 940, margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, padding: 16, maxHeight: "94vh", overflowY: "auto", boxShadow: "0 12px 48px rgba(0,0,0,0.45)" }}>
             <div style={{ display: "flex", gap: 16 }}>
               <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: 200, height: 140, objectFit: "cover", borderRadius: 10, flexShrink: 0, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
               <div style={{ flex: 1 }}>
@@ -545,6 +546,7 @@ export default function ManageLibrary({ ctx }) {
               )}
               <div style={{ marginTop: 8, fontSize: 10, color: textS }}>Only Rate Card items can be added manually. Items tagged <span style={{color:"#F59E0B",fontWeight:600}}>NEW</span> were AI-detected but not in Rate Card — add them to Rate Card for pricing, or remove.</div>
             </div>
+          </div>
           </div>
         )}
       </div>
