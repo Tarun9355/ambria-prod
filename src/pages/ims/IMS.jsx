@@ -4,6 +4,7 @@ import { useAuth } from "../../lib/AuthContext";
 import { Tabs } from "../../components/ui";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
+import { computePatternSizeCost, effectiveMarkup } from "../../lib/ims/flowerHelpers";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import InventoryTab from "./InventoryTab.jsx";
@@ -108,6 +109,8 @@ export default function IMS() {
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [studioRcItems, setStudioRcItems] = useState([]);
   const [studioRcCats, setStudioRcCats] = useState(RC_CATS_DEFAULT); // Studio's LIVE categories (RC_SK_CATS) — falls back to defaults until loaded
+  const [tier15LastSync, setTier15LastSync] = useState(null); // last recipe→Studio rate sync timestamp
+  const [tier15Syncing, setTier15Syncing] = useState(false);
   const [lmsContracts, setLmsContracts] = useState([]);
   const [lmsSyncing, setLmsSyncing] = useState(false);
   // Season date-categories ({ "YYYY-MM-DD": "Heavy Saya"|... }) — auto-synced from the
@@ -164,6 +167,8 @@ export default function IMS() {
   const trussPromotedRef = useRef(new Set());
   const trussBackfilledRef = useRef(false);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
+  const studioRcItemsRef = useRef([]);
+  useEffect(() => { studioRcItemsRef.current = studioRcItems; }, [studioRcItems]);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
   useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
@@ -195,6 +200,72 @@ export default function IMS() {
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
   }, []);
+
+  // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
+  // For every Studio Florals rate-card item in a recipe-driven sub-category that has a matching
+  // flower recipe, write `mandi cost × markup` per size into the rate card (S/M/B or Flat) and
+  // flag it _imsDriven (locks the price in Studio). Items whose recipe was removed get unlocked.
+  // This is the bridge that was specified in the UI but never implemented — without it, IMS-DRIVEN
+  // items showed stale hand-entered prices instead of the recipe's computed rate.
+  const syncRecipeRatesToStudio = useCallback(async ({ silent = true } = {}) => {
+    const items = studioRcItemsRef.current || [];
+    if (!items.length) return { updated: 0, cleared: 0 };
+    const s = settingsRef.current || {};
+    const patterns = s.flowerPatterns || [];
+    const recipeSubs = s.flowerRecipeSubcats || [];
+    const mandi = s.mandiCatalogue || [];
+    const rateFor = (pat, markup, sizeKey) => {
+      const sd = pat.sizes?.[sizeKey];
+      const c = sd ? computePatternSizeCost(sd, mandi) : null;
+      return c == null ? null : Math.round(c * markup);
+    };
+    let updated = 0, cleared = 0;
+    const next = items.map((it) => {
+      if (String(it.cat || "").toLowerCase() !== "florals") return it;
+      const inDrivenSub = recipeSubs.includes(String(it.sub || "").trim());
+      const pat = inDrivenSub ? patterns.find((p) => (p.name || "").toLowerCase().trim() === (it.name || "").toLowerCase().trim()) : null;
+      const hasRecipe = !!pat && Object.values(pat.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
+      if (!hasRecipe) {
+        if (it._imsDriven) { cleared++; const { _imsDriven, ...rest } = it; return rest; } // recipe gone → unlock
+        return it;
+      }
+      const markup = effectiveMarkup(pat, s);
+      const mode = pat.mode === "flat" ? "flat" : pat.mode === "smb" ? "smb" : (it.inhouseMode === "smb" ? "smb" : "flat");
+      const draft = { ...it, _imsDriven: true, inhouseMode: mode };
+      if (mode === "smb") {
+        const sm = rateFor(pat, markup, "small"), md = rateFor(pat, markup, "medium"), bg = rateFor(pat, markup, "big");
+        if (sm != null) draft.inhouseS = sm;
+        if (md != null) draft.inhouseM = md;
+        if (bg != null) draft.inhouseB = bg;
+      } else {
+        const flat = rateFor(pat, markup, "medium") ?? rateFor(pat, markup, "small") ?? rateFor(pat, markup, "big");
+        if (flat != null) draft.inhouseFlat = flat;
+      }
+      if (JSON.stringify(draft) !== JSON.stringify(it)) updated++;
+      return draft;
+    });
+    if (!silent) setTier15Syncing(true);
+    try {
+      if (updated || cleared) {
+        studioRcItemsRef.current = next;
+        setStudioRcItems(next);
+        const r = await reliableSave(RC_SK, JSON.stringify(next), "Rate card");
+        if (!r.ok) { if (!silent) setError(`Sync failed: ${r.error}`); return { error: r.error, updated, cleared }; }
+      }
+      setTier15LastSync(Date.now());
+      return { updated, cleared };
+    } finally {
+      if (!silent) setTier15Syncing(false);
+    }
+  }, []);
+
+  // Auto-sync: reconcile Studio prices to the recipe whenever recipes / mandi / markup / driven-subs
+  // change (debounced), and once after load — so Studio matches the recipe even with no button press.
+  useEffect(() => {
+    if (loading) return;
+    const t = setTimeout(() => { syncRecipeRatesToStudio({ silent: true }); }, 2500);
+    return () => clearTimeout(t);
+  }, [loading, settings.flowerPatterns, settings.mandiCatalogue, settings.defaultStudioMarkup, settings.flowerRecipeSubcats, studioRcItems, syncRecipeRatesToStudio]);
 
   // ── Initial load + Realtime subscriptions ──
   useEffect(() => {
@@ -847,6 +918,7 @@ export default function IMS() {
             functions={functions} setFunctions={setFunctions}
             supervisors={supervisors} setSupervisors={setSupervisors}
             studio={studio} authUser={user}
+            syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing}
           />
         ) : tab === "approvals" ? (
           <ApprovalsTab

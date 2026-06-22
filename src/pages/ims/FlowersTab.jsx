@@ -6,7 +6,7 @@ import FlowerMandiTab from "./FlowerMandiTab.jsx";
 // Faithful to the reference FlowersTab wrapper (Mandi / Recipes / Function Planning /
 // Transfers). Mandi + Recipes render AdminSettingsTab via the `mode` prop. Planning/Transfers
 // render FlowerMandiTab via the `mode` prop.
-export default function FlowersTab({ settings, setSettings, supervisors, setSupervisors, studio, authUser, functions, setFunctions }) {
+export default function FlowersTab({ settings, setSettings, supervisors, setSupervisors, studio, authUser, functions, setFunctions, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing }) {
   const allTabs = [
     { id: "mandi", label: "🌸 Mandi Prices" },
     { id: "recipes", label: "🌺 Recipes" },
@@ -22,7 +22,7 @@ export default function FlowersTab({ settings, setSettings, supervisors, setSupe
     <div className="space-y-4">
       <Tabs tabs={tabs} active={sub} onChange={setSub} />
       {sub === "mandi" && <AdminSettingsTab mode="mandi" settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} />}
-      {sub === "recipes" && <AdminSettingsTab mode="patterns" settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} />}
+      {sub === "recipes" && <AdminSettingsTab mode="patterns" settings={settings} setSettings={setSettings} supervisors={supervisors} setSupervisors={setSupervisors} studio={studio} syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing} />}
       {sub === "planning" && <FlowerMandiTab mode="planning" settings={settings} setSettings={setSettings} functions={functions} setFunctions={setFunctions} />}
       {sub === "transfers" && <FlowerMandiTab mode="transfers" settings={settings} setSettings={setSettings} functions={functions} setFunctions={setFunctions} />}
     </div>
