@@ -682,18 +682,24 @@ export default function ManageLibrary({ ctx }) {
             <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>📝 Recent{corrUser ? ` — ${corrUser}` : ""}</div>
             <div style={{ maxHeight: 460, overflowY: "auto" }}>
               {inRange.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>Nothing matches.</div> :
-                inRange.slice(0, 400).map(e => (
+                inRange.slice(0, 400).map(e => {
+                  const isVid = kindOf(e) === "video";
+                  const thumb = isVid ? (allVideos.find(v => v.id === e.photoId)?.thumb) : (libItems.find(i => i.id === e.photoId)?.url);
+                  return (
                   <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${border}` }}>
-                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 12 }}>{kindOf(e) === "video" ? "🎬" : "📷"}</span>
+                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                      {thumb
+                        ? <img src={thumb} alt="" loading="lazy" style={{ width: 40, height: 28, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} onError={ev => { ev.target.style.display = "none"; }} />
+                        : <span style={{ fontSize: 14, width: 40, textAlign: "center", flexShrink: 0 }}>{isVid ? "🎬" : "📷"}</span>}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.photoName || e.photoId || "(item)"}</div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{isVid ? "🎬 " : ""}{e.photoName || e.photoId || "(item)"}</div>
                         <div style={{ fontSize: 9, color: textS }}>{e.user} · {e.source === "build" ? "build screen" : e.source === "video" ? "video" : "library"}</div>
                       </div>
                     </div>
                     <span style={{ fontSize: 9, color: textS, whiteSpace: "nowrap" }}>{fmtTs(e.ts)}</span>
                   </div>
-                ))}
+                  );
+                })}
             </div>
           </div>
         </div>

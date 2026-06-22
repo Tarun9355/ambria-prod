@@ -457,12 +457,15 @@ export default function StudioBuild({ ctx }) {
             </div>
           ) : (
             <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:12,padding:"16px 20px",marginBottom:12,textAlign:"center"}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>No {TIER_TO_CAT[tier]} {el.label} photos yet</div>
-              <div style={{fontSize:11,color:textS,marginBottom:8}}>Upload a client photo or add Library photos to see options here.</div>
-              <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"8px 20px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:12,fontWeight:600,cursor:zoneUploading?"wait":"pointer"}}>
-                {zoneUploading===k?"⏳ Uploading...":"📷 Upload Client Photo"}
-                <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
-              </label>
+              <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${TIER_TO_CAT[tier]} ${el.label} photos match your filters`:`No ${TIER_TO_CAT[tier]} ${el.label} photos yet`}</div>
+              <div style={{fontSize:11,color:textS,marginBottom:8}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div>
+              <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
+                <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"8px 20px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:12,fontWeight:600,cursor:zoneUploading?"wait":"pointer"}}>
+                  {zoneUploading===k?"⏳ Uploading...":"📷 Upload Client Photo"}
+                  <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                </label>
+              </div>
             </div>
           )}
 
