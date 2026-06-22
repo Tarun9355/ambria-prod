@@ -11,6 +11,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const beamSizes = Object.keys(trussInv?.beams || {}).sort((a, b) => Number(b) - Number(a));
   const fixedVenues = settings.fixedVenues || [];
   const save = (next) => setSettings((s) => ({ ...s, fixedVenues: next }));
+  const [activeId, setActiveId] = useState(null);
 
   // Venue names must match what Studio uses for a function's venue. Source the dropdown
   // from the Studio venue catalogue (synced as venueParents — sub-venues + parents) plus
@@ -29,10 +30,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     if (!name || fixedVenues.some((v) => v.name === name)) return;
     const cfg = settings.venueMinLabour?.[name];
     const min = (cfg && typeof cfg === "object" ? cfg.min : (typeof cfg === "number" ? cfg : null)) || 4;
-    save([...fixedVenues, { id: "fv_" + Date.now().toString(36).slice(-6), name, minLabour: min, discountPct: 70, items: [] }]);
+    const id = "fv_" + Date.now().toString(36).slice(-6);
+    save([...fixedVenues, { id, name, minLabour: min, discountPct: 70, items: [] }]);
+    setActiveId(id); // jump to the new venue's tab
   };
   const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-  const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; save(fixedVenues.filter((x) => x.id !== id)); };
+  const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; if (activeId === id) setActiveId(null); save(fixedVenues.filter((x) => x.id !== id)); };
 
   const addItem = (vid, inv) => {
     if (!inv) return;
@@ -63,6 +66,9 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     return Math.max(0, stock - otherStanding);
   };
 
+  // The venue whose panel is shown — the selected tab, or the first venue as a fallback.
+  const active = fixedVenues.find((v) => v.id === activeId) || fixedVenues[0] || null;
+
   return (
     <div className="bg-white border rounded-2xl p-5">
       <div className="flex items-center justify-between mb-1">
@@ -78,8 +84,25 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
 
       {fixedVenues.length === 0 && <div className="text-center text-gray-400 text-sm py-8 border border-dashed rounded-xl">No fixed venues yet. Add one (e.g. Ambria Exotica) to define its standing inventory.</div>}
 
+      {/* Tab strip — one tab per venue. Only the active venue's panel renders below, so the
+          list stays compact no matter how many venues / standing items exist. */}
+      {fixedVenues.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap border-b border-gray-200 mb-4">
+          {fixedVenues.map((v) => {
+            const isActive = (active?.id || fixedVenues[0]?.id) === v.id;
+            const count = (v.items?.length || 0) + Object.keys(v.truss?.pillars || {}).length + Object.keys(v.truss?.beams || {}).length;
+            return (
+              <button key={v.id} onClick={() => setActiveId(v.id)}
+                className={"px-3 py-2 text-sm font-semibold rounded-t-lg -mb-px border-b-2 transition-colors " + (isActive ? "border-indigo-600 text-indigo-700 bg-indigo-50" : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50")}>
+                🏛️ {v.name}{count > 0 && <span className={"ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full " + (isActive ? "bg-indigo-200 text-indigo-800" : "bg-gray-200 text-gray-500")}>{count}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="space-y-4">
-        {fixedVenues.map((v) => (
+        {active && [active].map((v) => (
           <div key={v.id} className="border rounded-xl p-4 bg-gray-50">
             <div className="flex items-center gap-3 flex-wrap mb-3">
               <select value={v.name} onChange={(e) => updVenue(v.id, { name: e.target.value })} className="border rounded-lg px-3 py-1.5 text-sm font-semibold flex-1 min-w-[160px] bg-white">
