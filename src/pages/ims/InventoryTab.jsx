@@ -538,7 +538,6 @@ Rules:
               const avail = i.qty - (i.blocked || 0);
               const zero = avail === 0;
               const low = avail > 0 && avail <= 2;
-              const alts = (zero || low) ? findAlternatives(i, inventory, 1, i.id) : [];
               return (
                 <React.Fragment key={i.id}>
                   <tr className={"border-t cursor-pointer " + (zero ? "bg-red-50 hover:bg-red-100" : low ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-gray-50")} onClick={() => setDetailItem(i.id)}>
@@ -602,28 +601,6 @@ Rules:
                       </div>
                     </td>
                   </tr>
-                  {/* Alternatives row — only when low/zero stock */}
-                  {(zero || low) && alts.length > 0 && (
-                    <tr className={"border-b " + (zero ? "bg-red-50" : "bg-amber-50")}>
-                      <td colSpan="10" className="px-4 py-2">
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <span className="text-xs font-bold text-amber-700 whitespace-nowrap flex-shrink-0">
-                            💡 Try instead:
-                          </span>
-                          {alts.map((alt) => (
-                            <button key={alt.id}
-                              onClick={(e) => { e.stopPropagation(); setBlockModal(alt.id); setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" }); }}
-                              className="inline-flex items-center gap-2 bg-white hover:bg-amber-100 border border-amber-200 hover:border-amber-400 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:text-amber-800 transition-all shadow-sm group">
-                              {alt.img && <img src={alt.img} alt="" className="w-5 h-5 rounded object-cover" />}
-                              <span>{alt.name}</span>
-                              <span className="text-green-600 font-bold">{alt._avail} avail</span>
-                              <span className="text-amber-400 group-hover:text-amber-600">→</span>
-                            </button>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
                 </React.Fragment>
               );
             })}
