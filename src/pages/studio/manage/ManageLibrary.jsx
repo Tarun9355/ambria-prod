@@ -213,20 +213,31 @@ export default function ManageLibrary({ ctx }) {
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name..." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
-        {/* ── Status filter + bulk AI tag (Phase 1a) ── */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-          {[["all", `All (${libFiltered.length})`], ["review", `🤖 Needs review (${libFiltered.filter(i => photoStatus(i) === "review").length})`], ["verified", `✅ Verified (${libFiltered.filter(i => photoStatus(i) === "verified").length})`], ["untagged", `❓ Untagged (${libFiltered.filter(i => photoStatus(i) === "untagged").length})`]].map(([k, label]) => (
-            <span key={k} onClick={() => setLibStatus(k)} style={{ padding: "4px 10px", fontSize: 10, borderRadius: 12, cursor: "pointer", fontWeight: libStatus === k ? 700 : 500, border: `1px solid ${libStatus === k ? accent : border}`, background: libStatus === k ? `${accent}18` : "transparent", color: libStatus === k ? accent : textS }}>{label}</span>
-          ))}
+        {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
+        <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+          {[
+            ["all", "📁", "All", "everything", libFiltered.length, accent],
+            ["verified", "✅", "Verified", "reviewed by a person", libFiltered.filter(i => photoStatus(i) === "verified").length, "#059669"],
+            ["review", "🤖", "Needs review", "AI-tagged — to check", libFiltered.filter(i => photoStatus(i) === "review").length, "#7C3AED"],
+            ["untagged", "❓", "Untagged", "no tags yet", libFiltered.filter(i => photoStatus(i) === "untagged").length, "#9CA3AF"],
+          ].map(([k, icon, label, sub, count, col]) => {
+            const on = libStatus === k;
+            return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: on ? col : textS }}>{icon} {label}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}><span style={{ fontSize: 17, fontWeight: 800, color: on ? col : textP }}>{count}</span><span style={{ fontSize: 8, color: textS }}>{sub}</span></div>
+            </div>;
+          })}
           <div style={{ flex: 1 }} />
-          {tagAll.running ? (
-            <>
-              <span style={{ fontSize: 10, color: textS }}>Tagging {tagAll.done}/{tagAll.total} · {tagAll.ok}✓ {tagAll.fail}✕</span>
-              <button onClick={() => { tagAllStop.current = true; }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px", color: "#E11D48" }}>■ Stop</button>
-            </>
-          ) : (
-            untaggedCount > 0 && <button onClick={runTagAll} style={{ ...S.btn(true), fontSize: 10, padding: "4px 12px", background: "#7C3AED" }}>🤖 Tag all untagged ({untaggedCount})</button>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "center" }}>
+            {tagAll.running ? (
+              <>
+                <span style={{ fontSize: 10, color: textS }}>Tagging {tagAll.done}/{tagAll.total} · {tagAll.ok}✓ {tagAll.fail}✕</span>
+                <button onClick={() => { tagAllStop.current = true; }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px", color: "#E11D48" }}>■ Stop</button>
+              </>
+            ) : (
+              untaggedCount > 0 && <button onClick={runTagAll} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#7C3AED" }}>🤖 Tag all untagged ({untaggedCount})</button>
+            )}
+          </div>
         </div>
         {tagAll.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${tagAll.total ? (tagAll.done / tagAll.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
         <div style={{ fontSize: 11, color: textS, marginBottom: 8 }}>Showing {libVisible.length} of {libItems.length} images</div>
