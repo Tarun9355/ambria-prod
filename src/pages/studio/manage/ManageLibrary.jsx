@@ -883,21 +883,42 @@ export default function ManageLibrary({ ctx }) {
           </div>;})}
         </div>}
         {!cldLoading&&cldImages.length>0&&<>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:10,color:textS}}>{cldImages.length} images</div>
-            <button onClick={()=>{
-              const existUrls=new Set(libItems.map(l=>l.url));
-              const newImgs=cldImages.filter(img=>!existUrls.has(img.secure_url)).map(img=>({
-                id:"LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-                url:img.secure_url,
-                name:(img.public_id||"").split("/").pop().replace(/[-_]/g," "),
-                tags:{eventType:[],venueType:[],venue:"",areasElements:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]},
-                elements:[],addedAt:Date.now(),source:"cloudinary"
-              }));
-              if(!newImgs.length){showMsg("All already in Library","orange");return;}
-              saveLib([...libItems,...newImgs]);
-              showMsg(`✓ ${newImgs.length} photos added to Library — tag them now`,"green");
-            }} style={{...S.btn(true),fontSize:10,padding:"6px 12px"}}>Add All ({cldImages.length}) to Library</button>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+            <div style={{fontSize:10,color:textS}}>{cldImages.length} images{cldPath.length>0?` · folder "${cldPath[cldPath.length-1]}"`:""}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              {/* Phase 3 — import a whole event folder: stamp the event name + auto-sort by zone from filename */}
+              <button onClick={()=>{
+                const eventName=(cldPath[cldPath.length-1]||"Event").toString();
+                const zones=taxonomy.areasElements||[];
+                const KW={stage:"Stage",entry:"Entry Passage",passage:"Entry Passage",vedi:"Vedi",mandap:"Vedi",lounge:"Centre Lounge","side lounge":"Side Lounge",photobooth:"Photobooth","photo booth":"Photobooth",centrepiece:"Centre Pieces","centre piece":"Centre Pieces","center piece":"Centre Pieces",prop:"Props",install:"Installations"};
+                const detectZone=(f)=>{ const s=f.toLowerCase(); let z=zones.find(zn=>s.includes(zn.toLowerCase())); if(z)return z; for(const [k,zn] of Object.entries(KW)){ if(s.includes(k)&&zones.includes(zn))return zn; } return ""; };
+                const existUrls=new Set(libItems.map(l=>l.url));
+                const stamp=Date.now().toString(36);
+                const newImgs=cldImages.filter(img=>!existUrls.has(img.secure_url)).map((img,ix)=>{
+                  const fname=(img.public_id||"").split("/").pop().replace(/[-_]/g," ");
+                  const zone=detectZone(fname);
+                  return { id:"LIB"+stamp+ix.toString(36)+Math.random().toString(36).slice(2,4), url:img.secure_url, name:fname, tags:{eventType:[],venueType:[],venue:"",areasElements:zone?[zone]:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]}, elements:[], addedAt:Date.now(), source:"folder-import", _event:eventName };
+                });
+                if(!newImgs.length){showMsg("All photos in this folder are already in the Library","orange");return;}
+                saveLib([...libItems,...newImgs]);
+                const zoned=newImgs.filter(i=>(i.tags.areasElements||[]).length).length;
+                showMsg(`✓ Imported ${newImgs.length} photos as event "${eventName}"${zoned?` · ${zoned} auto-sorted by zone`:""}. Now run "🤖 Tag all untagged".`,"green");
+              }} disabled={cldPath.length===0} style={{...S.btn(true),fontSize:10,padding:"6px 12px",opacity:cldPath.length===0?0.4:1}}>📁 Import as event folder</button>
+              <button onClick={()=>{
+                const existUrls=new Set(libItems.map(l=>l.url));
+                const stamp=Date.now().toString(36);
+                const newImgs=cldImages.filter(img=>!existUrls.has(img.secure_url)).map((img,ix)=>({
+                  id:"LIB"+stamp+ix.toString(36)+Math.random().toString(36).slice(2,4),
+                  url:img.secure_url,
+                  name:(img.public_id||"").split("/").pop().replace(/[-_]/g," "),
+                  tags:{eventType:[],venueType:[],venue:"",areasElements:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]},
+                  elements:[],addedAt:Date.now(),source:"cloudinary"
+                }));
+                if(!newImgs.length){showMsg("All already in Library","orange");return;}
+                saveLib([...libItems,...newImgs]);
+                showMsg(`✓ ${newImgs.length} photos added to Library — tag them now`,"green");
+              }} style={{...S.btn(false),fontSize:10,padding:"6px 12px"}}>Add All ({cldImages.length})</button>
+            </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:6,maxHeight:300,overflowY:"auto"}}>
             {cldImages.map(img=>{
