@@ -23,29 +23,35 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const isLegacyCat = (cat) => cat === "Stage" || cat === "Structural" || cat === "Consumable" || cat === "Floral" || cat === "Lighting" || cat === "Furniture" || cat === "Fabric" || cat === "Props";
 
   // ── Category/sub-cat normalization (non-destructive display layer) ─────────
-  // Data imported from the old Supabase uses different spellings ("Flower" vs the current
-  // "Floral"/"Florals"). We canonicalise on read so old + new rows collapse onto ONE chip and
-  // searching/filtering finds them all — without rewriting the DB. Case-insensitive matching
-  // alone fixes "fabric" vs "Fabric"; the floral family is mapped explicitly per Tarun's example.
-  const FLORAL_ALIASES = new Set(["flower", "flowers", "floral", "florals"]);
-  // Canonical floral spelling, taken from the live Studio lists so the migration writes whatever
-  // Studio currently uses (category label vs sub-cat label can differ), with sensible fallbacks.
-  const FLORAL_CAT_LABEL = studioCatLabels.find((l) => /floral|flower/i.test(l)) || "Florals";
-  const FLORAL_SUB_LABEL = studioSubcats.find((s) => /floral|flower/i.test(s)) || "Floral";
-  const normCat = (c) => {
-    const raw = String(c ?? "").trim();
+  // Inventory imported from the old Supabase carries spellings that diverge from the current
+  // Studio categories: "Cloths"/"कपड़ा" (should be Fabric), "Furnitures" (plural of Furniture),
+  // "Flower" (should be Florals). We canonicalise on read so old + new rows collapse onto ONE chip
+  // matching Studio, and searching/filtering finds them all. The same function powers the one-click
+  // migration, so fixing the rules here fixes both the display AND the permanent rewrite.
+  //
+  // Semantic alias groups: { test = raw values that belong to this group, find = how to locate the
+  // current Studio label for it, fallback = label to use if Studio has no such category yet }.
+  const ALIAS_GROUPS = [
+    { test: (low, raw) => /^(flowers?|florals?)$/.test(low), find: /floral|flower/i, fallbackCat: "Florals", fallbackSub: "Floral" },
+    { test: (low, raw) => /^(cloths?|fabrics?|kapda|kapra)$/.test(low) || /कपड़ा|कपडा/.test(raw), find: /fabric|cloth|कपड़ा/i, fallbackCat: "Fabric", fallbackSub: "Fabric" },
+  ];
+  // Generic matcher: alias group → exact (case-insensitive) → singular/plural tolerance → raw.
+  const canonicalLabel = (value, labels, isSub) => {
+    const raw = String(value ?? "").trim();
     if (!raw) return "";
-    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_CAT_LABEL;
-    const hit = studioCatLabels.find((l) => l.toLowerCase() === raw.toLowerCase());
-    return hit || raw;
+    const low = raw.toLowerCase();
+    for (const g of ALIAS_GROUPS) {
+      if (g.test(low, raw)) return labels.find((l) => g.find.test(l)) || (isSub ? g.fallbackSub : g.fallbackCat);
+    }
+    let hit = labels.find((l) => l.toLowerCase() === low);
+    if (hit) return hit;
+    const sing = (x) => x.replace(/s$/, ""); // "Furnitures" → "Furniture"
+    hit = labels.find((l) => sing(l.toLowerCase()) === sing(low));
+    if (hit) return hit;
+    return raw;
   };
-  const normSub = (s) => {
-    const raw = String(s ?? "").trim();
-    if (!raw) return "";
-    if (FLORAL_ALIASES.has(raw.toLowerCase())) return FLORAL_SUB_LABEL;
-    const hit = studioSubcats.find((l) => l.toLowerCase() === raw.toLowerCase());
-    return hit || raw;
-  };
+  const normCat = (c) => canonicalLabel(c, studioCatLabels, false);
+  const normSub = (s) => canonicalLabel(s, studioSubcats, true);
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
