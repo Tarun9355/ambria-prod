@@ -9,7 +9,7 @@ import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
-import { heavyExtraLabour } from "../../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fixedVenues";
 
 export default function DealCheckOverlay({ ctx }) {
@@ -194,7 +194,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const base = Math.ceil(vm * em);
                   const dp = dcMpIncludeMinusOne;
                   let sm = 1.0;
-                  if (!dp) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultipliers[shiftToTiming(fn.fnShift)] || 1.0); sm = Math.max(...c, 1.0); }
+                  if (!dp) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
                   const adj = Math.ceil(base * sm);
                   let he = 0; const sc = {}; walkFn(fn, ({rc, qty}) => { sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
                   heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat]||0); });

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Tabs, AddInlineItem, FlowerPicker, Btn } from "../../components/ui";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
-import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, DUMPING_LEVELS, EVENT_TIMINGS } from "../../lib/ims/constants";
+import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 
@@ -155,6 +155,75 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         </div>
                       </div>
                     )}
+
+                    {/* Truss Labour — Pillar Range Table (nested under its own row) */}
+                    {type === "Truss Labour" && (
+                      <div className="mt-2 pt-2 border-t border-gray-200">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-xs text-gray-500">🔩 Pillar Range Table <span className="text-gray-400">(truss labours by total pillar count — set in the Manpower tab)</span></p>
+                          <button onClick={() => { const ranges = [...(settings.trussLabourRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 20, labour: (ranges[ranges.length - 1]?.labour || 6) + 2, label: "+20 pillars" }); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1 rounded-lg font-medium">+ Add Range</button>
+                        </div>
+                        <div className="bg-white rounded-lg border border-teal-200 overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead className="bg-teal-100 text-xs text-teal-700"><tr><th className="px-3 py-2 text-left font-medium">Pillar Range</th><th className="px-3 py-2 text-center font-medium">Up To</th><th className="px-3 py-2 text-center font-medium">Truss Labour</th><th className="px-3 py-2 text-center font-medium w-12"></th></tr></thead>
+                            <tbody>
+                              {(settings.trussLabourRanges || []).map((r, i) => {
+                                const prevMax = i > 0 ? (settings.trussLabourRanges[i - 1].upTo + 1) : 1;
+                                return (
+                                  <tr key={i} className="border-t border-teal-100">
+                                    <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} pillars</td>
+                                    <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.trussLabourRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-20 border border-teal-200 rounded px-2 py-1 text-xs text-center" /></td>
+                                    <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-16 border border-teal-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
+                                    <td className="px-3 py-2 text-center">{(settings.trussLabourRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.trussLabourRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fabric Bangali — SqFt Range Table + RFT (nested under its own row) */}
+                    {type === "Fabric Bangali" && (
+                      <div className="mt-2 pt-2 border-t border-gray-200 space-y-3">
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <p className="text-xs text-gray-500">📐 Box Truss SqFt Range Table <span className="text-gray-400">(sqft = L × W; height doesn't change fabric labour)</span></p>
+                            <button onClick={() => { const ranges = [...(settings.fabricBangaliRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 1000, labour: (ranges[ranges.length - 1]?.labour || 3) + 4, label: "" }); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-2.5 py-1 rounded-lg font-medium">+ Add Range</button>
+                          </div>
+                          <div className="bg-white rounded-lg border border-orange-200 overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead className="bg-orange-100 text-xs text-orange-700"><tr><th className="px-3 py-2 text-left font-medium">SqFt Range</th><th className="px-3 py-2 text-center font-medium">Up To</th><th className="px-3 py-2 text-center font-medium">Fabric Bangali</th><th className="px-3 py-2 text-left font-medium">Example</th><th className="px-3 py-2 text-center font-medium w-12"></th></tr></thead>
+                              <tbody>
+                                {(settings.fabricBangaliRanges || []).map((r, i) => {
+                                  const prevMax = i > 0 ? (settings.fabricBangaliRanges[i - 1].upTo + 1) : 1;
+                                  const side = Math.round(Math.sqrt(r.upTo > 9000 ? 5000 : r.upTo));
+                                  return (
+                                    <tr key={i} className="border-t border-orange-100">
+                                      <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} sqft</td>
+                                      <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.fabricBangaliRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-20 border border-orange-200 rounded px-2 py-1 text-xs text-center" /></td>
+                                      <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
+                                      <td className="px-3 py-2 text-xs text-gray-400 italic">~{side}×{side}ft</td>
+                                      <td className="px-3 py-2 text-center">{(settings.fabricBangaliRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.fabricBangaliRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          <span className="text-gray-600">📏 Side walls: 1 Fabric Bangali per</span>
+                          <input type="number" min="10" max="500" value={settings.fabricRftPerWorker || 100} onChange={(e) => setSettings((s) => ({ ...s, fabricRftPerWorker: parseInt(e.target.value) || 100 }))} className="w-16 border border-orange-300 rounded px-2 py-1 text-xs font-bold text-orange-700 text-center" />
+                          <span className="text-gray-600">RFT</span>
+                          <span className="text-gray-300 mx-1">|</span>
+                          <span className="text-gray-600">Half Box back depth</span>
+                          <input type="number" min="1" max="20" value={settings.fabricBackDepthFt || 4} onChange={(e) => setSettings((s) => ({ ...s, fabricBackDepthFt: parseInt(e.target.value) || 4 }))} className="w-14 border border-orange-300 rounded px-2 py-1 text-xs font-bold text-orange-700 text-center" />
+                          <span className="text-gray-600">ft</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -175,81 +244,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
-
-            {/* Truss Labour — Pillar Range Table */}
-            <div className="mt-4 bg-teal-50 border border-teal-100 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-bold text-teal-800">🔩 Truss Labour — Pillar Range Table</p>
-                  <p className="text-xs text-teal-600 mt-0.5">Define how many truss labours are needed based on total pillar count</p>
-                </div>
-                <button onClick={() => { const ranges = [...(settings.trussLabourRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 20, labour: (ranges[ranges.length - 1]?.labour || 6) + 2, label: "+20 pillars" }); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Range</button>
-              </div>
-              <div className="bg-white rounded-lg border border-teal-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-teal-100 text-xs text-teal-700"><tr><th className="px-3 py-2 text-left font-medium">Pillar Range</th><th className="px-3 py-2 text-center font-medium">Up To (pillars)</th><th className="px-3 py-2 text-center font-medium">Truss Labour</th><th className="px-3 py-2 text-center font-medium w-16"></th></tr></thead>
-                  <tbody>
-                    {(settings.trussLabourRanges || []).map((r, i) => {
-                      const prevMax = i > 0 ? (settings.trussLabourRanges[i - 1].upTo + 1) : 1;
-                      return (
-                        <tr key={i} className="border-t border-teal-100">
-                          <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} pillars</td>
-                          <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.trussLabourRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-20 border border-teal-200 rounded px-2 py-1 text-xs text-center" /></td>
-                          <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.trussLabourRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="w-16 border border-teal-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
-                          <td className="px-3 py-2 text-center">{(settings.trussLabourRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.trussLabourRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, trussLabourRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-teal-600">💡 Enter total truss pillar count in the Manpower tab → Truss Labour card auto-calculates from this table.</p>
-            </div>
-
-            {/* Fabric Bangali — SqFt Range Table */}
-            <div className="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-bold text-orange-800">📐 Fabric Bangali — Box Truss SqFt Range Table</p>
-                  <p className="text-xs text-orange-600 mt-0.5">SqFt = L × W of box truss (height doesn't affect fabric labour count)</p>
-                </div>
-                <button onClick={() => { const ranges = [...(settings.fabricBangaliRanges || [])]; const lastUpTo = ranges.length > 0 ? ranges[ranges.length - 1].upTo : 0; ranges.push({ upTo: lastUpTo + 1000, labour: (ranges[ranges.length - 1]?.labour || 3) + 4, label: "" }); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Range</button>
-              </div>
-              <div className="bg-white rounded-lg border border-orange-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-orange-100 text-xs text-orange-700"><tr><th className="px-3 py-2 text-left font-medium">SqFt Range</th><th className="px-3 py-2 text-center font-medium">Up To (sqft)</th><th className="px-3 py-2 text-center font-medium">Fabric Bangali</th><th className="px-3 py-2 text-left font-medium">Example</th><th className="px-3 py-2 text-center font-medium w-16"></th></tr></thead>
-                  <tbody>
-                    {(settings.fabricBangaliRanges || []).map((r, i) => {
-                      const prevMax = i > 0 ? (settings.fabricBangaliRanges[i - 1].upTo + 1) : 1;
-                      const side = Math.round(Math.sqrt(r.upTo > 9000 ? 5000 : r.upTo));
-                      return (
-                        <tr key={i} className="border-t border-orange-100">
-                          <td className="px-3 py-2 text-gray-600 text-xs">{prevMax} – {r.upTo > 9000 ? "∞" : r.upTo} sqft</td>
-                          <td className="px-3 py-2 text-center"><input type="number" min={i > 0 ? settings.fabricBangaliRanges[i - 1].upTo + 1 : 1} value={r.upTo > 9000 ? "" : r.upTo} placeholder="∞" onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], upTo: parseInt(e.target.value) || 9999 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-20 border border-orange-200 rounded px-2 py-1 text-xs text-center" /></td>
-                          <td className="px-3 py-2 text-center"><input type="number" min="1" value={r.labour} onChange={(e) => { const ranges = [...(settings.fabricBangaliRanges || [])]; ranges[i] = { ...ranges[i], labour: parseInt(e.target.value) || 1 }; setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center font-bold" /></td>
-                          <td className="px-3 py-2 text-xs text-gray-400 italic">~{side}×{side}ft</td>
-                          <td className="px-3 py-2 text-center">{(settings.fabricBangaliRanges || []).length > 1 && (<button onClick={() => { const ranges = (settings.fabricBangaliRanges || []).filter((_, j) => j !== i); setSettings((s) => ({ ...s, fabricBangaliRanges: ranges })); }} className="text-red-400 hover:text-red-600 text-xs">✕</button>)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Fabric RFT */}
-            <div className="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 space-y-3">
-              <p className="text-sm font-bold text-orange-800">📏 Fabric RFT Settings (Side Walls + Half Box backDepth)</p>
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-sm text-gray-700">1 Fabric Bangali per</span>
-                <input type="number" min="10" max="500" value={settings.fabricRftPerWorker || 100} onChange={(e) => setSettings((s) => ({ ...s, fabricRftPerWorker: parseInt(e.target.value) || 100 }))} className="w-20 border border-orange-300 rounded-lg px-3 py-2 text-sm font-bold text-orange-700 text-center" />
-                <span className="text-sm text-gray-700">RFT</span>
-                <span className="text-sm text-gray-400 mx-2">|</span>
-                <span className="text-sm text-gray-700">Half Box back depth:</span>
-                <input type="number" min="1" max="20" value={settings.fabricBackDepthFt || 4} onChange={(e) => setSettings((s) => ({ ...s, fabricBackDepthFt: parseInt(e.target.value) || 4 }))} className="w-16 border border-orange-300 rounded-lg px-3 py-2 text-sm font-bold text-orange-700 text-center" />
-                <span className="text-sm text-gray-700">ft</span>
               </div>
             </div>
 
@@ -308,15 +302,38 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   </div>
                 );
               })}
-              {/* Event Timing — tighter setup window for early events; multiplies ALL manpower types */}
+              {/* Event Timing — now PER-TYPE (like Heavy Saya). Earlier events = tighter setup window;
+                  each manpower type can carry its own ratio (e.g. Painters tighter than Flowerists at brunch). */}
               <div className="bg-white border border-amber-200 rounded-lg p-3">
-                <div className="mb-2"><span className="text-xs font-bold text-gray-800">⏰ Event Timing</span><span className="text-xs text-gray-400 ml-2">Earlier events have a tighter setup window → multiplies ALL manpower types. Dinner & late-night need no multiplier (planning already covers them).</span></div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="mb-2"><span className="text-xs font-bold text-gray-800">⏰ Event Timing</span><span className="text-xs text-gray-400 ml-2">Earlier events have a tighter setup window. Each timing carries a per-type ratio, just like Heavy Saya. Dinner & late-night stay at ×1.0.</span></div>
+                <div className="space-y-2">
                   {EVENT_TIMINGS.filter((t) => t.id !== "dinner" && t.id !== "latenight").map((t) => (
-                    <div key={t.id} className="bg-gray-50 border rounded-lg p-2 text-center">
-                      <p className="text-xs font-medium text-gray-700 mb-0.5">{t.label}</p>
-                      <p className="text-[10px] text-gray-400 mb-1">{t.setupWindow}</p>
-                      <input type="number" min="1" max="2" step="0.05" value={(settings.eventTimingMultipliers || {})[t.id] || t.mult} onChange={(e) => setSettings((s) => ({ ...s, eventTimingMultipliers: { ...s.eventTimingMultipliers, [t.id]: parseFloat(e.target.value) || 1 } }))} className="w-full border rounded px-2 py-1 text-sm text-center font-bold" />
+                    <div key={t.id} className="border border-amber-100 rounded-lg p-2.5 bg-amber-50/40">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div><span className="text-xs font-bold text-gray-800">{t.label}</span><span className="text-xs text-gray-400 ml-2">setup window {t.setupWindow}</span></div>
+                        <button onClick={() => setSettings((s) => ({ ...s, eventTimingMultipliers: { ...s.eventTimingMultipliers, [t.id]: Object.fromEntries(SIT_MULT_TYPES.map((ty) => [ty, t.mult])) } }))} className="text-xs text-amber-600 hover:text-amber-800">↩ Reset all to ×{t.mult}</button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {SIT_MULT_TYPES.map((type) => {
+                          const val = eventTimingMultFor(settings.eventTimingMultipliers, t.id, type, t.mult);
+                          const isReduction = val < 1;
+                          return (
+                            <div key={type} className={"flex items-center gap-1 border rounded-lg px-2 py-1 " + (isReduction ? "bg-green-50 border-green-200" : val > 1 ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200")}>
+                              <span className="text-xs text-gray-700 w-20 truncate" title={type}>{type}</span>
+                              <input type="number" step="0.05" min="0.5" max="2.0" value={val} onChange={(e) => {
+                                const v = parseFloat(e.target.value) || 1.0;
+                                setSettings((s) => {
+                                  // Seed the full per-type map from current effective values so editing one type
+                                  // never drops the others (legacy single-scalar expands cleanly too).
+                                  const cur = Object.fromEntries(SIT_MULT_TYPES.map((ty) => [ty, eventTimingMultFor(s.eventTimingMultipliers, t.id, ty, t.mult)]));
+                                  cur[type] = v;
+                                  return { ...s, eventTimingMultipliers: { ...s.eventTimingMultipliers, [t.id]: cur } };
+                                });
+                              }} className={"w-14 border rounded px-1.5 py-0.5 text-xs text-center font-bold " + (isReduction ? "border-green-300 text-green-700" : val > 1 ? "border-amber-300 text-amber-700" : "border-gray-200 text-gray-500")} />
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   ))}
                 </div>

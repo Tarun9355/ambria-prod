@@ -59,6 +59,28 @@ export const SIT_MULT_DEFAULTS = {
   rush: { Labours: 1.3, Helpers: 1.3, Carpenters: 1.25, "Fabric Bangali": 1.2, Painters: 1.2, Electricians: 1.15, Flowerists: 1.1, "Truss Labour": 1.15 },
 };
 
+// Manpower types that can carry per-type situational/timing ratios (excludes Drivers/Supervisors,
+// which are fixed and never multiplied).
+export const SIT_MULT_TYPES = MANPOWER_TYPES.filter((t) => t !== "Drivers" && t !== "Supervisors");
+
+// Event-timing multipliers are now PER-TYPE (like heavySaya) instead of one scalar applied to all.
+// Defaults broadcast each timing's old scalar across every type, so behaviour is unchanged until a
+// planner tunes individual types (e.g. Painters tighter at brunch than Flowerists).
+const _broadcastTiming = (mult) => Object.fromEntries(SIT_MULT_TYPES.map((t) => [t, mult]));
+export const EVENT_TIMING_MULT_DEFAULTS = Object.fromEntries(
+  EVENT_TIMINGS.map((t) => [t.id, _broadcastTiming(t.mult)])
+);
+
+// Read an event-timing multiplier for a specific manpower type. Backward-compatible: accepts both
+// the legacy scalar shape ({ brunch: 1.3 }) and the new per-type shape ({ brunch: { Painters: 1.3, … } }).
+export function eventTimingMultFor(etm, timingId, type, fallback = 1.0) {
+  const v = (etm || {})[timingId];
+  if (v == null) return fallback;
+  if (typeof v === "number") return v || fallback;            // legacy: one scalar for all types
+  if (typeof v === "object") return v[type] ?? v._all ?? fallback; // per-type map
+  return fallback;
+}
+
 // §23 Truss + Batta + Liza inventory defaults (faithful to reference INIT_TRUSS_INV).
 export const INIT_TRUSS_INV = {
   pillars: {
@@ -141,7 +163,7 @@ export const SETTINGS_DEFAULTS = {
   defaultMinLabour: 4,
   eventTypeMultipliers: { outdoor_premium: 1.5, outdoor_budgeted: 1.0, inhouse: 0.75 },
   sayaMultiplier: 1.3,
-  eventTimingMultipliers: { brunch: 1.3, lunch: 1.15, sundowner: 1.05, dinner: 1.0, latenight: 1.0 },
+  eventTimingMultipliers: EVENT_TIMING_MULT_DEFAULTS,
   venueMinLabour: {
     "The Grand Hyatt": { min: 6, dumpingLevel: "far" },
     "Green Valley Farmhouse": { min: 4, dumpingLevel: "nearby" },

@@ -6,6 +6,7 @@ import {
   DUMPING_LEVELS,
   EVENT_TIMINGS,
   SIT_MULT_DEFAULTS,
+  eventTimingMultFor,
   heavyExtraLabour,
 } from "../../lib/ims/constants";
 import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
@@ -203,7 +204,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       if(heavySayaOn) candidates.push((settings.situationalMultipliers?.heavySaya||{})[type]||SIT_MULT_DEFAULTS.heavySaya[type]||1.3);
       // Event timing — THIS function's start time determines pressure
       const fnTiming=getEventTimingFromTime(fn?.eventStartTime);
-      const fnTimingMult=(settings.eventTimingMultipliers||{})[fnTiming.id]||fnTiming.mult;
+      const fnTimingMult=eventTimingMultFor(settings.eventTimingMultipliers, fnTiming.id, type, fnTiming.mult);
       candidates.push(fnTimingMult);
       situationalMult=Math.max(...candidates,1.0);
     }
@@ -239,7 +240,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
         if(heavySayaOn) cands.push((settings.situationalMultipliers?.heavySaya||{}).Labours||SIT_MULT_DEFAULTS.heavySaya.Labours||1.3);
         // Event timing — this function's own start time
         const otherTiming=getEventTimingFromTime(otherFn.eventStartTime);
-        const otherTimingMult=(settings.eventTimingMultipliers||{})[otherTiming.id]||otherTiming.mult;
+        const otherTimingMult=eventTimingMultFor(settings.eventTimingMultipliers, otherTiming.id, "Labours", otherTiming.mult);
         cands.push(otherTimingMult);
         sitMult=Math.max(...cands,1.0);
       }
@@ -487,7 +488,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
     let evtTimingMult=1.0;
     if(!dayPriorConfirmed){
       const ev=getEventTimingFromTime(fn?.eventStartTime);
-      evtTimingMult=(settings.eventTimingMultipliers||{})[ev.id]||ev.mult||1.0;
+      evtTimingMult=eventTimingMultFor(settings.eventTimingMultipliers, ev.id, type, ev.mult||1.0);
       if(evtTimingMult!==1.0) factors.push({label:`⏰ ${ev.label||ev.id}`,mult:evtTimingMult});
     }
 
@@ -834,7 +835,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
                       const season=(settings.seasonMap||{})[fn?.date||""];
                       const sayaMult=season==="kings"?(settings.sayaMultiplier||1.3):1.0;
                       const fnTiming=getEventTimingFromTime(fn?.eventStartTime);
-                      const timingMult=(settings.eventTimingMultipliers||{})[fnTiming.id]||fnTiming.mult;
+                      const timingMult=eventTimingMultFor(settings.eventTimingMultipliers, fnTiming.id, c.type, fnTiming.mult);
                       const timingLabel=fnTiming.label;
                       const sitCandidates=dayPrior?[1.0]:[dumpMult,sayaMult,timingMult];
                       const sitMax=Math.max(...sitCandidates,1.0);

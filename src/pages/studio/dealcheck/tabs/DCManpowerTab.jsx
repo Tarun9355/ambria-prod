@@ -5,7 +5,7 @@
 // per-day calculation breakdown panel it drives (15416–15587).
 // ═══════════════════════════════════════════════════════════════
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
-import { heavyExtraLabour } from "../../../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 
 export default function DCManpowerTab({ ctx }) {
@@ -180,7 +180,7 @@ export default function DCManpowerTab({ ctx }) {
                       const season = seasonMapMP[fn.fnDate||""];
                       if (season === "kings") candidates.push(sayaMultiplier);
                       const timingId = shiftToTiming(fn.fnShift);
-                      candidates.push(eventTimingMultipliers[timingId] || 1.0);
+                      candidates.push(eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0));
                       situationalMult = Math.max(...candidates, 1.0);
                     }
                     const adjusted = Math.ceil(base * situationalMult);
@@ -391,7 +391,7 @@ export default function DCManpowerTab({ ctx }) {
                       const season = seasonMapMP[fn.fnDate||""];
                       if (season === "kings") candidates.push({ name:`Heavy Saya`, mult: sayaMultiplier });
                       const timingId = shiftToTiming(fn.fnShift);
-                      candidates.push({ name:`Timing · ${timingId}`, mult: eventTimingMultipliers[timingId] || 1.0 });
+                      candidates.push({ name:`Timing · ${timingId}`, mult: eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0) });
                       winningMult = candidates.reduce((m, c) => c.mult > m.mult ? c : m, { name:"none", mult: 1.0 });
                       situationalMult = winningMult.mult;
                     }
