@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { fetchAll } from "../../lib/supabase";
 
 // ═══ superset-schema field accessors (copied VERBATIM from reference module scope) ═══
 // IMS items post-02-May migration carry BOTH legacy (cat/qty/price/img/size) and new
@@ -32,14 +33,12 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
   const [liveInv, setLiveInv] = useState(initialInv);
   useEffect(() => {
     if (liveInv && liveInv.length > 0) return;
+    // This is a static SPA — there is no /api/data endpoint. IMS inventory lives in the Supabase
+    // `inventory` TABLE, so read it directly when no DealCheck cache was passed in. Without this,
+    // the reference-pricing matcher had nothing to search and always showed "No reference items".
     (async () => {
       try {
-        const today = new Date().toISOString().slice(0, 10);
-        const res = await fetch("/api/data?action=get&key=" + encodeURIComponent("ambria-ims-inventory-v1"));
-        if (!res.ok) return;
-        const json = await res.json();
-        let inv = json?.value;
-        for (let i = 0; i < 2; i++) { if (typeof inv === "string") { try { inv = JSON.parse(inv); } catch {} } }
+        const inv = await fetchAll("inventory");
         if (Array.isArray(inv) && inv.length > 0) setLiveInv(inv);
       } catch (e) { console.warn("[custom-item] fresh IMS fetch failed:", e); }
     })();
