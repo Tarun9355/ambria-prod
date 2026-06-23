@@ -88,6 +88,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [editForm, setEditForm] = useState({});
   const [editPhotoUploading, setEditPhotoUploading] = useState(false);
   const editPhotoInputRef = useRef(null);
+  const [bigImg, setBigImg] = useState(null); // full-size inventory photo preview
 
   // ── Photo Scan state ──────────────────────────────────────────────────────
   const [photoModal, setPhotoModal] = useState(false);
@@ -1211,9 +1212,10 @@ Rules:
               <div className="flex gap-4 items-start">
                 <div className="relative">
                   {editForm.img
-                    ? <img src={editForm.img} alt="" className="w-32 h-32 rounded-xl object-cover border shadow" onError={(e) => { e.target.style.display = "none"; }} />
+                    ? <img src={editForm.img} alt="" title="Click to view full size" onClick={() => setBigImg(editForm.img)} className="w-32 h-32 rounded-xl object-cover border shadow cursor-zoom-in hover:opacity-90" onError={(e) => { e.target.style.display = "none"; }} />
                     : <div className="w-32 h-32 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
                   }
+                  {editForm.img && <div className="absolute bottom-1 right-1 bg-black/55 text-white text-[9px] px-1.5 py-0.5 rounded pointer-events-none">🔍 Click to enlarge</div>}
                   {editPhotoUploading && (
                     <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center text-white text-xs">
                       Uploading…
@@ -1795,6 +1797,14 @@ Rules:
           </div>
         )}
       </Modal>
+
+      {/* Full-size inventory photo preview — opens above the edit modal */}
+      {bigImg && (
+        <div onClick={() => setBigImg(null)} className="fixed inset-0 z-[100001] bg-black/85 flex items-center justify-center p-6 cursor-zoom-out">
+          <img src={bigImg} alt="Inventory photo" className="max-w-[92vw] max-h-[92vh] rounded-xl object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          <button onClick={() => setBigImg(null)} className="absolute top-4 right-5 text-white/90 hover:text-white text-3xl leading-none">×</button>
+        </div>
+      )}
     </div>
   );
 }
