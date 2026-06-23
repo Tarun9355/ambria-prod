@@ -133,6 +133,18 @@ export default function ManageSettings({ ctx }) {
     saveFilterPriority(np);
   };
 
+  // Reorder a zone — rebuilds zoneDefs.meta in the new key order. Build reads Object.keys(zoneMeta),
+  // so this directly sets the zone display sequence on the Build page. Persists to Redis.
+  const moveZone = (idx, dir) => {
+    const keys = Object.keys(zoneDefs.meta || {});
+    const swap = idx + dir;
+    if (swap < 0 || swap >= keys.length) return;
+    [keys[idx], keys[swap]] = [keys[swap], keys[idx]];
+    const newMeta = {};
+    keys.forEach((k) => { newMeta[k] = zoneDefs.meta[k]; });
+    saveZD({ ...zoneDefs, meta: newMeta });
+  };
+
   // ═══ ADMIN VENUES (settingsView "venues") — App_latest.jsx:7990 ═══
   const AdminVenues = () => {
 
@@ -572,16 +584,21 @@ export default function ManageSettings({ ctx }) {
       )}
       {settingsView === "zones" && <div style={{maxWidth:800}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div><div style={{fontSize:16,fontWeight:700,color:accent}}>📐 Zone Types</div><div style={{fontSize:11,color:textS,marginTop:2}}>Define zone types used across Build, Templates, and Library. Changes sync to all devices via Redis.</div></div>
+          <div><div style={{fontSize:16,fontWeight:700,color:accent}}>📐 Zone Types</div><div style={{fontSize:11,color:textS,marginTop:2}}>Define zone types used across Build, Templates, and Library. Use the ↑ ↓ arrows to set the order zones appear on the Build page. Changes sync to all devices via Redis.</div></div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={()=>{const label=prompt("Enter zone name (e.g. 'Stage', 'Photobooth'):");if(label&&label.trim())addZoneWithAreaSync(label);}} style={{...S.btn(true),fontSize:11,padding:"8px 14px"}}>+ Add Zone</button>
             <button onClick={()=>{if(!confirm("Reset all zones to factory defaults?"))return;const nd={elements:{},meta:JSON.parse(JSON.stringify(ZONE_META))};saveZD(nd);}} style={{...S.btn(false),fontSize:11,padding:"8px 14px"}}>↻ Reset</button>
           </div>
         </div>
-        {Object.entries(zoneDefs.meta).map(([zk,zm])=>{const lbl=zoneLabelsD[zk];return(
+        {Object.entries(zoneDefs.meta).map(([zk,zm],zIdx)=>{const lbl=zoneLabelsD[zk];const zTotal=Object.keys(zoneDefs.meta).length;return(
           <div key={zk} style={{...S.card,padding:"16px 18px",marginBottom:10}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
+                  <button onClick={()=>moveZone(zIdx,-1)} disabled={zIdx===0} style={{width:24,height:20,borderRadius:5,border:`1px solid ${border}`,background:"transparent",cursor:zIdx===0?"default":"pointer",opacity:zIdx===0?0.3:1,fontSize:11,color:textP,lineHeight:1,padding:0}}>↑</button>
+                  <span style={{fontSize:10,fontWeight:700,color:accent}}>{zIdx+1}</span>
+                  <button onClick={()=>moveZone(zIdx,1)} disabled={zIdx===zTotal-1} style={{width:24,height:20,borderRadius:5,border:`1px solid ${border}`,background:"transparent",cursor:zIdx===zTotal-1?"default":"pointer",opacity:zIdx===zTotal-1?0.3:1,fontSize:11,color:textP,lineHeight:1,padding:0}}>↓</button>
+                </div>
                 <input defaultValue={zm.icon||lbl?.icon||"📦"} onBlur={e=>{const nd={...zoneDefs,meta:{...zoneDefs.meta,[zk]:{...zm,icon:e.target.value}}};setZoneDefs(nd);}} key={zk+"-icon"} style={{width:34,padding:"4px 2px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:18,textAlign:"center",outline:"none",fontFamily:"inherit"}} maxLength={2}/>
                 <div>
                   <input defaultValue={zm.label} onBlur={e=>{const nd={...zoneDefs,meta:{...zoneDefs.meta,[zk]:{...zm,label:e.target.value}}};setZoneDefs(nd);}} key={zk+"-label"} style={{fontSize:14,fontWeight:700,color:textP,background:"transparent",border:"none",borderBottom:`1px solid ${border}`,outline:"none",fontFamily:"inherit",padding:"2px 0",width:200}}/>
