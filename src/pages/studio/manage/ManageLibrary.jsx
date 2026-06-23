@@ -541,7 +541,7 @@ export default function ManageLibrary({ ctx }) {
                     const lineCost=(el.qty||0)*unitPrice;
                     return (
                     <Fragment key={idx}>
-                      <div style={{ fontSize: 11, fontWeight: 500, color: rc ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 4 }}>{el.name}{(el.new || !rc) && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>NEW</span>}</div>
+                      <div style={{ fontSize: 11, fontWeight: 500, color: rc ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>{el.name}{(el.new || !rc) && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>NEW</span>}{sizes && <button onClick={() => { const elems = [...(libEditImg.elements || [])]; const used = new Set(elems.filter(e => e.name === el.name).map(e => e.size || "M")); const ns = ["B","M","S"].find(s => !used.has(s)) || "B"; elems.splice(idx + 1, 0, { ...el, size: ns, qty: 1 }); setLibEditImg({ ...libEditImg, elements: elems }); }} title="Split into another size (e.g. 3 Big + 2 Small)" style={{ padding: "0 5px", borderRadius: 3, border: `1px dashed ${border}`, fontSize: 8, fontWeight: 700, cursor: "pointer", background: "transparent", color: accent }}>＋ size</button>}</div>
                       {isTrussSqft ? (
                         <div title="Area-based — uses zone truss/floor sqft" style={{ fontSize: 11, fontWeight: 600, color: textS, padding: "3px 5px", borderRadius: 4, background: isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)", textAlign: "center" }}>area</div>
                       ) : (
