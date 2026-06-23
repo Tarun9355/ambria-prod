@@ -190,6 +190,8 @@ function calcStructCost(zk, zc) {
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   if (zc.trT === "box") { const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a); r.truss = v[0] * v[1] * 50; }
   else if (zc.trT === "singleU") { r.truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
+  // Multiple identical trusses in one zone/photo (e.g. 3× Single U) — cost scales by quantity.
+  r.truss *= Math.max(1, zc.trussQty || 1);
   if (zc.mkOn && zc.mkT) {
     const h = d.H || 0, rate = BASE_RATES.masking[zc.mkT] || 20; let w = 0;
     const dL = d.L || d.S || 0, dW = d.W || d.S || 0;
@@ -226,7 +228,7 @@ function calcStructCost(zk, zc) {
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
-  return { dims, trT: p.tr || zm.defaultTruss || null, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
+  return { dims, trT: p.tr || zm.defaultTruss || null, trussQty: p.trussQty || 1, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
 }
 
 // ═══ Active soft-hold lookup (Deal Check inventory-status conflicts) — VERBATIM ═══
@@ -3712,7 +3714,7 @@ Return ONLY JSON:
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
-      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)", total: zl.truss });
+      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)" + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
       if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
       if (zl.carpet > 0) structItems.push({ name: "Carpet (" + (zc.cpT === "new" ? "New ₹15" : "Old ₹7") + "/sqft)", total: zl.carpet });

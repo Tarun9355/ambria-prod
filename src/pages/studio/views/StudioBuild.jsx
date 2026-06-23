@@ -701,6 +701,7 @@ export default function StudioBuild({ ctx }) {
                 {zm.defaultTruss&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span>{"🔩"} Truss</span>
                     {["box","singleU"].map(tt=><button key={tt} onClick={()=>sZ({trT:tt})} style={{padding:"2px 8px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.trT===tt?700:400,background:zc.trT===tt?"rgba(0,0,0,0.08)":"transparent",color:zc.trT===tt?textP:textS}}>{tt==="box"?"Box"+(showCosts?" ₹50":""):"Single U"+(showCosts?" ₹30":"")}{showCosts?"/sqft":""}</button>)}
+                    {zc.trT&&<span style={{display:"flex",alignItems:"center",gap:3,marginLeft:2}}><span style={{fontSize:10,color:textS}}>Qty</span><input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{width:38,padding:"2px 4px",borderRadius:5,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:10,textAlign:"center"}}/></span>}
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
                 </div>}
                 {zm.hasMasking&&(()=>{
@@ -1029,8 +1030,9 @@ export default function StudioBuild({ ctx }) {
                 {showCosts&&st.total>0&&<div style={{fontWeight:600,color:textP}}>{fmt(st.total)}</div>}
               </div>
               {/* Truss type */}
-              <div style={{display:"flex",gap:4,marginBottom:8}}>
+              <div style={{display:"flex",gap:4,marginBottom:8,alignItems:"center",flexWrap:"wrap"}}>
                 {[{id:"box",l:"Box Truss"},{id:"singleU",l:"Single U Truss"},{id:null,l:"None"}].map(o=><button key={o.id||"none"} onClick={()=>sZ({trT:o.id})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${zc.trT===o.id?textP:border}`,background:zc.trT===o.id?"rgba(0,0,0,0.06)":"transparent",color:zc.trT===o.id?textP:textS,fontSize:10,cursor:"pointer",fontWeight:zc.trT===o.id?600:400}}>{o.l}{showCosts&&o.id?` ₹${o.id==="box"?50:30}/sqft`:""}</button>)}
+                {zc.trT&&<span style={{display:"flex",alignItems:"center",gap:4,marginLeft:4}}><span style={{fontSize:10,color:textS}}>Qty</span><input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{width:44,padding:"4px 6px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:11,textAlign:"center"}}/></span>}
               </div>
               {/* Truss dims: L, W, H */}
               <div style={{display:"flex",gap:8,marginBottom:8}}>
