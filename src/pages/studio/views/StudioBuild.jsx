@@ -92,6 +92,9 @@ export default function StudioBuild({ ctx }) {
     }
 
     // 2. LIBRARY PHOTOS — scored by admin priority, capped at 50
+    // Strict tier tab: Silver shows only Simple-tagged photos, Gold only Enhanced.
+    // Photos tagged the OPPOSITE tier are excluded; untagged photos appear under either tab.
+    const tabTier = tier === "enhanced" ? "Enhanced" : tier === "premium" ? "Premium" : "Simple";
     if (areaNames.length) {
       const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
       const {exact, similar, fallback} = getLibPhotosForZone(areaNames, vTag);
@@ -99,6 +102,8 @@ export default function StudioBuild({ ctx }) {
       for (const img of allMatches) {
         if (photos.length >= 50) break;
         if (!img.url || seen.has(img.url)) continue;
+        const liTier = img.tags?.categoryTier || [];
+        if (liTier.length && !liTier.includes(tabTier)) continue; // tagged opposite tier → hide
         seen.add(img.url);
         photos.push({
           src: img.url, eventId: img.id, eventName: img.name || "Library",

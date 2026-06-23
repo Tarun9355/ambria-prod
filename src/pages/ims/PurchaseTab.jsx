@@ -11,25 +11,44 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
   const [modal, setModal] = useState(false);
   const [approveId, setApproveId] = useState(null);
   const [purchaseId, setPurchaseId] = useState(null);
+  const [fromFlagId, setFromFlagId] = useState(null);
   const [form, setForm] = useState({ item: "", qty: "", unit: "Piece", cat: "Florals", reason: "", requestedBy: "Tarun Sharma", estimatedCost: "", vendor: "", notes: "" });
   const [purchaseForm, setPurchaseForm] = useState({ actualCost: "", actualQty: "", vendor: "", mobile: "", contactPerson: "", invoiceRef: "" });
 
   const statuses = ["All", "Pending", "Approved", "Rejected", "Purchased", "AddedToInventory"];
   const statusColors = { Pending: "amber", Approved: "green", Rejected: "red", Purchased: "blue", AddedToInventory: "purple" };
 
-  const filtered = filter === "All" ? purchase : purchase.filter((p) => p.status === filter);
+  // AI-flagged unmatched items — never auto-become POs. Includes new flags (status "Flagged")
+  // and any legacy auto-POs from before this change (Pending + "Auto: unmatched item…").
+  const isAiFlag = (p) => p.status === "Flagged" || (p.status === "Pending" && typeof p.reason === "string" && p.reason.startsWith("Auto: unmatched"));
+  const flagged = purchase.filter(isAiFlag);
+  const filtered = (filter === "All" ? purchase : purchase.filter((p) => p.status === filter)).filter((p) => !isAiFlag(p));
 
   function createPR() {
     const ts = Date.now();
     const id = "PR_" + ts;
     const poNum = `PO-${new Date().getFullYear()}-${String(purchase.length + 1).padStart(3, "0")}`;
-    setPurchase([...purchase, {
+    const newPR = {
       ...form, id, poNumber: poNum, date: new Date().toISOString().split("T")[0],
       qty: parseInt(form.qty) || 1, estimatedCost: parseFloat(form.estimatedCost) || 0,
       status: "Pending", actualCost: null, actualQty: null, approvedBy: null, approvedDate: null, vendorSnapshot: null, functionAllocation: null, buildType: null,
-    }]);
+    };
+    // If this PO came from an AI flag, consume that flag so it leaves the flagged section.
+    setPurchase((prev) => [...(fromFlagId ? prev.filter((p) => p.id !== fromFlagId) : prev), newPR]);
     setForm({ item: "", qty: "", unit: "Piece", cat: "Florals", reason: "", requestedBy: "Tarun Sharma", estimatedCost: "", vendor: "", notes: "" });
+    setFromFlagId(null);
     setModal(false);
+  }
+
+  // AI flag → prefill the New Request form so the salesperson reviews + raises the PO manually.
+  function createPOFromFlag(p) {
+    setForm({ item: p.item || "", qty: String(p.qty || 1), unit: p.unit || "Piece", cat: p.cat || "Florals", reason: p.reason || "", requestedBy: "Tarun Sharma", estimatedCost: "", vendor: "", notes: p.notes || "" });
+    setFromFlagId(p.id);
+    setModal(true);
+  }
+
+  function dismissFlag(id) {
+    setPurchase((prev) => prev.filter((p) => p.id !== id));
   }
 
   function approve(id, action) {
@@ -78,7 +97,7 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
           {statuses.map((s) => (
             <button key={s} onClick={() => setFilter(s)}
               className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all " + (filter === s ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
-              {s} {s !== "All" && <span className="ml-1 text-xs opacity-70">({purchase.filter((p) => s === "All" || p.status === s).length})</span>}
+              {s} {s !== "All" && <span className="ml-1 text-xs opacity-70">({purchase.filter((p) => (s === "All" || p.status === s) && !isAiFlag(p)).length})</span>}
             </button>
           ))}
         </div>
@@ -115,8 +134,37 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
         {filtered.length === 0 && <div className="text-center py-10 text-gray-400">No purchase requests found</div>}
       </div>
 
+      {/* AI-flagged unmatched items — highlighted, NOT auto-POs. Salesperson raises the PO manually. */}
+      {flagged.length > 0 && (
+        <div className="border border-amber-300 bg-amber-50 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-base">🔎</span>
+            <span className="font-semibold text-amber-900">AI-flagged — items not found in inventory ({flagged.length})</span>
+          </div>
+          <p className="text-xs text-amber-700 mb-3">These came from confirmed events but didn't match any inventory item. No PO is created automatically — review each and raise a PO manually, or dismiss it.</p>
+          <div className="space-y-2">
+            {flagged.map((p) => (
+              <div key={p.id} className="bg-white border border-amber-200 rounded-lg p-3 flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="font-medium text-gray-900">{p.item}</span>
+                    <span className="text-xs text-gray-400">{p.qty} {p.unit} · {p.cat}</span>
+                  </div>
+                  <p className="text-xs text-gray-500">{p.reason}</p>
+                  {p.notes && <p className="text-xs text-gray-400 mt-0.5">{p.notes}</p>}
+                </div>
+                <div className="flex gap-2 ml-4 shrink-0">
+                  <button onClick={() => createPOFromFlag(p)} className="text-xs bg-indigo-600 text-white hover:bg-indigo-700 px-2.5 py-1 rounded-lg">➕ Create PO</button>
+                  <button onClick={() => dismissFlag(p.id)} className="text-xs bg-gray-100 text-gray-600 hover:bg-gray-200 px-2.5 py-1 rounded-lg">Dismiss</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* New PR Modal */}
-      <Modal open={modal} onClose={() => setModal(false)} title="New Purchase Request">
+      <Modal open={modal} onClose={() => { setModal(false); setFromFlagId(null); }} title={fromFlagId ? "Raise PO for flagged item" : "New Purchase Request"}>
         <div className="space-y-3">
           {[["Item Name", "item", "text"], ["Quantity", "qty", "number"], ["Estimated Cost (₹/unit)", "estimatedCost", "number"], ["Preferred Vendor", "vendor", "text"]].map(([l, k, t]) => (
             <div key={k}><label className="text-xs text-gray-500">{l}</label>

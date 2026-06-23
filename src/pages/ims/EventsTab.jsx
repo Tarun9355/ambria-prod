@@ -1046,24 +1046,26 @@ Respond ONLY with a JSON array, no other text:
       }
       return {name:(eo.functions||["Event"])[0]||"Event", date:eo.date||""};
     };
-    // 1. POs for skipped/unmatched items — these need purchasing (per-fn)
+    // 1. Unmatched items — DO NOT auto-create a PO. Flag them for the salesperson to review and
+    //    raise a PO manually (status:"Flagged" keeps them out of the approval queue; the Supply →
+    //    Purchase tab surfaces them in a dedicated "AI-flagged" section).
     skippedItems.forEach(si=>{
       idx++;
       const info=fnInfo(si.fnIdx);
       newPOs.push({
         id:"PR_"+ts+"_"+idx,
-        poNumber:`PO-AUTO-${eo.id.slice(-6)}-${idx}`,
+        poNumber:`FLAG-${eo.id.slice(-6)}-${idx}`,
         item:si.element||si.name||"Unknown item",
         qty:si.qty||1,
         unit:"Piece",
         cat:si.category||"Props",
         reason:`Auto: unmatched item for ${eo.clientName} — ${info.name} (${info.date})`,
-        requestedBy:"System (Auto-PO)",
+        requestedBy:"AI (unmatched)",
         estimatedCost:0,
         vendor:"",
         notes:`Event: ${eo.clientName} | Fn: ${info.name} | Zone: ${si.zone||"general"}`,
         date:today,
-        status:"Pending",
+        status:"Flagged",
         actualCost:null,
         actualQty:null,
         approvedBy:null,
@@ -1071,7 +1073,7 @@ Respond ONLY with a JSON array, no other text:
         vendorSnapshot:null,
         functionAllocation:eo.id,
         buildType:"purchase",
-        source:"auto"
+        source:"ai-flag"
       });
     });
     // 2. POs for Floral items — flowers are ALWAYS purchased fresh, ONE PO per (fn) since mandi is a single trip
