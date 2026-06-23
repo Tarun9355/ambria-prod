@@ -58,20 +58,17 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
       alert(`Username "${username}" already exists. Choose a different name.`);
       return;
     }
-    // Collision-proof id. The old "U"+(length+1) scheme reused ids after a delete (and gave two
-    // quick adds the SAME id), so the upsert(onConflict:"id") OVERWROTE an existing user instead
-    // of inserting — which looked like "adding a user deletes the last one". A unique id always inserts.
-    const taken = new Set(users.map(u => String(u.id)));
     const mint = () => "U" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 10) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
-    let newId = mint(); while (taken.has(newId)) newId = mint();
-    const newUser = {
-      ...form,
-      username,
-      password: form.password.trim(),
-      id: newId,
-      createdAt: Date.now()
-    };
-    setUsers([...users, newUser]);
+    // Append to the LIVE current list (prev), not the possibly-stale `users` prop. setUsers diffs
+    // next against the true current users and DELETES any id missing from `next` — so passing a
+    // stale array (e.g. before the last add's realtime echo landed) was deleting the last user.
+    // Mint a collision-proof id from prev so the upsert always inserts.
+    setUsers(prev => {
+      const taken = new Set((prev || []).map(u => String(u.id)));
+      let newId = mint(); while (taken.has(newId)) newId = mint();
+      const newUser = { ...form, username, password: form.password.trim(), id: newId, createdAt: Date.now() };
+      return [...(prev || []), newUser];
+    });
     setModal(false);
     // Show one-time credential confirmation
     setCredsShown({ name: form.name.trim(), username, password: form.password.trim(), isReset: false });
