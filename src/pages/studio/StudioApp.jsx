@@ -1596,7 +1596,7 @@ export default function StudioApp() {
   }), [customInhouse, customOutdoor]);
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   const saveRC = useCallback(async (ni) => { setRcItems(ni); await reliableSave(RC_SK, JSON.stringify(ni), "Rate card"); }, []);
-  const saveRcCats = useCallback(async (nc) => { setRcCats(nc); await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
+  const saveRcCats = useCallback(async (nc) => { setRcCats(nc); return await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
   // ── Realtime: reload shared config blobs live when changed (other device or IMS) ──
   useEffect(() => {
     const pj = (v) => { try { return typeof v === "string" ? JSON.parse(v) : v; } catch { return null; } };

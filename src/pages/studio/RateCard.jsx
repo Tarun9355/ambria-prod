@@ -99,7 +99,7 @@ export default function RateCard({ ctx }) {
             </div>
           </div>; })}
           <button onClick={() => { const newId = "cat_" + Date.now().toString(36).slice(-5); setRcCats([...rcCats, { id: newId, l: "New Category", icon: "📦", c: "#9CA3AF", d: "" }]); }} style={{ width: "100%", padding: "8px 0", borderRadius: 8, border: `1px dashed ${accent}40`, background: "transparent", color: accent, fontSize: 11, fontWeight: 600, cursor: "pointer", marginTop: 4 }}>+ Add Category</button>
-          <button onClick={() => saveRcCats(rcCats)} style={{ width: "100%", padding: "8px 0", borderRadius: 8, border: "none", background: accent, color: "#0F0F1A", fontSize: 11, fontWeight: 700, cursor: "pointer", marginTop: 8 }}>💾 Save Categories</button>
+          <button onClick={async () => { const r = await saveRcCats(rcCats); if (r && r.ok === false) { showMsg && showMsg("Save failed: " + (r.error || "unknown error"), "red"); return; } showMsg && showMsg("✓ Categories saved", "green"); setRcCatEditMode(false); }} style={{ width: "100%", padding: "8px 0", borderRadius: 8, border: "none", background: accent, color: "#0F0F1A", fontSize: 11, fontWeight: 700, cursor: "pointer", marginTop: 8 }}>💾 Save Categories</button>
         </div>}
         {!rcCatEditMode && rcCats.map((c) => { const n = rcItems.filter((i) => i.cat === c.id).length; const nr = rcItems.filter((i) => i.cat === c.id && isNotRated(i)).length;
             return <div key={c.id} onClick={() => { setRcCat(c.id); setRcSearch(""); }} style={{ padding: "8px 12px", borderRadius: 10, marginBottom: 4, cursor: "pointer", background: rcCat === c.id ? "rgba(201,169,110,0.1)" : cardBg, border: `1px solid ${rcCat === c.id ? accent + "40" : border}` }}>
