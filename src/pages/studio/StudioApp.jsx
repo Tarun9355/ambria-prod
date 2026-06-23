@@ -32,7 +32,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
-  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
+  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, libPhotoIsTagged,
 } from "../../lib/studio/taxonomy";
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
@@ -3487,7 +3487,7 @@ Return ONLY JSON:
   // Checkpoints every 8 photos; stoppable; resumable (skips already-tagged on the next run).
   const stopBulkTag = useCallback(() => { bulkTagStop.current = true; }, []);
   const runBulkTag = useCallback(async () => {
-    const isUntagged = (i) => i.url && !i._verified && !i._aiTagged && !(i.elements || []).length && !Object.values(i.tags || {}).some(v => Array.isArray(v) && v.length);
+    const isUntagged = (i) => i.url && !i._verified && !libPhotoIsTagged(i);
     const targets = (libItemsRef.current || []).filter(isUntagged);
     if (!targets.length) { showMsg("Nothing to tag — every photo is already AI-tagged or verified.", "green"); return null; }
     bulkTagStop.current = false;

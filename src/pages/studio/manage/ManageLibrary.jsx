@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState, useRef } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
+import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
 
 // ═══ MANAGE: LIBRARY & CONTENT ═══
 // Faithful rebuild of the reference AmbriStudioInner library view.
@@ -111,8 +112,11 @@ export default function ManageLibrary({ ctx }) {
   // A photo is "Verified" once a human saves/corrects it; "AI-tagged" (needs review) once an
   // AI pass has filled it but no human has confirmed; otherwise "Untagged". This lets the team
   // use AI tags immediately while a person — or salespeople on the build screen — cleans them up.
+  // Folder-imported photos carry only a seeded zone tag (areasElements) until the AI runs — that
+  // alone must NOT read as "tagged", or they hide in Needs-review and bulk skips them. libPhotoIsTagged
+  // discounts the seeded zone and keys off the _aiTagged stamp / real tags.
   const photoStatus = (img) => img?._verified ? "verified"
-    : (img?._aiTagged || (img?.elements || []).length > 0 || Object.values(img?.tags || {}).some(v => Array.isArray(v) && v.length)) ? "review"
+    : libPhotoIsTagged(img) ? "review"
     : "untagged";
   const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
   const [corrRange, setCorrRange] = useState("today"); // contributions panel date range

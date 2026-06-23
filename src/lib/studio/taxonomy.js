@@ -95,6 +95,17 @@ export const DEFAULT_TAX={
   timeSetting:["Day","Night","Twilight"]
 };
 export const TAX_LABELS={eventType:"Event type",venueType:"Venue type",areasElements:"Areas & elements",colorPalette:"Color palette",tier:"Tier",categoryTier:"Category tier (legacy)",designStyle:"Design style",timeSetting:"Time / setting"};
+
+// A library photo counts as AI-tagged / "Needs review" (vs truly Untagged) when the AI pass has
+// stamped it (_aiTagged), it has detected elements, or it carries real taxonomy tags. The single
+// `areasElements` zone that FOLDER IMPORT seeds (from the subfolder name) does NOT count on its
+// own — otherwise every folder-imported photo looks tagged before the AI ever ran, hiding it from
+// the "Untagged" filter and causing bulk tagging to skip it. _aiTagged is the definitive signal
+// (set on every processed image, success or fail), so already-tagged photos are never re-tagged.
+export const libPhotoIsTagged = (img) =>
+  !!img?._aiTagged
+  || (img?.elements || []).length > 0
+  || Object.entries(img?.tags || {}).some(([k, v]) => k !== "areasElements" && Array.isArray(v) && v.length > 0);
 export const TAX_KEYS=Object.keys(DEFAULT_TAX);
 export const DEFAULT_TAX_KEYS=new Set(Object.keys(DEFAULT_TAX));
 export const TIER_MAP_TPL_TO_LIB={Silver:"Simple",Gold:"Enhanced"};
