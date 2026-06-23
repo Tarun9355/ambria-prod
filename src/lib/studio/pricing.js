@@ -386,19 +386,22 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   const pillarCount = topo.pillarCount || (topo.pillars||[]).length || 0;
   const curtainPillarCount = topo.frontPillarCount || pillarCount;
   const curtainPieces = curtainPillarCount * curtainsPerPillar;
+  // Multiple identical trusses in one zone → all physical counts (fabric pieces, liza, curtains,
+  // pillars) scale by quantity. Per-truss dimensions (maskL/W, physL/W) stay as a single truss.
+  const qty = Math.max(1, zc.trussQty || 1);
   return {
-    maskingPieces,
+    maskingPieces: maskingPieces * qty,
     maskL,             // §23 Phase 2.9e — outer footprint used for masking RFT
     maskW,
-    lizaKg,            // total (wrap + ceiling)
-    lizaWrapKg,        // wrap component (always present for any truss)
-    lizaCeilingKg,     // ceiling component (Full Box only, else 0)
+    lizaKg: Math.round(lizaKg * qty * 100) / 100,            // total (wrap + ceiling)
+    lizaWrapKg: Math.round(lizaWrapKg * qty * 100) / 100,    // wrap component (always present for any truss)
+    lizaCeilingKg: Math.round(lizaCeilingKg * qty * 100) / 100, // ceiling component (Full Box only, else 0)
     lizaModel,         // "none" | "wrap" | "wrap+ceiling"
-    curtainPieces,
-    curtainPillarCount,
+    curtainPieces: curtainPieces * qty,
+    curtainPillarCount: curtainPillarCount * qty,
     physL: topo.physicalL,
     physW: topo.physicalW,
-    pillarCount,
+    pillarCount: pillarCount * qty,
     density
   };
 };

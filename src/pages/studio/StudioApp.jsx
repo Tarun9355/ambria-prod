@@ -216,7 +216,7 @@ function calcStructCost(zk, zc) {
       if (zc.trT === "box") { const dd = [dL, dW].sort((a, b) => b - a); if (s >= 1) w += dd[0] * h; if (s >= 2) w += dd[1] * h; if (s >= 3) w += dd[0] * h; }
       else { w = dW * h * s; }
     }
-    r.masking = w * rate;
+    r.masking = w * rate * Math.max(1, zc.trussQty || 1);
   }
   if (zc.plH) { const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0)); r.platform = a * (BASE_RATES.platform[zc.plH] || 45); }
   if (zc.cpT) { const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0)); r.carpet = a * (BASE_RATES.carpet[zc.cpT] || 15); }
@@ -1954,7 +1954,7 @@ export default function StudioApp() {
       const dims = cfg.dims || {}; const w = dims.w || 0; const d = dims.d || 0; const sqft = w * d;
       if (sqft > 0) {
         const trussTc = truckCap.find(tc => tc.item.toLowerCase().includes("truss") && tc.perTruck > 0);
-        if (trussTc && cfg.trT) itemAgg[trussTc.id] = (itemAgg[trussTc.id] || 0) + sqft;
+        if (trussTc && cfg.trT) itemAgg[trussTc.id] = (itemAgg[trussTc.id] || 0) + sqft * Math.max(1, cfg.trussQty || 1);
         const platTc = truckCap.find(tc => tc.item.toLowerCase().includes("platform") && tc.perTruck > 0);
         if (platTc && cfg.plH) itemAgg[platTc.id] = (itemAgg[platTc.id] || 0) + sqft;
         const carpTc = truckCap.find(tc => tc.item.toLowerCase().includes("carpet") && tc.perTruck > 0);
@@ -2084,7 +2084,7 @@ export default function StudioApp() {
         const d = cfg.dims || {};
         const fd = cfg.floorDims || d;
         if (cfg.trT === "box") {
-          const tSqft = (d.L || 0) * (d.W || 0);
+          const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1);
           if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().includes("truss") && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
         }
         const sqft = (fd.L || 0) * (fd.W || 0);
@@ -2244,7 +2244,7 @@ export default function StudioApp() {
         const d = cfg.dims || {};
         const fd = cfg.floorDims || d;
         if (cfg.trT === "box") {
-          const tSqft = (d.L || 0) * (d.W || 0);
+          const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1);
           if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().includes("truss") && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
         }
         const sqft = (fd.L || 0) * (fd.W || 0);
