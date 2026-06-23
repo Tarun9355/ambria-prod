@@ -62,6 +62,7 @@ export default function StudioBrowse({ ctx }) {
             <img src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,position:"relative",zIndex:2}}>▶</div>
             {v.tierCat&&<div style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3}}>{v.tierCat}</div>}
+            {v.aiTagged&&<div title={v.savedBy?`Tagged by AI · saved by ${v.savedBy}`:"Tagged by AI"} style={{position:"absolute",top:10,left:10,background:"rgba(124,58,237,0.9)",color:"#fff",padding:"3px 8px",borderRadius:10,fontSize:9,fontWeight:700,zIndex:3}}>🤖 AI</div>}
             <div style={{position:"absolute",bottom:10,left:10,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:600,zIndex:3}}>
               {priceTBD ? "Price TBD" : fmt(v.price)}
             </div>

@@ -1207,7 +1207,7 @@ export default function ManageLibrary({ ctx }) {
                   {/* AI Draft banner */}
                   {hasDraft&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",marginBottom:10,borderRadius:8,background:"rgba(201,169,110,0.12)",border:`1px solid ${accent}40`}}>
                     <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>🤖 AI suggested — review & save</span>
-                    <button onClick={()=>{const nt={...ytVideoTags,[v.id]:aiVideoDraft.tags};saveYtTags(nt);setAiVideoDraft(null);showMsg("✓ Tags saved","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
+                    <button onClick={()=>{const nt={...ytVideoTags,[v.id]:{...aiVideoDraft.tags,_aiTagged:true,_savedBy:authUser?.name||"—",_savedAt:Date.now()}};saveYtTags(nt);setAiVideoDraft(null);showMsg("✓ AI tags saved — video now live on Browse","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
                     <button onClick={()=>{setAiVideoDraft(null);setYtTagEdit(null);}} style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>✕ Discard</button>
                   </div>}
                   {/* Row 1: Venue (2-level chip picker — mirrors Browse page pattern) */}

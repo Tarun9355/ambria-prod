@@ -2754,13 +2754,27 @@ Return ONLY JSON:
         io: parsed.io || existingTag.io,
         colors: (parsed.colors || []).length ? parsed.colors : existingTag.colors || [],
         styles: (parsed.styles || []).length ? parsed.styles : existingTag.styles || [],
+        palette: parsed.colors?.[0] || existingTag.palette || "",
       };
+      // Auto-assign the best-matching library photo to each zone (admin can change any before
+      // saving). Keep any photo the admin already picked. This gives the video a build cost so it
+      // shows priced on Browse once saved — no manual per-zone picking required.
+      const autoZonePhotos = { ...(existingTag.zonePhotos || {}) };
+      let assigned = 0;
+      (taxonomy.areasElements || []).forEach(area => {
+        if (autoZonePhotos[area]) return; // respect an existing manual pick
+        const { exact, similar } = getLibPhotosForZone(area, newTag);
+        const top = exact[0] || similar[0];
+        if (top) { autoZonePhotos[area] = top.id; assigned++; }
+      });
+      newTag.zonePhotos = autoZonePhotos;
+      newTag._aiTagged = true;
       setAiVideoDraft({ videoId, tags: newTag });
       setYtTagEdit(videoId);
-      showMsg("✓ AI suggested tags — review & save", "green");
+      showMsg(`✓ AI tagged + auto-picked ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
     } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
-  }, [aiTaggingVideo, ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue]);
+  }, [aiTaggingVideo, ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
 
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
   // (ytApi) + kv cache (YT_SK settings blob) instead of /api/youtube + window.storage. ──
@@ -2887,6 +2901,8 @@ Return ONLY JSON:
         colors: tag.colors || [],
         hasZonePhotos,
         price,
+        aiTagged: !!tag._aiTagged,
+        savedBy: tag._savedBy || "",
         duration: vid?.duration || "",
         source: vid?.source || "youtube"
       };
@@ -2950,6 +2966,12 @@ Return ONLY JSON:
       const vTag = ytVideoTags[vidId] || {};
       const vid = allVideos.find(v => v.id === vidId);
       setSourceVideo({ id: vidId, title: vid?.title || ev.name, tags: vTag });
+      // Default the Build palette to the one tagged on the video (salesperson can still change it).
+      const vidPalette = vTag.palette || (Array.isArray(vTag.colors) ? vTag.colors[0] : "") || "";
+      if (vidPalette) {
+        if (activeFnIdx === 0) setClientPalette(vidPalette);
+        else setExtraFunctions(prev => prev.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: vidPalette } : f));
+      }
       const zonePhotos = vTag.zonePhotos || {};
       const autoZE = {};
       const autoSP = {};
@@ -2985,7 +3007,7 @@ Return ONLY JSON:
         return updated;
       });
     }
-  }, [loadEvent, ytVideoTags, allVideos, libItems]);
+  }, [loadEvent, ytVideoTags, allVideos, libItems, activeFnIdx, setClientPalette, setExtraFunctions]);
 
   const pickAndLoadFromVideo = useCallback((videoId, targetStep) => {
     const tag = ytVideoTags[videoId] || {};

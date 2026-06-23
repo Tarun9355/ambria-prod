@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
 
 export default function StudioEventInfo({ ctx }) {
+  const [sessionHistoryOpen, setSessionHistoryOpen] = useState(false); // collapsed by default
   const {
     S, isDark, accent, border, textS, textP, fmt,
     authUser,
@@ -196,58 +198,6 @@ export default function StudioEventInfo({ ctx }) {
           })()}
           <div style={{marginBottom:20}}><div style={S.label}>Bride & Groom Name</div><input value={clientBrideGroom} onChange={e=>setClientBrideGroom(e.target.value)} placeholder="e.g. Rahul & Priya" style={S.input}/></div>
 
-          {/* ═══ SESSION HISTORY — visible once a client is loaded. All users' sessions, newest first. ═══ */}
-          {/* Default shows 5; expand to see all (capped at 20 by saveSession). Each row has Load button. */}
-          {activeClient && activeClient.sessions && activeClient.sessions.length > 0 && (() => {
-            const sessions = activeClient.sessions;
-            const visible = sessionHistoryExpanded ? sessions.slice(0, 20) : sessions.slice(0, 5);
-            const timeAgo = (ts) => {
-              const ms = Date.now() - ts;
-              const min = Math.floor(ms / 60000);
-              if (min < 1) return "just now";
-              if (min < 60) return `${min}m ago`;
-              const hr = Math.floor(min / 60);
-              if (hr < 24) return `${hr}h ago`;
-              const days = Math.floor(hr / 24);
-              if (days < 30) return `${days}d ago`;
-              return new Date(ts).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
-            };
-            const fmtDate = (d) => {
-              if (!d) return "—";
-              try { return new Date(d+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}); } catch { return d; }
-            };
-            return <div style={{marginBottom:20,padding:"12px 14px",borderRadius:10,background:isDark?"rgba(201,169,110,0.04)":"#FFFDF7",border:`1px solid ${isDark?"rgba(201,169,110,0.15)":"rgba(201,169,110,0.3)"}`}}>
-              <div style={{fontSize:11,fontWeight:700,color:accent,marginBottom:10,display:"flex",alignItems:"center",gap:6,textTransform:"uppercase",letterSpacing:0.5}}>
-                <span>📋</span>
-                <span>Session History — {sessions.length} meeting{sessions.length>1?"s":""}</span>
-              </div>
-              {visible.map((s, si) => <div key={s.id || si} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:12,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <span>{new Date(s.savedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
-                    <span style={{color:textS,fontWeight:400,fontSize:10}}>({timeAgo(s.savedAt)})</span>
-                    <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:`${accent}25`,color:accent}}>by {s.savedBy || "—"}</span>
-                    {si === 0 && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:"#10B981"}}>LATEST</span>}
-                  </div>
-                  <div style={{fontSize:10,color:textS,marginTop:3}}>
-                    {s.venue && <span>📍 {s.venue}</span>}
-                    {s.eventDate && <span> · 📅 {fmtDate(s.eventDate)}</span>}
-                    {s.fn && <span> · {s.fn}</span>}
-                    {s.total && <span style={{color:textP,fontWeight:600}}> · {fmt(s.total)}</span>}
-                    {s.tier && <span style={{color:textS}}> {s.tier}</span>}
-                  </div>
-                </div>
-                <button onClick={() => {
-                  if (!confirm(`Load session from ${new Date(s.savedAt).toLocaleString("en-IN")} by ${s.savedBy||"—"}?\n\nAny unsaved changes will be replaced.`)) return;
-                  loadClientSession(activeClient, s, 0);
-                }} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:accent,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
-              </div>)}
-              {sessions.length > 5 && <button onClick={() => setSessionHistoryExpanded(!sessionHistoryExpanded)} style={{marginTop:4,padding:"4px 10px",fontSize:10,color:accent,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>
-                {sessionHistoryExpanded ? `↑ Show fewer (5)` : `↓ Show all ${sessions.length} sessions`}
-              </button>}
-            </div>;
-          })()}
-
           {/* ═══ FUNCTIONS ═══ Commit 2 — multi-function. Function 1 is mirrored by legacy state. ═══ */}
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:4,marginBottom:12}}>
             <div style={{height:1,flex:1,background:border}}/>
@@ -418,6 +368,59 @@ export default function StudioEventInfo({ ctx }) {
             );
           })}
         </div>}
+        {/* ═══ SESSION HISTORY — moved to the bottom, collapsed by default to reduce clutter. ═══ */}
+        {activeClient && activeClient.sessions && activeClient.sessions.length > 0 && (() => {
+          const sessions = activeClient.sessions;
+          const visible = sessionHistoryExpanded ? sessions.slice(0, 20) : sessions.slice(0, 5);
+          const timeAgo = (ts) => {
+            const ms = Date.now() - ts;
+            const min = Math.floor(ms / 60000);
+            if (min < 1) return "just now";
+            if (min < 60) return `${min}m ago`;
+            const hr = Math.floor(min / 60);
+            if (hr < 24) return `${hr}h ago`;
+            const days = Math.floor(hr / 24);
+            if (days < 30) return `${days}d ago`;
+            return new Date(ts).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+          };
+          const fmtDate = (d) => {
+            if (!d) return "—";
+            try { return new Date(d+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}); } catch { return d; }
+          };
+          return <div style={{marginTop:28,padding:"4px 14px 12px",borderRadius:10,background:isDark?"rgba(201,169,110,0.04)":"#FFFDF7",border:`1px solid ${isDark?"rgba(201,169,110,0.15)":"rgba(201,169,110,0.3)"}`}}>
+            <div onClick={() => setSessionHistoryOpen(o => !o)} style={{padding:"8px 0",cursor:"pointer",fontSize:11,fontWeight:700,color:accent,display:"flex",alignItems:"center",gap:6,textTransform:"uppercase",letterSpacing:0.5}}>
+              <span>📋</span>
+              <span style={{flex:1}}>Session History — {sessions.length} meeting{sessions.length>1?"s":""}</span>
+              <span style={{fontSize:10}}>{sessionHistoryOpen ? "▲ Hide" : "▼ Show"}</span>
+            </div>
+            {sessionHistoryOpen && <div style={{marginTop:6}}>
+              {visible.map((s, si) => <div key={s.id || si} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span>{new Date(s.savedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
+                    <span style={{color:textS,fontWeight:400,fontSize:10}}>({timeAgo(s.savedAt)})</span>
+                    <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:`${accent}25`,color:accent}}>by {s.savedBy || "—"}</span>
+                    {si === 0 && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:"#10B981"}}>LATEST</span>}
+                  </div>
+                  <div style={{fontSize:10,color:textS,marginTop:3}}>
+                    {s.venue && <span>📍 {s.venue}</span>}
+                    {s.eventDate && <span> · 📅 {fmtDate(s.eventDate)}</span>}
+                    {s.fn && <span> · {s.fn}</span>}
+                    {s.total && <span style={{color:textP,fontWeight:600}}> · {fmt(s.total)}</span>}
+                    {s.tier && <span style={{color:textS}}> {s.tier}</span>}
+                  </div>
+                </div>
+                <button onClick={() => {
+                  if (!confirm(`Load session from ${new Date(s.savedAt).toLocaleString("en-IN")} by ${s.savedBy||"—"}?\n\nAny unsaved changes will be replaced.`)) return;
+                  loadClientSession(activeClient, s, 0);
+                }} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:accent,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
+              </div>)}
+              {sessions.length > 5 && <button onClick={() => setSessionHistoryExpanded(!sessionHistoryExpanded)} style={{marginTop:4,padding:"4px 10px",fontSize:10,color:accent,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>
+                {sessionHistoryExpanded ? `↑ Show fewer (5)` : `↓ Show all ${sessions.length} sessions`}
+              </button>}
+            </div>}
+          </div>;
+        })()}
         <div style={{display:"flex",justifyContent:"flex-end",marginTop:24}}>
           <button onClick={()=>{
             doSaveClient();
