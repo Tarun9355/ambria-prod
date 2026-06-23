@@ -716,6 +716,16 @@ export default function IMS() {
     })();
   }, []);
 
+  // Pure INSERT for a brand-new user — never diffs/updates/deletes existing rows. Used by the
+  // "Add User" flow so adding one user can't touch any other row in the table.
+  const addUser = useCallback(async (newUser) => {
+    const next = [...(usersRef.current || []), newUser];
+    usersRef.current = next;
+    setUsersState(next);
+    const { error: e } = await supabase.from("users").insert(userToRow(newUser));
+    if (e) setError(`Add user failed: ${e.message}`);
+  }, []);
+
   // Production requests — full object stored in `data`; persist only changed/deleted rows.
   const setProdRequests = useCallback((updater) => {
     const prev = prodRequestsRef.current;
@@ -902,7 +912,7 @@ export default function IMS() {
             vendors={vendors} setVendors={setVendors} functions={functions}
             settings={settings} setSettings={setSettings}
             supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
-            users={users} setUsers={setUsers} inventory={items} trussInv={trussInv}
+            users={users} setUsers={setUsers} addUser={addUser} inventory={items} trussInv={trussInv}
           />
         ) : tab === "supply" ? (
           <SupplyTab

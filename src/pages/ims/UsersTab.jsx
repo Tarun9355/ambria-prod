@@ -5,7 +5,7 @@ import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS } from "../../lib/ims/co
 // App-access default derived from role (the one addition to the reference).
 const defaultApps = (role) => role === "Admin" ? ["studio","ims"] : role === "Sales" ? ["studio"] : ["ims"];
 
-export default function UsersTab({ users, setUsers, settings, setSettings }){
+export default function UsersTab({ users, setUsers, addUser, settings, setSettings }){
   const [modal, setModal]=useState(false);
   const [editUser, setEditUser]=useState(null);
   const [form, setForm]=useState({ name:"", email:"", phone:"", role:"Sales", permissions:ROLE_DEFAULTS.Sales, active:true, password:"" });
@@ -59,16 +59,13 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
       return;
     }
     const mint = () => "U" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 10) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
-    // Append to the LIVE current list (prev), not the possibly-stale `users` prop. setUsers diffs
-    // next against the true current users and DELETES any id missing from `next` — so passing a
-    // stale array (e.g. before the last add's realtime echo landed) was deleting the last user.
-    // Mint a collision-proof id from prev so the upsert always inserts.
-    setUsers(prev => {
-      const taken = new Set((prev || []).map(u => String(u.id)));
-      let newId = mint(); while (taken.has(newId)) newId = mint();
-      const newUser = { ...form, username, password: form.password.trim(), id: newId, createdAt: Date.now() };
-      return [...(prev || []), newUser];
-    });
+    const taken = new Set((users || []).map(u => String(u.id)));
+    let newId = mint(); while (taken.has(newId)) newId = mint();
+    const newUser = { ...form, username, password: form.password.trim(), id: newId, createdAt: Date.now() };
+    // Pure INSERT — addUser writes ONLY this new row, never updating/deleting any existing user.
+    // (Falls back to setUsers append if addUser wasn't provided.)
+    if (addUser) addUser(newUser);
+    else setUsers(prev => [...(prev || []), newUser]);
     setModal(false);
     // Show one-time credential confirmation
     setCredsShown({ name: form.name.trim(), username, password: form.password.trim(), isReset: false });
