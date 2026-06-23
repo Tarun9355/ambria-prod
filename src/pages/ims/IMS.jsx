@@ -219,6 +219,20 @@ export default function IMS() {
       const c = sd ? computePatternSizeCost(sd, mandi) : null;
       return c == null ? null : Math.round(c * markup);
     };
+    // Full-artificial rate for a size: the recipe's totalPieces (whole arrangement) → kg via
+    // artificialKgToPieces → × artificialMixRatePerKg → × the SAME markup as real. The Studio
+    // blend then weights this by the artificial % (100 − realPct), so 100% artificial is no
+    // longer ₹0 and a 30%-real mix charges 30% real + 70% of this artificial rate.
+    const kgToPieces = Number(s.artificialKgToPieces) || 200;
+    const artMixRate = Number(s.artificialMixRatePerKg) || 0;
+    const artRateFor = (pat, markup, sizeKey) => {
+      const sizes = pat.sizes || {};
+      let pieces = Number(sizes[sizeKey]?.totalPieces) || 0;
+      // Legacy alias: some recipes store the big-size pieces under "large" (big = 0).
+      if (pieces <= 0 && sizeKey === "big") pieces = Number(sizes.large?.totalPieces) || 0;
+      if (pieces <= 0 || artMixRate <= 0) return null;
+      return Math.round((pieces / kgToPieces) * artMixRate * markup);
+    };
     let updated = 0, cleared = 0;
     const next = items.map((it) => {
       if (String(it.cat || "").toLowerCase() !== "florals") return it;
@@ -237,9 +251,15 @@ export default function IMS() {
         if (sm != null) draft.inhouseS = sm;
         if (md != null) draft.inhouseM = md;
         if (bg != null) draft.inhouseB = bg;
+        const as = artRateFor(pat, markup, "small"), am = artRateFor(pat, markup, "medium"), ab = artRateFor(pat, markup, "big");
+        if (as != null) draft.artificialS = as;
+        if (am != null) draft.artificialM = am;
+        if (ab != null) draft.artificialB = ab;
       } else {
         const flat = rateFor(pat, markup, "medium") ?? rateFor(pat, markup, "small") ?? rateFor(pat, markup, "big");
         if (flat != null) draft.inhouseFlat = flat;
+        const aflat = artRateFor(pat, markup, "medium") ?? artRateFor(pat, markup, "small") ?? artRateFor(pat, markup, "big");
+        if (aflat != null) draft.artificialFlat = aflat;
       }
       if (JSON.stringify(draft) !== JSON.stringify(it)) updated++;
       return draft;
