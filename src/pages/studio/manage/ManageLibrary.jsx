@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, useRef } from "react";
+import { Fragment, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
 
@@ -27,6 +27,8 @@ export default function ManageLibrary({ ctx }) {
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
     allInhouseVenues, allOutdoorDB, customOutdoor,
+    // permissions
+    studioLibraryAllowed,
     // library state + persistence
     libItems, saveLib, libView, setLibView,
     libSearch, setLibSearch, libFilters, setLibFilters,
@@ -119,6 +121,15 @@ export default function ManageLibrary({ ctx }) {
     : libPhotoIsTagged(img) ? "review"
     : "untagged";
   const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
+  // Permission gate for the Images / Videos / Contributions sub-views. If the current view isn't
+  // allowed for this role, fall back to the first one that is.
+  const libAllowed = (v) => (studioLibraryAllowed ? studioLibraryAllowed(v) : true);
+  useEffect(() => {
+    if (!libAllowed(libView)) {
+      const first = ["images", "videos", "corrections"].find(libAllowed);
+      if (first && first !== libView) setLibView(first);
+    }
+  }, [studioLibraryAllowed, libView]);
   const [corrRange, setCorrRange] = useState("today"); // contributions panel date range
   const [corrUser, setCorrUser] = useState("");          // contributions panel user filter
   const [corrKind, setCorrKind] = useState("all");       // all | photo | video
@@ -991,9 +1002,9 @@ export default function ManageLibrary({ ctx }) {
       {libShowBulk && LibraryBulk()}
       {/* Images / Videos toggle */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-        <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libItems.length})</button>
-        <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>
-        <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({(corrLog || []).length})</button>
+        {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libItems.length})</button>}
+        {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
+        {libAllowed("corrections") && <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({(corrLog || []).length})</button>}
       </div>
       {/* Content */}
       {libView === "corrections" && CorrectionsPanel()}

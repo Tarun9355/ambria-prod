@@ -1304,6 +1304,16 @@ export default function StudioApp() {
   // Which Studio Settings sub-views (venues/tags/clients/calendar/users/zones/palettes/
   // priority) this role can see — consumed by ManageSettings.
   const studioSettingsAllowed = useCallback((view) => isAdmin || studioSub("settings", view), [isAdmin, studioSub]);
+  // Which Library & content sub-views (images/videos/corrections) this role can see. If the
+  // Library tab is granted but no sub-tabs are explicitly picked, all three are allowed (matches
+  // the IMS supply-tab convention: no sub-config = full access to the granted tab).
+  const studioLibraryAllowed = useCallback((view) => {
+    if (isAdmin) return true;
+    if (!(studioCfg?.tabs || []).includes("library")) return false;
+    const subs = studioCfg?.subTabs?.library;
+    if (!subs || subs.length === 0) return true;
+    return subs.includes(view);
+  }, [isAdmin, studioCfg]);
   // Map the reference's canX perm flags onto the Studio tab/sub-tab grants. Every existing
   // hasPerm("canX") call site across Studio/views/manage keeps working through this.
   const hasPerm = useCallback((perm) => {
@@ -4289,7 +4299,7 @@ Return ONLY JSON:
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
-    authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed,
+    authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
     // app mode + steps
     mode, setMode, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, loaded, setLoaded, saveError, setSaveError,
     // events

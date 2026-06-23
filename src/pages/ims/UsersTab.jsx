@@ -106,6 +106,7 @@ export default function UsersTab({ users, setUsers, settings, setSettings }){
   const STUDIO_TABS = [{id:"design",label:"🎨 Design Studio"},{id:"library",label:"📚 Library & content"},{id:"pricing",label:"💲 Pricing"},{id:"settings",label:"⚙️ Settings"}];
   const STUDIO_SUBTABS = {
     design: [{id:"dealcheck",label:"Deal Check"},{id:"viewpricing",label:"View Pricing & Costs"},{id:"export",label:"Export PDF/PPT"}],
+    library: [{id:"images",label:"Images"},{id:"videos",label:"Videos"},{id:"corrections",label:"Contributions"}],
     settings: [{id:"venues",label:"Venues"},{id:"tags",label:"Tags"},{id:"clients",label:"Clients"},{id:"calendar",label:"Calendar"},{id:"zones",label:"Zones"},{id:"palettes",label:"Palettes"},{id:"priority",label:"Photo Priority"}],
   };
   const roleTabs = settings?.roleTabs || {};

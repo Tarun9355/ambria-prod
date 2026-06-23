@@ -204,10 +204,7 @@ export default function RateCard({ ctx }) {
                       <button onClick={() => setMode("artificial")} style={pill(mode === "artificial", "#EC4899")}>🎯 100% Artificial</button>
                     </div>
                     <div style={{ fontSize: 10, color: textS, marginBottom: 10, lineHeight: 1.4 }}>{help}</div>
-                    <div style={{ fontSize: 10, color: textS, fontWeight: 600, marginBottom: 6 }}>Artificial rate (required — used in all modes)</div>
-                    {item.inhouseMode === "flat"
-                      ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ color: textS }}>₹</span><input type="number" value={item.artificialFlat || 0} onChange={(e) => rcUpd(item.id, "artificialFlat", e.target.value)} style={{ ...S.input, width: 140, fontSize: 16, fontWeight: 700, textAlign: "right" }} /></div>
-                      : <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>{[["Small", "artificialS"], ["Medium", "artificialM"], ["Big", "artificialB"]].map(([l, f]) => <div key={f}><div style={{ fontSize: 10, color: textS, textAlign: "center", fontWeight: 600 }}>{l}</div><input type="number" value={item[f] || 0} onChange={(e) => rcUpd(item.id, f, e.target.value)} style={{ ...S.input, textAlign: "center", fontSize: 14, fontWeight: 700 }} /></div>)}</div>}
+                    <div style={{ fontSize: 10, color: textS, lineHeight: 1.4, fontStyle: "italic" }}>Artificial cost is auto-derived from the IMS recipe (pieces × mix rate × markup) — no manual rate needed.</div>
                   </div>; })()}
                   {/* Outsource */}
                   <div style={{ background: isDark ? (item.outEnabled ? "#0F0F1A" : "#0A0A12") : (item.outEnabled ? "#fff" : "#F5F5F5"), borderRadius: 10, padding: 12, marginBottom: 10, border: `1px solid ${item.outEnabled ? "#F59E0B30" : border}`, opacity: item.outEnabled ? 1 : 0.5 }}>
