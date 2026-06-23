@@ -2305,7 +2305,9 @@ export default function StudioApp() {
 
   // ── Library photo scoring for a zone — VERBATIM ──
   const getLibPhotosForZone = useCallback((zone, videoTag) => {
-    if (!zone || !libItems.length) return { exact: [], similar: [], fallback: [] };
+    // `zone` may be a single tag name (Manage Library) or an array of synonym names (Build page).
+    const zoneList = (Array.isArray(zone) ? zone : [zone]).filter(Boolean);
+    if (!zoneList.length || !libItems.length) return { exact: [], similar: [], fallback: [] };
     const tier = videoTag?.tier;
     const libTier = tier === "Silver" ? "Simple" : tier === "Gold" ? "Enhanced" : null;
     // Resolve the active palette (per function) → its anchor colours + the ★ primary.
@@ -2324,7 +2326,10 @@ export default function StudioApp() {
     const styles = videoTag?.styles || [];
     const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
     const io = videoTag?.io || "";
-    const zoneMatches = libItems.filter(li => (li.tags?.areasElements || []).includes(zone));
+    const zoneMatches = libItems.filter(li => {
+      const ae = li.tags?.areasElements || [];
+      return zoneList.some(z => ae.includes(z));
+    });
     const scorePhoto = (li) => {
       let score = 0;
       const liTier = li.tags?.categoryTier || [];
@@ -2332,6 +2337,13 @@ export default function StudioApp() {
       const liStyle = li.tags?.designStyle || [];
       const liFn = li.tags?.eventType || [];
       const liIO = li.tags?.venueType || [];
+      // §Palette-first — when an active palette context exists (e.g. arrived via an Ivory-tagged
+      // video / client palette set), photos carrying a palette colour LEAD their zone regardless
+      // of where "color" sits in the settings priority; the priority score below is the tiebreaker.
+      if (colors.length) {
+        if (primaryColors.length && primaryColors.some(pc => liColor.includes(pc))) score += 1000;
+        else if (colors.some(c => liColor.includes(c))) score += 500;
+      }
       filterPriority.forEach((p, idx) => {
         const weight = (filterPriority.length - idx) * 10;
         switch (p.id) {
@@ -2364,7 +2376,12 @@ export default function StudioApp() {
     let overflow = [];
     if (total < 50) {
       const usedIds = new Set([...exact, ...similar, ...fallback].map(li => li.id));
-      overflow = libItems.filter(li => !usedIds.has(li.id)).slice(0, 50 - total);
+      // "Rest" (non-zone fillers) still follow the settings priority + palette-first ordering.
+      overflow = libItems.filter(li => !usedIds.has(li.id))
+        .map(li => ({ li, score: scorePhoto(li) }))
+        .sort((a, b) => b.score - a.score)
+        .map(s => s.li)
+        .slice(0, 50 - total);
     }
     return { exact, similar, fallback: [...fallback, ...overflow] };
   }, [libItems, filterPriority, clientPalette, activeFnIdx, extraFunctions, imsPaletteCatalogue]);

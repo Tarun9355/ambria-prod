@@ -67,15 +67,16 @@ export default function StudioBuild({ ctx }) {
   // No mixing — each tab shows ONLY its category's photos
   const getMatchedPhotos = (elKey, tier) => {
     const targetCat = TIER_TO_CAT[tier] || "Silver";
-    const areaName = ZONE_TYPE_TO_AREA[elKey];
+    const areaNamesRaw = ZONE_TYPE_TO_AREA[elKey];
+    const areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
     const photos = [];
     const seen = new Set();
 
     // 1. VIDEO DEFAULT — if sourceVideo has a zone photo for this area, show it first
-    if (sourceVideo && areaName) {
+    if (sourceVideo && areaNames.length) {
       const vTag = ytVideoTags[sourceVideo.id] || {};
       const zp = vTag.zonePhotos || {};
-      const libId = zp[areaName];
+      const libId = areaNames.map(n => zp[n]).find(Boolean);
       if (libId) {
         const li = libItems.find(l => l.id === libId);
         if (li && li.url) {
@@ -91,9 +92,9 @@ export default function StudioBuild({ ctx }) {
     }
 
     // 2. LIBRARY PHOTOS — scored by admin priority, capped at 50
-    if (areaName) {
+    if (areaNames.length) {
       const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
-      const {exact, similar, fallback} = getLibPhotosForZone(areaName, vTag);
+      const {exact, similar, fallback} = getLibPhotosForZone(areaNames, vTag);
       const allMatches = [...exact, ...similar, ...fallback];
       for (const img of allMatches) {
         if (photos.length >= 50) break;

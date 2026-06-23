@@ -99,7 +99,20 @@ export const TAX_KEYS=Object.keys(DEFAULT_TAX);
 export const DEFAULT_TAX_KEYS=new Set(Object.keys(DEFAULT_TAX));
 export const TIER_MAP_TPL_TO_LIB={Silver:"Simple",Gold:"Enhanced"};
 export const TIER_MAP_LIB_TO_TPL={Simple:"Silver",Enhanced:"Gold"};
-export const ZONE_TYPE_TO_AREA={stage:"Stage",entry:"Entry Passage",lounge:"Centre Lounge",vedi:"Vedi",bar:"Centre Pieces",photobooth:"Photobooth",sidelounge:"Side Lounge"};
+// Build-page zone key → photo-tag area name(s). Arrays so each build zone can match any of
+// its synonym chips in the live taxonomy (e.g. a Lounge card matches Centre/Side/Open Lounges).
+// A photo counts as "in this zone" if its areasElements include ANY of these names.
+export const ZONE_TYPE_TO_AREA={
+  stage:["Stage","Entertainment Stage"],
+  entry:["Entry Passage","Entry & Passage"],
+  lounge:["Lounge","Centre Lounge","Side Lounge","Open Lounges"],
+  bar:["Bar / Counter"],
+  vedi:["Vedi"],
+  photobooth:["Photobooth"],
+  lighting:["Lighting"],
+  ceiling:["Ceiling","Installations"],
+  tableDecor:["Table Decor","Centre Pieces"],
+};
 
 // ═══ HELPERS ═══
 export const getCat=t=>{if(t>=600000)return{label:"Platinum",bg:"#EDE9FE",color:"#7C3AED"};if(t>=350000)return{label:"Gold",bg:"#FFFBEB",color:"#D97706"};return{label:"Silver",bg:"#ECFDF5",color:"#059669"}};
