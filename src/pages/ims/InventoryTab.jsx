@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
-import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER } from "../../lib/inventory/constants";
+import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing } from "../../lib/inventory/helpers";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
 import { callClaudeStreaming } from "../../lib/ai";
@@ -279,6 +279,8 @@ Rules:
     const costNum = parseFloat(form.cost) || 0;
     const breakNum = parseFloat(form.breakagePct) || 0;
     const paintNum = form.paintCost ? (parseFloat(form.paintCost) || 0) : 0;
+    const paintableFlag = form.paintable !== undefined ? !!form.paintable
+      : (!!(form.baseColour || form.paintCost) || PAINT_TOKENS.some((tok) => String(form.cat || "").toLowerCase().includes(tok) || String(form.subCat || "").toLowerCase().includes(tok)));
     // Append against the CANONICAL list (prev), not the stale `inventory` closure, and mint a
     // collision-proof id. The old "I"+(length+10) scheme reused ids after deletes — and gave two
     // people adding at once the SAME id — so the upsert (onConflict:"id") silently OVERWROTE an
@@ -310,6 +312,7 @@ Rules:
         breakagePct: breakNum,
         baseColour: form.baseColour || "",
         paintCost: paintNum,
+        paintable: paintableFlag,
         notes: form.notes || "",
         blocked: 0,
         source: "manual",
@@ -360,6 +363,7 @@ Rules:
       dimUnit: it.dims_LxWxH?.unit || "Feet",
       baseColour: it.baseColour || "",
       paintCost: String(it.paintCost ?? ""),
+      paintable: it.paintable,   // undefined for legacy items → display falls back to keyword/data default
       printL: it.printable_LxW?.l ?? "",
       printW: it.printable_LxW?.w ?? "",
       printUnit: it.printable_LxW?.unit || "Feet",
@@ -443,6 +447,8 @@ Rules:
         photoUrls: f.img ? [f.img] : [],
         baseColour: f.baseColour || "",
         paintCost: f.paintCost !== "" && f.paintCost != null ? (parseFloat(f.paintCost) || 0) : (i.paintCost ?? 0),
+        paintable: f.paintable !== undefined ? !!f.paintable
+          : (!!(f.baseColour || f.paintCost) || PAINT_TOKENS.some((tok) => String(f.cat || "").toLowerCase().includes(tok) || String(f.subCat || "").toLowerCase().includes(tok))),
         subItems: cleanSubItems,
         printable_LxW: (f.printL || f.printW) ? { l: f.printL || "", w: f.printW || "", unit: f.printUnit || "Feet" } : (i.printable_LxW || null),
       };
@@ -1071,32 +1077,40 @@ Rules:
               </div>
             </div>
 
-            {/* Paint Override — shown for paintable categories */}
+            {/* Paint Override — manual per-item toggle */}
             {(() => {
               const PAINT_TOKENS = ["truss", "struct", "mask", "platform", "carpet", "furniture", "arch", "prop", "panel", "pillar", "glass", "stage", "wrought", "consumable"];
               const cat = String(form.cat || "").toLowerCase();
               const subcat = String(form.subCat || "").toLowerCase();
-              if (!PAINT_TOKENS.some((tok) => cat.includes(tok) || subcat.includes(tok))) return null;
+              const legacyHint = PAINT_TOKENS.some((tok) => cat.includes(tok) || subcat.includes(tok));
+              const hasPaintData = !!(form.baseColour || form.paintCost);
+              const paintable = form.paintable === undefined ? (hasPaintData || legacyHint) : !!form.paintable;
               const colours = (settings?.colourCatalogue || []).map((c) => c.name);
               return (
                 <div className="col-span-2 bg-pink-50 border border-pink-200 rounded-xl p-3 space-y-2">
-                  <span className="text-xs font-bold text-pink-800">🎨 Paint Override Settings</span>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-gray-600">Base Colour</label>
-                      <select value={form.baseColour || ""} onChange={(e) => setForm({ ...form, baseColour: e.target.value })}
-                        className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm">
-                        <option value="">— Not set —</option>
-                        {colours.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={paintable} onChange={(e) => setForm({ ...form, paintable: e.target.checked })} className="w-4 h-4 accent-pink-600" />
+                    <span className="text-xs font-bold text-pink-800">🎨 This item can be painted</span>
+                    <span className="text-xs text-pink-600">— tick to set base colour + repaint cost</span>
+                  </label>
+                  {paintable && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-gray-600">Base Colour</label>
+                        <select value={form.baseColour || ""} onChange={(e) => setForm({ ...form, baseColour: e.target.value })}
+                          className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm">
+                          <option value="">— Not set —</option>
+                          {colours.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600">Repaint Cost (₹)</label>
+                        <input type="number" min="0" step="50" value={form.paintCost || ""} onChange={(e) => setForm({ ...form, paintCost: e.target.value })}
+                          placeholder={String(settings?.defaultPaintCostPerItem || 400)}
+                          className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-xs text-gray-600">Repaint Cost (₹)</label>
-                      <input type="number" min="0" step="50" value={form.paintCost || ""} onChange={(e) => setForm({ ...form, paintCost: e.target.value })}
-                        placeholder={String(settings?.defaultPaintCostPerItem || 400)}
-                        className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm" />
-                    </div>
-                  </div>
+                  )}
                 </div>
               );
             })()}
@@ -1346,37 +1360,45 @@ Rules:
                 </div>
               </div>
 
-              {/* §23 Phase 2.9 — Paint override fields (only shown for paintable categories) */}
+              {/* §23 Phase 2.9 — Paint override (manual per-item toggle) */}
               {(() => {
                 const PAINT_TOKENS = ["truss", "struct", "mask", "platform", "carpet", "furniture", "arch", "prop", "panel", "pillar", "glass", "stage", "wrought", "consumable"];
                 const cat = String(editForm.cat || "").toLowerCase();
                 const subcat = String(editForm.subCat || "").toLowerCase();
-                const isPaintable = PAINT_TOKENS.some((tok) => cat.includes(tok) || subcat.includes(tok));
-                if (!isPaintable) return null;
+                const legacyHint = PAINT_TOKENS.some((tok) => cat.includes(tok) || subcat.includes(tok));
+                const hasPaintData = !!(editForm.baseColour || editForm.paintCost);
+                // Default ON for items that already have paint data or match a paintable category,
+                // so nothing currently configured disappears; otherwise the user opts in explicitly.
+                const paintable = editForm.paintable === undefined ? (hasPaintData || legacyHint) : !!editForm.paintable;
                 const colours = (settings.colourCatalogue || []).map((c) => c.name);
                 return (
                   <div className="bg-pink-50 border border-pink-200 rounded-xl p-3 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-pink-800">🎨 Paint Override Settings</span>
-                      <span className="text-xs text-pink-600">— shipping default + per-event repaint cost</span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs text-gray-600">Base Colour (shipped as)</label>
-                        <select value={editForm.baseColour || ""} onChange={(e) => setEditForm((f) => ({ ...f, baseColour: e.target.value }))}
-                          className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm">
-                          <option value="">— Not set —</option>
-                          {colours.map((c) => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600">Repaint Cost (₹ per item, if overridden)</label>
-                        <input type="number" min="0" step="50" value={editForm.paintCost || ""} onChange={(e) => setEditForm((f) => ({ ...f, paintCost: e.target.value }))}
-                          placeholder={String(settings.defaultPaintCostPerItem || 400)}
-                          className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm" />
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-500 italic">Salespeople ship base colour by default. If they override (via Studio Build), Ops paints the item and this cost is added to the event.</p>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={paintable} onChange={(e) => setEditForm((f) => ({ ...f, paintable: e.target.checked }))} className="w-4 h-4 accent-pink-600" />
+                      <span className="text-xs font-bold text-pink-800">🎨 This item can be painted</span>
+                      <span className="text-xs text-pink-600">— tick to set base colour + per-event repaint cost</span>
+                    </label>
+                    {paintable && (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs text-gray-600">Base Colour (shipped as)</label>
+                            <select value={editForm.baseColour || ""} onChange={(e) => setEditForm((f) => ({ ...f, baseColour: e.target.value }))}
+                              className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm">
+                              <option value="">— Not set —</option>
+                              {colours.map((c) => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-600">Repaint Cost (₹ per item, if overridden)</label>
+                            <input type="number" min="0" step="50" value={editForm.paintCost || ""} onChange={(e) => setEditForm((f) => ({ ...f, paintCost: e.target.value }))}
+                              placeholder={String(settings.defaultPaintCostPerItem || 400)}
+                              className="mt-1 w-full border border-pink-200 rounded-lg px-3 py-2 text-sm" />
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500 italic">Salespeople ship base colour by default. If they override (via Studio Build), Ops paints the item and this cost is added to the event.</p>
+                      </>
+                    )}
                   </div>
                 );
               })()}
