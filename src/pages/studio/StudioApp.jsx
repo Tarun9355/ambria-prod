@@ -3500,18 +3500,22 @@ Return ONLY JSON:
       const img = targets[n];
       try {
         const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        const upd = { _aiTagged: true, _aiTaggedAt: Date.now() };
+        const upd = {};
+        let gotTags = false; // did the AI actually return usable tags/elements?
         if (result) {
           const tagSrc = result.tags || result;
-          if (tagSrc) { const t = { ...(img.tags || {}) }; let any = false; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) { t[k] = tagSrc[k]; any = true; } }); if (any) upd.tags = t; }
+          if (tagSrc) { const t = { ...(img.tags || {}) }; let any = false; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) { t[k] = tagSrc[k]; any = true; } }); if (any) { upd.tags = t; gotTags = true; } }
           if (result.name && (!img.name || img.name.startsWith("img ") || img.name === "Untitled")) upd.name = result.name;
-          if (Array.isArray(result.elements) && result.elements.length > 0) upd.elements = result.elements;
+          if (Array.isArray(result.elements) && result.elements.length > 0) { upd.elements = result.elements; gotTags = true; }
           const d = result.dims || {};
           if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
-          ok++;
-        } else { fail++; }
+        }
+        // Only mark "AI-tagged" when we actually got tags — a failed/empty pass (e.g. credits out)
+        // stays untagged so it's retried on the next run instead of looking done-but-blank.
+        if (gotTags) { upd._aiTagged = true; upd._aiTaggedAt = Date.now(); ok++; }
+        else { upd._aiFailed = true; upd._aiFailedAt = Date.now(); fail++; }
         patch[img.id] = upd;
-      } catch { patch[img.id] = { _aiTagged: true, _aiTaggedAt: Date.now() }; fail++; }
+      } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
       setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
       if ((n + 1) % 8 === 0) flush();
     }
