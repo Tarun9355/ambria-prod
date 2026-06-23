@@ -32,8 +32,19 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
-  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, libPhotoIsTagged,
+  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, libPhotoIsTagged, ZONE_TYPE_TO_AREA,
 } from "../../lib/studio/taxonomy";
+
+// Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
+// A video's zonePhotos are keyed by area name; the Build page keys zones by elKey — without this
+// map the per-zone photo a salesperson assigned to a video never pre-selects on Build.
+const AREA_TO_ZONEKEY = (() => {
+  const m = {};
+  Object.entries(ZONE_TYPE_TO_AREA).forEach(([zk, areas]) => {
+    (Array.isArray(areas) ? areas : [areas]).forEach((a) => { if (!(a in m)) m[a] = zk; });
+  });
+  return m;
+})();
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
@@ -2943,9 +2954,11 @@ Return ONLY JSON:
       const autoZE = {};
       const autoSP = {};
       const autoZC = {};
-      Object.entries(zonePhotos).forEach(([zk, libId]) => {
+      Object.entries(zonePhotos).forEach(([area, libId]) => {
         const li = libItems.find(l => l.id === libId);
         if (!li) return;
+        // Map the photo-tag area name → the Build zone key so the selection lands on the right card.
+        const zk = AREA_TO_ZONEKEY[area] || area;
         if ((li.elements || []).length > 0) {
           autoZE[zk] = JSON.parse(JSON.stringify(li.elements));
         }
@@ -2962,7 +2975,7 @@ Return ONLY JSON:
         setZoneConfig(prev => ({ ...prev, ...autoZC }));
         setActiveZones([]);
       }
-      videoZoneKeys = Object.keys(zonePhotos);
+      videoZoneKeys = Object.keys(zonePhotos).map(area => AREA_TO_ZONEKEY[area] || area);
     }
     loadEvent(ev, targetStep);
     if (videoZoneKeys.length > 0) {
@@ -2991,7 +3004,7 @@ Return ONLY JSON:
       photos: [],
       video: `https://www.youtube.com/embed/${videoId}`,
       desc: "",
-      enabledEls: Object.keys(tag.zonePhotos || {}),
+      enabledEls: Object.keys(tag.zonePhotos || {}).map(area => AREA_TO_ZONEKEY[area] || area),
       itemQtys: {},
       itemGrades: {},
       tags: [...(tag.styles || []), ...(tag.colors || [])].slice(0, 3)
