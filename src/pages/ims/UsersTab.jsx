@@ -107,7 +107,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   const STUDIO_SUBTABS = {
     design: [{id:"dealcheck",label:"Deal Check"},{id:"viewpricing",label:"View Pricing & Costs"},{id:"export",label:"Export PDF/PPT"}],
     library: [{id:"images",label:"Images"},{id:"videos",label:"Videos"},{id:"corrections",label:"Contributions"}],
-    settings: [{id:"venues",label:"Venues"},{id:"tags",label:"Tags"},{id:"clients",label:"Clients"},{id:"calendar",label:"Calendar"},{id:"zones",label:"Zones"},{id:"priority",label:"Photo Priority"}],
+    settings: [{id:"venues",label:"Venues"},{id:"tags",label:"Tags"},{id:"clients",label:"Clients"},{id:"calendar",label:"Calendar"},{id:"zones",label:"Zones"},{id:"priority",label:"Photo Priority"},{id:"departments",label:"Departments"}],
   };
   const roleTabs = settings?.roleTabs || {};
   const toggleRoleTab = (role, tabId) => {

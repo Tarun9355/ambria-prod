@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { SPACES, TAX_LABELS, DEFAULT_TAX_KEYS, taxOr, ZONE_META } from "../../../lib/studio/taxonomy";
 import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
+import { INV_CATS } from "../../../lib/inventory/constants";
 import { fetchCachedContracts, fetchSeason } from "../../../lib/ims/lms";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
@@ -34,6 +35,8 @@ export default function ManageSettings({ ctx }) {
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     // palettes
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
+    // department income mapping
+    catDeptMap, saveCatDeptMap, rcCats,
     // zones
     zoneDefs, setZoneDefs, saveZD, zoneLabelsD, addZoneWithAreaSync,
     // photo priority — saveFilterPriority is the reference handler; fall back to
@@ -508,7 +511,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"]];
+          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
@@ -789,6 +792,35 @@ export default function ManageSettings({ ctx }) {
         </div>
         <button onClick={()=>saveFilterPriority(DEFAULT_FILTER_PRIORITY)} style={{...S.btn(false),fontSize:11,marginTop:12}}>Reset to default</button>
       </div>}
+      {settingsView === "departments" && (() => {
+        const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
+        const map = catDeptMap || {};
+        // Keyword fallback (mirrors Deal Check) — shown as the default when a category isn't set.
+        const kw = (cat) => { const s = String(cat || "").toLowerCase(); if (s.includes("floral") || s.includes("flower")) return "Floral"; if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting"; if (s.includes("truss")) return "Tenting"; if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric"; if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting"; if (s.includes("transport") || s.includes("truck")) return "Transport"; if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture"; return "Structure"; };
+        // Categories to map: studio rate-card categories + IMS inventory categories (deduped by name).
+        const cats = [];
+        const seen = new Set();
+        [...(rcCats || []).map(c => c?.l).filter(Boolean), ...INV_CATS].forEach(name => { const k = String(name).toLowerCase().trim(); if (k && !seen.has(k)) { seen.add(k); cats.push(name); } });
+        const setCat = (name, dep) => { const k = String(name).toLowerCase().trim(); const next = { ...map }; if (dep) next[k] = dep; else delete next[k]; saveCatDeptMap(next); };
+        return <div style={{ maxWidth: 620 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: textP, marginBottom: 4 }}>🏦 Department Income mapping</div>
+          <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Set which department earns each category's income (used by Deal Check → Dept Income). "Auto" uses smart keyword matching. Manpower types & truss/fabric follow fixed rules.</div>
+          <div style={{ borderRadius: 10, border: `1px solid ${border}`, overflow: "hidden" }}>
+            {cats.map((name, i) => {
+              const k = String(name).toLowerCase().trim();
+              const val = map[k] || "";
+              return <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < cats.length - 1 ? `1px solid ${border}` : "none", background: cardBg }}>
+                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: textP }}>{name}</div>
+                <select value={val} onChange={e => setCat(name, e.target.value)} style={{ ...S.select, width: 180, marginBottom: 0, fontSize: 12 }}>
+                  <option value="">Auto ({kw(name)})</option>
+                  {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>;
+            })}
+          </div>
+          <div style={{ fontSize: 10, color: textS, marginTop: 10, lineHeight: 1.5 }}>Tip: a sub-category inherits its category's department. Truss steel → Tenting · masking/drape fabric → Fabric · genset → Lighting · transport → Transport · manpower by worker type — all handled automatically.</div>
+        </div>;
+      })()}
     </div>
   );
 }

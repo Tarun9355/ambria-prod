@@ -1056,6 +1056,11 @@ export default function StudioApp() {
     const data = { colourCatalogue: colours || imsColourCatalogue, paletteCatalogue: palettes || imsPaletteCatalogue };
     reliableSave(PALETTE_SK, JSON.stringify(data), "Palette catalogue").catch(() => {});
   }, [imsColourCatalogue, imsPaletteCatalogue]);
+  // Category → Department map (Deal Check department income). Stored in the settings table as a
+  // plain key→value row so the Deal Check rollup reads it; empty falls back to keyword matching.
+  const [catDeptMap, setCatDeptMap] = useState({});
+  useEffect(() => { (async () => { try { const v = await kvGet("categoryDepartments"); const p = typeof v === "string" ? JSON.parse(v) : v; if (p && typeof p === "object") setCatDeptMap(p); } catch { /* ignore */ } })(); }, []);
+  const saveCatDeptMap = useCallback((m) => { setCatDeptMap(m); reliableSave("categoryDepartments", JSON.stringify(m), "Category→Department").catch(() => {}); }, []);
   const [paintPickerTarget, setPaintPickerTarget] = useState(null);
   const [fabricPickerTarget, setFabricPickerTarget] = useState(null);
   const [dealCheckLoading, setDealCheckLoading] = useState(false);
@@ -4063,7 +4068,7 @@ Return ONLY JSON:
       for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch {} } }
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], venueParents, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {} });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], venueParents, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
@@ -4488,7 +4493,7 @@ Return ONLY JSON:
     notifications, setNotifications, notifOpen, setNotifOpen, notifLastRead, setNotifLastRead, unreadCount, markAllRead,
     filterPriority, setFilterPriority,
     // deal check
-    dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError,
+    dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,

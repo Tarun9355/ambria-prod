@@ -77,10 +77,13 @@ export default function DealCheckOverlay({ ctx }) {
           const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
           const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
-          // Category (rate-card OR inventory) → department, by keyword. Sub-cat already implies its category.
+          // Category (rate-card OR inventory) → department. First the admin-editable map
+          // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
+          const catDeptCfg = dealCheckData?.categoryDepartments || {};
           const catToDept = (cat) => {
-            const s = String(cat || "").toLowerCase();
+            const s = String(cat || "").toLowerCase().trim();
             if (!s) return "Structure";
+            if (catDeptCfg[s] && DEPTS.includes(catDeptCfg[s])) return catDeptCfg[s];
             if (s.includes("floral") || s.includes("flower")) return "Floral";
             if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting";
             if (s.includes("truss")) return "Tenting";
