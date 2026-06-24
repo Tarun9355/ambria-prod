@@ -784,8 +784,10 @@ export default function StudioBuild({ ctx }) {
                   <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Truss Qty</div>
                   <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
-                {zc.trT==="box"&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}} title="Front extended both sides by this many ft (front width = W + 2×ext). Rare.">Front ext (ft/side)</div>
+                {zc.trT==="box"&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
                   <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                {zc.trT==="box"&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
+                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
               {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
               {(() => {
@@ -1044,8 +1046,10 @@ export default function StudioBuild({ ctx }) {
                   <input type="number" value={dims[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>)}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss Qty</div>
                   <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="1"/></div>}
-                {zc.trT==="box"&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Front extended both sides by this many ft (front width = W + 2×ext). Rare.">Front ext (ft/side)</div>
+                {zc.trT==="box"&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
                   <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>}
+                {zc.trT==="box"&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
+                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={String(zc.dims?.H||0)}/></div>}
               </div>
               {/* ── §23 Truss Type selector + Height-anchor validation (custom zone) ── */}
               {(()=>{

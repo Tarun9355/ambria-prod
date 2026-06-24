@@ -199,9 +199,16 @@ const FLORAL_HARDPROP_DEFAULT = {
 function calcStructCost(zk, zc) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
-  // Optional FRONT EXTENSION (box only, rare): both front sides extended by trussFrontExt ft, so the
-  // effective front width = W + 2×ext (e.g. 12 + 5 + 5 = 22). Widens the top-2 footprint accordingly.
-  if (zc.trT === "box") { const wEff = (d.W || d.S || 0) + 2 * (Number(zc.trussFrontExt) || 0); const v = [d.L || 0, wEff, d.H || 0].sort((a, b) => b - a); r.truss = v[0] * v[1] * 50; }
+  if (zc.trT === "box") {
+    const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
+    r.truss = v[0] * v[1] * 50;
+    // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
+    // Single U rate (₹30/sqft) = extension length × extension height. Its own height (can differ from
+    // the box). The shared box-corner pillar saves material/fabric, NOT cost — so the rupee cost is the
+    // full Single U area for both sides.
+    const ext = Number(zc.trussFrontExt) || 0;
+    if (ext > 0) { const extH = Number(zc.trussFrontExtH) || (d.H || 0); r.truss += 2 * ext * extH * 30; }
+  }
   else if (zc.trT === "singleU") { r.truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
   // Multiple identical trusses in one zone/photo (e.g. 3× Single U) — cost scales by quantity.
   r.truss *= Math.max(1, zc.trussQty || 1);
@@ -241,7 +248,7 @@ function calcStructCost(zk, zc) {
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
-  return { dims, trT: p.tr || zm.defaultTruss || null, trussQty: p.trussQty || 1, trussFrontExt: p.trussFrontExt || 0, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
+  return { dims, trT: p.tr || zm.defaultTruss || null, trussQty: p.trussQty || 1, trussFrontExt: p.trussFrontExt || 0, trussFrontExtH: p.trussFrontExtH || 0, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
 }
 
 // ═══ Active soft-hold lookup (Deal Check inventory-status conflicts) — VERBATIM ═══
@@ -3796,7 +3803,7 @@ Return ONLY JSON:
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
-      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)" + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` +${zc.trussFrontExt}ft front ext/side` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
+      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)" + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
       if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
       if (zl.carpet > 0) structItems.push({ name: "Carpet (" + (zc.cpT === "new" ? "New ₹15" : "Old ₹7") + "/sqft)", total: zl.carpet });

@@ -386,6 +386,19 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   const pillarCount = topo.pillarCount || (topo.pillars||[]).length || 0;
   const curtainPillarCount = topo.frontPillarCount || pillarCount;
   const curtainPieces = curtainPillarCount * curtainsPerPillar;
+  // FRONT EXTENSION (box only, rare): each side is a Single-U wing = 1 beam (extLen) + 1 NEW outer
+  // pillar at height extH. The box's front-corner pillar is SHARED, so we don't re-count it (the
+  // "−1 pillar per side" rule). Adds liza wrap fabric + the 2 new pillars to material counts.
+  const extLen = Number(zc.trussFrontExt) || 0;
+  let extPillars = 0;
+  if (extLen > 0) {
+    const extH = Number(zc.trussFrontExtH) || (zc.dims?.H) || 0;
+    const extWrapRft = (2 * extLen) + (2 * extH); // 2 side beams + 2 new pillars (shared excluded)
+    const extWrapKg = Math.ceil(extWrapRft * (factors.kgPerRftWrap || 0.3) * 100) / 100;
+    lizaWrapKg = Math.round((lizaWrapKg + extWrapKg) * 100) / 100;
+    lizaKg = Math.round((lizaKg + extWrapKg) * 100) / 100;
+    extPillars = 2; // 1 new pillar per side
+  }
   // Multiple identical trusses in one zone → all physical counts (fabric pieces, liza, curtains,
   // pillars) scale by quantity. Per-truss dimensions (maskL/W, physL/W) stay as a single truss.
   const qty = Math.max(1, zc.trussQty || 1);
@@ -401,7 +414,7 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     curtainPillarCount: curtainPillarCount * qty,
     physL: topo.physicalL,
     physW: topo.physicalW,
-    pillarCount: pillarCount * qty,
+    pillarCount: (pillarCount + extPillars) * qty,
     density
   };
 };
