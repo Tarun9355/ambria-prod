@@ -390,7 +390,7 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   // pillar at height extH. The box's front-corner pillar is SHARED, so we don't re-count it (the
   // "−1 pillar per side" rule). Adds liza wrap fabric + the 2 new pillars to material counts.
   const extLen = Number(zc.trussFrontExt) || 0;
-  let extPillars = 0;
+  let extPillars = 0, extCurtains = 0, extMaskingPieces = 0;
   if (extLen > 0) {
     const extH = Number(zc.trussFrontExtH) || (zc.dims?.H) || 0;
     const extWrapRft = (2 * extLen) + (2 * extH); // 2 side beams + 2 new pillars (shared excluded)
@@ -398,20 +398,24 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     lizaWrapKg = Math.round((lizaWrapKg + extWrapKg) * 100) / 100;
     lizaKg = Math.round((lizaKg + extWrapKg) * 100) / 100;
     extPillars = 2; // 1 new pillar per side
+    // Curtains: each of the 2 new pillars gets a curtain set (shared pillars already counted).
+    extCurtains = extPillars * curtainsPerPillar;
+    // Wall masking: when masking is on, each wing gets a masked wall (extLen wide → 13ft panels).
+    if (zc.mkOn) extMaskingPieces = 2 * Math.max(1, Math.ceil(extLen / 13));
   }
   // Multiple identical trusses in one zone → all physical counts (fabric pieces, liza, curtains,
   // pillars) scale by quantity. Per-truss dimensions (maskL/W, physL/W) stay as a single truss.
   const qty = Math.max(1, zc.trussQty || 1);
   return {
-    maskingPieces: maskingPieces * qty,
+    maskingPieces: (maskingPieces + extMaskingPieces) * qty,
     maskL,             // §23 Phase 2.9e — outer footprint used for masking RFT
     maskW,
     lizaKg: Math.round(lizaKg * qty * 100) / 100,            // total (wrap + ceiling)
     lizaWrapKg: Math.round(lizaWrapKg * qty * 100) / 100,    // wrap component (always present for any truss)
     lizaCeilingKg: Math.round(lizaCeilingKg * qty * 100) / 100, // ceiling component (Full Box only, else 0)
     lizaModel,         // "none" | "wrap" | "wrap+ceiling"
-    curtainPieces: curtainPieces * qty,
-    curtainPillarCount: curtainPillarCount * qty,
+    curtainPieces: (curtainPieces + extCurtains) * qty,
+    curtainPillarCount: (curtainPillarCount + extPillars) * qty,
     physL: topo.physicalL,
     physW: topo.physicalW,
     pillarCount: (pillarCount + extPillars) * qty,
