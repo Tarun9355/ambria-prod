@@ -331,6 +331,28 @@ export default function DealCheckOverlay({ ctx }) {
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
         })();
 
+        // ── Build + auto-push the department snapshot to IMS whenever Deal Check is open (any tab),
+        // so Dept Ops mirrors Studio without anyone navigating to the Dept Income tab. ──
+        const dcSeasonMap = dealCheckData?.seasonMap || {};
+        const dcMandiMult = dealCheckData?.mandiPriceMultipliers || {};
+        const dcBookingDate = (dcCostRollup.fns || []).map(f => f.fnDate).filter(Boolean).sort()[0] || "";
+        const dcSeasonKey = dcSeasonMap[dcBookingDate] || "non_saya";
+        const dcSeasonInfo = { key: dcSeasonKey, mult: dcMandiMult[dcSeasonKey] || 1, label: (dcSeasonKey === "kings" || dcSeasonKey === "heavy_saya") ? "Saya" : dcSeasonKey === "competition" ? "Competition" : "Non-Saya" };
+        const buildDeptSnapshot = () => {
+          let floralPlan = { projected: 0, flowers: [] };
+          try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: dcSeasonInfo, capturedAt: Date.now() }; } catch {}
+          let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
+          const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
+          const SHARED = new Set(["Labours", "Supervisors"]);
+          const manpowerDetail = {};
+          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared }; }); });
+          return { income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo };
+        };
+        if (isSold && persistDeptSnapshot) {
+          const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));
+          if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot(buildDeptSnapshot()); } catch {} }, 200); }
+        }
+
         return (
           <div style={{position:"fixed",inset:0,zIndex:9000,background:"#0A0A14",display:"flex",flexDirection:"column"}}>
             {/* TOP BAR */}
@@ -1467,36 +1489,7 @@ export default function DealCheckOverlay({ ctx }) {
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                     ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
                   ].filter(([, v]) => v > 0);
-                  // Season factor (saya vs non-saya) for the booking — drives mandi-price multiplier
-                  // shown to the dept head ("non-saya → flower prices ×0.85").
-                  const seasonMapDC = dealCheckData?.seasonMap || {};
-                  const mandiMult = dealCheckData?.mandiPriceMultipliers || {};
-                  const bookingDate = (dcCostRollup.fns || []).map(f => f.fnDate).filter(Boolean).sort()[0] || "";
-                  const seasonKey = seasonMapDC[bookingDate] || "non_saya";
-                  const seasonInfo = { key: seasonKey, mult: mandiMult[seasonKey] || 1, label: seasonKey === "kings" || seasonKey === "heavy_saya" ? "Saya" : seasonKey === "competition" ? "Competition" : "Non-Saya" };
-                  const buildSnapshot = () => {
-                    let floralPlan = { projected: 0, flowers: [] };
-                    try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: seasonInfo, capturedAt: Date.now() }; } catch {}
-                    let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
-                    // Per-department manpower DETAIL — every crew type contributing to that dept's manpower
-                    // cost (mapped types in full + the dept's share of general labour/supervisors), so the
-                    // rows reconcile EXACTLY to the income card. count/rate editable; "shared" rows = the
-                    // split allocation. basis = how the system derived the count (incl. all multipliers).
-                    const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
-                    const SHARED = new Set(["Labours", "Supervisors"]);
-                    const manpowerDetail = {};
-                    (dcCostRollup.DEPTS || []).forEach(d => {
-                      manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => {
-                        const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type);
-                        return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared };
-                      });
-                    });
-                    return { income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: seasonInfo };
-                  };
-                  const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
-                  // Auto-push to IMS whenever the numbers change (deduped) — keeps Dept Ops in sync without a click.
-                  const _sig = JSON.stringify(depts.map(d => Math.round(dd[d]?.total || 0)));
-                  if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot && persistDeptSnapshot(buildSnapshot()); } catch {} }, 200); }
+                  const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildDeptSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
                   return (
                     <div style={{ padding: "4px" }}>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
