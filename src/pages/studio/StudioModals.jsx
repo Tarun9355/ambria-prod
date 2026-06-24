@@ -113,7 +113,7 @@ export default function StudioModals({ ctx }) {
             <div style={{marginBottom:16,padding:12,background:isDark?"#0F0F1A":"#F9FAFB",borderRadius:10,border:`1px solid ${border}`}}>
               <div style={{fontSize:11,fontWeight:700,color:accent,marginBottom:8}}>📐 Estimated Dimensions (ft)</div>
               <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                {[["Truss L","trussL"],["Truss W","trussW"],["Truss H","trussH"],["Floor L","floorL"],["Floor W","floorW"]].map(([l,f])=>
+                {[["Truss Width","trussW"],["Truss Depth","trussL"],["Truss Height","trussH"],["Floor Width","floorW"],["Floor Depth","floorL"]].map(([l,f])=>
                   <div key={f} style={{minWidth:70}}>
                     <div style={{fontSize:9,color:textS,fontWeight:600}}>{l}</div>
                     <input type="number" defaultValue={zoneUploadReview.dims?.[f]||0} onBlur={e=>setZoneUploadReview(p=>({...p,dims:{...p.dims,[f]:Number(e.target.value)||0}}))} key={"zur-"+f} style={{width:65,padding:"5px 8px",borderRadius:6,border:`1px solid ${border}`,background:isDark?"#0A0A14":"#fff",color:textP,fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/>

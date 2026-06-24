@@ -180,7 +180,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
-            {[["Qty *","qty","number",1],["Length (ft)","l","number","L"],["Width (ft)","w","number","W"],["Height (ft)","h","number","H"]].map(([lbl,key,t,ph])=>(
+            {[["Qty *","qty","number",1],["Width (ft)","w","number","W"],["Depth (ft)","l","number","D"],["Height (ft)","h","number","H"]].map(([lbl,key,t,ph])=>(
               <div key={key}>
                 <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:4}}>{lbl}</div>
                 <input type={t} value={key==="qty"?cForm.qty:(cForm.dims[key]||"")} onChange={e=>key==="qty"?setCForm(f=>({...f,qty:e.target.value})):setCForm(f=>({...f,dims:{...f.dims,[key]:e.target.value}}))}

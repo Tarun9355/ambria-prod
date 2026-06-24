@@ -1052,13 +1052,13 @@ Rules:
                 {form.loc && !INV_LOCATIONS.includes(form.loc) && <option value={form.loc}>{form.loc}</option>}
               </select>
             </div>
-            {/* Dimensions (L × W × H) — matches Edit form */}
+            {/* Dimensions (Width × Depth × Height) — matches Edit form */}
             <div className="col-span-2">
-              <label className="text-xs text-gray-500">Dimensions (L × W × H)</label>
+              <label className="text-xs text-gray-500">Dimensions (Width × Depth × Height)</label>
               <div className="grid grid-cols-4 gap-2 mt-1">
-                <input type="number" min="0" step="0.1" value={form.dimL || ""} onChange={(e) => setForm({ ...form, dimL: e.target.value })} placeholder="L" className="border rounded-lg px-3 py-2 text-sm" />
-                <input type="number" min="0" step="0.1" value={form.dimW || ""} onChange={(e) => setForm({ ...form, dimW: e.target.value })} placeholder="W" className="border rounded-lg px-3 py-2 text-sm" />
-                <input type="number" min="0" step="0.1" value={form.dimH || ""} onChange={(e) => setForm({ ...form, dimH: e.target.value })} placeholder="H" className="border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" min="0" step="0.1" value={form.dimW || ""} onChange={(e) => setForm({ ...form, dimW: e.target.value })} placeholder="Width" className="border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" min="0" step="0.1" value={form.dimL || ""} onChange={(e) => setForm({ ...form, dimL: e.target.value })} placeholder="Depth" className="border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" min="0" step="0.1" value={form.dimH || ""} onChange={(e) => setForm({ ...form, dimH: e.target.value })} placeholder="Height" className="border rounded-lg px-3 py-2 text-sm" />
                 <select value={form.dimUnit || "Feet"} onChange={(e) => setForm({ ...form, dimUnit: e.target.value })} className="border rounded-lg px-3 py-2 text-sm">
                   <option>Feet</option><option>Inches</option><option>Cm</option><option>Metre</option>
                 </select>
@@ -1067,10 +1067,10 @@ Rules:
 
             {/* Printable dimensions (optional) */}
             <div className="col-span-2">
-              <label className="text-xs text-gray-500">Printable Area (L × W) — <span className="italic">optional, for items with hollow/print space</span></label>
+              <label className="text-xs text-gray-500">Printable Area (Width × Depth) — <span className="italic">optional, for items with hollow/print space</span></label>
               <div className="grid grid-cols-4 gap-2 mt-1">
-                <input type="number" min="0" step="0.1" value={form.printL || ""} onChange={(e) => setForm({ ...form, printL: e.target.value })} placeholder="L" className="border rounded-lg px-3 py-2 text-sm" />
-                <input type="number" min="0" step="0.1" value={form.printW || ""} onChange={(e) => setForm({ ...form, printW: e.target.value })} placeholder="W" className="border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" min="0" step="0.1" value={form.printW || ""} onChange={(e) => setForm({ ...form, printW: e.target.value })} placeholder="Width" className="border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" min="0" step="0.1" value={form.printL || ""} onChange={(e) => setForm({ ...form, printL: e.target.value })} placeholder="Depth" className="border rounded-lg px-3 py-2 text-sm" />
                 <div></div>
                 <select value={form.printUnit || "Feet"} onChange={(e) => setForm({ ...form, printUnit: e.target.value })} className="border rounded-lg px-3 py-2 text-sm">
                   <option>Feet</option><option>Inches</option><option>Cm</option><option>Metre</option>
@@ -1330,13 +1330,13 @@ Rules:
 
               {/* Dimensions */}
               <div>
-                <label className="text-xs text-gray-500">Dimensions (L × W × H)</label>
+                <label className="text-xs text-gray-500">Dimensions (Width × Depth × Height)</label>
                 <div className={"grid grid-cols-4 gap-2 mt-1 " + (orig?._dimUnitMismatch ? "p-2 border border-orange-300 bg-orange-50 rounded-lg" : "")}>
-                  <input type="number" min="0" step="0.1" placeholder="L" value={editForm.dimL || ""} onChange={(e) => setEditForm((f) => ({ ...f, dimL: e.target.value }))}
+                  <input type="number" min="0" step="0.1" placeholder="Width" value={editForm.dimW || ""} onChange={(e) => setEditForm((f) => ({ ...f, dimW: e.target.value }))}
                     className="border rounded-lg px-3 py-2 text-sm" />
-                  <input type="number" min="0" step="0.1" placeholder="W" value={editForm.dimW || ""} onChange={(e) => setEditForm((f) => ({ ...f, dimW: e.target.value }))}
+                  <input type="number" min="0" step="0.1" placeholder="Depth" value={editForm.dimL || ""} onChange={(e) => setEditForm((f) => ({ ...f, dimL: e.target.value }))}
                     className="border rounded-lg px-3 py-2 text-sm" />
-                  <input type="number" min="0" step="0.1" placeholder="H" value={editForm.dimH || ""} onChange={(e) => setEditForm((f) => ({ ...f, dimH: e.target.value }))}
+                  <input type="number" min="0" step="0.1" placeholder="Height" value={editForm.dimH || ""} onChange={(e) => setEditForm((f) => ({ ...f, dimH: e.target.value }))}
                     className="border rounded-lg px-3 py-2 text-sm" />
                   <select value={editForm.dimUnit || "Feet"} onChange={(e) => setEditForm((f) => ({ ...f, dimUnit: e.target.value }))}
                     className="border rounded-lg px-3 py-2 text-sm">
@@ -1348,11 +1348,11 @@ Rules:
 
               {/* Printable area (optional) */}
               <div>
-                <label className="text-xs text-gray-500">Printable Area (L × W) — <span className="italic">optional</span></label>
+                <label className="text-xs text-gray-500">Printable Area (Width × Depth) — <span className="italic">optional</span></label>
                 <div className="grid grid-cols-4 gap-2 mt-1">
-                  <input type="number" min="0" step="0.1" placeholder="L" value={editForm.printL || ""} onChange={(e) => setEditForm((f) => ({ ...f, printL: e.target.value }))}
+                  <input type="number" min="0" step="0.1" placeholder="Width" value={editForm.printW || ""} onChange={(e) => setEditForm((f) => ({ ...f, printW: e.target.value }))}
                     className="border rounded-lg px-3 py-2 text-sm" />
-                  <input type="number" min="0" step="0.1" placeholder="W" value={editForm.printW || ""} onChange={(e) => setEditForm((f) => ({ ...f, printW: e.target.value }))}
+                  <input type="number" min="0" step="0.1" placeholder="Depth" value={editForm.printL || ""} onChange={(e) => setEditForm((f) => ({ ...f, printL: e.target.value }))}
                     className="border rounded-lg px-3 py-2 text-sm" />
                   <div></div>
                   <select value={editForm.printUnit || "Feet"} onChange={(e) => setEditForm((f) => ({ ...f, printUnit: e.target.value }))}

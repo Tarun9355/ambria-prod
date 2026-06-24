@@ -102,7 +102,7 @@ export default function DCTrussTab({ ctx }) {
                     return <div style={{padding:"50px 30px",textAlign:"center",color:textS,fontSize:11}}>
                       <div style={{fontSize:32,marginBottom:10}}>🏗️</div>
                       <div style={{marginBottom:4}}>No truss configured in any zone.</div>
-                      <div>Add Truss L/W/H dimensions in Build → any zone to see preview here.</div>
+                      <div>Add Truss Width/Depth/Height dimensions in Build → any zone to see preview here.</div>
                     </div>;
                   }
 
@@ -310,13 +310,13 @@ export default function DCTrussTab({ ctx }) {
                                         const dW = parseFloat(zCfg.dims?.W) || 0;
                                         const dH = parseFloat(zCfg.dims?.H) || 0;
                                         const demanded = pv.config === "u_only" || pv.config === "half_box"
-                                          ? `${pv.spanFt || Math.max(dL, dW)}L × ${dH}H ft`
-                                          : `${dL}L × ${dW}W × ${dH}H ft`;
+                                          ? `${pv.spanFt || Math.max(dL, dW)}W × ${dH}H ft`
+                                          : `${dW}W × ${dL}D × ${dH}H ft`;
                                         const phyL = topo.physicalL ? Math.round(topo.physicalL * 100) / 100 : 0;
                                         const phyW = topo.physicalW ? Math.round(topo.physicalW * 100) / 100 : 0;
                                         const physical = pv.config === "u_only"
-                                          ? `${phyL}L × ${dH}H ft`
-                                          : `${phyL}L × ${phyW}W × ${dH}H ft`;
+                                          ? `${phyL}W × ${dH}H ft`
+                                          : `${phyW}W × ${phyL}D × ${dH}H ft`;
                                         return <>
                                           <div style={{flex:1,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6}}>
                                             <div style={{color:textS,marginBottom:2}}>Customer demand</div>

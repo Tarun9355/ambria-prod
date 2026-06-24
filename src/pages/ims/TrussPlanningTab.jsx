@@ -736,9 +736,9 @@ function NewSimulationDialog({ selectedDate, trussInv, dateEntry, dateSimulation
                   <option value="half_box">Half Box</option>
                   <option value="full_box">Full Box</option>
                 </select>
-                <input type="number" value={z.L} onChange={e => updateZone(idx, "L", e.target.value)} placeholder="L" className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-xs" />
-                <input type="number" value={z.W} onChange={e => updateZone(idx, "W", e.target.value)} placeholder="W" className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-xs" />
-                <input type="number" value={z.H} onChange={e => updateZone(idx, "H", e.target.value)} placeholder="H" className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-xs" />
+                <input type="number" value={z.W} onChange={e => updateZone(idx, "W", e.target.value)} placeholder="Width" className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-xs" />
+                <input type="number" value={z.L} onChange={e => updateZone(idx, "L", e.target.value)} placeholder="Depth" className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-xs" />
+                <input type="number" value={z.H} onChange={e => updateZone(idx, "H", e.target.value)} placeholder="Height" className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-xs" />
                 {zones.length > 1 && <button onClick={() => removeZone(idx)} className="col-span-1 text-red-600 hover:text-red-800 text-xs">×</button>}
               </div>
             ))}

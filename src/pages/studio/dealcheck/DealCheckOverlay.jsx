@@ -987,7 +987,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       {photo ? <img src={photo} alt="" style={{width:44,height:44,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:44,height:44,borderRadius:6,background:`${ciColor}15`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{ciIcon}</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{fontSize:11,fontWeight:600,color:textP}}>{ciIcon} {ci.subCat} <span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:`${ciColor}20`,color:ciColor,fontWeight:700,marginLeft:4}}>{isP?"PRODUCTION":"BUYING"}</span></div>
-                                        <div style={{fontSize:9,color:textS,marginTop:2}}>× {ci.qty} · {ci.dims.l||"?"}L × {ci.dims.w||"?"}W × {ci.dims.h||"?"}H ft{ci.notes?` · ${ci.notes}`:""}</div>
+                                        <div style={{fontSize:9,color:textS,marginTop:2}}>× {ci.qty} · {ci.dims.w||"?"}W × {ci.dims.l||"?"}D × {ci.dims.h||"?"}H ft{ci.notes?` · ${ci.notes}`:""}</div>
                                       </div>
                                       <div style={{textAlign:"right"}}>
                                         <div style={{fontSize:12,fontWeight:700,color:ciColor}}>₹{Math.round(unitCost * ci.qty).toLocaleString("en-IN")}</div>
@@ -1058,7 +1058,7 @@ export default function DealCheckOverlay({ ctx }) {
                             {photo ? <img src={photo} alt="" style={{width:48,height:48,borderRadius:8,objectFit:"cover"}} /> : <div style={{width:48,height:48,borderRadius:8,background:`${ciColor}12`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{isP?"🏭":"🛒"}</div>}
                             <div style={{flex:1}}>
                               <div style={{fontSize:12,fontWeight:600,color:textP}}>{ci.cat ? `${ci.cat} → ` : ""}{ci.subCat}</div>
-                              <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims?.l?` · ${ci.dims.l}L × ${ci.dims.w}W × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
+                              <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims?.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
                               <div style={{fontSize:9,color:textS,marginTop:1}}>Zone: {ci.zoneKey}{refItem?` · Ref: ${refItem.name}`:""}</div>
                             </div>
                             <div style={{textAlign:"right"}}>

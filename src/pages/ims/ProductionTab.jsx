@@ -465,13 +465,13 @@ Compare the two and return ONLY JSON:
           </div>
           {/* Dimensions */}
           <div className="col-span-2">
-            <label className="text-xs text-gray-500">Dimensions (L × W × H)</label>
+            <label className="text-xs text-gray-500">Dimensions (Width × Depth × Height)</label>
             <div className="flex gap-2 mt-1 items-center">
-              <input value={form.dimensions.l} onChange={e => setForm({ ...form, dimensions: { ...form.dimensions, l: e.target.value } })}
-                className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Length" />
-              <span className="text-gray-400 text-lg font-light">×</span>
               <input value={form.dimensions.w} onChange={e => setForm({ ...form, dimensions: { ...form.dimensions, w: e.target.value } })}
                 className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Width" />
+              <span className="text-gray-400 text-lg font-light">×</span>
+              <input value={form.dimensions.l} onChange={e => setForm({ ...form, dimensions: { ...form.dimensions, l: e.target.value } })}
+                className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Depth" />
               <span className="text-gray-400 text-lg font-light">×</span>
               <input value={form.dimensions.h} onChange={e => setForm({ ...form, dimensions: { ...form.dimensions, h: e.target.value } })}
                 className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Height" />

@@ -203,7 +203,7 @@ export const resolveTrussConfig = (zc) => {
   const hasH = isFilled(dims.H);
   if (!hasL && !hasW && !hasH) return { config: null, source: "none" };
   if (!hasH && (hasL || hasW)) return { config: null, source: "invalid", error: "Truss Height is required" };
-  if (hasH && !hasL && !hasW) return { config: null, source: "invalid", error: "Need Length or Width along with Height" };
+  if (hasH && !hasL && !hasW) return { config: null, source: "invalid", error: "Need Width or Depth along with Height" };
   if (hasH && hasL && hasW) return { config: "full_box", source: "auto-3dim" };
   const spanFt = hasL ? L : W;
   if (zc.trussType === "u_only" || zc.trussType === "half_box") return { config: zc.trussType, source: "sales-pick", spanFt };

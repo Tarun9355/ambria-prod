@@ -687,7 +687,7 @@ export default function StudioBuild({ ctx }) {
           {/* Zone structure — always visible, costs hidden behind toggle */}
           {zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
             const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc);
-            const dl={L:"Length",W:"Width",H:"Height",S:"Size"};
+            const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],dims:{...(p[k]?.dims||{}),[d]:parseFloat(v)||0}}}));};
             const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
@@ -780,7 +780,7 @@ export default function StudioBuild({ ctx }) {
                 </div>;})()}
               </div>
               <div style={{display:"flex",gap:8,marginBottom:6}}>
-                {[["L","Length"],["W","Width"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
+                {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
                   <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Truss Qty</div>
                   <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
@@ -882,10 +882,10 @@ export default function StudioBuild({ ctx }) {
                 </div>}
               </div>
               <div style={{display:"flex",gap:8,marginBottom:4}}>
-                <div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Floor L (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
-                <div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Floor W (ft)</div>
+                <div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
+                <div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
+                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
                 <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:10,color:textS,lineHeight:1.3}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div></div>
               </div>
             </div>);
@@ -905,7 +905,7 @@ export default function StudioBuild({ ctx }) {
                     <span style={{fontSize:18}}>{ciIcon}</span>
                     <div style={{flex:1}}>
                       <div style={{fontSize:12,fontWeight:600,color:textP}}>{ci.subCat} <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
-                      <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims.l?` · ${ci.dims.l}L × ${ci.dims.w}W × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
+                      <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:13,fontWeight:700,color:ciColor}}>₹{Math.round(unitCost * (Number(ci.qty)||1)).toLocaleString("en-IN")}</div>
@@ -1042,7 +1042,7 @@ export default function StudioBuild({ ctx }) {
               </div>
               {/* Truss dims: L, W, H + Qty */}
               <div style={{display:"flex",gap:8,marginBottom:8}}>
-                {[["L","Length"],["W","Width"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
+                {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
                   <input type="number" value={dims[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>)}
                 {zc.trT&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss Qty</div>
                   <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="1"/></div>}
@@ -1110,10 +1110,10 @@ export default function StudioBuild({ ctx }) {
               </div>
               {/* Floor dims */}
               <div style={{display:"flex",gap:8}}>
-                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor L (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.L||"—"}/></div>
-                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor W (ft)</div>
+                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.W||"—"}/></div>
+                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
+                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.L||"—"}/></div>
                 <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:9,color:textS}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W"}</div></div>
               </div>
             </div>;
