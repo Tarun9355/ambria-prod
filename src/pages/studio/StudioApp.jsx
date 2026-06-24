@@ -1691,7 +1691,7 @@ export default function StudioApp() {
   const persistDeptSnapshot = useCallback(async (snap) => {
     const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
     if (!eo) return;
-    const merged = { ...eo, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || eo.floralPlan || null, manpowerPlan: snap.manpowerPlan || eo.manpowerPlan || [], deptSyncedAt: Date.now() };
+    const merged = { ...eo, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || eo.floralPlan || null, manpowerPlan: snap.manpowerPlan || eo.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, deptSeason: snap.season || null, deptSyncedAt: Date.now() };
     try { await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" }); } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);

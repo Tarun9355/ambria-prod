@@ -106,11 +106,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // ── Department-saved data on the event order ──
   const deptData = (sel?.deptOps && sel.deptOps[dept]) || {};
   const deptTypes = DEPT_MP[dept] || ["Labours"];
+  // Prefer the reconciling per-dept manpower detail from Deal Check (sums EXACTLY to the income card:
+  // mapped crew in full + this dept's share of general labour/supervisors). Each row carries the
+  // system count/rate/cost + basis (all multipliers) so the head sees how it was derived and edits it.
+  const mpDetail = (sel?.manpowerDetail && Array.isArray(sel.manpowerDetail[dept])) ? sel.manpowerDetail[dept] : null;
   const sysPlan = (Array.isArray(sel?.manpowerPlan) ? sel.manpowerPlan : []).filter(p => deptTypes.includes(p.type));
-  // Seed crew rows from the system's plan (count + basis); the head can override. Saved overrides win.
   const mpRows = Array.isArray(deptData.mp) ? deptData.mp
-    : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sys: p.count }))
-      : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sys: null })));
+    : (mpDetail && mpDetail.length ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0 }))
+      : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0) }))
+        : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0 }))));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
   const realMandi = deptData.realMandi || "";
 
@@ -124,7 +128,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     }));
   };
 
-  const mpCost = mpRows.reduce((s, r) => s + (Number(r.count) || 0) * (Number(r.rate) || 0), 0);
+  // Line cost reconciles to Studio: shared rows = fixed allocation; mapped rows scale by edits.
+  const lineCost = (r) => {
+    if (r.shared) return Number(r.sysCost) || 0;
+    const sc = Number(r.sysCount) || 0, sr = Number(r.sysRate) || 0, scost = Number(r.sysCost) || 0;
+    if (sc > 0 && sr > 0 && scost > 0) return Math.round(scost * ((Number(r.count) || 0) / sc) * ((Number(r.rate) || 0) / sr));
+    return (Number(r.count) || 0) * (Number(r.rate) || 0);
+  };
+  const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
   const projectedIncome = deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost); // full dept income from Deal Check, else local
@@ -266,21 +277,27 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Manpower plan (editable / override) */}
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-800">👷 Manpower plan <span className="text-xs font-normal text-gray-400">— system suggests; override if you can manage with fewer</span></span>
+                <span className="text-sm font-semibold text-gray-800">👷 Manpower plan <span className="text-xs font-normal text-gray-400">— from Studio; edit any field, it saves. Sum matches the income card.</span></span>
                 <span className="text-sm font-bold text-gray-900">{fmt(mpCost)}</span>
               </div>
               <div className="divide-y">
                 {mpRows.map((r, i) => {
-                  const overridden = r.sys != null && Number(r.count) !== Number(r.sys);
+                  const overridden = r.sysCount != null && Number(r.count) !== Number(r.sysCount);
                   return (
                     <div key={i} className="px-4 py-2.5">
                       <div className="flex items-center gap-3">
-                        <input value={r.type} onChange={e => setMp(i, "type", e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm font-medium" />
-                        <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 border rounded-lg px-2 py-1.5 text-sm text-center " + (overridden ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
-                        <div className="flex items-center gap-1"><span className="text-xs text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
-                        <div className="text-sm font-semibold text-gray-700 w-20 text-right">{fmt((Number(r.count) || 0) * (Number(r.rate) || 0))}</div>
+                        <span className="flex-1 text-sm font-medium text-gray-800">{r.type}{r.shared && <span className="ml-2 text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}</span>
+                        {r.shared ? (
+                          <span className="text-[10px] text-gray-400 mr-2">split allocation</span>
+                        ) : (<>
+                          <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 border rounded-lg px-2 py-1.5 text-sm text-center " + (overridden ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
+                          <div className="flex items-center gap-1"><span className="text-xs text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
+                        </>)}
+                        <div className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(lineCost(r))}</div>
                       </div>
-                      {(r.basis || r.sys != null) && <div className="text-[10px] text-gray-400 mt-1 pl-1">{r.sys != null && <span className={overridden ? "text-amber-600 font-semibold" : ""}>System: {r.sys}{overridden ? ` → you set ${r.count || 0}` : ""}</span>}{r.basis ? ` · ${r.basis}` : ""}</div>}
+                      <div className="text-[10px] text-gray-400 mt-1 pl-1">
+                        {r.shared ? "This dept's share of general labour/supervisors (split by income share)." : <>{r.sysCount != null && <span className={overridden ? "text-amber-600 font-semibold" : ""}>System: {r.sysCount}{overridden ? ` → you set ${r.count || 0}` : ""}</span>}{r.basis ? ` · ${r.basis}` : ""}</>}
+                      </div>
                     </div>
                   );
                 })}

@@ -81,6 +81,8 @@ export default function DealCheckOverlay({ ctx }) {
           const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
           const deptInv = {}; DEPTS.forEach(d => { deptInv[d] = []; }); // per-dept blocked-inventory detail (name/photo/qty/unit/total)
           const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
+          let mpRateByType = {}; // rate per type (for editable, reconciling crew rows in Dept Ops)
+          const deptMp = {}; DEPTS.forEach(d => { deptMp[d] = {}; }); // per-dept, per-type manpower cost (sums to dept.manpower)
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
           // Category (rate-card OR inventory) → department. First the admin-editable map
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
@@ -187,6 +189,7 @@ export default function DealCheckOverlay({ ctx }) {
               const vendorsMP = (dealCheckData?.vendors || []).filter(v => v && v.active && v.type);
               const rateByType = {};
               labourTypes.forEach(t => { const vs = vendorsMP.filter(v => v.type === t); rateByType[t] = vs.length > 0 ? vs.reduce((s,v)=>s+(v.avgRate||v.dayRate||0),0)/vs.length : (dihariSchemes[t]?.rate || 0); });
+              mpRateByType = rateByType;
               const shiftToTiming = (s) => { const sl = String(s||"").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening")||sl.includes("night")) return "evening"; return "day"; };
               const sizeFromMode = (mode, sz) => { if (mode === "flat" || !sz) return "medium"; return String(sz).toLowerCase() || "medium"; };
               const walkFn = (fn, cb) => {
@@ -295,10 +298,10 @@ export default function DealCheckOverlay({ ctx }) {
           Object.entries(mpByType).forEach(([t, amt]) => {
             if (!(amt > 0)) return;
             const target = MP_DEPT[t];
-            if (target) { addD(target, "manpower", amt); return; }
+            if (target) { addD(target, "manpower", amt); deptMp[target][t] = (deptMp[target][t] || 0) + amt; return; }
             // General Labours + Supervisors (and anything unmapped) → split by direct-income share
-            if (directTotal > 0) DEPTS.forEach(d => addD(d, "manpower", amt * (directOf(d) / directTotal)));
-            else addD("Structure", "manpower", amt);
+            if (directTotal > 0) DEPTS.forEach(d => { const sh = amt * (directOf(d) / directTotal); addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; });
+            else { addD("Structure", "manpower", amt); deptMp["Structure"][t] = (deptMp["Structure"][t] || 0) + amt; }
           });
           DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].manpower + dept[d].production + dept[d].buying; });
           // ── ACTUALS overlay (entered by dept heads in IMS) → exact cost. Real mandi replaces the
@@ -319,7 +322,7 @@ export default function DealCheckOverlay({ ctx }) {
           try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
-          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv,
+          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals };
         })();
 
@@ -1470,7 +1473,20 @@ export default function DealCheckOverlay({ ctx }) {
                     let floralPlan = { projected: 0, flowers: [] };
                     try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: seasonInfo, capturedAt: Date.now() }; } catch {}
                     let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
-                    return { income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, season: seasonInfo };
+                    // Per-department manpower DETAIL — every crew type contributing to that dept's manpower
+                    // cost (mapped types in full + the dept's share of general labour/supervisors), so the
+                    // rows reconcile EXACTLY to the income card. count/rate editable; "shared" rows = the
+                    // split allocation. basis = how the system derived the count (incl. all multipliers).
+                    const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
+                    const SHARED = new Set(["Labours", "Supervisors"]);
+                    const manpowerDetail = {};
+                    (dcCostRollup.DEPTS || []).forEach(d => {
+                      manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => {
+                        const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type);
+                        return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared };
+                      });
+                    });
+                    return { income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: seasonInfo };
                   };
                   const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
                   // Auto-push to IMS whenever the numbers change (deduped) — keeps Dept Ops in sync without a click.
