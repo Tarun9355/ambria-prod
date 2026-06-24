@@ -23,7 +23,7 @@ export default function ManageLibrary({ ctx }) {
     S, isDark, accent, border, textS, fmt,
     accentBg, accentText, textP, cardBg,
     // taxonomy
-    taxonomy, TAX_LABELS, imsPaletteCatalogue,
+    taxonomy, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData,
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
     allInhouseVenues, allOutdoorDB, customOutdoor,
@@ -133,7 +133,7 @@ export default function ManageLibrary({ ctx }) {
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
   // Permission gate for the Images / Videos / Contributions sub-views. If the current view isn't
   // allowed for this role, fall back to the first one that is.
-  const libAllowed = (v) => (studioLibraryAllowed ? studioLibraryAllowed(v) : true);
+  const libAllowed = (v) => v === "palettes" ? true : (studioLibraryAllowed ? studioLibraryAllowed(v) : true);
   useEffect(() => {
     if (!libAllowed(libView)) {
       const first = ["images", "videos", "corrections"].find(libAllowed);
@@ -1015,7 +1015,76 @@ export default function ManageLibrary({ ctx }) {
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libItems.length})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({(corrLog || []).length})</button>}
+        <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes ({imsPaletteCatalogue.length})</button>
       </div>
+      {libView === "palettes" && (
+        <div style={{ maxWidth: 650 }}>
+          {/* 🎨 Colour Catalogue */}
+          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px", marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🎨 Colour Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Master colours for paint picker + inventory base colour. ★ = Neutral (shows in every palette).</div></div>
+              <button onClick={() => { const next = [...imsColourCatalogue, { name: "New Colour", hex: "#CCCCCC", isNeutral: false }]; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Colour</button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {imsColourCatalogue.map((c, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 8, border: `1px solid ${c.isNeutral ? accent : border}`, background: c.isNeutral ? `${accent}08` : "transparent" }}>
+                  <input type="color" value={c.hex || "#ccc"} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], hex: e.target.value }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ width: 20, height: 20, border: "none", cursor: "pointer", borderRadius: 4, padding: 0 }} />
+                  <input type="text" value={c.name || ""} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], name: e.target.value }; setImsColourCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ border: "none", background: "transparent", color: textP, fontSize: 11, fontWeight: 500, width: 80, outline: "none" }} />
+                  <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ fontSize: 12, cursor: "pointer", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
+                  <span onClick={() => { const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ fontSize: 10, cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* 🌈 Palette Catalogue */}
+          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🌈 Palette Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Named themes for salesperson to pick per function. Drives the Build screen colour picker + library filter.</div></div>
+              <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
+            </div>
+            {imsPaletteCatalogue.map((p, pi) => (
+              <div key={pi} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, marginBottom: 8, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 13, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
+                  <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "2px 8px" }}>🗑</span>
+                </div>
+                <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks primary colour(s) — you can star more than one — which drive Build photo order):</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {imsColourCatalogue.filter(c => !c.isNeutral).map(c => {
+                    const isAnchor = (p.anchorColours || []).includes(c.name);
+                    const primaries = Array.isArray(p.primaryColours) ? p.primaryColours : (p.primaryColour ? [p.primaryColour] : []);
+                    const isPrimary = primaries.includes(c.name);
+                    const toggleAnchor = () => {
+                      const anchors = p.anchorColours || [];
+                      const nextA = isAnchor ? anchors.filter(a => a !== c.name) : [...anchors, c.name];
+                      const next = [...imsPaletteCatalogue];
+                      next[pi] = { ...next[pi], anchorColours: nextA, primaryColours: isAnchor ? primaries.filter(x => x !== c.name) : primaries };
+                      delete next[pi].primaryColour;
+                      setImsPaletteCatalogue(next); savePaletteData(null, next);
+                    };
+                    const setPrimary = (e) => {
+                      e.stopPropagation();
+                      const nextP = isPrimary ? primaries.filter(x => x !== c.name) : [...primaries, c.name];
+                      const next = [...imsPaletteCatalogue];
+                      next[pi] = { ...next[pi], primaryColours: nextP };
+                      delete next[pi].primaryColour;
+                      if (!isPrimary && !isAnchor) next[pi].anchorColours = [...(p.anchorColours || []), c.name];
+                      setImsPaletteCatalogue(next); savePaletteData(null, next);
+                    };
+                    return <span key={c.name} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: `1px solid ${isPrimary ? "#C9A96E" : isAnchor ? accent : border}`, background: isPrimary ? "rgba(201,169,110,0.18)" : isAnchor ? `${accent}18` : "transparent", color: isPrimary ? "#C9A96E" : isAnchor ? accent : textS }}>
+                      <span onClick={toggleAnchor} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 3, background: c.hex || "#ccc", display: "inline-block", border: "1px solid rgba(0,0,0,0.1)" }} />
+                        {c.name}
+                      </span>
+                      {isAnchor && <span onClick={setPrimary} title={isPrimary ? "Primary colour (tap to unset)" : "Mark as primary"} style={{ cursor: "pointer", fontSize: 11, color: isPrimary ? "#C9A96E" : textS }}>{isPrimary ? "★" : "☆"}</span>}
+                    </span>;
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Content */}
       {libView === "corrections" && CorrectionsPanel()}
       {libView === "images" && LibraryBrowse()}
