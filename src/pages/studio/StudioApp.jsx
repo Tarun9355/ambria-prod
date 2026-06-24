@@ -1695,6 +1695,15 @@ export default function StudioApp() {
     try { await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" }); } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
+  // Read back the dept-head ACTUALS (real mandi + on-site expenses) that IMS wrote onto the event
+  // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
+  const [dcEoActuals, setDcEoActuals] = useState(null);
+  const refreshDcEoActuals = useCallback(async () => {
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo) { setDcEoActuals(null); return; }
+    try { const { data } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle(); const d = data?.data; setDcEoActuals(d ? { deptOps: d.deptOps || {}, floralPlan: d.floralPlan || null } : null); }
+    catch { setDcEoActuals(null); }
+  }, [eventOrders, activeClientId, clientName]);
   const saveScanHistory = useCallback(async (nh) => { setScanHistory(nh); await reliableSave(SCAN_HIST_SK, JSON.stringify(nh), "Scan history"); }, []);
   const saveYtTags = useCallback(async (nt) => { setYtVideoTags(nt); await reliableSave(YT_TAG_SK, JSON.stringify(nt), "Video tags"); }, []);
 
@@ -4613,7 +4622,7 @@ Return ONLY JSON:
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     writeStudioTrussSoftHolds,

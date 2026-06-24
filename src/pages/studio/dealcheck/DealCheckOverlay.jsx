@@ -5,7 +5,7 @@
 // bodies. The 7 large sub-tabs (inventory / truss / florals / manpower /
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
@@ -41,8 +41,11 @@ export default function DealCheckOverlay({ ctx }) {
     // orchestration + persistence
     openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     // misc
-    showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot,
+    showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
+
+  // Pull the latest dept-head actuals (IMS) whenever Deal Check opens for this client.
+  useEffect(() => { refreshDcEoActuals && refreshDcEoActuals(); }, [activeClientId]);
 
   if (!(authUser && true)) return null;
 
@@ -297,14 +300,26 @@ export default function DealCheckOverlay({ ctx }) {
             else addD("Structure", "manpower", amt);
           });
           DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].manpower + dept[d].production + dept[d].buying; });
+          // ── ACTUALS overlay (entered by dept heads in IMS) → exact cost. Real mandi replaces the
+          // projected florals; on-site expenses are added. Margin recomputes on the exact figure. ──
+          const aDeptOps = dcEoActuals?.deptOps || {};
+          const actualMandi = Number(aDeptOps?.Floral?.realMandi) || 0;
+          let actualExpenses = 0;
+          Object.values(aDeptOps).forEach(o => { (o?.expenses || []).forEach(e => { actualExpenses += Number(e.amount) || 0; }); });
+          const hasActuals = actualMandi > 0 || actualExpenses > 0;
+          const effFlorals = actualMandi > 0 ? actualMandi : florals;
           const base = rental + florals + transport + manpower + truss + buyTotal + produceTotal;
-          const gyvFixed = Math.round(base * 0.05);
-          const bufferCost = Math.round(base * 0.03);
-          const grand = base + gyvFixed + bufferCost;
+          const baseActual = rental + effFlorals + transport + manpower + truss + buyTotal + produceTotal + actualExpenses;
+          const gyvFixed = Math.round((hasActuals ? baseActual : base) * 0.05);
+          const bufferCost = Math.round((hasActuals ? baseActual : base) * 0.03);
+          const grand = base + Math.round(base * 0.05) + Math.round(base * 0.03);
+          const grandActual = baseActual + gyvFixed + bufferCost;
           let clientRevenue = 0;
           try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
-          const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - grand) / clientRevenue) * 100) : 0;
-          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv };
+          const effGrand = hasActuals ? grandActual : grand;
+          const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
+          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv,
+            hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals };
         })();
 
         return (
@@ -1266,7 +1281,9 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseCost, gyvFixed: gyvCost, bufferCost, grand: grandWithOverheads, clientRevenue, fns } = dcCostRollup;
+                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, grand: grandProj, clientRevenue, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals } = dcCostRollup;
+                  const baseCost = hasActuals ? baseActual : baseProj;
+                  const grandWithOverheads = hasActuals ? grandActual : grandProj;
                   const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
                   const gyvPct = 5;
                   const bufferPct = 3;
@@ -1274,11 +1291,12 @@ export default function DealCheckOverlay({ ctx }) {
                   const rows = [
                     { label: "📦 Rental",    value: rental },
                     { label: "🏗️ Truss",     value: truss },
-                    { label: "🌸 Florals",   value: florals },
+                    { label: actualMandi > 0 ? "🌸 Florals (ACTUAL)" : "🌸 Florals", value: actualMandi > 0 ? actualMandi : florals, note: actualMandi > 0 ? `actual mandi · projected was ${fmt(projFlorals)}` : null },
                     { label: "🚚 Transport", value: transport },
                     { label: "👷 Manpower",  value: manpower },
                     { label: "🛒 Buying",    value: buyTotal },
                     { label: "🏭 Production",value: produceTotal },
+                    ...(actualExpenses > 0 ? [{ label: "🧾 On-site expenses (ACTUAL)", value: actualExpenses }] : []),
                   ];
 
                   return (
@@ -1289,8 +1307,8 @@ export default function DealCheckOverlay({ ctx }) {
                         <div style={{display:"flex",flexDirection:"column"}}>
                           {rows.map((r, i) => (
                             <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 14px",borderTop:`1px solid ${border}22`,fontSize:11}}>
-                              <span style={{color:textS}}>{r.label}</span>
-                              <span style={{color:"#fff",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(r.value)}</span>
+                              <span style={{color:r.note?"#10B981":textS}}>{r.label}{r.note && <span style={{display:"block",fontSize:9,color:textS,fontWeight:400}}>{r.note}</span>}</span>
+                              <span style={{color:r.note?"#10B981":"#fff",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(r.value)}</span>
                             </div>
                           ))}
                           <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}`,fontSize:12,fontWeight:700}}>
@@ -1477,7 +1495,9 @@ export default function DealCheckOverlay({ ctx }) {
             {/* BOTTOM STRIP — Project total + 6 sub-cost chips + Save Draft (Patch 5: live numbers wired) */}
             {(() => {
               // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: total, gyvFixed, bufferCost, grand: grandWithOverheads, clientRevenue: stripRevenue, profitPct: stripProfitPct } = dcCostRollup;
+              const { rental, transport, manpower, truss, buyTotal, produceTotal, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj } = dcCostRollup;
+              const florals = hasActuals ? effFlorals : dcCostRollup.florals;       // show actual mandi once logged
+              const grandWithOverheads = hasActuals ? grandActual : grandProj;
               const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
               const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "—";
               const onSaveDraft = async () => {
