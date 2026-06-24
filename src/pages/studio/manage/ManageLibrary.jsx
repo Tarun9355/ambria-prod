@@ -54,7 +54,7 @@ export default function ManageLibrary({ ctx }) {
     fetchCldFolders, cldNavigate, cldGoBack, handleCldUpload, handleCldBulkDelete, handleCldDeleteFolder,
     // ═══ VIDEOS SUBSYSTEM ═══
     allVideos, ytVideos, loadAllYT, ytLoading, ytSearch, setYtSearch, ytFilterPL,
-    ytVideoTags, saveYtTags, ytTagEdit, setYtTagEdit, aiTaggingVideo, aiTagVideo,
+    ytVideoTags, saveYtTags, ytTagEdit, setYtTagEdit, aiTaggingVideo, aiTagVideo, aiTagVideoSave,
     aiVideoDraft, setAiVideoDraft, untaggedVideoCount, hiddenVideos, saveHiddenVideos,
     manualVideos, saveManualVideos, showHidden, setShowHidden, lastVisitTs,
     ytPicker, setYtPicker, getPhotos, ZONE_ICONS,
@@ -1197,8 +1197,7 @@ export default function ManageLibrary({ ctx }) {
                       setYtPicker(null);
                     }
                   } else {
-                    if(isEditing&&hasDraft)setAiVideoDraft(null);
-                    setYtTagEdit(isEditing?null:v.id);
+                    setBigTagVid(v.id); // open the full-screen editor (play + tag + hide)
                   }
                 }}>
                   <img src={v.thumb} alt={v.title} loading="lazy" style={{width:"100%",height:140,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
@@ -1231,11 +1230,9 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4,gap:6}}>
                     <div style={{fontSize:9,color:textS}}>{v.date}</div>
                     <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                      {!hasTag&&!isEditing&&<>
-                        <span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>
-                        <button onClick={(e)=>{e.stopPropagation();aiTagVideo(v.id);}} disabled={aiTaggingVideo===v.id} style={{padding:"2px 8px",borderRadius:6,border:"none",background:aiTaggingVideo===v.id?"#C9A96E44":"#C9A96E",color:aiTaggingVideo===v.id?"#C9A96E":"#1a1a2e",fontSize:9,fontWeight:600,cursor:aiTaggingVideo===v.id?"wait":"pointer"}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
-                      </>}
-                      <button onClick={(e)=>{e.stopPropagation();setBigTagVid(v.id);}} title="Open the full-screen tag editor (big photo scrollers per zone)" style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${accent}`,background:`${accent}12`,color:accent,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖥 Big editor</button>
+                      {!hasTag&&<span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>}
+                      {hiddenVideos[v.id]&&<span style={{fontSize:9,color:textS,fontWeight:600}}>🙈 Hidden</span>}
+                      <button onClick={(e)=>{e.stopPropagation();setBigTagVid(v.id);}} title="Open the full-screen editor — play, tag, pick zone photos, hide" style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${accent}`,background:`${accent}12`,color:accent,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖥 Open editor</button>
                     </div>
                   </div>
                 </div>
@@ -1554,10 +1551,18 @@ export default function ManageLibrary({ ctx }) {
                 <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🎬 {v.title || "Video"}</div>
                 <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>{assigned} of {zones.length} zones have a photo · changes save instantly</div>
               </div>
+              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🤖 AI Tag"}</button>
+              <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
               <button onClick={() => { const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() } }; saveYtTags(nt); logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>
             <div style={{ padding: "16px 22px" }}>
+              {/* Playable video — watch to see what elements it includes before tagging */}
+              <div style={{ marginBottom: 16, borderRadius: 12, overflow: "hidden", background: "#000", maxWidth: 760, aspectRatio: "16/9" }}>
+                {v.source === "cloudinary" && v.videoUrl
+                  ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
+                  : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} />}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginBottom: 18 }}>
                 <div><div style={lbl}>Tier</div><div style={chipRow}>{["Silver", "Gold", "Platinum"].map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
                 <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>

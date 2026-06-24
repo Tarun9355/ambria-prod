@@ -2793,6 +2793,22 @@ Return ONLY JSON:
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI]);
 
+  // Direct-save variant for the full-screen editor: AI-tag a single video and save immediately
+  // (no draft step), so the big editor just shows the filled tags to review/adjust.
+  const aiTagVideoSave = useCallback(async (videoId) => {
+    if (aiTaggingVideo) return;
+    setAiTaggingVideo(videoId);
+    showMsg("🤖 AI analyzing video...", "blue");
+    try {
+      const newTag = await buildVideoTagFromAI(videoId);
+      if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
+      const assigned = Object.keys(newTag.zonePhotos || {}).length;
+      await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "AI", _savedAt: Date.now() } });
+      showMsg(`✓ AI tagged + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & adjust below`, "green");
+    } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
+    setAiTaggingVideo(null);
+  }, [aiTaggingVideo, buildVideoTagFromAI, ytVideoTags, saveYtTags, authUser]);
+
   // Bulk AI-tag every untagged video (app-wide, like photo bulk). Saves directly with _aiTagged so
   // the team reviews/verifies after — keeps going while you move around; stoppable; resumable.
   const stopBulkTagVideos = useCallback(() => { bulkVidStop.current = true; }, []);
@@ -4452,7 +4468,7 @@ Return ONLY JSON:
     ytFilterVenue, setYtFilterVenue, ytFilterFn, setYtFilterFn, ytFilterTier, setYtFilterTier, ytFilterLinked, setYtFilterLinked,
     ytFilterStyle, setYtFilterStyle, ytFilterColor, setYtFilterColor, ytFilterIO, setYtFilterIO, ytPhotoUrl, setYtPhotoUrl,
     manualVideos, setManualVideos, hiddenVideos, setHiddenVideos, showHidden, setShowHidden, lastVisitTs, setLastVisitTs,
-    saveManualVideos, saveHiddenVideos, aiTagVideo, getPhotos, ZONE_ICONS,
+    saveManualVideos, saveHiddenVideos, aiTagVideo, aiTagVideoSave, getPhotos, ZONE_ICONS,
     // cloudinary photo browser
     cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading, setCldLoading,
     cldUploading, setCldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
