@@ -1527,7 +1527,7 @@ export default function DealCheckOverlay({ ctx }) {
             {/* BOTTOM STRIP — Project total + 6 sub-cost chips + Save Draft (Patch 5: live numbers wired) */}
             {(() => {
               // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { rental, transport, truss, buyTotal, produceTotal, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj, mpDelta, effManpower } = dcCostRollup;
+              const { rental, transport, truss, buyTotal, produceTotal, base: total, gyvFixed, bufferCost, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj, mpDelta, effManpower } = dcCostRollup;
               const manpower = mpDelta ? effManpower : dcCostRollup.manpower;       // reflect dept-head crew overrides
               const florals = hasActuals ? effFlorals : dcCostRollup.florals;       // show actual mandi once logged
               const grandWithOverheads = hasActuals ? grandActual : grandProj;
