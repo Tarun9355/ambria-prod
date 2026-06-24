@@ -3266,6 +3266,9 @@ Return ONLY JSON:
         status: "pending"
       };
       saveEventOrders([...eventOrders, eo]);
+      // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
+      // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
+      supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[markSold] event_orders table sync failed:", error.message); }).catch(() => {});
       logActivity("booking", `🎉 ${client.name} — Booking confirmed by ${authUser?.name || "—"}`);
       setShowSoldConfetti(true);
       setTimeout(() => setShowSoldConfetti(false), 4000);

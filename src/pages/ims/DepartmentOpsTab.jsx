@@ -41,18 +41,24 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [dept, setDept] = useState(roleDept || "Floral");
   const [search, setSearch] = useState("");
   const [selId, setSelId] = useState(null);
+  const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD selected on the calendar (or "")
+  const now = new Date();
+  const [calRef, setCalRef] = useState({ y: now.getFullYear(), m: now.getMonth() }); // visible calendar month
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   const today = new Date().toISOString().slice(0, 10);
 
-  // Event list — search + sorted by date, upcoming first.
+  // All events (date-tagged) — drives both the calendar and the list.
+  const allEvents = useMemo(() => (eventOrders || []).map(eo => ({ eo, date: eventDate(eo) })), [eventOrders]);
+  const eventDatesSet = useMemo(() => new Set(allEvents.map(e => e.date).filter(Boolean)), [allEvents]);
+
+  // Event list — search + optional date filter, sorted by date (upcoming first).
   const events = useMemo(() => {
     const q = search.toLowerCase().trim();
-    return (eventOrders || [])
-      .filter(eo => !q || (eo.clientName || "").toLowerCase().includes(q) || (eo.functionsDetail?.[0]?.venue || eo.venue || "").toLowerCase().includes(q))
-      .map(eo => ({ eo, date: eventDate(eo) }))
+    return allEvents
+      .filter(({ eo, date }) => (!q || (eo.clientName || "").toLowerCase().includes(q) || (eo.functionsDetail?.[0]?.venue || eo.venue || "").toLowerCase().includes(q)) && (!dateFilter || date === dateFilter))
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
-  }, [eventOrders, search]);
+  }, [allEvents, search, dateFilter]);
 
   const sel = (eventOrders || []).find(e => e.id === selId);
   const selDateStr = sel ? eventDate(sel) : "";
@@ -124,6 +130,46 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             </select>
           )}
         </div>
+        {/* Mini calendar — booked dates highlighted; click a date to filter */}
+        {(() => {
+          const { y, m } = calRef;
+          const first = new Date(y, m, 1);
+          const startDow = first.getDay();
+          const daysInMonth = new Date(y, m + 1, 0).getDate();
+          const monthLabel = first.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+          const pad = (n) => String(n).padStart(2, "0");
+          const prev = () => setCalRef(m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 });
+          const next = () => setCalRef(m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 });
+          const cells = [];
+          for (let i = 0; i < startDow; i++) cells.push(null);
+          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+          return (
+            <div className="border rounded-lg p-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <button onClick={prev} className="px-2 text-gray-500 hover:text-gray-800 text-sm">‹</button>
+                <span className="text-xs font-semibold text-gray-700">{monthLabel}</span>
+                <button onClick={next} className="px-2 text-gray-500 hover:text-gray-800 text-sm">›</button>
+              </div>
+              <div className="grid grid-cols-7 gap-0.5 text-center">
+                {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <div key={i} className="text-[9px] text-gray-400 font-semibold">{d}</div>)}
+                {cells.map((d, i) => {
+                  if (!d) return <div key={i} />;
+                  const ds = `${y}-${pad(m + 1)}-${pad(d)}`;
+                  const hasEv = eventDatesSet.has(ds);
+                  const isSel = dateFilter === ds;
+                  const isToday = ds === today;
+                  return (
+                    <button key={i} onClick={() => setDateFilter(isSel ? "" : ds)} disabled={!hasEv}
+                      className={"text-[11px] rounded h-6 flex items-center justify-center relative " + (isSel ? "bg-indigo-600 text-white font-bold" : hasEv ? "bg-indigo-50 text-indigo-700 font-semibold hover:bg-indigo-100 cursor-pointer" : "text-gray-300 cursor-default") + (isToday && !isSel ? " ring-1 ring-amber-400" : "")}>
+                      {d}{hasEv && !isSel && <span className="absolute bottom-0.5 w-1 h-1 rounded-full bg-indigo-500" />}
+                    </button>
+                  );
+                })}
+              </div>
+              {dateFilter && <button onClick={() => setDateFilter("")} className="mt-1.5 w-full text-[10px] text-indigo-600 hover:text-indigo-800 font-medium">✕ Showing {dateFilter} — show all</button>}
+            </div>
+          );
+        })()}
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Search event / venue…" className="w-full border rounded-lg px-3 py-2 text-sm" />
         <div className="space-y-1.5 max-h-[60vh] overflow-y-auto pr-1">
           {events.length === 0 && <div className="text-xs text-gray-400 py-4 text-center">No events.</div>}
