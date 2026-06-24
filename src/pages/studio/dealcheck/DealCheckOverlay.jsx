@@ -5,7 +5,7 @@
 // bodies. The 7 large sub-tabs (inventory / truss / florals / manpower /
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
@@ -15,6 +15,7 @@ import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fi
 
 export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
+  const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const {
     // chrome / theme
     border, textS, textP, accent, fmt,
@@ -1458,17 +1459,27 @@ export default function DealCheckOverlay({ ctx }) {
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                     ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
                   ].filter(([, v]) => v > 0);
-                  const syncToOps = async () => {
+                  // Season factor (saya vs non-saya) for the booking — drives mandi-price multiplier
+                  // shown to the dept head ("non-saya → flower prices ×0.85").
+                  const seasonMapDC = dealCheckData?.seasonMap || {};
+                  const mandiMult = dealCheckData?.mandiPriceMultipliers || {};
+                  const bookingDate = (dcCostRollup.fns || []).map(f => f.fnDate).filter(Boolean).sort()[0] || "";
+                  const seasonKey = seasonMapDC[bookingDate] || "non_saya";
+                  const seasonInfo = { key: seasonKey, mult: mandiMult[seasonKey] || 1, label: seasonKey === "kings" || seasonKey === "heavy_saya" ? "Saya" : seasonKey === "competition" ? "Competition" : "Non-Saya" };
+                  const buildSnapshot = () => {
                     let floralPlan = { projected: 0, flowers: [] };
-                    try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() }; } catch {}
+                    try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: seasonInfo, capturedAt: Date.now() }; } catch {}
                     let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
-                    await (persistDeptSnapshot && persistDeptSnapshot({ income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan }));
-                    showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green");
+                    return { income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, season: seasonInfo };
                   };
+                  const syncToOps = async () => { await (persistDeptSnapshot && persistDeptSnapshot(buildSnapshot())); showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"); };
+                  // Auto-push to IMS whenever the numbers change (deduped) — keeps Dept Ops in sync without a click.
+                  const _sig = JSON.stringify(depts.map(d => Math.round(dd[d]?.total || 0)));
+                  if (deptSyncRef.current !== _sig) { deptSyncRef.current = _sig; setTimeout(() => { try { persistDeptSnapshot && persistDeptSnapshot(buildSnapshot()); } catch {} }, 200); }
                   return (
                     <div style={{ padding: "4px" }}>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                        <button onClick={syncToOps} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${accent}`, background: `${accent}18`, color: accent, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📤 Sync to IMS Dept Ops</button>
+                        <span style={{ fontSize: 10, color: textS, alignSelf: "center", marginRight: 8 }}>Auto-syncs to IMS Dept Ops</span><button onClick={syncToOps} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${accent}`, background: `${accent}18`, color: accent, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📤 Sync now</button>
                       </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
                         {depts.map(d => { const on = dcDept === d; const t = dd[d]?.total || 0; return (

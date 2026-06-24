@@ -305,6 +305,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       {/* Projected mandi breakdown — same as Deal Check */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden">
                         <div className="px-3 py-2 bg-emerald-100/60 flex justify-between text-xs font-semibold text-emerald-900"><span>🌸 Projected mandi (from Deal Check)</span><span>{fmt(projected)}</span></div>
+                        {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 text-[10px] text-emerald-700 bg-emerald-50/60 border-b border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
                         {flowers.length === 0 ? <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. (Run Deal Check before marking Sold to capture it.)</div>
                         : <div className="divide-y">{flowers.map((f, i) => <div key={i} className="flex justify-between px-3 py-1.5 text-xs"><span className="text-gray-700">{f.name} <span className="text-gray-400">×{f.qty}{f.unit ? " " + f.unit : ""}</span></span><span className="font-medium text-gray-800">{fmt(f.cost)}</span></div>)}</div>}
                       </div>
