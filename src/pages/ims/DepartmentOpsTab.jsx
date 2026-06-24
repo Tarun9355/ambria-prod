@@ -30,7 +30,18 @@ const kwDept = (cat) => {
   return "Structure";
 };
 
-export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, blocks, settings, authUser }) {
+// Suggested essential tools per department — one-tap to add to the reusable template.
+const DEFAULT_TOOLS = {
+  Floral: ["Ladder", "Tripal", "Buckets", "Oasis", "Scissors", "Binding wire", "Cutter"],
+  Fabric: ["Nails", "Hammer", "Stapler + pins", "Safety pins", "Needle & thread", "Scissors"],
+  Tenting: ["Ropes", "Hammer", "Spanner set", "Cable ties", "Tripal"],
+  Structure: ["Drill machine", "Screws", "Spanner set", "Nuts & bolts", "Spirit level"],
+  Lighting: ["Extension boards", "Cable ties", "Line tester", "Insulation tape", "Bulbs spare"],
+  Transport: ["Ropes", "Tarpaulin", "Trolley", "Straps"],
+  Furniture: ["Trolley", "Covers", "Cleaning cloth", "Cushion spares"],
+};
+
+export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, blocks, settings, setSettings, authUser }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => { const k = String(cat || "").toLowerCase().trim(); if (catDeptCfg[k] && DEPTS.includes(catDeptCfg[k])) return catDeptCfg[k]; return kwDept(cat); };
   const dihari = settings?.dihariSchemes || {};
@@ -44,6 +55,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD selected on the calendar (or "")
   const now = new Date();
   const [calRef, setCalRef] = useState({ y: now.getFullYear(), m: now.getMonth() }); // visible calendar month
+  const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
+  const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
+  const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   const today = new Date().toISOString().slice(0, 10);
@@ -139,14 +153,72 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
   const projectedIncome = Math.round(deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost)); // full dept income from Deal Check, else local
-  const actualCost = realMandiNum + expenseTotal + mpCost; // real spend logged by the head
-  const hasActuals = realMandiNum > 0 || expenseTotal > 0;
 
   const setMp = (i, key, val) => { const next = mpRows.map((r, j) => j === i ? { ...r, [key]: val } : r); saveDept({ mp: next }); };
   const addMp = () => saveDept({ mp: [...mpRows, { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
   const addExpense = () => saveDept({ expenses: [...expenses, { label: "", amount: "" }] });
   const setExpense = (i, key, val) => { const next = expenses.map((e, j) => j === i ? { ...e, [key]: val } : e); saveDept({ expenses: next }); };
   const delExpense = (i) => saveDept({ expenses: expenses.filter((_, j) => j !== i) });
+
+  // ── Floral: editable real-mandi shopping list (projected vs actual, side-by-side) ──
+  const fp = sel?.floralPlan || {};
+  const fpFlowers = Array.isArray(fp.flowers) ? fp.flowers : [];
+  const artificialProj = fpFlowers.filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
+  const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
+    .map(f => ({ name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round((Number(f.cost) || 0) / f.qty) : 0 }));
+  const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
+  const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
+  const mandiActualTotal = mandiActualReal + artificialProj; // artificial carried over (not re-shopped at mandi)
+  const projMandiReal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
+  // Persist the list AND the headline actual (realMandi) so Studio's P&L reflection picks it up.
+  const saveMandi = (next) => saveDept({ mandiLines: next, realMandi: next.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0) + artificialProj });
+  const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
+  const delMandi = (i) => saveMandi(mandiRows.filter((_, j) => j !== i));
+  const addMandi = (cat) => { saveMandi([...mandiRows, { name: cat.name, unit: cat.unit || "", projQty: 0, projCost: 0, qty: 1, price: Number(cat.currentPrice) || 0 }]); setMandiQuery(""); };
+  const mandiSuggest = useMemo(() => {
+    const q = mandiQuery.toLowerCase().trim();
+    if (!q) return [];
+    return mandiCatalogue.filter(f => (f.name || "").toLowerCase().includes(q)).slice(0, 8);
+  }, [mandiQuery, mandiCatalogue]);
+
+  // ── Reusable essentials / tools template (per department) + per-event loading state ──
+  const toolkitAll = (settings?.deptToolkits && typeof settings.deptToolkits === "object") ? settings.deptToolkits : {};
+  const deptTools = Array.isArray(toolkitAll[dept]) ? toolkitAll[dept] : [];
+  const saveTools = (next) => setSettings && setSettings(s => ({ ...s, deptToolkits: { ...(s.deptToolkits || {}), [dept]: next } }));
+  const addTool = (name) => { const n = String(name || "").trim(); if (!n || deptTools.some(t => (t.name || "").toLowerCase() === n.toLowerCase())) return; saveTools([...deptTools, { name: n, qty: 1 }]); setNewTool(""); };
+  const setTool = (i, key, val) => saveTools(deptTools.map((t, j) => j === i ? { ...t, [key]: val } : t));
+  const delTool = (i) => saveTools(deptTools.filter((_, j) => j !== i));
+
+  const loaded = (deptData.loaded && typeof deptData.loaded === "object") ? deptData.loaded : {};
+  const toggleLoaded = (key) => saveDept({ loaded: { ...loaded, [key]: !loaded[key] } });
+  const loadKeys = [...blockedItems.map(it => "inv:" + it.id), ...deptTools.map(t => "tool:" + t.name)];
+  const totalLoadItems = loadKeys.length;
+  const loadedCount = loadKeys.filter(k => loaded[k]).length;
+  const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
+  const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
+
+  // Actual spend logged by the head → exact P&L (mandi list + on-site expenses + edited crew).
+  const mandiSpend = dept === "Floral" ? mandiActualTotal : 0;
+  const actualCost = mandiSpend + expenseTotal + mpCost;
+  const hasActuals = mandiSpend > 0 || expenseTotal > 0;
+
+  const printChallan = () => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const rows = [
+      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
+      ...deptTools.map(t => `<tr><td>${loaded["tool:" + t.name] ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
+    ].join("");
+    w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
+      <h2>${DEPT_ICON[dept]} Ambria — ${dept} Loading Challan</h2>
+      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${sel?.functionsDetail?.[0]?.venue || sel?.venue || "-"}</p>
+      <p>Vehicle: ${dispatch.vehicle || "______"} &nbsp;|&nbsp; Driver: ${dispatch.driver || "______"} &nbsp;|&nbsp; Phone: ${dispatch.phone || "______"}</p>
+      <table><tr><th>✓</th><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">Nothing to load</td></tr>'}</table>
+      <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
+      <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
+      <button onclick="window.print()">🖨️ Print</button></body></html>`);
+    w.document.close();
+  };
 
   return (
     <div className="flex gap-4">
@@ -295,8 +367,18 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         </>)}
                         <div className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(lineCost(r))}</div>
                       </div>
-                      <div className="text-[10px] text-gray-400 mt-1 pl-1">
-                        {r.shared ? "This dept's share of general labour/supervisors (split by income share)." : <>{r.sysCount != null && <span className={overridden ? "text-amber-600 font-semibold" : ""}>System: {r.sysCount}{overridden ? ` → you set ${r.count || 0}` : ""}</span>}{r.basis ? ` · ${r.basis}` : ""}</>}
+                      <div className="text-[10px] text-gray-500 mt-1 pl-1 leading-relaxed">
+                        {r.shared ? (
+                          <>This dept's share of general labour / supervisors, split across departments by each dept's income share. Fixed allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</>
+                        ) : (<>
+                          {r.basis && <span className="text-gray-600">📐 {r.basis}<br /></span>}
+                          {r.sysCount != null && r.sysCount !== "" && (
+                            <span className={overridden ? "text-amber-600 font-semibold" : "text-gray-500"}>
+                              Studio plan: {r.sysCount} × {fmt(r.sysRate || 0)}/day = {fmt(r.sysCost || 0)}
+                              {overridden && <> → you set <b>{r.count || 0} × {fmt(r.rate || 0)}/day = {fmt(lineCost(r))}</b></>}
+                            </span>
+                          )}
+                        </>)}
                       </div>
                     </div>
                   );
@@ -313,27 +395,65 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
               <div className="px-4 pb-3 space-y-2">
                 {dept === "Floral" && (() => {
-                  const fp = sel.floralPlan || {};
-                  const projected = Number(fp.projected) || 0;
-                  const flowers = Array.isArray(fp.flowers) ? fp.flowers : [];
-                  const actual = Number(realMandi) || 0;
+                  const projectedTotal = Number(fp.projected) || 0;
+                  const variance = mandiActualTotal - projectedTotal;
                   return (
                     <div className="space-y-2">
-                      {/* Projected mandi breakdown — same as Deal Check */}
+                      {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
+                      {/* Projected vs real mandi — side by side, editable real shopping list */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden">
-                        <div className="px-3 py-2 bg-emerald-100/60 flex justify-between text-xs font-semibold text-emerald-900"><span>🌸 Projected mandi (from Deal Check)</span><span>{fmt(projected)}</span></div>
-                        {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 text-[10px] text-emerald-700 bg-emerald-50/60 border-b border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
-                        {flowers.length === 0 ? <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. (Run Deal Check before marking Sold to capture it.)</div>
-                        : <div className="divide-y">{flowers.map((f, i) => <div key={i} className="flex justify-between px-3 py-1.5 text-xs"><span className="text-gray-700">{f.name} <span className="text-gray-400">{f.artificial || !f.qty ? (f.unit || "") : `×${f.qty}${f.unit ? " " + f.unit : ""}`}</span></span><span className="font-medium text-gray-800">{fmt(f.cost)}</span></div>)}</div>}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide">
+                          <span>🌸 Flower</span><span className="text-right w-28">Projected (plan)</span><span className="text-right w-44">Real shopping</span>
+                        </div>
+                        {mandiRows.length === 0 && fpFlowers.length === 0 ? (
+                          <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. Add flowers below, or run Deal Check before marking Sold to auto-capture it.</div>
+                        ) : (
+                          <div className="divide-y">
+                            {mandiRows.map((r, i) => {
+                              const lineActual = (Number(r.qty) || 0) * (Number(r.price) || 0);
+                              const lineVar = lineActual - (Number(r.projCost) || 0);
+                              return (
+                                <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
+                                  <div className="min-w-0"><div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>{r.projQty > 0 && <div className="text-[10px] text-gray-400">{r.projQty} {r.unit} planned</div>}</div>
+                                  <div className="text-right w-28 text-xs text-gray-400">{r.projCost > 0 ? fmt(r.projCost) : <span className="text-amber-500">extra</span>}</div>
+                                  <div className="flex items-center justify-end gap-1 w-44">
+                                    <input type="number" min="0" value={r.qty} onChange={e => setMandi(i, "qty", e.target.value)} className="w-12 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
+                                    <span className="text-[10px] text-gray-300">×</span>
+                                    <input type="number" min="0" value={r.price} onChange={e => setMandi(i, "price", e.target.value)} className="w-16 border rounded px-1.5 py-1 text-xs text-center" title="₹/unit" />
+                                    <span className={"text-xs font-semibold w-14 text-right " + (lineVar > 0 ? "text-red-500" : lineVar < 0 ? "text-emerald-600" : "text-gray-700")}>{fmt(lineActual)}</span>
+                                    <button onClick={() => delMandi(i)} className="text-red-300 hover:text-red-500 text-xs">×</button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {artificialProj > 0 && <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center bg-gray-50/60"><div className="text-xs text-gray-500">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></div><div className="text-right w-28 text-xs text-gray-400">{fmt(artificialProj)}</div><div className="text-right w-44 text-xs text-gray-500 pr-6">{fmt(artificialProj)}</div></div>}
+                          </div>
+                        )}
+                        {/* Totals row */}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-50 border-t border-emerald-100 items-center">
+                          <span className="text-xs font-bold text-emerald-900">Total</span>
+                          <span className="text-right w-28 text-xs font-semibold text-gray-500">{fmt(projectedTotal)}</span>
+                          <span className="text-right w-44 text-sm font-bold text-emerald-800 pr-6">{fmt(mandiActualTotal)}</span>
+                        </div>
                       </div>
-                      {/* Actual mandi entry */}
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-emerald-800 w-40">🧾 Actual mandi spent</span>
-                        <input type="number" min="0" value={realMandi} onChange={e => saveDept({ realMandi: e.target.value })} placeholder={projected ? `projected ${projected}` : "actual flower spend"} className="flex-1 border border-emerald-200 rounded-lg px-3 py-2 text-sm" />
+                      {/* Add a flower with autocomplete from the Mandi Prices tab */}
+                      <div className="relative">
+                        <input value={mandiQuery} onChange={e => setMandiQuery(e.target.value)} placeholder="➕ Add flower — type e.g. 'mu' for Muraya (from Mandi Prices)" className="w-full border border-emerald-200 rounded-lg px-3 py-2 text-sm" />
+                        {mandiSuggest.length > 0 && (
+                          <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                            {mandiSuggest.map(f => (
+                              <button key={f.id} onClick={() => addMandi(f)} className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-emerald-50 text-left">
+                                <span className="font-medium text-gray-800">{f.name} <span className="text-[10px] text-gray-400">{f.flowerCat} · {f.unit}</span></span>
+                                <span className="text-xs font-semibold text-emerald-700">{fmt(f.currentPrice)}/{f.unit}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {mandiQuery.trim() && mandiSuggest.length === 0 && <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">No match in Mandi Prices. <button onClick={() => addMandi({ name: mandiQuery.trim(), unit: "bundle", currentPrice: 0 })} className="text-emerald-600 font-medium">Add "{mandiQuery.trim()}" anyway</button></div>}
                       </div>
-                      {actual > 0 && projected > 0 && (
-                        <div className={"text-xs font-semibold " + (actual > projected ? "text-red-600" : "text-emerald-700")}>
-                          {actual > projected ? "▲ Over" : "▼ Under"} projected by {fmt(Math.abs(actual - projected))} — salesperson's P&L will use the actual {fmt(actual)}.
+                      {mandiActualTotal > 0 && projectedTotal > 0 && (
+                        <div className={"text-xs font-semibold " + (variance > 0 ? "text-red-600" : "text-emerald-700")}>
+                          {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} — salesperson's P&L uses the real {fmt(mandiActualTotal)}.
                         </div>
                       )}
                     </div>
@@ -347,6 +467,72 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   </div>
                 ))}
                 <button onClick={addExpense} className="text-xs text-emerald-700 hover:text-emerald-900 font-medium">+ Add on-site expense</button>
+              </div>
+            </div>
+
+            {/* Loading / dispatch — cross-check inventory + essentials while loading the truck */}
+            <div className="bg-white border rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
+                <span className="text-sm font-semibold text-gray-800">🚚 Loading & dispatch <span className="text-xs font-normal text-gray-400">— tick each as it goes on the truck</span></span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">{loadedCount}/{totalLoadItems} loaded</span>
+                  <button onClick={printChallan} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">🖨️ Print challan</button>
+                </div>
+              </div>
+              <div className="px-4 py-3 grid grid-cols-3 gap-2 border-b">
+                {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
+                  <div key={k}><label className="text-[10px] text-gray-400">{l}</label><input value={dispatch[k] || ""} onChange={e => setDispatch(k, e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
+                ))}
+              </div>
+              {/* Inventory to load */}
+              {blockedItems.length > 0 && (
+                <div className="divide-y">
+                  {blockedItems.map(it => {
+                    const k = "inv:" + it.id; const on = !!loaded[k];
+                    return (
+                      <label key={k} className="flex items-center gap-3 px-4 py-2 cursor-pointer hover:bg-gray-50">
+                        <input type="checkbox" checked={on} onChange={() => toggleLoaded(k)} className="w-4 h-4" />
+                        {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                        <span className={"flex-1 text-sm " + (on ? "line-through text-gray-400" : "text-gray-800")}>{it.name}</span>
+                        <span className="text-xs text-gray-500">×{it.qty}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {/* Essentials / tools */}
+              <div className="bg-amber-50/40 border-t">
+                <div className="px-4 py-2 text-xs font-semibold text-amber-800 flex items-center justify-between">
+                  <span>🛠️ Essentials / tools <span className="font-normal text-amber-600">— things you carry but don't block (saved for every {dept} event)</span></span>
+                </div>
+                {deptTools.length > 0 && (
+                  <div className="divide-y divide-amber-100">
+                    {deptTools.map((t, i) => {
+                      const k = "tool:" + t.name; const on = !!loaded[k];
+                      return (
+                        <div key={i} className="flex items-center gap-3 px-4 py-2">
+                          <input type="checkbox" checked={on} onChange={() => toggleLoaded(k)} className="w-4 h-4" />
+                          <span className={"flex-1 text-sm " + (on ? "line-through text-gray-400" : "text-gray-800")}>{t.name}</span>
+                          <input type="number" min="1" value={t.qty || 1} onChange={e => setTool(i, "qty", e.target.value)} className="w-14 border rounded px-1.5 py-1 text-xs text-center" title="qty" />
+                          <button onClick={() => delTool(i)} className="text-red-300 hover:text-red-500 text-xs">×</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="px-4 py-2.5 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addTool(newTool); }} placeholder="Add an essential (e.g. ladder, nails)…" className="flex-1 border border-amber-200 rounded-lg px-3 py-1.5 text-sm" />
+                    <button onClick={() => addTool(newTool)} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg font-medium">Add</button>
+                  </div>
+                  {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).map(s => (
+                        <button key={s} onClick={() => addTool(s)} className="text-[11px] px-2 py-1 rounded-full bg-white border border-amber-200 text-amber-700 hover:bg-amber-100">+ {s}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
