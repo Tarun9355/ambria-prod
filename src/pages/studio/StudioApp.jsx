@@ -1734,6 +1734,10 @@ export default function StudioApp() {
       floorDims: Object.keys(floorDims).length ? floorDims : (hasDims ? { ...dims } : {}),
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
       plH: d.plH || null, cpT: hasDims ? "new" : null,
+      // Carry truss quantity + box front-extension tagged on the library photo through to Build.
+      trussQty: Math.max(1, Number(d.trussQty) || 1),
+      trussFrontExt: Number(d.trussFrontExt) || 0,
+      trussFrontExtH: Number(d.trussFrontExtH) || 0,
     };
   };
 
