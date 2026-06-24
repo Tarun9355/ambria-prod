@@ -1686,6 +1686,14 @@ export default function StudioApp() {
     return req;
   }, []);
   const saveEventOrders = useCallback(async (neo) => { setEventOrders(neo); await reliableSave(EO_SK, JSON.stringify(neo), "Event orders"); }, []);
+  // Persist the Deal Check department breakdown onto the client's SOLD event-order row (table), so
+  // IMS Dept Ops shows the SAME numbers (income, inventory-with-photos, manpower) Studio computed.
+  const persistDeptSnapshot = useCallback(async (snap) => {
+    const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
+    if (!eo) return;
+    const merged = { ...eo, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || eo.floralPlan || null, manpowerPlan: snap.manpowerPlan || eo.manpowerPlan || [], deptSyncedAt: Date.now() };
+    try { await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" }); } catch (e) { /* best-effort */ }
+  }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   const saveScanHistory = useCallback(async (nh) => { setScanHistory(nh); await reliableSave(SCAN_HIST_SK, JSON.stringify(nh), "Scan history"); }, []);
   const saveYtTags = useCallback(async (nt) => { setYtVideoTags(nt); await reliableSave(YT_TAG_SK, JSON.stringify(nt), "Video tags"); }, []);
@@ -4605,7 +4613,7 @@ Return ONLY JSON:
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal,
-    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown,
+    collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     writeStudioTrussSoftHolds,

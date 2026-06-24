@@ -80,9 +80,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     return events.filter(({ eo, date }) => eo.id !== selId && date && Math.abs(new Date(date + "T00:00:00").getTime() - t) <= 7 * 864e5);
   }, [events, selDateStr, selId]);
 
-  // ── Blocked inventory for this event + department ──
+  // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
+  const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
+  const deptInvSnap = (sel?.deptInventory && Array.isArray(sel.deptInventory[dept])) ? sel.deptInventory[dept] : null;
+
+  // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   const blockedItems = useMemo(() => {
     if (!sel) return [];
+    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "" }));
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
@@ -122,7 +127,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const mpCost = mpRows.reduce((s, r) => s + (Number(r.count) || 0) * (Number(r.rate) || 0), 0);
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
-  const projectedIncome = rentalIncome + mpCost;          // what the dept earns (rental + crew)
+  const projectedIncome = deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost); // full dept income from Deal Check, else local
   const actualCost = realMandiNum + expenseTotal + mpCost; // real spend logged by the head
   const hasActuals = realMandiNum > 0 || expenseTotal > 0;
 
@@ -215,6 +220,23 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
               {nearby.length > 0 && <div className="text-xs text-gray-500">📅 {nearby.length} nearby event{nearby.length > 1 ? "s" : ""} (±7 days)</div>}
             </div>
+
+            {/* Department income (from Deal Check snapshot — matches Studio) */}
+            {deptIncome ? (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 flex items-center justify-between bg-indigo-100/60">
+                  <span className="text-sm font-semibold text-indigo-900">📊 {dept} income (from Deal Check)</span>
+                  <span className="text-sm font-bold text-indigo-900">{fmt(deptIncome.total || 0)}</span>
+                </div>
+                <div className="divide-y divide-indigo-100">
+                  {[["📦 Inventory rental", deptIncome.rental], ["🏗️ Truss", deptIncome.truss], ["🧵 Fabric / draping", deptIncome.fabric], ["🌸 Floral (mandi)", deptIncome.florals], ["👷 Manpower", deptIncome.manpower], ["🏭 Production", deptIncome.production], ["🛒 Buying", deptIncome.buying], ["🚚 Transport", deptIncome.transport]].filter(([, v]) => v > 0).map(([l, v], i) => (
+                    <div key={i} className="flex justify-between px-4 py-1.5 text-xs"><span className="text-indigo-800">{l}</span><span className="font-semibold text-indigo-900">{fmt(v)}</span></div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">No Deal Check breakdown synced yet for this event. In Studio → Deal Check → <b>Dept Income</b>, click <b>📤 Sync to IMS Dept Ops</b> to push the numbers here.</div>
+            )}
 
             {/* Blocked inventory */}
             <div className="bg-white border rounded-xl overflow-hidden">

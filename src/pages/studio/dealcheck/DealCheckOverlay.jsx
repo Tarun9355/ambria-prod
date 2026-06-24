@@ -41,7 +41,7 @@ export default function DealCheckOverlay({ ctx }) {
     // orchestration + persistence
     openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     // misc
-    showMsg, saveClientLedger,
+    showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot,
   } = ctx;
 
   if (!(authUser && true)) return null;
@@ -75,6 +75,7 @@ export default function DealCheckOverlay({ ctx }) {
           // ═══ §Department income (7 depts) — every rupee tagged to a department ═══
           const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
           const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
+          const deptInv = {}; DEPTS.forEach(d => { deptInv[d] = []; }); // per-dept blocked-inventory detail (name/photo/qty/unit/total)
           const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
           // Category (rate-card OR inventory) → department. First the admin-editable map
@@ -108,7 +109,9 @@ export default function DealCheckOverlay({ ctx }) {
               const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, venueName, c.imsId, qty);
               const lineRental = sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
               rental += lineRental;
-              addD(catToDept(imsField.category(item) || c.cat), "rental", lineRental);
+              const dD = catToDept(imsField.category(item) || c.cat);
+              addD(dD, "rental", lineRental);
+              if (lineRental > 0 && deptInv[dD]) deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "" });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
             try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); } } catch {}
@@ -301,7 +304,7 @@ export default function DealCheckOverlay({ ctx }) {
           let clientRevenue = 0;
           try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - grand) / clientRevenue) * 100) : 0;
-          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS };
+          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv };
         })();
 
         return (
@@ -1437,8 +1440,18 @@ export default function DealCheckOverlay({ ctx }) {
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                     ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
                   ].filter(([, v]) => v > 0);
+                  const syncToOps = async () => {
+                    let floralPlan = { projected: 0, flowers: [] };
+                    try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() }; } catch {}
+                    let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
+                    await (persistDeptSnapshot && persistDeptSnapshot({ income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan }));
+                    showMsg && showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green");
+                  };
                   return (
                     <div style={{ padding: "4px" }}>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                        <button onClick={syncToOps} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${accent}`, background: `${accent}18`, color: accent, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📤 Sync to IMS Dept Ops</button>
+                      </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
                         {depts.map(d => { const on = dcDept === d; const t = dd[d]?.total || 0; return (
                           <button key={d} onClick={() => setDcDept(d)} style={{ padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? "#fff" : textS, cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, minWidth: 96, alignItems: "flex-start" }}>
