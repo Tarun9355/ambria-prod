@@ -5,6 +5,7 @@
 // bodies. The 7 large sub-tabs (inventory / truss / florals / manpower /
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
+import { useState } from "react";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
@@ -13,6 +14,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants
 import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fixedVenues";
 
 export default function DealCheckOverlay({ ctx }) {
+  const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
   const {
     // chrome / theme
     border, textS, textP, accent, fmt,
@@ -62,6 +64,7 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "transport", label: "Transport",        icon: "🚚", live: true  },
           { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
+          { id: "depts",     label: "Dept Income",      icon: "🏦", live: true  },
         ];
         const activeTabDef = TABS.find(t => t.id === dcActiveTab) || TABS[0];
 
@@ -69,6 +72,25 @@ export default function DealCheckOverlay({ ctx }) {
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0;
+          // ═══ §Department income (7 depts) — every rupee tagged to a department ═══
+          const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
+          const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
+          const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
+          const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
+          // Category (rate-card OR inventory) → department, by keyword. Sub-cat already implies its category.
+          const catToDept = (cat) => {
+            const s = String(cat || "").toLowerCase();
+            if (!s) return "Structure";
+            if (s.includes("floral") || s.includes("flower")) return "Floral";
+            if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting";
+            if (s.includes("truss")) return "Tenting";
+            if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric";
+            if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting";
+            if (s.includes("transport") || s.includes("truck") || s.includes("logistic")) return "Transport";
+            if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture";
+            if (s.includes("arch") || s.includes("prop") || s.includes("wrought") || s.includes("glass") || s.includes("struct") || s.includes("pillar") || s.includes("stage") || s.includes("platform")) return "Structure";
+            return "Structure"; // catch-all
+          };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             Object.entries(cards).forEach(([ck, c]) => {
@@ -81,10 +103,12 @@ export default function DealCheckOverlay({ ctx }) {
               const qty = c.qty || 1;
               const venueName = fn.fnVenue || fn.venue || "";
               const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, venueName, c.imsId, qty);
-              rental += sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
+              const lineRental = sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
+              rental += lineRental;
+              addD(catToDept(imsField.category(item) || c.cat), "rental", lineRental);
             });
-            try { florals += calcFnFloralSourcingCost(fn).grandTotal; } catch {}
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) transport += bd.transportTotal; } catch {}
+            try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); } } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -96,11 +120,12 @@ export default function DealCheckOverlay({ ctx }) {
                 Object.keys(zc).forEach(zk => {
                   if (!en[zk] || !zc[zk]) return;
                   const pv = calcZoneTrussPreview(zc[zk], tInv);
-                  if (pv?.costs?.actual) truss += pv.costs.actual;
+                  if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                  truss += calcZoneFabricCost(zc[zk], tInv, anchors, density);
+                  const fabCost = calcZoneFabricCost(zc[zk], tInv, anchors, density);
+                  truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
                 });
               }
             } catch {}
@@ -111,7 +136,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (pp) {
               const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
               const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              Object.values(pp.perZone || {}).forEach(z => { rental += (z.fattas || 0) * fattaR + (z.stands || 0) * standR; });
+              Object.values(pp.perZone || {}).forEach(z => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; addD("Tenting", "rental", pc); }); // platform → Tenting
             }
           } catch {}
           try {
@@ -126,7 +151,7 @@ export default function DealCheckOverlay({ ctx }) {
                 if (!pickedId) return;
                 const carpetItem = dcInventoryCache.find(x => x.id === pickedId);
                 if (!carpetItem) return;
-                rental += calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost;
+                { const cc = calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost; rental += cc; addD("Tenting", "rental", cc); } // carpet → Tenting
               });
             });
           } catch {}
@@ -239,7 +264,9 @@ export default function DealCheckOverlay({ ctx }) {
                   labourTypes.forEach(t => {
                     const ppl = running[t] || 0; if (ppl <= 0) return;
                     const wins = dcMpOverrides[`${d.date}|${t}`] || (defaultWindowsByPhase[t]||{})[d.phase] || [];
-                    manpower += ppl * wins.length * (rateByType[t] || 0);
+                    const mpCost = ppl * wins.length * (rateByType[t] || 0);
+                    manpower += mpCost;
+                    mpByType[t] = (mpByType[t] || 0) + mpCost;
                   });
                 });
               }
@@ -247,6 +274,23 @@ export default function DealCheckOverlay({ ctx }) {
           } catch {}
           const buyTotal = dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
           const produceTotal = dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+          // Production / Buying → department by the item's category/sub-category
+          dcCustomItems.forEach(c => { const amt = (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1); if (amt > 0) addD(catToDept(c.cat || c.subCat), c.type === "buying" ? "buying" : "production", amt); });
+          // ── Distribute manpower per type to departments ──
+          const MP_DEPT = { "Flowerists": "Floral", "Carpenters": "Structure", "Painters": "Tenting", "Truss Labour": "Tenting", "Fabric Bangali": "Fabric", "Electricians": "Lighting", "Drivers": "Transport" };
+          // Direct-income share per dept (rental+florals+truss+fabric+production+buying) — drives the
+          // proportional split of general Labours + Supervisors across all departments.
+          const directOf = (d) => dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].production + dept[d].buying;
+          const directTotal = DEPTS.reduce((s, d) => s + directOf(d), 0);
+          Object.entries(mpByType).forEach(([t, amt]) => {
+            if (!(amt > 0)) return;
+            const target = MP_DEPT[t];
+            if (target) { addD(target, "manpower", amt); return; }
+            // General Labours + Supervisors (and anything unmapped) → split by direct-income share
+            if (directTotal > 0) DEPTS.forEach(d => addD(d, "manpower", amt * (directOf(d) / directTotal)));
+            else addD("Structure", "manpower", amt);
+          });
+          DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].manpower + dept[d].production + dept[d].buying; });
           const base = rental + florals + transport + manpower + truss + buyTotal + produceTotal;
           const gyvFixed = Math.round(base * 0.05);
           const bufferCost = Math.round(base * 0.03);
@@ -254,7 +298,7 @@ export default function DealCheckOverlay({ ctx }) {
           let clientRevenue = 0;
           try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - grand) / clientRevenue) * 100) : 0;
-          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns };
+          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS };
         })();
 
         return (
@@ -1376,6 +1420,39 @@ export default function DealCheckOverlay({ ctx }) {
                           </div>
                         );
                       })()}
+                    </div>
+                  );
+                })() : dcActiveTab === "depts" ? (() => {
+                  const dd = dcCostRollup.dept || {};
+                  const depts = dcCostRollup.DEPTS || [];
+                  const deptIcon = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+                  const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 };
+                  const grandAll = depts.reduce((s, d) => s + (dd[d]?.total || 0), 0);
+                  const f2 = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
+                  const lines = [
+                    ["📦 Inventory rental", cur.rental], ["🌸 Floral (mandi)", cur.florals], ["🏗️ Truss", cur.truss],
+                    ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
+                    ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
+                  ].filter(([, v]) => v > 0);
+                  return (
+                    <div style={{ padding: "4px" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                        {depts.map(d => { const on = dcDept === d; const t = dd[d]?.total || 0; return (
+                          <button key={d} onClick={() => setDcDept(d)} style={{ padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? "#fff" : textS, cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, minWidth: 96, alignItems: "flex-start" }}>
+                            <span style={{ fontSize: 11, fontWeight: on ? 700 : 500 }}>{deptIcon[d] || "🏦"} {d}</span>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: on ? "#fff" : textP }}>{f2(t)}</span>
+                          </button>); })}
+                      </div>
+                      <div style={{ borderRadius: 10, border: `1px solid ${border}`, overflow: "hidden" }}>
+                        <div style={{ padding: "10px 14px", background: "rgba(255,255,255,0.02)", fontSize: 12, fontWeight: 700, color: "#fff", display: "flex", justifyContent: "space-between" }}>
+                          <span>{deptIcon[dcDept]} {dcDept} — Department Income</span><span>{f2(cur.total)}</span>
+                        </div>
+                        {lines.length === 0
+                          ? <div style={{ padding: 16, textAlign: "center", color: textS, fontSize: 11 }}>No income for this department in the current deal.</div>
+                          : lines.map(([l, v], i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 14px", borderTop: `1px solid ${border}22`, fontSize: 12 }}><span style={{ color: textS }}>{l}</span><span style={{ color: "#fff", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{f2(v)}</span></div>)}
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderTop: `1px solid ${border}`, fontSize: 11, color: textS }}><span>Share of project</span><span style={{ fontWeight: 700, color: accent }}>{grandAll > 0 ? Math.round((cur.total / grandAll) * 100) : 0}%</span></div>
+                      </div>
+                      <div style={{ fontSize: 10, color: textS, marginTop: 10, lineHeight: 1.5 }}>General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
                     </div>
                   );
                 })() : null}
