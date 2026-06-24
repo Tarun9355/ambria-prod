@@ -57,6 +57,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [calRef, setCalRef] = useState({ y: now.getFullYear(), m: now.getMonth() }); // visible calendar month
   const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
   const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
+  const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
+  const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
@@ -196,6 +198,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const loadedCount = loadKeys.filter(k => loaded[k]).length;
   const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
   const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
+  // Own fleet — vehicle + regular driver + phone, saved once in settings; one tap fills all three.
+  const fleet = Array.isArray(settings?.fleet) ? settings.fleet : [];
+  const saveFleet = (next) => setSettings && setSettings(s => ({ ...s, fleet: next }));
+  const pickFleet = (f) => saveDept({ dispatch: { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" } });
+  const addFleet = () => { const v = (newVeh.vehicle || "").trim(); if (!v) return; saveFleet([...fleet, { id: "veh_" + Date.now(), vehicle: v, driver: (newVeh.driver || "").trim(), phone: (newVeh.phone || "").trim() }]); setNewVeh({ vehicle: "", driver: "", phone: "" }); };
+  const delFleet = (id) => saveFleet(fleet.filter(f => f.id !== id));
 
   // Actual spend logged by the head → exact P&L (mandi list + on-site expenses + edited crew).
   const mandiSpend = dept === "Floral" ? mandiActualTotal : 0;
@@ -479,10 +487,49 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <button onClick={printChallan} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">🖨️ Print challan</button>
                 </div>
               </div>
-              <div className="px-4 py-3 grid grid-cols-3 gap-2 border-b">
-                {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
-                  <div key={k}><label className="text-[10px] text-gray-400">{l}</label><input value={dispatch[k] || ""} onChange={e => setDispatch(k, e.target.value)} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
-                ))}
+              <div className="px-4 py-3 border-b space-y-2">
+                {/* Own fleet — one tap fills vehicle + driver + phone */}
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Own vehicle — quick fill</span>
+                  <button onClick={() => setShowFleet(v => !v)} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">{showFleet ? "Done" : "⚙️ Manage fleet"}</button>
+                </div>
+                {fleet.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {fleet.map(f => {
+                      const on = dispatch.vehicle === f.vehicle && dispatch.driver === f.driver;
+                      return (
+                        <button key={f.id} onClick={() => pickFleet(f)} className={"text-[11px] px-2.5 py-1.5 rounded-lg border text-left " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>
+                          🚛 {f.vehicle}{f.driver ? <span className={on ? "text-indigo-100" : "text-gray-400"}> · {f.driver}</span> : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : <div className="text-[11px] text-gray-400">No own vehicles saved yet — click “Manage fleet” to add them once.</div>}
+                {/* Manage-fleet editor (shared across all departments) */}
+                {showFleet && (
+                  <div className="bg-gray-50 border rounded-lg p-2.5 space-y-2">
+                    {fleet.map(f => (
+                      <div key={f.id} className="flex items-center gap-2 text-xs">
+                        <span className="flex-1 font-medium text-gray-700">🚛 {f.vehicle}</span>
+                        <span className="text-gray-500">{f.driver || "—"}</span>
+                        <span className="text-gray-400">{f.phone || ""}</span>
+                        <button onClick={() => delFleet(f.id)} className="text-red-300 hover:text-red-500">×</button>
+                      </div>
+                    ))}
+                    <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-end">
+                      <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="border rounded px-2 py-1.5 text-xs" />
+                      <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="border rounded px-2 py-1.5 text-xs" />
+                      <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="border rounded px-2 py-1.5 text-xs" />
+                      <button onClick={addFleet} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-medium">Add</button>
+                    </div>
+                  </div>
+                )}
+                {/* Final fields — prefilled by the chip, still editable for outside vehicles */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
+                    <div key={k}><label className="text-[10px] text-gray-400">{l}</label><input value={dispatch[k] || ""} onChange={e => setDispatch(k, e.target.value)} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
+                  ))}
+                </div>
               </div>
               {/* Inventory to load */}
               {blockedItems.length > 0 && (
