@@ -199,7 +199,9 @@ const FLORAL_HARDPROP_DEFAULT = {
 function calcStructCost(zk, zc) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
-  if (zc.trT === "box") { const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a); r.truss = v[0] * v[1] * 50; }
+  // Optional FRONT EXTENSION (box only, rare): both front sides extended by trussFrontExt ft, so the
+  // effective front width = W + 2×ext (e.g. 12 + 5 + 5 = 22). Widens the top-2 footprint accordingly.
+  if (zc.trT === "box") { const wEff = (d.W || d.S || 0) + 2 * (Number(zc.trussFrontExt) || 0); const v = [d.L || 0, wEff, d.H || 0].sort((a, b) => b - a); r.truss = v[0] * v[1] * 50; }
   else if (zc.trT === "singleU") { r.truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
   // Multiple identical trusses in one zone/photo (e.g. 3× Single U) — cost scales by quantity.
   r.truss *= Math.max(1, zc.trussQty || 1);
@@ -239,7 +241,7 @@ function calcStructCost(zk, zc) {
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
   const dims = {}; zm.dimFields.forEach(f => { dims[f] = p[f] || 0; });
-  return { dims, trT: p.tr || zm.defaultTruss || null, trussQty: p.trussQty || 1, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
+  return { dims, trT: p.tr || zm.defaultTruss || null, trussQty: p.trussQty || 1, trussFrontExt: p.trussFrontExt || 0, mkOn: !!p.mk, mkT: p.mk || "fabric", mkS: p.ms || 1, plH: p.pl || null, cpT: p.cp || null, archOn: !!p.archT, archT: p.archT || null, archQty: p.archQty || 0, archW: p.archW || 0, archH: p.archH || 0, pillarQty: p.pillarQty || 0, glassOn: !!p.glassT, glassT: p.glassT || null, glassQty: p.glassQty || 0, glassW: p.glassW || 0, glassH: p.glassH || 0 };
 }
 
 // ═══ Active soft-hold lookup (Deal Check inventory-status conflicts) — VERBATIM ═══
@@ -878,6 +880,8 @@ export default function StudioApp() {
   const libItemsRef = useRef([]); // latest library array, for the background bulk-tagger to merge into
   const [bulkTag, setBulkTag] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk AI tagging progress
   const bulkTagStop = useRef(false);
+  const [bulkVid, setBulkVid] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk VIDEO AI tagging progress
+  const bulkVidStop = useRef(false);
   useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
   const [libSearch, setLibSearch] = useState("");
   const [libFilters, setLibFilters] = useState({});
@@ -2695,14 +2699,12 @@ export default function StudioApp() {
   }, [manualVideos, saveManualVideos]);
 
   // ═══ AI TAG VIDEO (reference ~4762) — /api/youtube → ytApi, /api/anthropic → callClaudeStreaming ═══
-  const aiTagVideo = useCallback(async (videoId) => {
-    if (aiTaggingVideo) return;
-    setAiTaggingVideo(videoId);
-    showMsg("🤖 Fetching video details...", "blue");
-    try {
+  // Core: fetch a video's details, AI-tag the metadata, and auto-assign the best-match library
+  // photo per zone. Returns the tag object (with _aiTagged) or null. Used by single + bulk taggers.
+  const buildVideoTagFromAI = useCallback(async (videoId) => {
       const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
       const snippet = ytData.items?.[0]?.snippet;
-      if (!snippet) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
+      if (!snippet) return null;
       const title = snippet.title || "";
       const desc = snippet.description || "";
       const ytTags = (snippet.tags || []).join(", ");
@@ -2737,7 +2739,6 @@ Extract these fields using ONLY these exact values:
 Return ONLY JSON:
 {"venue":"...","fn":["..."],"tier":"...","io":"...","colors":["..."],"styles":["..."]}`;
 
-      showMsg("🤖 AI analyzing video...", "blue");
       const txt = await callClaudeStreaming({
         contentBlocks: prompt,
         model: "claude-sonnet-4-6",
@@ -2756,25 +2757,61 @@ Return ONLY JSON:
         styles: (parsed.styles || []).length ? parsed.styles : existingTag.styles || [],
         palette: parsed.colors?.[0] || existingTag.palette || "",
       };
-      // Auto-assign the best-matching library photo to each zone (admin can change any before
-      // saving). Keep any photo the admin already picked. This gives the video a build cost so it
-      // shows priced on Browse once saved — no manual per-zone picking required.
+      // Auto-assign the best-matching library photo to each zone (kept if the admin already picked
+      // one). Gives the video a build cost so it shows priced on Browse once saved.
       const autoZonePhotos = { ...(existingTag.zonePhotos || {}) };
-      let assigned = 0;
       (taxonomy.areasElements || []).forEach(area => {
-        if (autoZonePhotos[area]) return; // respect an existing manual pick
+        if (autoZonePhotos[area]) return;
         const { exact, similar } = getLibPhotosForZone(area, newTag);
         const top = exact[0] || similar[0];
-        if (top) { autoZonePhotos[area] = top.id; assigned++; }
+        if (top) autoZonePhotos[area] = top.id;
       });
       newTag.zonePhotos = autoZonePhotos;
       newTag._aiTagged = true;
+      return newTag;
+  }, [ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
+
+  const aiTagVideo = useCallback(async (videoId) => {
+    if (aiTaggingVideo) return;
+    setAiTaggingVideo(videoId);
+    showMsg("🤖 AI analyzing video...", "blue");
+    try {
+      const newTag = await buildVideoTagFromAI(videoId);
+      if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
+      const assigned = Object.keys(newTag.zonePhotos || {}).length;
       setAiVideoDraft({ videoId, tags: newTag });
       setYtTagEdit(videoId);
-      showMsg(`✓ AI tagged + auto-picked ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
+      showMsg(`✓ AI tagged + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
     } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
-  }, [aiTaggingVideo, ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
+  }, [aiTaggingVideo, buildVideoTagFromAI]);
+
+  // Bulk AI-tag every untagged video (app-wide, like photo bulk). Saves directly with _aiTagged so
+  // the team reviews/verifies after — keeps going while you move around; stoppable; resumable.
+  const stopBulkTagVideos = useCallback(() => { bulkVidStop.current = true; }, []);
+  const runBulkTagVideos = useCallback(async () => {
+    const targets = allVideos.filter(v => !hiddenVideos[v.id] && !ytVideoTags[v.id]);
+    if (!targets.length) { showMsg("No untagged videos — every video is already tagged.", "green"); return null; }
+    bulkVidStop.current = false;
+    setBulkVid({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
+    let merged = { ...ytVideoTags };
+    let ok = 0, fail = 0;
+    for (let n = 0; n < targets.length; n++) {
+      if (bulkVidStop.current) break;
+      try {
+        const tag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        if (tag) { merged = { ...merged, [targets[n].id]: { ...tag, _savedBy: "AI (bulk)", _savedAt: Date.now() } }; ok++; }
+        else fail++;
+      } catch { fail++; }
+      if ((n + 1) % 4 === 0) await saveYtTags(merged);
+      setBulkVid({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
+    }
+    await saveYtTags(merged);
+    const stopped = bulkVidStop.current;
+    setBulkVid({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
+    showMsg(`🎬 Video AI tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
+    return { ok, fail };
+  }, [allVideos, hiddenVideos, ytVideoTags, buildVideoTagFromAI, saveYtTags]);
 
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
   // (ytApi) + kv cache (YT_SK settings blob) instead of /api/youtube + window.storage. ──
@@ -3759,7 +3796,7 @@ Return ONLY JSON:
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
-      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)" + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
+      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)" + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` +${zc.trussFrontExt}ft front ext/side` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
       if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
       if (zl.carpet > 0) structItems.push({ name: "Carpet (" + (zc.cpT === "new" ? "New ₹15" : "Old ₹7") + "/sqft)", total: zl.carpet });
@@ -4346,7 +4383,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,
@@ -4490,6 +4527,19 @@ Return ONLY JSON:
           </div>
           <div style={{ height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>
           <div style={{ fontSize: 10, opacity: 0.8, marginTop: 5 }}>{bulkTag.ok}✓ {bulkTag.fail}✕ · keep working — this runs in the background</div>
+        </div>
+      )}
+
+      {/* GLOBAL BULK VIDEO-TAG PROGRESS PILL */}
+      {bulkVid.running && (
+        <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 100000, background: "#1f2937", color: "#fff", padding: "10px 14px", borderRadius: 12, fontSize: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.12)", minWidth: 220 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontWeight: 700 }}>🎬 Video AI tagging…</span>
+            <span style={{ marginLeft: "auto", opacity: 0.9 }}>{bulkVid.done}/{bulkVid.total}</span>
+            <button onClick={stopBulkTagVideos} style={{ background: "rgba(239,68,68,0.95)", color: "#fff", border: "none", borderRadius: 6, padding: "2px 9px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Stop</button>
+          </div>
+          <div style={{ height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2 }}><div style={{ height: 4, width: `${bulkVid.total ? (bulkVid.done / bulkVid.total) * 100 : 0}%`, background: "#0EA5E9", borderRadius: 2, transition: "width 0.3s" }} /></div>
+          <div style={{ fontSize: 10, opacity: 0.8, marginTop: 5 }}>{bulkVid.ok}✓ {bulkVid.fail}✕ · keep working — team reviews after</div>
         </div>
       )}
 
