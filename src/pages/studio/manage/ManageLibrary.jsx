@@ -130,6 +130,7 @@ export default function ManageLibrary({ ctx }) {
     return hasTag ? "review" : "untagged";
   };
   const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
+  const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
   // Permission gate for the Images / Videos / Contributions sub-views. If the current view isn't
   // allowed for this role, fall back to the first one that is.
   const libAllowed = (v) => (studioLibraryAllowed ? studioLibraryAllowed(v) : true);
@@ -1227,12 +1228,15 @@ export default function ManageLibrary({ ctx }) {
                 {/* Title + date */}
                 <div style={{padding:"8px 10px"}}>
                   <div style={{fontSize:11,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",lineHeight:1.4,color:textP}}>{v.title}</div>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4,gap:6}}>
                     <div style={{fontSize:9,color:textS}}>{v.date}</div>
-                    {!hasTag&&!isEditing&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
-                      <span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>
-                      <button onClick={(e)=>{e.stopPropagation();aiTagVideo(v.id);}} disabled={aiTaggingVideo===v.id} style={{padding:"2px 8px",borderRadius:6,border:"none",background:aiTaggingVideo===v.id?"#C9A96E44":"#C9A96E",color:aiTaggingVideo===v.id?"#C9A96E":"#1a1a2e",fontSize:9,fontWeight:600,cursor:aiTaggingVideo===v.id?"wait":"pointer"}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
-                    </div>}
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      {!hasTag&&!isEditing&&<>
+                        <span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>
+                        <button onClick={(e)=>{e.stopPropagation();aiTagVideo(v.id);}} disabled={aiTaggingVideo===v.id} style={{padding:"2px 8px",borderRadius:6,border:"none",background:aiTaggingVideo===v.id?"#C9A96E44":"#C9A96E",color:aiTaggingVideo===v.id?"#C9A96E":"#1a1a2e",fontSize:9,fontWeight:600,cursor:aiTaggingVideo===v.id?"wait":"pointer"}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
+                      </>}
+                      <button onClick={(e)=>{e.stopPropagation();setBigTagVid(v.id);}} title="Open the full-screen tag editor (big photo scrollers per zone)" style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${accent}`,background:`${accent}12`,color:accent,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖥 Big editor</button>
+                    </div>
                   </div>
                 </div>
                 {/* Expanded tag editor */}
@@ -1524,6 +1528,71 @@ export default function ManageLibrary({ ctx }) {
                 <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>No photos in Library yet</div>
                 <div style={{fontSize:12}}>Add photos to Library and tag them to see options here.</div>
               </div>}
+            </div>
+          </div>
+        </div>;
+      })()}
+
+      {/* ═══ FULL-SCREEN VIDEO TAG EDITOR — all metadata + a left/right photo scroller per zone ═══ */}
+      {bigTagVid && (() => {
+        const v = allVideos.find(x => x.id === bigTagVid) || {};
+        const vTag = ytVideoTags[bigTagVid] || {};
+        const updTag = (patch) => saveYtTags({ ...ytVideoTags, [bigTagVid]: { ...vTag, ...patch } });
+        const setZP = (zone, id) => { const zp = { ...(vTag.zonePhotos || {}) }; if (id) zp[zone] = id; else delete zp[zone]; updTag({ zonePhotos: zp }); };
+        const toggleArr = (field, val) => { const cur = Array.isArray(vTag[field]) ? vTag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
+        const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
+        const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
+        const zones = taxonomy.areasElements || [];
+        const assigned = Object.keys(vTag.zonePhotos || {}).length;
+        const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 5 };
+        const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
+        const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
+        return <div onClick={() => setBigTagVid(null)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.85)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: "2vh 1vw" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: bg, borderRadius: 16, width: "98vw", maxWidth: 1600, minHeight: "92vh", border: `1px solid ${border}`, overflow: "hidden" }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 2, background: bg, borderBottom: `1px solid ${border}`, padding: "14px 22px", display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🎬 {v.title || "Video"}</div>
+                <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>{assigned} of {zones.length} zones have a photo · changes save instantly</div>
+              </div>
+              <button onClick={() => { const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() } }; saveYtTags(nt); logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
+              <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
+            </div>
+            <div style={{ padding: "16px 22px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginBottom: 18 }}>
+                <div><div style={lbl}>Tier</div><div style={chipRow}>{["Silver", "Gold", "Platinum"].map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
+                <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
+                <div><div style={lbl}>Event type</div><div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div></div>
+                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor"]).map(io => chip(io, vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
+                <div><div style={lbl}>Colors</div><div style={chipRow}>{palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}</div></div>
+                <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 8 }}>📸 Photo per zone — scroll ◀ ▶ and click to pick</div>
+              {zones.map(zone => {
+                const zp = vTag.zonePhotos || {};
+                const chosenId = zp[zone];
+                const { exact, similar, fallback } = getLibPhotosForZone(zone, vTag);
+                const cands = [...exact, ...similar, ...fallback];
+                const chosen = chosenId ? libItems.find(l => l.id === chosenId) : null;
+                const strip = [...(chosen && !cands.find(c => c.id === chosen.id) ? [chosen] : []), ...cands].slice(0, 40);
+                return <div key={zone} style={{ padding: "10px 0", borderBottom: `1px solid ${border}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 18 }}>{ZONE_ICONS[zone] || "📍"}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: textP, flex: 1 }}>{zone}</span>
+                    {chosen ? <span style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>✓ {chosen.name || "selected"}</span> : <span style={{ fontSize: 11, color: textS }}>{strip.length} options</span>}
+                    {chosen && <span onClick={() => setZP(zone, null)} style={{ fontSize: 11, color: "#E11D48", cursor: "pointer", fontWeight: 700 }}>× clear</span>}
+                  </div>
+                  {strip.length === 0 ? <div style={{ fontSize: 11, color: textS, paddingLeft: 28 }}>No matching photos for this zone yet — tag more library photos for it.</div> :
+                    <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
+                      {strip.map(li => { const isSel = li.id === chosenId; return <div key={li.id} onClick={() => setZP(zone, isSel ? null : li.id)} title={li.name || ""} style={{ flexShrink: 0, width: 190, borderRadius: 10, overflow: "hidden", cursor: "pointer", border: isSel ? `3px solid #059669` : `1px solid ${border}`, background: cardBg }}>
+                        <img src={li.url} alt="" loading="lazy" style={{ width: 190, height: 130, objectFit: "cover", display: "block", opacity: isSel ? 1 : 0.9 }} onError={e => { e.target.style.display = "none"; }} />
+                        <div style={{ padding: "5px 8px" }}>
+                          <div style={{ fontSize: 11, fontWeight: isSel ? 700 : 600, color: isSel ? "#059669" : textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{isSel ? "✓ " : ""}{li.name || "Untitled"}</div>
+                          <div style={{ fontSize: 9, color: textS }}>{(li.elements || []).length} elements</div>
+                        </div>
+                      </div>; })}
+                    </div>}
+                </div>;
+              })}
             </div>
           </div>
         </div>;
