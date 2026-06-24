@@ -928,7 +928,7 @@ export default function IMS() {
             vendors={vendors} setVendors={setVendors}
             settings={settings} setSettings={setSettings} boxes={boxes} setBoxes={setBoxes}
             trussInv={trussInv} setTrussInv={setTrussInv}
-            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders}
+            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
             studio={studio} authUser={user}
           />
         ) : tab === "finance" ? (

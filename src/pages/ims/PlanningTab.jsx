@@ -5,6 +5,7 @@ import BoxesTab from "./BoxesTab.jsx";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import ManpowerTab from "./ManpowerTab.jsx";
 import TrussPlanningTab from "./TrussPlanningTab.jsx";
+import DepartmentOpsTab from "./DepartmentOpsTab.jsx";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Manpower / Truss / Paint /
 // Boxes / Truss&Batta / Fabric Stock). Truss (allocation engine) is a later sub-phase.
@@ -18,8 +19,9 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function PlanningTab({ projects, functions, setFunctions, inventory, vendors, setVendors, settings, setSettings, boxes, setBoxes, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, studio, authUser }) {
+export default function PlanningTab({ projects, functions, setFunctions, inventory, vendors, setVendors, settings, setSettings, boxes, setBoxes, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser }) {
   const allTabs = [
+    { id: "deptops", label: "🏦 Dept Ops" },
     { id: "manpower", label: "👷 Manpower" },
     { id: "truss", label: "🏗️ Truss" },
     { id: "paint", label: "🎨 Paint" },
@@ -35,6 +37,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   return (
     <div className="space-y-4">
       <Tabs tabs={tabs} active={sub} onChange={setSub} />
+      {sub === "deptops" && <DepartmentOpsTab eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} blocks={blocks} settings={settings} authUser={authUser} />}
       {sub === "manpower" && <ManpowerTab projects={projects} functions={functions} setFunctions={setFunctions} settings={settings} setSettings={setSettings} vendors={vendors} setVendors={setVendors} inventory={inventory} />}
       {sub === "truss" && <TrussPlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
