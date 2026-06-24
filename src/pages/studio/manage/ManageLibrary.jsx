@@ -372,11 +372,21 @@ export default function ManageLibrary({ ctx }) {
             {/* ── Zone Dimensions ── */}
             <div style={{ marginTop: 14, borderTop: `1px solid ${border}`, paddingTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "#C9A96E", marginBottom: 8 }}>{"📐"} Zone Dimensions</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
-                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Truss Depth (ft)</div><input type="number" value={libEditImg.dims?.trussL || ""} onChange={e => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), trussL: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
-                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Truss Width (ft)</div><input type="number" value={libEditImg.dims?.trussW || ""} onChange={e => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), trussW: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
-                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Truss Height (ft)</div><input type="number" value={libEditImg.dims?.trussH || ""} onChange={e => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), trussH: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
-              </div>
+              {(() => {
+                const d = libEditImg.dims || {};
+                const isBox = !!(d.trussL && d.trussW && d.trussH);
+                const setD = (patch) => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), ...patch } });
+                const cell = { fontSize: 9, color: textS, marginBottom: 2 };
+                const inp = { ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 };
+                return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 6, marginBottom: 8 }}>
+                  <div><div style={cell}>Truss Depth (ft)</div><input type="number" value={d.trussL || ""} onChange={e => setD({ trussL: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                  <div><div style={cell}>Truss Width (ft)</div><input type="number" value={d.trussW || ""} onChange={e => setD({ trussW: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                  <div><div style={cell}>Truss Height (ft)</div><input type="number" value={d.trussH || ""} onChange={e => setD({ trussH: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                  <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={d.trussQty || ""} placeholder="1" onChange={e => setD({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
+                  {isBox && <div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={d.trussFrontExt || ""} placeholder="0" onChange={e => setD({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                  {isBox && (Number(d.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                </div>;
+              })()}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                 <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={libEditImg.dims?.floorL || ""} onChange={e => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), floorL: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
                 <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={libEditImg.dims?.floorW || ""} onChange={e => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), floorW: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
@@ -389,17 +399,6 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                 </div>
               </div>
-              {/* Truss quantity + box front-extension — same controls as the Build zone, so they carry through */}
-              {(() => {
-                const d = libEditImg.dims || {};
-                const isBox = !!(d.trussL && d.trussW && d.trussH);
-                const setD = (patch) => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), ...patch } });
-                return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 6 }}>
-                  <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Truss Qty</div><input type="number" min={1} value={d.trussQty || ""} placeholder="1" onChange={e => setD({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} /></div>
-                  {isBox && <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={d.trussFrontExt || ""} placeholder="0" onChange={e => setD({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} /></div>}
-                  {isBox && (Number(d.trussFrontExt) || 0) > 0 && <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} /></div>}
-                </div>;
-              })()}
               {/* ── §23 Phase 2.9e (26 May 2026) — Drape Density (Liza kg/sqft for Full Box ceiling) ── */}
               {(() => {
                 const d = libEditImg.dims || {};
