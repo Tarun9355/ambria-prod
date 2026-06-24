@@ -285,7 +285,10 @@ export default function IMS() {
     if (loading) return;
     const t = setTimeout(() => { syncRecipeRatesToStudio({ silent: true }); }, 2500);
     return () => clearTimeout(t);
-  }, [loading, settings.flowerPatterns, settings.mandiCatalogue, settings.defaultStudioMarkup, settings.flowerRecipeSubcats, studioRcItems, syncRecipeRatesToStudio]);
+    // NOTE: studioRcItems is deliberately NOT a dependency. It used to be — but a Studio price edit
+    // changes RC_SK → realtime updates studioRcItems → this effect fired → re-saved RC_SK → echoed
+    // back to Studio and REVERTED the edit (feedback loop). Sync only on recipe/mandi/markup changes.
+  }, [loading, settings.flowerPatterns, settings.mandiCatalogue, settings.defaultStudioMarkup, settings.flowerRecipeSubcats, syncRecipeRatesToStudio]);
 
   // ── Initial load + Realtime subscriptions ──
   useEffect(() => {

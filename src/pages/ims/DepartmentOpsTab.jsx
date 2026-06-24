@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 
 // ═══ DEPARTMENT OPERATIONS (Planning → Dept Ops) ═══
@@ -52,6 +52,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const allEvents = useMemo(() => (eventOrders || []).map(eo => ({ eo, date: eventDate(eo) })), [eventOrders]);
   const eventDatesSet = useMemo(() => new Set(allEvents.map(e => e.date).filter(Boolean)), [allEvents]);
 
+  // Open the calendar on a month that actually has events (nearest upcoming, else latest) so a
+  // booked event is never hidden behind the current month.
+  const calInitRef = useRef(false);
+  useEffect(() => {
+    if (calInitRef.current || allEvents.length === 0) return;
+    calInitRef.current = true;
+    const dated = allEvents.map(e => e.date).filter(Boolean).sort();
+    const target = dated.find(d => d >= today) || dated[dated.length - 1];
+    if (target) { const dt = new Date(target + "T00:00:00"); setCalRef({ y: dt.getFullYear(), m: dt.getMonth() }); }
+  }, [allEvents, today]);
+
   // Event list — search + optional date filter, sorted by date (upcoming first).
   const events = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -89,7 +100,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
 
   // ── Department-saved data on the event order ──
   const deptData = (sel?.deptOps && sel.deptOps[dept]) || {};
-  const mpRows = Array.isArray(deptData.mp) ? deptData.mp : (DEPT_MP[dept] || ["Labours"]).map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0 }));
+  const deptTypes = DEPT_MP[dept] || ["Labours"];
+  const sysPlan = (Array.isArray(sel?.manpowerPlan) ? sel.manpowerPlan : []).filter(p => deptTypes.includes(p.type));
+  // Seed crew rows from the system's plan (count + basis); the head can override. Saved overrides win.
+  const mpRows = Array.isArray(deptData.mp) ? deptData.mp
+    : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sys: p.count }))
+      : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sys: null })));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
   const realMandi = deptData.realMandi || "";
 
@@ -228,18 +244,24 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Manpower plan (editable / override) */}
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-800">👷 Manpower plan <span className="text-xs font-normal text-gray-400">— edit counts as you see fit</span></span>
+                <span className="text-sm font-semibold text-gray-800">👷 Manpower plan <span className="text-xs font-normal text-gray-400">— system suggests; override if you can manage with fewer</span></span>
                 <span className="text-sm font-bold text-gray-900">{fmt(mpCost)}</span>
               </div>
               <div className="divide-y">
-                {mpRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-                    <input value={r.type} onChange={e => setMp(i, "type", e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm font-medium" />
-                    <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className="w-16 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
-                    <div className="flex items-center gap-1"><span className="text-xs text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
-                    <div className="text-sm font-semibold text-gray-700 w-20 text-right">{fmt((Number(r.count) || 0) * (Number(r.rate) || 0))}</div>
-                  </div>
-                ))}
+                {mpRows.map((r, i) => {
+                  const overridden = r.sys != null && Number(r.count) !== Number(r.sys);
+                  return (
+                    <div key={i} className="px-4 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <input value={r.type} onChange={e => setMp(i, "type", e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm font-medium" />
+                        <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 border rounded-lg px-2 py-1.5 text-sm text-center " + (overridden ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
+                        <div className="flex items-center gap-1"><span className="text-xs text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
+                        <div className="text-sm font-semibold text-gray-700 w-20 text-right">{fmt((Number(r.count) || 0) * (Number(r.rate) || 0))}</div>
+                      </div>
+                      {(r.basis || r.sys != null) && <div className="text-[10px] text-gray-400 mt-1 pl-1">{r.sys != null && <span className={overridden ? "text-amber-600 font-semibold" : ""}>System: {r.sys}{overridden ? ` → you set ${r.count || 0}` : ""}</span>}{r.basis ? ` · ${r.basis}` : ""}</div>}
+                    </div>
+                  );
+                })}
               </div>
               <div className="px-4 py-2"><button onClick={addMp} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">+ Add crew type</button></div>
             </div>

@@ -53,6 +53,7 @@ import {
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
+import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
@@ -2216,6 +2217,77 @@ export default function StudioApp() {
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost) };
   }, [dealCheckData, rcItems, floralRatio]);
 
+  // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
+  // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
+  // Peak count across functions (= people to book). Mirrors the Deal Check manpower rules.
+  const manpowerPlanForBooking = useCallback((allFns) => {
+    const d = dealCheckData || {};
+    const dihari = d.dihariSchemes || {};
+    const labourTiers = d.labourTiers || {};
+    const venueMinLabour = d.venueMinLabour || {};
+    const defaultMinLabour = d.defaultMinLabour || 4;
+    const eventTypeMultipliers = d.eventTypeMultipliers || { outdoor_budgeted: 1 };
+    const eventTimingMultipliers = d.eventTimingMultipliers || {};
+    const sayaMultiplier = d.sayaMultiplier || 1.3;
+    const heavyElementRanges = d.heavyElementRanges || [];
+    const fabricBangaliRanges = d.fabricBangaliRanges || [];
+    const trussLabourRanges = d.trussLabourRanges || [];
+    const fps = d.flowerPatterns || [];
+    const elecProd = d.electricianProductivity || {};
+    const seasonMap = d.seasonMap || {};
+    const recipeSubs = (d.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s || "").toLowerCase().trim());
+    const types = Object.keys(dihari);
+    if (!types.length || !(allFns || []).length) return [];
+    const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
+    const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
+    const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => { const rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase()); if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) }); }); }); };
+    const calc = (fn, type) => {
+      if (type === "Flowerists") {
+        let t = 0, arr = 0; walk(fn, ({ rc, el, qty }) => {
+          if (String(rc.cat || "").toLowerCase() !== "florals") return;
+          if (!recipeSubs.includes(String(rc.sub || "").toLowerCase().trim())) return;
+          const pat = fps.find(p => { const n = String(p?.name || "").toLowerCase().trim(); const rn = String(rc.name || "").toLowerCase().trim(); return n && rn && (n === rn || n.includes(rn) || rn.includes(n)); });
+          if (!pat) return; const sk = sizeFromMode(rc.inhouseMode, el.size); let c = pat.sizes?.[sk] || pat.sizes?.medium; if (!c && sk === "big" && pat.sizes?.large) c = pat.sizes.large;
+          const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { t += Math.ceil(qty / upf); arr += qty; }
+        });
+        return { count: t, basis: t > 0 ? `${arr} arrangement(s) ÷ units-per-flowerist` : "no recipe-driven florals" };
+      }
+      if (type === "Electricians") {
+        let t = 0, n = 0; walk(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = elecProd[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { t += Math.ceil(qty / upe); n += qty; } });
+        return { count: t, basis: t > 0 ? `${n} lighting unit(s) ÷ productivity` : "no lighting" };
+      }
+      if (type === "Labours") {
+        const vc = venueMinLabour[fn.fnVenue || ""]; const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
+        const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
+        const ss = seasonMap[fn.fnDate || ""]; const cand = [1.0]; if (ss === "kings") cand.push(sayaMultiplier); cand.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); const sm = Math.max(...cand, 1.0);
+        const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+        let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat] || 0); });
+        return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}` };
+      }
+      if (type === "Fabric Bangali") {
+        let sq = 0; walk(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) sq += L * W; } });
+        if (sq <= 0 || !fabricBangaliRanges.length) return { count: 0, basis: "no fabric sqft" };
+        let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
+        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range` };
+      }
+      if (type === "Truss Labour") {
+        let p = 0; walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) p += qty; });
+        if (p <= 0 || !trussLabourRanges.length) return { count: 0, basis: "no truss/pillars" };
+        let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
+        return { count: lab, basis: `${p} truss/pillar(s) → range` };
+      }
+      const cfg = labourTiers[type];
+      if (cfg && cfg.tier === 2) { const batches = cfg.subCatBatches || {}; const sc = {}; walk(fn, ({ rc, qty }) => { if (batches[rc.sub || ""]) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; }); let t = 0; Object.entries(sc).forEach(([k, v]) => { t += Math.ceil(v / (batches[k] || 3)); }); return { count: Math.max(cfg.minimum || 1, t), basis: `sub-category batches (min ${cfg.minimum || 1})` }; }
+      if (type === "Supervisors") return { count: 1, basis: "1 per booking" };
+      return { count: 0, basis: "" };
+    };
+    return types.map(type => {
+      let best = { count: 0, basis: "" };
+      (allFns || []).forEach(fn => { const r = calc(fn, type); if (r.count > best.count) best = r; });
+      return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0 };
+    }).filter(r => r.count > 0);
+  }, [dealCheckData, rcItems]);
+
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
     return all.reduce((sum, fnData) => sum + calcFunctionCost(fnData).grand, 0);
@@ -3248,6 +3320,9 @@ Return ONLY JSON:
         const flowers = Object.values(fbAgg).sort((a, b) => b.cost - a.cost);
         floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
       } catch {}
+      // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
+      let manpowerPlan = [];
+      try { manpowerPlan = manpowerPlanForBooking(allFns); } catch {}
       const eo = {
         id: "eo_" + Date.now().toString(36),
         clientId: client.id,
@@ -3273,6 +3348,7 @@ Return ONLY JSON:
         transportCost: eventTransport,
         functionsDetail: fnEOs,
         floralPlan,
+        manpowerPlan,
         manualItems: [...dcManualItems],
         floralRatio,
         salesperson: authUser?.name || "—",
