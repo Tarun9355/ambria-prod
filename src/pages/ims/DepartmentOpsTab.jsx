@@ -138,7 +138,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
-  const projectedIncome = deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost); // full dept income from Deal Check, else local
+  const projectedIncome = Math.round(deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost)); // full dept income from Deal Check, else local
   const actualCost = realMandiNum + expenseTotal + mpCost; // real spend logged by the head
   const hasActuals = realMandiNum > 0 || expenseTotal > 0;
 
@@ -237,11 +237,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               <div className="bg-indigo-50 border border-indigo-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-2.5 flex items-center justify-between bg-indigo-100/60">
                   <span className="text-sm font-semibold text-indigo-900">📊 {dept} income (from Deal Check)</span>
-                  <span className="text-sm font-bold text-indigo-900">{fmt(deptIncome.total || 0)}</span>
+                  <span className="text-sm font-bold text-indigo-900">{fmt(Math.round(deptIncome.total || 0))}</span>
                 </div>
                 <div className="divide-y divide-indigo-100">
                   {[["📦 Inventory rental", deptIncome.rental], ["🏗️ Truss", deptIncome.truss], ["🧵 Fabric / draping", deptIncome.fabric], ["🌸 Floral (mandi)", deptIncome.florals], ["👷 Manpower", deptIncome.manpower], ["🏭 Production", deptIncome.production], ["🛒 Buying", deptIncome.buying], ["🚚 Transport", deptIncome.transport]].filter(([, v]) => v > 0).map(([l, v], i) => (
-                    <div key={i} className="flex justify-between px-4 py-1.5 text-xs"><span className="text-indigo-800">{l}</span><span className="font-semibold text-indigo-900">{fmt(v)}</span></div>
+                    <div key={i} className="flex justify-between px-4 py-1.5 text-xs"><span className="text-indigo-800">{l}</span><span className="font-semibold text-indigo-900">{fmt(Math.round(v))}</span></div>
                   ))}
                 </div>
               </div>
@@ -324,7 +324,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <div className="px-3 py-2 bg-emerald-100/60 flex justify-between text-xs font-semibold text-emerald-900"><span>🌸 Projected mandi (from Deal Check)</span><span>{fmt(projected)}</span></div>
                         {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 text-[10px] text-emerald-700 bg-emerald-50/60 border-b border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
                         {flowers.length === 0 ? <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. (Run Deal Check before marking Sold to capture it.)</div>
-                        : <div className="divide-y">{flowers.map((f, i) => <div key={i} className="flex justify-between px-3 py-1.5 text-xs"><span className="text-gray-700">{f.name} <span className="text-gray-400">×{f.qty}{f.unit ? " " + f.unit : ""}</span></span><span className="font-medium text-gray-800">{fmt(f.cost)}</span></div>)}</div>}
+                        : <div className="divide-y">{flowers.map((f, i) => <div key={i} className="flex justify-between px-3 py-1.5 text-xs"><span className="text-gray-700">{f.name} <span className="text-gray-400">{f.artificial || !f.qty ? (f.unit || "") : `×${f.qty}${f.unit ? " " + f.unit : ""}`}</span></span><span className="font-medium text-gray-800">{fmt(f.cost)}</span></div>)}</div>}
                       </div>
                       {/* Actual mandi entry */}
                       <div className="flex items-center gap-2">

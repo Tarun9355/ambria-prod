@@ -120,7 +120,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (lineRental > 0 && deptInv[dD]) deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "" });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); } } catch {}
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -148,7 +148,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (pp) {
               const fattaR = pp.fattaItem ? imsField.rentalCost(pp.fattaItem) : 0;
               const standR = pp.standItem ? imsField.rentalCost(pp.standItem) : 0;
-              Object.values(pp.perZone || {}).forEach(z => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; addD("Tenting", "rental", pc); }); // platform → Tenting
+              Object.values(pp.perZone || {}).forEach(z => { const pc = (z.fattas || 0) * fattaR + (z.stands || 0) * standR; rental += pc; addD("Tenting", "rental", pc); if (pc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: "Platform (fatta + stand)", photo: "", qty: (z.fattas || 0) + (z.stands || 0), unit: 0, total: Math.round(pc), sub: `${z.fattas || 0} fatta · ${z.stands || 0} stand` }); }); // platform → Tenting
             }
           } catch {}
           try {
@@ -163,7 +163,7 @@ export default function DealCheckOverlay({ ctx }) {
                 if (!pickedId) return;
                 const carpetItem = dcInventoryCache.find(x => x.id === pickedId);
                 if (!carpetItem) return;
-                { const cc = calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost; rental += cc; addD("Tenting", "rental", cc); } // carpet → Tenting
+                { const cc = calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost; rental += cc; addD("Tenting", "rental", cc); if (cc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: carpetItem.name || "Carpet", photo: imsField.photos(carpetItem)[0] || "", qty: 1, unit: 0, total: Math.round(cc), sub: imsField.subcategory(carpetItem) || "carpet" }); } // carpet → Tenting
               });
             });
           } catch {}
@@ -340,13 +340,14 @@ export default function DealCheckOverlay({ ctx }) {
         const dcSeasonInfo = { key: dcSeasonKey, mult: dcMandiMult[dcSeasonKey] || 1, label: (dcSeasonKey === "kings" || dcSeasonKey === "heavy_saya") ? "Saya" : dcSeasonKey === "competition" ? "Competition" : "Non-Saya" };
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
-          try { const agg = {}; (dcCostRollup.fns || []).forEach(fn => { (calcFnFloralSourcingCost(fn).breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: dcSeasonInfo, capturedAt: Date.now() }; } catch {}
+          try { const agg = {}; let artTotal = 0; (dcCostRollup.fns || []).forEach(fn => { const r = calcFnFloralSourcingCost(fn); artTotal += r.totalArtificial || 0; (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true }); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: dcSeasonInfo, capturedAt: Date.now() }; } catch {}
           let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
           const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
           (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared }; }); });
-          return { income: dcCostRollup.dept, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo };
+          const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
+          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo };
         };
         if (isSold && persistDeptSnapshot) {
           const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));
