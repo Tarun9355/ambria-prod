@@ -2173,6 +2173,7 @@ export default function StudioApp() {
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
     let tReal = 0, tArt = 0;
+    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
       (elems || []).forEach(el => {
@@ -2199,7 +2200,10 @@ export default function StudioApp() {
           const effR = ft === "real_only" ? 1 : rp;
           const effA = ft === "real_only" ? 0 : ap;
           const bp = (parent?.currentPrice || 0) * sMult;
-          tReal += (fl.qty || 0) * q * effR * bp;
+          const realUnits = (fl.qty || 0) * q * effR;
+          const realCost = realUnits * bp;
+          tReal += realCost;
+          if (realUnits > 0 && parent) { const nm = parent.name || "Flower"; if (!fbreak[nm]) fbreak[nm] = { name: nm, qty: 0, cost: 0, unit: parent.unit || "" }; fbreak[nm].qty += realUnits; fbreak[nm].cost += realCost; }
           if (effA > 0) {
             const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
             const bunches = (fl.qty || 0) * q * effA * bpu;
@@ -2209,7 +2213,7 @@ export default function StudioApp() {
         });
       });
     });
-    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt };
+    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost) };
   }, [dealCheckData, rcItems, floralRatio]);
 
   const eventGrandTotal = useMemo(() => {
@@ -3235,6 +3239,15 @@ Return ONLY JSON:
       const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
       const eventDecor = fnEOs.reduce((s, f) => s + (f.decorCost || 0), 0);
       const eventTransport = fnEOs.reduce((s, f) => s + (f.transportCost || 0), 0);
+      // Snapshot the Deal Check floral MANDI plan (projected) so the IMS Floral head sees the same
+      // breakdown and can enter the actual mandi price later → real P&L flows back here.
+      let floralPlan = { projected: 0, flowers: [] };
+      try {
+        const fbAgg = {};
+        allFns.forEach(fnData => { const r = calcFnFloralSourcingCost(fnData); (r.breakdown || []).forEach(f => { if (!fbAgg[f.name]) fbAgg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; fbAgg[f.name].qty += f.qty; fbAgg[f.name].cost += f.cost; }); });
+        const flowers = Object.values(fbAgg).sort((a, b) => b.cost - a.cost);
+        floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, capturedAt: Date.now() };
+      } catch {}
       const eo = {
         id: "eo_" + Date.now().toString(36),
         clientId: client.id,
@@ -3259,6 +3272,7 @@ Return ONLY JSON:
         decorCost: eventDecor,
         transportCost: eventTransport,
         functionsDetail: fnEOs,
+        floralPlan,
         manualItems: [...dcManualItems],
         floralRatio,
         salesperson: authUser?.name || "—",

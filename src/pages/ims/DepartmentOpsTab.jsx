@@ -251,12 +251,32 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 {hasActuals && <span className="text-sm font-bold text-emerald-800">{fmt(actualCost)}</span>}
               </div>
               <div className="px-4 pb-3 space-y-2">
-                {dept === "Floral" && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-emerald-800 w-40">🌸 Real mandi cost</span>
-                    <input type="number" min="0" value={realMandi} onChange={e => saveDept({ realMandi: e.target.value })} placeholder="actual flower spend" className="flex-1 border border-emerald-200 rounded-lg px-3 py-2 text-sm" />
-                  </div>
-                )}
+                {dept === "Floral" && (() => {
+                  const fp = sel.floralPlan || {};
+                  const projected = Number(fp.projected) || 0;
+                  const flowers = Array.isArray(fp.flowers) ? fp.flowers : [];
+                  const actual = Number(realMandi) || 0;
+                  return (
+                    <div className="space-y-2">
+                      {/* Projected mandi breakdown — same as Deal Check */}
+                      <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden">
+                        <div className="px-3 py-2 bg-emerald-100/60 flex justify-between text-xs font-semibold text-emerald-900"><span>🌸 Projected mandi (from Deal Check)</span><span>{fmt(projected)}</span></div>
+                        {flowers.length === 0 ? <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. (Run Deal Check before marking Sold to capture it.)</div>
+                        : <div className="divide-y">{flowers.map((f, i) => <div key={i} className="flex justify-between px-3 py-1.5 text-xs"><span className="text-gray-700">{f.name} <span className="text-gray-400">×{f.qty}{f.unit ? " " + f.unit : ""}</span></span><span className="font-medium text-gray-800">{fmt(f.cost)}</span></div>)}</div>}
+                      </div>
+                      {/* Actual mandi entry */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-emerald-800 w-40">🧾 Actual mandi spent</span>
+                        <input type="number" min="0" value={realMandi} onChange={e => saveDept({ realMandi: e.target.value })} placeholder={projected ? `projected ${projected}` : "actual flower spend"} className="flex-1 border border-emerald-200 rounded-lg px-3 py-2 text-sm" />
+                      </div>
+                      {actual > 0 && projected > 0 && (
+                        <div className={"text-xs font-semibold " + (actual > projected ? "text-red-600" : "text-emerald-700")}>
+                          {actual > projected ? "▲ Over" : "▼ Under"} projected by {fmt(Math.abs(actual - projected))} — salesperson's P&L will use the actual {fmt(actual)}.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {expenses.map((ex, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <input value={ex.label} onChange={e => setExpense(i, "label", e.target.value)} placeholder="on-site expense" className="flex-1 border border-emerald-200 rounded-lg px-3 py-2 text-sm" />
