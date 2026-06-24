@@ -44,7 +44,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -120,6 +120,15 @@ export default function ManageLibrary({ ctx }) {
   const photoStatus = (img) => img?._verified ? "verified"
     : libPhotoIsTagged(img) ? "review"
     : "untagged";
+  // Same 3-state model for videos: verified (a person confirmed), review (AI/has tags, unconfirmed),
+  // or untagged (no tag entry yet). Drives the Videos status folders + bulk video tagging.
+  const videoStatus = (v) => {
+    const t = ytVideoTags[v.id];
+    if (!t) return "untagged";
+    if (t._verified) return "verified";
+    const hasTag = t._aiTagged || t.venue || t.fn || t.tier || t.io || (t.styles || []).length || (t.colors || []).length || Object.keys(t.zonePhotos || {}).length;
+    return hasTag ? "review" : "untagged";
+  };
   const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
   // Permission gate for the Images / Videos / Contributions sub-views. If the current view isn't
   // allowed for this role, fall back to the first one that is.
@@ -1017,10 +1026,36 @@ export default function ManageLibrary({ ctx }) {
             <button onClick={()=>openCldVideoBrowser()} style={{...S.btn(true),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Add Video</button>
             <button onClick={()=>loadAllYT(true)} disabled={ytLoading} style={{...S.btn(false),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap",opacity:ytLoading?0.5:1}}>{ytLoading?"⏳":"🔄"} Refresh YT</button>
           </div>
-          {/* Untagged alert banner */}
-          {untaggedVideoCount>0&&<div onClick={()=>{setYtFilterLinked("untagged");}} style={{padding:"8px 14px",background:"rgba(245,158,11,0.1)",borderRadius:10,border:"1px solid rgba(245,158,11,0.3)",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-            <div style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>🔴 {untaggedVideoCount} untagged video{untaggedVideoCount>1?"s":""} — tap to filter</div>
-          </div>}
+          {/* ── Status "folders" + bulk video AI tag (mirrors the Images tab) ── */}
+          {(() => {
+            const vis = allVideos.filter(v => !hiddenVideos[v.id]);
+            const cnt = (k) => k === "all" ? vis.length : vis.filter(v => videoStatus(v) === k).length;
+            const untaggedN = cnt("untagged");
+            return (
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {[
+                  ["all", "📁", "All", "everything", cnt("all"), accent],
+                  ["verified", "✅", "Verified", "reviewed by a person", cnt("verified"), "#059669"],
+                  ["review", "🤖", "Needs review", "AI-tagged — to check", cnt("review"), "#7C3AED"],
+                  ["untagged", "❓", "Untagged", "no tags yet", untaggedN, "#9CA3AF"],
+                ].map(([k, icon, label, sub, count, col]) => {
+                  const on = ytFilterLinked === k;
+                  return <div key={k} onClick={() => setYtFilterLinked(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: on ? col : textS }}>{icon} {label}</div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}><span style={{ fontSize: 17, fontWeight: 800, color: on ? col : textP }}>{count}</span><span style={{ fontSize: 8, color: textS }}>{sub}</span></div>
+                  </div>;
+                })}
+                <div style={{ flex: 1 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "center" }}>
+                  {bulkVid?.running ? (
+                    <span style={{ fontSize: 10, color: textS }}>🎬 Tagging {bulkVid.done}/{bulkVid.total} · {bulkVid.ok}✓ {bulkVid.fail}✕</span>
+                  ) : untaggedN > 0 ? (
+                    <button onClick={() => { if (window.confirm(`AI-tag ${untaggedN} untagged video${untaggedN === 1 ? "" : "s"}?\n\nRuns in the background — keep working; progress shows in the corner. Each video is metadata-tagged and gets best-match zone photos. The team reviews/verifies after, and tagged videos appear on Browse.`)) runBulkTagVideos?.(); }} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#0EA5E9" }}>🎬 Tag all untagged ({untaggedN})</button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })()}
           {/* Add Video Panel (Cloudinary Video Browser) */}
           {addVideoOpen&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:12,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -1098,6 +1133,8 @@ export default function ManageLibrary({ ctx }) {
             </select>
             <select value={ytFilterLinked} onChange={e=>setYtFilterLinked(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
               <option value="all">All</option>
+              <option value="verified">✅ Verified</option>
+              <option value="review">🤖 Needs review</option>
               <option value="tagged">Tagged</option>
               <option value="untagged">Untagged</option>
               <option value="linked">Linked to Event</option>
@@ -1134,8 +1171,10 @@ export default function ManageLibrary({ ctx }) {
               if(ytFilterIO!=="all"&&tag?.io!==ytFilterIO) return false;
               if(ytFilterStyle!=="all"&&!(tag?.styles||[]).includes(ytFilterStyle)) return false;
               if(ytFilterColor!=="all"&&!(tag?.colors||[]).includes(ytFilterColor)) return false;
-              if(ytFilterLinked==="tagged"&&!tag) return false;
-              if(ytFilterLinked==="untagged"&&tag) return false;
+              if(ytFilterLinked==="tagged"&&videoStatus(v)==="untagged") return false;
+              if(ytFilterLinked==="untagged"&&videoStatus(v)!=="untagged") return false;
+              if(ytFilterLinked==="verified"&&videoStatus(v)!=="verified") return false;
+              if(ytFilterLinked==="review"&&videoStatus(v)!=="review") return false;
               if(ytFilterLinked==="linked"&&!(tag?.linkedEvents?.length>0)) return false;
               return true;
             }).map(v=>{
