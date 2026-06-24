@@ -1361,7 +1361,7 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                   {/* ═══ PHOTOS BY ZONE (Phase 2) — every zone on one screen, ranked candidates, one-click assign ═══ */}
                   <div style={{marginBottom:8,borderTop:`1px solid ${border}`,paddingTop:10}}>
-                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — best matches shown first; tap one to assign. "More…" opens the full picker with filters.</div>
+                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — tap a thumbnail to assign, or hit <span style={{color:accent,fontWeight:700}}>🔍 Big view</span> to pick from large photos in a full-screen popup.</div>
                     {(taxonomy.areasElements||[]).map((zone,zi)=>{
                       const zp=tag.zonePhotos||{};
                       const libId=zp[zone];
@@ -1376,7 +1376,7 @@ export default function ManageLibrary({ ctx }) {
                           <span style={{fontSize:14,width:20,textAlign:"center"}}>{ZONE_ICONS[zone]||"📍"}</span>
                           <span style={{fontSize:11,fontWeight:600,color:textP,flex:1}}>{zone}</span>
                           {chosen?<span style={{fontSize:9,color:"#059669",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {chosen.name||"selected"}</span>:<span style={{fontSize:9,color:textS}}>{cands.length} match{cands.length===1?"":"es"}</span>}
-                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]});}} style={{fontSize:9,color:accent,fontWeight:600,cursor:"pointer",flexShrink:0}}>More…</span>
+                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]});}} title="Open the big full-screen picker for this zone" style={{fontSize:9,fontWeight:700,cursor:"pointer",flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${accent}`,color:accent,background:`${accent}12`}}>🔍 Big view</span>
                           {chosen&&<span onClick={(e)=>{e.stopPropagation();setZonePhoto(null);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>× clear</span>}
                         </div>
                         {stripList.length===0
@@ -1434,7 +1434,7 @@ export default function ManageLibrary({ ctx }) {
           const cost=calcElCost(li);
           return <div key={li.id} onClick={()=>selectPhoto(li.id)} style={{borderRadius:10,border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,overflow:"hidden",cursor:"pointer",background:cardBg,position:"relative"}}>
             <div style={{position:"relative"}}>
-              <img src={li.url} alt={li.name||""} style={{width:"100%",height:120,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="120px";}}/>
+              <img src={li.url} alt={li.name||""} style={{width:"100%",height:200,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="200px";}}/>
               {isCurrent&&<div style={{position:"absolute",top:4,right:4,background:accent,color:"#fff",fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700}}>Current</div>}
               {cost>0&&<div style={{position:"absolute",top:4,left:4,background:"rgba(0,0,0,0.75)",color:"#fff",fontSize:10,padding:"2px 8px",borderRadius:4,fontWeight:700}}>{fmt(cost)}</div>}
             </div>
@@ -1451,7 +1451,7 @@ export default function ManageLibrary({ ctx }) {
         };
         const priorityLabels = filterPriority.map(p=>p.label).join(" > ");
         return <div style={{position:"fixed",inset:0,zIndex:9999,background:isDark?"rgba(0,0,0,0.92)":"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}} onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:bg,borderRadius:16,width:"100%",maxWidth:1000,maxHeight:"90vh",overflow:"auto",border:`1px solid ${border}`}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:bg,borderRadius:16,width:"96vw",maxWidth:1500,maxHeight:"94vh",overflow:"auto",border:`1px solid ${border}`}}>
             <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:bg,zIndex:1}}>
               <div>
                 <div style={{fontSize:18,fontWeight:700,color:textP}}>{ZONE_ICONS[zonePickerZone]||"📍"} Select photo for {zonePickerZone}</div>
@@ -1504,19 +1504,19 @@ export default function ManageLibrary({ ctx }) {
             <div style={{padding:20}}>
               {exact.length>0&&<>
                 <div style={{fontSize:12,fontWeight:700,color:accent,marginBottom:8}}>Best matches ({exact.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
                   {exact.map(renderCard)}
                 </div>
               </>}
               {similar.length>0&&<>
                 <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>Similar options ({similar.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
                   {similar.map(renderCard)}
                 </div>
               </>}
               {fallback.length>0&&<>
                 <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>More options ({fallback.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
                   {fallback.map(renderCard)}
                 </div>
               </>}
