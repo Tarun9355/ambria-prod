@@ -12,6 +12,7 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fixedVenues";
+import { calcZoneFabric, autoFillFabricAllocation } from "../../../lib/studio/pricing";
 
 export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
@@ -347,7 +348,39 @@ export default function DealCheckOverlay({ ctx }) {
           const manpowerDetail = {};
           (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared }; }); });
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo };
+          // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
+          let fabricPlan = { liza: [], masking: [], curtain: [] };
+          try {
+            const tInv = dealCheckData?.trussInv;
+            if (tInv) {
+              const agg = { liza: {}, masking: {}, curtain: {} };
+              (dcCostRollup.fns || []).forEach(fn => {
+                const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                const pObj = (imsPaletteCatalogue || []).find(p => p.name === (fn.fnPalette || "Custom"));
+                const anchors = pObj?.anchorColours || [];
+                Object.keys(zc).forEach(zk => {
+                  if (!en[zk] || !zc[zk]) return;
+                  let density = "moderate";
+                  const photoUrl = (fn.elSelectedPhoto || {})[zk];
+                  if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
+                  const fab = calcZoneFabric(zc[zk], tInv, density);
+                  const add = (key, totalQty, stockArr, qtyField, allocField) => {
+                    if (!totalQty || totalQty <= 0) return;
+                    const existing = zc[zk][allocField];
+                    const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);
+                    if (allocs.length) allocs.forEach(a => { const c = a.colour || "(unassigned)"; agg[key][c] = (agg[key][c] || 0) + (Number(a.qty) || 0); });
+                    else agg[key]["(unassigned)"] = (agg[key]["(unassigned)"] || 0) + Math.ceil(totalQty);
+                  };
+                  add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
+                  add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
+                  add("curtain", fab.curtainPieces, tInv.curtainStock, "stockPieces", "curtainAllocation");
+                });
+              });
+              const toRows = (o) => Object.entries(o).map(([colour, qty]) => ({ colour, qty: Math.ceil(qty) })).filter(r => r.qty > 0);
+              fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain) };
+            }
+          } catch {}
+          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan };
         };
         if (isSold && persistDeptSnapshot) {
           const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));

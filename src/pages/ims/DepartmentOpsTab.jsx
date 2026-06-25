@@ -41,7 +41,7 @@ const DEFAULT_TOOLS = {
   Furniture: ["Trolley", "Covers", "Cleaning cloth", "Cushion spares"],
 };
 
-export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, blocks, settings, setSettings, authUser }) {
+export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => { const k = String(cat || "").toLowerCase().trim(); if (catDeptCfg[k] && DEPTS.includes(catDeptCfg[k])) return catDeptCfg[k]; return kwDept(cat); };
   const dihari = settings?.dihariSchemes || {};
@@ -236,6 +236,49 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     w.document.close();
   };
 
+  // ── Fabric (dept = Fabric): total available (Old + New) vs required, with date-wise shortfall ──
+  const FABRIC_TYPES = [
+    { key: "liza", label: "Liza Fabric", stockKey: "lizaStock", qtyField: "stockKg", unit: "kg", emoji: "🪡" },
+    { key: "masking", label: "Wall Masking", stockKey: "maskingStock", qtyField: "stockPieces", unit: "pcs", emoji: "🧱" },
+    { key: "curtain", label: "Velvet Curtains", stockKey: "curtainStock", qtyField: "stockPieces", unit: "pcs", emoji: "🎀" },
+  ];
+  const fabricAvail = useMemo(() => {
+    const out = {};
+    FABRIC_TYPES.forEach(ft => {
+      const m = {};
+      (Array.isArray(trussInv?.[ft.stockKey]) ? trussInv[ft.stockKey] : []).forEach(r => {
+        const c = r.colour || "(unassigned)";
+        if (!m[c]) m[c] = { old: 0, new: 0 };
+        m[c].old += Number(r[ft.qtyField]) || 0;
+        m[c].new += Number(r[`${ft.qtyField}New`]) || 0;
+      });
+      out[ft.key] = m;
+    });
+    return out;
+  }, [trussInv]);
+  // Requirement vs available for the SELECTED event.
+  const fabricReqRows = (dept === "Fabric" && sel?.fabricPlan) ? FABRIC_TYPES.map(ft => {
+    const req = Array.isArray(sel.fabricPlan[ft.key]) ? sel.fabricPlan[ft.key] : [];
+    const rows = req.map(r => { const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 }; const avail = av.old + av.new; return { colour: r.colour, required: r.qty, old: av.old, new: av.new, avail, short: Math.max(0, r.qty - avail) }; });
+    return { ...ft, rows };
+  }).filter(f => f.rows.length) : [];
+  // All upcoming events scanned for fabric shortfalls → prior heads-up for ordering.
+  const upcomingFabricShort = useMemo(() => {
+    if (dept !== "Fabric") return [];
+    const out = [];
+    (eventOrders || []).forEach(eo => {
+      const d = eventDate(eo); if (!d || d < today || !eo.fabricPlan) return;
+      FABRIC_TYPES.forEach(ft => {
+        (Array.isArray(eo.fabricPlan[ft.key]) ? eo.fabricPlan[ft.key] : []).forEach(r => {
+          const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
+          const short = (Number(r.qty) || 0) - (av.old + av.new);
+          if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short, unit: ft.unit });
+        });
+      });
+    });
+    return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  }, [dept, eventOrders, fabricAvail, today]);
+
   return (
     <div className="flex gap-4">
       {/* ── Left: department + event list ── */}
@@ -335,6 +378,51 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
             ) : (
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">No Deal Check breakdown synced yet for this event. In Studio → Deal Check → <b>Dept Income</b>, click <b>📤 Sync to IMS Dept Ops</b> to push the numbers here.</div>
+            )}
+
+            {/* Fabric: stock vs requirement + shortfall (Fabric dept only) */}
+            {dept === "Fabric" && (
+              <div className="space-y-3">
+                {/* Prior heads-up: any upcoming event short on fabric */}
+                {upcomingFabricShort.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2.5 bg-red-100/70 text-sm font-bold text-red-800">⚠️ {upcomingFabricShort.length} upcoming fabric shortfall{upcomingFabricShort.length > 1 ? "s" : ""} — order ahead</div>
+                    <div className="divide-y divide-red-100">
+                      {upcomingFabricShort.map((s, i) => (
+                        <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
+                          <span className="text-red-800"><b>{s.fabric}</b> · {s.colour}</span>
+                          <span className="text-red-700">short <b>{s.short} {s.unit}</b> for {s.event} on <b>{s.date}</b></span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="px-4 py-1.5 text-[10px] text-red-500">Total available counts Old + New stock. Update live quantities in Planning → Fabric Stock after each washing cycle.</div>
+                  </div>
+                )}
+                {/* This event's requirement vs available */}
+                <div className="bg-white border rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-gray-800">🧵 Fabric required vs available <span className="text-xs font-normal text-gray-400">— for this event</span></span>
+                    <span className="text-xs text-gray-400">Available = Old + New stock</span>
+                  </div>
+                  {fabricReqRows.length === 0 ? (
+                    <div className="px-4 py-5 text-center text-xs text-gray-400">{sel?.fabricPlan ? "No fabric required for this event." : "No fabric plan synced yet — open Deal Check for this event in Studio."}</div>
+                  ) : fabricReqRows.map(ft => (
+                    <div key={ft.key} className="border-t first:border-t-0">
+                      <div className="px-4 py-1.5 bg-gray-50/60 text-xs font-semibold text-gray-700">{ft.emoji} {ft.label}</div>
+                      <div className="divide-y">
+                        {ft.rows.map((r, i) => (
+                          <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-4 py-1.5 text-xs items-center">
+                            <span className="text-gray-800">{r.colour}</span>
+                            <span className="text-gray-500 w-24 text-right">need <b>{r.required} {ft.unit}</b></span>
+                            <span className="text-gray-500 w-32 text-right">have {r.avail} <span className="text-gray-400">({r.old} old + {r.new} new)</span></span>
+                            <span className={"w-24 text-right font-bold " + (r.short > 0 ? "text-red-600" : "text-emerald-600")}>{r.short > 0 ? `short ${r.short} ${ft.unit}` : "✓ ok"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* Blocked inventory */}
