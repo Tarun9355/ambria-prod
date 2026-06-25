@@ -169,9 +169,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     }));
   };
 
-  // Line cost reconciles to Studio: shared rows = fixed allocation; mapped rows scale by edits.
+  // Day-wise crew overrides: deptData.mpDay = { [type]: { [date]: count } }. Non-shared crew with a
+  // working schedule can be tuned per day (Day 1 = 4, Day 2 = 6); cost = Sum(dayCount x shifts x rate).
+  const mpDay = (deptData.mpDay && typeof deptData.mpDay === "object") ? deptData.mpDay : {};
+  const dayWise = (r) => !r.shared && Array.isArray(r.schedule) && r.schedule.length > 0;
+  const effDay = (type, d) => { const ov = mpDay[type]; return Number(ov && ov[d.date] != null ? ov[d.date] : d.count) || 0; };
+  const setMpDay = (type, date, val) => saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } });
+  const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
+
+  // Line cost reconciles to Studio: shared = fixed allocation; day-wise = Sum(dayCount x shifts x rate);
+  // other mapped rows scale by count/rate edits.
   const lineCost = (r) => {
     if (r.shared) return Number(r.sysCost) || 0;
+    if (dayWise(r)) { const rate = Number(r.rate) || 0; return Math.round(r.schedule.reduce((s, d) => s + effDay(r.type, d) * (Number(d.windows) || 0) * rate, 0)); }
     const sc = Number(r.sysCount) || 0, sr = Number(r.sysRate) || 0, scost = Number(r.sysCost) || 0;
     if (sc > 0 && sr > 0 && scost > 0) return Math.round(scost * ((Number(r.count) || 0) / sc) * ((Number(r.rate) || 0) / sr));
     return (Number(r.count) || 0) * (Number(r.rate) || 0);
@@ -441,14 +451,29 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   };
   // Working-dihari schedule (which days × how many shifts) — mirrors Deal Check's day/timing breakdown.
   const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
-  const renderMpSchedule = (sch) => {
+  const renderMpSchedule = (r) => {
+    const sch = r && r.schedule;
     if (!Array.isArray(sch) || !sch.length) return null;
-    const total = sch.reduce((s, d) => s + (Number(d.windows) || 0), 0);
+    const editable = dayWise(r);
+    const totalDihari = sch.reduce((s, d) => s + effDay(r.type, d) * (Number(d.windows) || 0), 0);
     return (
       <div className="mt-1.5 bg-white border rounded-lg p-2 text-[10px] text-gray-600">
-        <div className="font-semibold text-gray-500 mb-0.5">📅 Working dihari (days × shifts)</div>
-        {sch.map((d, i) => <div key={i} className="flex justify-between"><span>{phaseLbl(d)}</span><span>{d.count} crew × {d.windows} shift{d.windows > 1 ? "s" : ""}</span></div>)}
-        <div className="border-t mt-0.5 pt-0.5 text-right">= <b className="text-gray-800">{total} dihari</b> booked</div>
+        <div className="font-semibold text-gray-500 mb-0.5">📅 Working dihari (days × shifts){editable ? " — edit crew per day" : ""}</div>
+        {sch.map((d, i) => {
+          const ov = editable && mpDay[r.type] && mpDay[r.type][d.date] != null && Number(mpDay[r.type][d.date]) !== Number(d.count);
+          return (
+            <div key={i} className="flex justify-between items-center py-0.5">
+              <span>{phaseLbl(d)}</span>
+              <span className="flex items-center gap-1">
+                {editable
+                  ? <input type="number" min="0" value={effDay(r.type, d)} onChange={e => setMpDay(r.type, d.date, e.target.value)} className={"w-10 border rounded px-1 py-0.5 text-[10px] text-center " + (ov ? "border-amber-400 bg-amber-50 font-bold" : "")} />
+                  : <b>{d.count}</b>}
+                crew × {d.windows} shift{d.windows > 1 ? "s" : ""}
+              </span>
+            </div>
+          );
+        })}
+        <div className="border-t mt-0.5 pt-0.5 text-right">= <b className="text-gray-800">{Math.round(totalDihari)} dihari</b> · line {fmt(lineCost(r))}</div>
       </div>
     );
   };
@@ -651,7 +676,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         {r.shared ? (
                           <span className="text-[10px] text-gray-400 mr-2">split allocation</span>
                         ) : (<>
-                          <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 border rounded-lg px-2 py-1.5 text-sm text-center " + (overridden ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
+                          {dayWise(r)
+                            ? <div className="flex items-center gap-1"><span className="text-xs text-gray-400" title="Sets all days; fine-tune per day in the schedule below">peak</span><input type="number" min="0" value={Math.max(0, ...r.schedule.map(d => effDay(r.type, d)))} onChange={e => setMpAllDays(r.type, r.schedule, e.target.value)} className="w-16 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
+                            : <div className="flex items-center gap-1"><span className="text-xs text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 border rounded-lg px-2 py-1.5 text-sm text-center " + (overridden ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>}
                           <div className="flex items-center gap-1"><span className="text-xs text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" /></div>
                         </>)}
                         <div className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(lineCost(r))}</div>
@@ -662,7 +689,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             <>
                               <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.type} derived → then split</div>
                               {renderMpTrace(r.trace)}
-                              {renderMpSchedule(r.schedule)}
+                              {renderMpSchedule(r)}
                               {r.splitInfo && r.splitInfo.byUsage && r.splitInfo.usageTotal > 0 ? (
                                 <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
                                   <b>{r.type}</b> split by <b>sub-category usage</b> — each sub-category's labour goes to its department:<br />
@@ -681,7 +708,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           ) : (<>
                             <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</div>
                             {renderMpTrace(r.trace)}
-                            {renderMpSchedule(r.schedule)}
+                            {renderMpSchedule(r)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
                             {r.sysCount != null && r.sysCount !== "" && (
                               <span className={overridden ? "text-amber-600 font-semibold" : "text-gray-500"}>
