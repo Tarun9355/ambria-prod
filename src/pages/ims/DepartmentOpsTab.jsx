@@ -849,16 +849,21 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Dismantle & return routing */}
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-50">
-                <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— after teardown, route each item: back to warehouse, reuse at another site, or mark damaged</span></span>
+                <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— after teardown, route each item: warehouse, reuse, needs-repair, or broken</span></span>
               </div>
+              {movements.some(m => m.type === "repair") && (
+                <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800">
+                  🔧 <b>Repairs needed</b> (kept in stock — fix before next use): {movements.filter(m => m.type === "repair").map((m, i) => <span key={m.id}>{i > 0 ? ", " : ""}{m.qty}× {m.name}</span>)}
+                </div>
+              )}
               {blockedItems.length === 0 ? (
                 <div className="px-4 py-5 text-center text-xs text-gray-400">No inventory to route for this department.</div>
               ) : (
                 <div className="divide-y">
                   {blockedItems.map(it => {
                     const k = "inv:" + it.id;
-                    const ret = movedQty(k, "return"), tr = movedQty(k, "transfer"), dmg = movedQty(k, "damage");
-                    const routed = ret + tr + dmg;
+                    const ret = movedQty(k, "return"), tr = movedQty(k, "transfer"), dmg = movedQty(k, "damage"), rep = movedQty(k, "repair");
+                    const routed = ret + tr + dmg + rep;
                     const unrouted = Math.max(0, it.qty - routed);
                     const d = routeDraft[k] || { type: "return" };
                     return (
@@ -868,11 +873,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">out {it.qty}{it.invId ? "" : " · not stock-linked"}</span></span>
                           <span className="text-[10px] text-gray-400">{unrouted > 0 ? `${unrouted} to route` : "✓ all routed"}</span>
                         </div>
-                        {(ret > 0 || tr > 0 || dmg > 0) && (
-                          <div className="text-[10px] pl-11 flex gap-3">
+                        {(ret > 0 || tr > 0 || dmg > 0 || rep > 0) && (
+                          <div className="text-[10px] pl-11 flex gap-3 flex-wrap">
                             {ret > 0 && <span className="text-gray-500">↩️ returned {ret}</span>}
                             {tr > 0 && <span className="text-sky-600">↪️ reused {tr}</span>}
-                            {dmg > 0 && <span className="text-red-600 font-semibold">⚠️ damaged {dmg}</span>}
+                            {rep > 0 && <span className="text-amber-600 font-semibold">🔧 to repair {rep}</span>}
+                            {dmg > 0 && <span className="text-red-600 font-semibold">⚠️ broken {dmg}</span>}
                           </div>
                         )}
                         <div className="pl-11 flex items-center gap-1.5 flex-wrap">
@@ -880,7 +886,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <select value={d.type} onChange={e => setDraft(k, { type: e.target.value })} className="border rounded px-2 py-1 text-xs">
                             <option value="return">↩️ Back to warehouse</option>
                             <option value="transfer">↪️ Reuse at another site</option>
-                            <option value="damage">⚠️ Damaged</option>
+                            <option value="repair">🔧 Needs repair (keep in stock)</option>
+                            <option value="damage">⚠️ Broken — write off (remove from stock)</option>
                           </select>
                           {d.type === "transfer" && (<>
                             <select value={d.toEventId || ""} onChange={e => setDraft(k, { toEventId: e.target.value })} className="border rounded px-2 py-1 text-xs max-w-[180px]">
@@ -910,10 +917,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <div className="divide-y">
                     {movements.slice().reverse().map(m => (
                       <div key={m.id} className="flex items-center justify-between px-4 py-1.5 text-xs">
-                        <span className={m.type === "damage" ? "text-red-600 font-semibold" : m.type === "transfer" ? "text-sky-700" : "text-gray-600"}>
-                          {m.type === "damage" ? "⚠️ Damaged" : m.type === "transfer" ? `↪️ Reused → ${m.toEventName || "event"}` : "↩️ Returned"} · {m.qty}× {m.name}
+                        <span className={m.type === "damage" ? "text-red-600 font-semibold" : m.type === "repair" ? "text-amber-600 font-semibold" : m.type === "transfer" ? "text-sky-700" : "text-gray-600"}>
+                          {m.type === "damage" ? "⚠️ Broken" : m.type === "repair" ? "🔧 Needs repair" : m.type === "transfer" ? `↪️ Reused → ${m.toEventName || "event"}` : "↩️ Returned"} · {m.qty}× {m.name}
                         </span>
-                        <span className="flex items-center gap-2 text-[10px] text-gray-400">{m.by}{m.type === "damage" && m.invId ? " · stock −" + m.qty : ""}<button onClick={() => delMovement(m.id)} className="text-red-300 hover:text-red-500 text-sm">×</button></span>
+                        <span className="flex items-center gap-2 text-[10px] text-gray-400">{m.by}{m.type === "damage" && m.invId ? " · stock −" + m.qty : m.type === "repair" ? " · kept in stock" : ""}<button onClick={() => delMovement(m.id)} className="text-red-300 hover:text-red-500 text-sm">×</button></span>
                       </div>
                     ))}
                   </div>
