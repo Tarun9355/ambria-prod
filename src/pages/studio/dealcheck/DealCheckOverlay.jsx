@@ -1105,16 +1105,22 @@ export default function DealCheckOverlay({ ctx }) {
                                             </div>
                                           );
                                         })()}
-                                        {Array.isArray(card.alternatives) && card.alternatives.length > 0 && (()=>{
-                                          const inferredSub = item ? imsField.subcategory(item) : (card.alternatives.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean) ? imsField.subcategory(card.alternatives.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean)) : "");
-                                          const cardSpec = parseCardKey(card._cardKey);
-                                          const subcategory = cardSpec ? (zoneCards[0]?.subcategory || "") : "";
-                                          const subToUse = subcategory || inferredSub;
+                                        {(()=>{
+                                          // Always show the card's sub-category options — computed live from current inventory
+                                          // so it works even on cached cards (no regenerate needed) and can never be blank when
+                                          // the sub-category has items. The card's true sub-category comes from its rate-card item.
+                                          const cardAlts = Array.isArray(card.alternatives) ? card.alternatives : [];
+                                          const rcForCard = rcItems.find(r => String(r?.name||"").toLowerCase().trim() === String(card.rcName||"").toLowerCase().trim());
+                                          const inferredSub = (rcForCard && rcForCard.sub) ? rcForCard.sub
+                                            : item ? imsField.subcategory(item)
+                                            : (cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean) ? imsField.subcategory(cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean)) : "");
+                                          const subToUse = inferredSub || (zoneCards[0]?.subcategory || "");
                                           const allSubItems = subToUse ? dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").toLowerCase().trim() === String(subToUse).toLowerCase().trim()) : [];
                                           const seenIds = new Set();
                                           const mergedAlts = [];
-                                          for (const alt of card.alternatives) { seenIds.add(alt.imsId); mergedAlts.push(alt); }
+                                          for (const alt of cardAlts) { if (alt && alt.imsId && !seenIds.has(alt.imsId)) { seenIds.add(alt.imsId); mergedAlts.push(alt); } }
                                           for (const itm of allSubItems) { if (!seenIds.has(itm.id)) { seenIds.add(itm.id); mergedAlts.push({imsId: itm.id, name: itm.name}); } }
+                                          if (mergedAlts.length === 0) return null;
                                           const subTotal = allSubItems.length;
                                           return (
                                           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:5}}>
