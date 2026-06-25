@@ -1499,16 +1499,35 @@ export default function StudioApp() {
         if (!cancelled) { setCustomInhouse(inhouseArr); setCustomOutdoor(outdoorArr); }
       } catch {}
       // Rate Card
+      let loadedRcItems = null;
       try {
         const v = await kvGet(RC_SK);
-        if (v != null) { const rp = parse(v); if (Array.isArray(rp) && rp.length) { const mapped = rp.map(i => ({ zones: [], ...i })); if (!cancelled) setRcItems(mapped); } }
+        if (v != null) { const rp = parse(v); if (Array.isArray(rp) && rp.length) { const mapped = rp.map(i => ({ zones: [], ...i })); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); } }
         else { reliableSave(RC_SK, JSON.stringify(RC_D), "Rate card").catch(() => {}); }
       } catch {}
-      // Rate Card Categories
+      // Rate Card Categories — reconcile any category that items reference but the saved list is
+      // missing (e.g. a category added in the editor but never "Saved", or trimmed later). Without
+      // this, those items have no group to render under and silently disappear from the Pricing tab.
       try {
         const v = await kvGet(RC_SK_CATS);
-        if (v != null) { const cp = parse(v); if (Array.isArray(cp) && cp.length && !cancelled) setRcCats(cp); }
-        else { reliableSave(RC_SK_CATS, JSON.stringify(RC_CATS_DEFAULT), "Categories").catch(() => {}); }
+        let cats = (v != null) ? (Array.isArray(parse(v)) ? parse(v) : null) : null;
+        if (!cats || !cats.length) { cats = RC_CATS_DEFAULT; if (v == null) reliableSave(RC_SK_CATS, JSON.stringify(RC_CATS_DEFAULT), "Categories").catch(() => {}); }
+        const items = loadedRcItems || [];
+        if (items.length) {
+          const haveIds = new Set(cats.map(c => c.id));
+          const orphanIds = [...new Set(items.map(i => i && i.cat).filter(id => id && !haveIds.has(id)))];
+          if (orphanIds.length) {
+            const recovered = orphanIds.map(id => {
+              const def = RC_CATS_DEFAULT.find(d => d.id === id);
+              if (def) return { ...def };
+              const firstSub = (items.find(i => i.cat === id) || {}).sub || "";
+              return { id, l: firstSub || `Recovered (${id})`, icon: "📦", c: "#9CA3AF", d: "Recovered — items existed under this category but it was missing from the list. Rename as needed." };
+            });
+            cats = [...cats, ...recovered];
+            reliableSave(RC_SK_CATS, JSON.stringify(cats), "Categories").catch(() => {});
+          }
+        }
+        if (!cancelled) setRcCats(cats);
       } catch {}
       // Transport
       try {
