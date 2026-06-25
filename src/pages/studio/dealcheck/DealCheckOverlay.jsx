@@ -11,6 +11,7 @@ import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
+import { deptMpReconciled } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../../lib/studio/pricing";
 
@@ -92,6 +93,11 @@ export default function DealCheckOverlay({ ctx }) {
           // each sub-category's labour charged to ITS department. Populated in the manpower block below.
           const labourUsageByDept = {}; DEPTS.forEach(d => { labourUsageByDept[d] = 0; });
           let labourUsageTotal = 0, labourUsageMode = false;
+          // Per-DAY usage split: each day's Labour cost is routed to departments by THAT day's element
+          // usage. labourDeptCost = Σ-over-days(dayCost × dayFrac[dept]); labourShareByDayDept exposes
+          // the per-day fraction so Dept Ops can show each day's bifurcation + this dept's share.
+          const labourDeptCost = {}; DEPTS.forEach(d => { labourDeptCost[d] = 0; });
+          const labourShareByDayDept = {};
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
           // Category (rate-card OR inventory) → department. First the admin-editable map
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
@@ -292,13 +298,70 @@ export default function DealCheckOverlay({ ctx }) {
                 if (type === "Supervisors") return 1;
                 return 0;
               };
-              // Populate usage-based labour split: per sub-category (labourTiers.Labours.subCatBatches),
-              // labour = qty ÷ per-unit, charged to that sub's department (catToDept of its category).
+              // Per-function calculation trace (the "how" for each day) — mirrors manpowerPlanForBooking's
+              // trace shapes so Dept Ops' renderMpTrace can show each day's own bifurcation table.
+              const traceOf = (fn, type) => {
+                if (type === "Flowerists") {
+                  const agg = {}; walkFn(fn, ({ rc, el, qty }) => {
+                    if (String(rc.cat || "").toLowerCase() !== "florals") return;
+                    if (!recipeSubsMP.includes(String(rc.sub || "").toLowerCase().trim())) return;
+                    const pattern = flowerPatternsMP.find(p => { const n = String(p?.name || "").toLowerCase().trim(); const rn = String(rc.name || "").toLowerCase().trim(); return n && rn && (n === rn || n.includes(rn) || rn.includes(n)); });
+                    if (!pattern) return; const sz = pattern.sizes || {}; const sk = sizeFromMode(rc.inhouseMode, el.size);
+                    let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
+                    const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
+                  });
+                  const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch })); let t = 0; rows.forEach(r => { t += Math.ceil(r.need); });
+                  return rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null;
+                }
+                if (type === "Electricians") {
+                  let t = 0, n = 0; walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { t += Math.ceil(qty / upe); n += qty; } });
+                  return t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null;
+                }
+                if (type === "Labours") {
+                  const venueName = fn.fnVenue || ""; const vc = venueMinLabour[venueName];
+                  const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
+                  const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
+                  let sm = 1.0;
+                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(vc && typeof vc === "object" ? vc.dumpingLevel : null) || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  const adj = Math.ceil(base * sm); let he = 0; const sc = {}; walkFn(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; }); heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat] || 0); });
+                  return { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he };
+                }
+                if (type === "Fabric Bangali") {
+                  let sq = 0; walkFn(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || rc.defaultDims?.L || 0); const W = Number(el.W || el.w || el.H || el.h || rc.defaultDims?.W || 0); if (L > 0 && W > 0) sq += L * W; } });
+                  if (sq <= 0 || !fabricBangaliRanges.length) return null;
+                  let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
+                  return { kind: "range", value: Math.round(sq), unit: "sqft", result: lab };
+                }
+                if (type === "Truss Labour") {
+                  let recipeP = 0; walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
+                  let zoneP = 0; try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); zoneP += (pv?.topology?.pillars || []).length; }); } } catch {}
+                  const p = recipeP + zoneP; if (p <= 0 || !trussLabourRanges.length) return null;
+                  let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
+                  return { kind: "pillars", recipeP, zoneP, total: p, result: lab };
+                }
+                const cfg = labourTiers[type];
+                if (cfg && cfg.tier === 2) {
+                  const batches = cfg.subCatBatches || {}; const sc = {};
+                  walkFn(fn, ({ rc, qty }) => { if (batches[rc.sub || ""]) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+                  const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: batches[k] || 3, need: v / (batches[k] || 3) }));
+                  const need = rows.reduce((s, r) => s + r.need, 0); const count = Math.max(cfg.minimum || 1, Math.ceil(need));
+                  return { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count };
+                }
+                if (type === "Supervisors") return { kind: "fixed", note: "1 supervisor per booking", result: 1 };
+                return null;
+              };
+              // Usage-based labour split, computed PER FUNCTION (drives the per-day split): for each fn,
+              // 1 labour per N units of each sub-category, charged to that sub's department (catToDept).
               const _labBatches = (labourTiers["Labours"] || {}).subCatBatches || {};
               labourUsageMode = Object.keys(_labBatches).length > 0;
-              if (labourUsageMode) {
-                fns.forEach(fn => walkFn(fn, ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (!b) return; const need = (Number(qty) || 0) / b; const dp = catToDept(rc.cat); labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + need; labourUsageTotal += need; }));
-              }
+              const labourUsageByFn = {};
+              fns.forEach((fn, fi) => {
+                const byDept = {}; let total = 0;
+                if (labourUsageMode) walkFn(fn, ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
+                labourUsageByFn[fi] = { byDept, total };
+                Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
+                labourUsageTotal += total;
+              });
               const fnDates = fns.map(f => f.fnDate).filter(Boolean).sort();
               if (fnDates.length) {
                 const addDays = (iso, n) => { const d = new Date(iso+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
@@ -310,17 +373,37 @@ export default function DealCheckOverlay({ ctx }) {
                 if (dcMpIncludeDismantle) dayList.push({date:addDays(latest,1),phase:"dismantle",fns:[]});
                 dcMpPhases = { minusOne: dayList.some(d=>d.phase==="minusOne"), eventDays: dayList.filter(d=>d.phase==="event").length, gapDays: dayList.filter(d=>d.phase==="gap").length, dismantle: dayList.some(d=>d.phase==="dismantle") };
                 const peopleByFn = {}; labourTypes.forEach(t => { peopleByFn[t] = {}; fns.forEach((fn, fi) => { peopleByFn[t][fi] = calcPpl(fn, t) || 0; }); });
+                // Default labour split fraction (used for leading / no-element days) = aggregate usage share.
+                const _aggFrac = {}; if (labourUsageMode && labourUsageTotal > 0) DEPTS.forEach(dp => { _aggFrac[dp] = (labourUsageByDept[dp] || 0) / labourUsageTotal; });
+                let _lastFrac = Object.keys(_aggFrac).length ? _aggFrac : null;
                 let running = {}; labourTypes.forEach(t => { running[t] = 0; });
                 dayList.forEach(d => {
                   if (d.phase === "minusOne") { labourTypes.forEach(t => { let mx = 0; fns.forEach((fn, fi) => { if ((peopleByFn[t][fi]||0) > mx) mx = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], mx); }); }
                   else if (d.phase === "event") { labourTypes.forEach(t => { let need = 0; d.fns.forEach(fn => { const fi = fns.indexOf(fn); if ((peopleByFn[t][fi]||0) > need) need = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], need); }); }
+                  // This day's labour usage fractions: event day = sum of its functions; else carry forward.
+                  let dayFrac = _lastFrac;
+                  if (labourUsageMode && labourUsageTotal > 0 && d.phase === "event") {
+                    const byDept = {}; let total = 0;
+                    d.fns.forEach(fn => { const u = labourUsageByFn[fns.indexOf(fn)]; if (!u) return; Object.entries(u.byDept).forEach(([dp, n]) => { byDept[dp] = (byDept[dp] || 0) + n; }); total += u.total; });
+                    if (total > 0) { dayFrac = {}; DEPTS.forEach(dp => { dayFrac[dp] = (byDept[dp] || 0) / total; }); _lastFrac = dayFrac; }
+                  }
+                  if (dayFrac) labourShareByDayDept[d.date] = dayFrac;
                   labourTypes.forEach(t => {
                     const ppl = running[t] || 0; if (ppl <= 0) return;
                     const wins = dcMpOverrides[`${d.date}|${t}`] || (defaultWindowsByPhase[t]||{})[d.phase] || [];
                     const mpCost = ppl * wins.length * (rateByType[t] || 0);
                     manpower += mpCost;
                     mpByType[t] = (mpByType[t] || 0) + mpCost;
-                    if (wins.length > 0) { if (!mpSchedule[t]) mpSchedule[t] = []; mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length }); }
+                    // Per-day labour cost → departments by THIS day's usage fractions.
+                    if (t === "Labours" && labourUsageMode && labourUsageTotal > 0 && dayFrac && mpCost > 0) { DEPTS.forEach(dp => { labourDeptCost[dp] += mpCost * (dayFrac[dp] || 0); }); }
+                    if (wins.length > 0) {
+                      if (!mpSchedule[t]) mpSchedule[t] = [];
+                      // Controlling function's trace for this day's "how" (event: busiest fn; -1 setup: peak fn).
+                      let trace = null, drivenBy = null;
+                      if (d.phase === "event" && d.fns.length) { let bf = d.fns[0], bc = -1; d.fns.forEach(fn => { const c = peopleByFn[t][fns.indexOf(fn)] || 0; if (c > bc) { bc = c; bf = fn; } }); trace = traceOf(bf, t); drivenBy = bf?.fnType || null; }
+                      else if (d.phase === "minusOne") { let bf = fns[0], bc = -1; fns.forEach((fn, fi) => { const c = peopleByFn[t][fi] || 0; if (c > bc) { bc = c; bf = fn; } }); trace = traceOf(bf, t); drivenBy = bf?.fnType || null; }
+                      mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length, windowIds: wins, trace, drivenBy });
+                    }
                   });
                 });
               }
@@ -341,25 +424,48 @@ export default function DealCheckOverlay({ ctx }) {
             if (!(amt > 0)) return;
             const target = MP_DEPT[t];
             if (target) { addD(target, "manpower", amt); deptMp[target][t] = (deptMp[target][t] || 0) + amt; return; }
-            // Labours → split by SUB-CATEGORY USAGE (each sub's labour to its dept) when configured;
-            // Supervisors (and any unmapped) → split by direct-income share.
+            // Labours → split PER DAY by sub-category usage (labourDeptCost, already summed over days)
+            // when configured; Supervisors (and any unmapped) → split by direct-income share.
             mpSharedTotals[t] = (mpSharedTotals[t] || 0) + amt;
-            if (t === "Labours" && labourUsageTotal > 0) {
-              DEPTS.forEach(d => { const sh = amt * ((labourUsageByDept[d] || 0) / labourUsageTotal); if (sh > 0) { addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; } });
+            if (t === "Labours" && labourUsageMode && labourUsageTotal > 0) {
+              DEPTS.forEach(d => { const sh = labourDeptCost[d] || 0; if (sh > 0) { addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; } });
             } else if (directTotal > 0) DEPTS.forEach(d => { const sh = amt * (directOf(d) / directTotal); addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; });
             else { addD("Structure", "manpower", amt); deptMp["Structure"][t] = (deptMp["Structure"][t] || 0) + amt; }
           });
           DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].manpower + dept[d].production + dept[d].buying; });
+          // ── Per-dept manpower detail (the exact crew rows the head edits in IMS Dept Ops). Built here
+          // so the actuals delta below reconciles head edits — count/rate overrides AND day-wise labour —
+          // via the SAME formula IMS uses (deptMpReconciled). Reused by buildDeptSnapshot. ──
+          let dcMpPlan = []; try { dcMpPlan = manpowerPlanForBooking ? manpowerPlanForBooking(fns) : []; } catch {}
+          const dcPlanByType = {}; dcMpPlan.forEach(p => { dcPlanByType[p.type] = p; });
+          const SHARED = new Set(["Labours", "Supervisors"]);
+          const manpowerDetail = {};
+          DEPTS.forEach(d => { manpowerDetail[d] = Object.entries(deptMp[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => {
+            const pl = dcPlanByType[type]; const rate = (mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type);
+            const usageMode = type === "Labours" && labourUsageMode && (labourUsageTotal || 0) > 0;
+            const splitInfo = shared ? (usageMode
+              ? { total: Math.round(mpSharedTotals[type] || 0), byUsage: true, perDay: true, deptUsage: +(labourUsageByDept[d] || 0).toFixed(2), usageTotal: +(labourUsageTotal || 0).toFixed(2) }
+              : { total: Math.round(mpSharedTotals[type] || 0), deptDirect: Math.round(deptDirectMap[d] || 0), directTotal: Math.round(directTotal || 0) }) : null;
+            // For usage-mode Labours, stamp each day with THIS dept's per-day share so Dept Ops can show
+            // the day-by-day bifurcation (count × share) and reconcile cost = Σ(count × share × shifts × rate).
+            const sched = mpSchedule[type] || null;
+            const schedule = (usageMode && Array.isArray(sched)) ? sched.map(s => ({ ...s, share: (labourShareByDayDept[s.date] && labourShareByDayDept[s.date][d] != null) ? labourShareByDayDept[s.date][d] : ((labourUsageTotal > 0) ? (labourUsageByDept[d] || 0) / labourUsageTotal : 0) })) : sched;
+            return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule };
+          }); });
           // ── ACTUALS overlay (entered by dept heads in IMS) → exact cost. Real mandi replaces the
           // projected florals; on-site expenses are added. Margin recomputes on the exact figure. ──
           const aDeptOps = dcEoActuals?.deptOps || {};
           const actualMandi = Number(aDeptOps?.Floral?.realMandi) || 0;
           let actualExpenses = 0;
           Object.values(aDeptOps).forEach(o => { (o?.expenses || []).forEach(e => { actualExpenses += Number(e.amount) || 0; }); });
-          // Manpower override: dept heads' edited crew rows → actual manpower (delta vs projected).
-          const mpLine = (r) => r.shared ? (Number(r.sysCost) || 0) : (((Number(r.sysCount) || 0) > 0 && (Number(r.sysRate) || 0) > 0 && (Number(r.sysCost) || 0) > 0) ? Math.round((Number(r.sysCost)) * ((Number(r.count) || 0) / Number(r.sysCount)) * ((Number(r.rate) || 0) / Number(r.sysRate))) : (Number(r.count) || 0) * (Number(r.rate) || 0));
+          // Manpower override: dept heads' edited crew (count/rate + day-wise) → actual manpower delta.
           let mpDelta = 0;
-          DEPTS.forEach(d => { const rows = aDeptOps?.[d]?.mp; if (!Array.isArray(rows) || !rows.length) return; const act = rows.reduce((s, r) => s + mpLine(r), 0); mpDelta += (act - (dept[d]?.manpower || 0)); });
+          DEPTS.forEach(d => {
+            const dd = aDeptOps?.[d]; if (!dd) return;
+            const edited = (dd.mpOverrides && Object.keys(dd.mpOverrides).length) || (Array.isArray(dd.mpExtra) && dd.mpExtra.length) || (dd.mpDay && Object.keys(dd.mpDay).length) || (dd.mpWin && Object.keys(dd.mpWin).length) || (Array.isArray(dd.mp) && dd.mp.length);
+            if (!edited) return;
+            mpDelta += (deptMpReconciled(manpowerDetail[d], dd) - (dept[d]?.manpower || 0));
+          });
           const effManpower = manpower + mpDelta;
           const hasActuals = actualMandi > 0 || actualExpenses > 0 || mpDelta !== 0;
           const effFlorals = actualMandi > 0 ? actualMandi : florals;
@@ -374,7 +480,7 @@ export default function DealCheckOverlay({ ctx }) {
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
-            mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal,
+            mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
         })();
 
@@ -388,14 +494,10 @@ export default function DealCheckOverlay({ ctx }) {
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
           try { const agg = {}; let artTotal = 0; (dcCostRollup.fns || []).forEach(fn => { const r = calcFnFloralSourcingCost(fn); artTotal += r.totalArtificial || 0; (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true }); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: dcSeasonInfo, capturedAt: Date.now() }; } catch {}
-          let manpowerPlan = []; try { manpowerPlan = manpowerPlanForBooking ? manpowerPlanForBooking(dcCostRollup.fns || []) : []; } catch {}
-          const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
-          const SHARED = new Set(["Labours", "Supervisors"]);
-          const manpowerDetail = {};
-          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); const usageMode = type === "Labours" && (dcCostRollup.labourUsageTotal || 0) > 0;
-              const splitInfo = shared ? (usageMode
-                ? { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), byUsage: true, deptUsage: +(dcCostRollup.labourUsageByDept?.[d] || 0).toFixed(2), usageTotal: +(dcCostRollup.labourUsageTotal || 0).toFixed(2) }
-                : { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), deptDirect: Math.round(dcCostRollup.deptDirectMap?.[d] || 0), directTotal: Math.round(dcCostRollup.directTotal || 0) }) : null; return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule: dcCostRollup.mpSchedule?.[type] || null }; }); });
+          // Manpower plan + per-dept detail are computed once in dcCostRollup (so the actuals delta and
+          // this snapshot stay identical). Reuse them here rather than recomputing.
+          const manpowerPlan = dcCostRollup.manpowerPlan || [];
+          const manpowerDetail = dcCostRollup.manpowerDetail || {};
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
           // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
           let fabricPlan = { liza: [], masking: [], curtain: [] };

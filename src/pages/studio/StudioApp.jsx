@@ -3354,8 +3354,17 @@ Return ONLY JSON:
       // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
       let manpowerPlan = [];
       try { manpowerPlan = manpowerPlanForBooking(allFns); } catch {}
+      // Prevent double-booking: one client + date = ONE event order. If an active (non-cancelled) order
+      // already exists for this client+date, update it IN PLACE (reuse id) instead of creating a second
+      // row. Otherwise re-confirming the same deal would spawn a duplicate booking in IMS.
+      const existingActive = eventOrders.find(e => e.clientId === client.id && e.date === clientDate && e.status !== "cancelled");
+      if (existingActive && !confirm(`${client.name} is already booked for ${clientDate} (status: ${existingActive.status || "pending"}). Update that existing booking with the latest plan instead of creating a second one?`)) return;
+      const eoId = existingActive ? existingActive.id : ("eo_" + Date.now().toString(36));
+      const eoCreatedAt = existingActive ? (existingActive.createdAt || Date.now()) : Date.now();
+      // Keep an in-progress IMS status (blocked/final) on re-push; otherwise (re)start the auto-confirm.
+      const eoStatus = (existingActive && (existingActive.status === "blocked" || existingActive.status === "final")) ? existingActive.status : "pending";
       const eo = {
-        id: "eo_" + Date.now().toString(36),
+        id: eoId,
         clientId: client.id,
         clientName: client.name,
         phone: clientPhone.trim(),
@@ -3383,10 +3392,10 @@ Return ONLY JSON:
         manualItems: [...dcManualItems],
         floralRatio,
         salesperson: authUser?.name || "—",
-        createdAt: Date.now(),
-        status: "pending"
+        createdAt: eoCreatedAt,
+        status: eoStatus
       };
-      saveEventOrders([...eventOrders, eo]);
+      saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
       // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
       // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
       supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[markSold] event_orders table sync failed:", error.message); }).catch(() => {});

@@ -498,6 +498,7 @@ Respond ONLY with a JSON array, no other text:
   // Tracks processed IDs in a ref; on failure the EO is NOT marked, so it retries.
   const autoConfirmedRef = useRef(new Set());
   const [autoConfirmFailures, setAutoConfirmFailures] = useState(new Set());
+  const [showCancelled, setShowCancelled] = useState(false); // show superseded/cancelled bookings in the list
   useEffect(() => {
     if (!Array.isArray(eventOrders)) return;
     // Pick up: (a) pending EOs, (b) legacy "review" EOs that got stuck before the migration.
@@ -1149,7 +1150,10 @@ Respond ONLY with a JSON array, no other text:
     if(newPOs.length>0) setPurchase(prev=>[...prev,...newPOs]);
   };
 
-  const sorted=[...eventOrders].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  // Cancelled orders are superseded bookings (e.g. a re-pushed deal) — hide them from the live list by
+  // default so one booking shows once. Toggle to review them.
+  const cancelledCount=eventOrders.filter(e=>e.status==="cancelled").length;
+  const sorted=[...eventOrders].filter(e=>showCancelled||e.status!=="cancelled").sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
 
   return (
     <div className="space-y-4">
@@ -1164,6 +1168,9 @@ Respond ONLY with a JSON array, no other text:
           )}
           <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-lg font-medium">{eventOrders.filter(e=>e.status==="blocked").length} Blocked</span>
           <span className="text-xs px-2 py-1 bg-teal-100 text-teal-700 rounded-lg font-medium">{eventOrders.filter(e=>e.status==="final").length} Final</span>
+          {cancelledCount>0&&(
+            <button onClick={()=>setShowCancelled(v=>!v)} className={"text-xs px-2 py-1 rounded-lg font-medium border "+(showCancelled?"bg-red-100 text-red-700 border-red-200":"bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100")} title="Cancelled bookings are hidden from the live list by default">{cancelledCount} Cancelled {showCancelled?"(showing)":"(hidden)"}</button>
+          )}
           <button onClick={handleRefresh} disabled={refreshing} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-xs font-medium hover:bg-gray-50 disabled:opacity-50">{refreshing?"⏳ Refreshing...":"🔄 Refresh"}</button>
           <button onClick={()=>setShowCreate(true)} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 ml-2">+ Create Event</button>
         </div>
