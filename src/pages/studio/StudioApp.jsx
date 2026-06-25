@@ -1694,9 +1694,10 @@ export default function StudioApp() {
   const persistDeptSnapshot = useCallback(async (snap) => {
     const eo = (eventOrders || []).find(e => e.clientId === activeClientId) || (eventOrders || []).find(e => (e.clientName || "") === (clientName || "").trim());
     if (!eo) return;
-    // Signature of the PROJECTED breakdown — used to skip redundant writes (every Deal Check open
-    // would otherwise re-push the same numbers and churn realtime).
-    const sig = JSON.stringify(Object.entries(snap.income || {}).map(([d, v]) => [d, Math.round((v && v.total) || 0)]).sort());
+    // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
+    // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
+    // manpower split or fabric plan also re-syncs, so the stored snapshot can't drift out of sync.
+    const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {} });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work.
     const applySnap = (base) => ({ ...base, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });

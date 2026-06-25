@@ -134,6 +134,12 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!en[zk] || !zc[zk]) return;
                   const pv = calcZoneTrussPreview(zc[zk], tInv);
                   if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
+                  // Truss requirement (pillar + beam pieces) → loadable line items so the head can dispatch them.
+                  if (pv?.topology && deptInv["Tenting"]) {
+                    const np = (pv.topology.pillars || []).length, nb = (pv.topology.beams || []).length;
+                    if (np > 0) deptInv["Tenting"].push({ name: "Truss pillars", photo: "", qty: np, unit: 0, total: Math.round(pv.costs?.actual || 0), sub: `${zk} · truss structure` });
+                    if (nb > 0) deptInv["Tenting"].push({ name: "Truss beams", photo: "", qty: nb, unit: 0, total: 0, sub: `${zk} · truss structure` });
+                  }
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
