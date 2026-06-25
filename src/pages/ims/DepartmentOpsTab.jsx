@@ -136,7 +136,14 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const sysPlan = (Array.isArray(sel?.manpowerPlan) ? sel.manpowerPlan : []).filter(p => deptTypes.includes(p.type));
   // days = the multi-day total cost ÷ (peak crew × day rate) — so the derivation math actually adds up.
   const dayCount = (count, rate, cost) => (count > 0 && rate > 0 && cost > 0) ? Math.max(1, Math.round(cost / (count * rate))) : 1;
-  const mpRows = Array.isArray(deptData.mp) ? deptData.mp
+  const mpRows = Array.isArray(deptData.mp)
+    // The head edited crew → keep their counts/rates, but ALWAYS re-attach the derivation (trace /
+    // basis / split) from the live snapshot by type, so "how it's derived" shows even after an edit.
+    ? deptData.mp.map(r => {
+        const snap = (mpDetail || []).find(s => s.type === r.type) || null;
+        if (!snap) return r;
+        return { ...r, basis: r.basis || snap.basis || "", trace: r.trace || snap.trace || null, splitInfo: r.splitInfo || snap.splitInfo || null, shared: r.shared != null ? r.shared : !!snap.shared, sysCount: r.sysCount != null ? r.sysCount : snap.count, sysRate: r.sysRate != null ? r.sysRate : (snap.rate || 0), sysCost: r.sysCost != null ? r.sysCost : (snap.cost || 0), days: r.days || dayCount(Number(snap.count) || 0, Number(snap.rate) || 0, Number(snap.cost) || 0) };
+      })
     : (mpDetail ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0, days: dayCount(Number(r.count) || 0, Number(r.rate) || 0, Number(r.cost) || 0), trace: r.trace || null, splitInfo: r.splitInfo || null }))
       : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1 }))
         : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1 }))));
@@ -606,7 +613,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   return (
                     <div key={i} className="px-4 py-2.5">
                       <div className="flex items-center gap-3">
-                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: !o[i] }))} className="text-gray-400 hover:text-gray-700 text-xs w-4 shrink-0" title={open ? "Hide how it's calculated" : "Show how it's calculated"}>{open ? "▾" : "▸"}</button>
+                        <button onClick={() => setMpOpen(o => ({ ...o, [i]: !o[i] }))} className="shrink-0 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-0.5" title="How this crew number was calculated">{open ? "▾ hide" : "▸ how"}</button>
                         <span className="flex-1 text-sm font-medium text-gray-800">{r.type}{r.shared && <span className="ml-2 text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}{days > 1 && !r.shared && <span className="ml-2 text-[10px] text-gray-400 font-normal">{days} days</span>}</span>
                         {r.shared ? (
                           <span className="text-[10px] text-gray-400 mr-2">split allocation</span>
