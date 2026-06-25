@@ -4367,7 +4367,8 @@ Return ONLY JSON:
         const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || venueParents };
         for (const spec of cardSpecs) {
           // Hide inventory locked to OTHER fixed venues; surface THIS venue's standing items first.
-          const scoped = filterImsBySubcategory(inventory, spec.subcategory)
+          const subcatList = filterImsBySubcategory(inventory, spec.subcategory);
+          const scoped = subcatList
             .filter((it) => availableAtVenue(fvCfg, venueName, it) > 0)
             .slice()
             .sort((a, b) => (isStandingAt(fvCfg, venueName, b.id) ? 1 : 0) - (isStandingAt(fvCfg, venueName, a.id) ? 1 : 0));
@@ -4387,12 +4388,15 @@ Return ONLY JSON:
               source = "no-match"; cardsUnmatched += 1;
             }
           }
-          // Alternatives ALWAYS come from the sub-category catalog (deterministic), independent of the
-          // AI's answer — so even a "no match" card lists every available option in that sub-category and
-          // can never be left blank. The auto-pick (if any) is just highlighted on top. (The AI used to
-          // own the alternatives too, so a null AI reply wiped them — that was the inconsistency.)
-          const alternatives = scoped
+          // Alternatives = the WHOLE sub-category (NOT venue-filtered), deterministic and independent of
+          // the AI's answer — so a card always lists every option in its sub-category, even when all of
+          // them are committed at another venue (that was the Glass Bar / BAR case: the venue-filtered
+          // pool was empty, so the card showed nothing). Venue-available items sort first; the auto-pick
+          // still uses the venue-filtered `scoped`.
+          const alternatives = subcatList
             .filter(x => x.id !== (primary?.imsId || null))
+            .slice()
+            .sort((a, b) => availableAtVenue(fvCfg, venueName, b) - availableAtVenue(fvCfg, venueName, a))
             .slice(0, 12)
             .map(x => ({ imsId: x.id, name: x.name }));
           newCards[fnIdx][spec.cardKey] = {
