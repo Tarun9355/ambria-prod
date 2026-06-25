@@ -253,6 +253,8 @@ export default function DealCheckOverlay({ ctx }) {
                 }
                 if (type === "Truss Labour") {
                   let p = 0; walkFn(fn, ({rc, qty}) => { const s = String(rc.sub||"").toLowerCase(); if (s.includes("pillar")||s.includes("column")||s.includes("truss")) p += qty; });
+                  // Also count pillars from the zone Truss tool (the structural truss config carries labour too).
+                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig||{}, en = fn.enabledEls||{}; Object.keys(zc).forEach(zk => { if (!en[zk]||!zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); p += (pv?.topology?.pillars||[]).length; }); } } catch {}
                   if (p <= 0 || trussLabourRanges.length === 0) return 0;
                   for (const r of trussLabourRanges) { if (p <= r.upTo) return r.labour || 0; }
                   return trussLabourRanges[trussLabourRanges.length-1]?.labour || 0;
@@ -261,8 +263,8 @@ export default function DealCheckOverlay({ ctx }) {
                 if (cfg && cfg.tier === 2) {
                   const batches = cfg.subCatBatches || {}; const sc = {};
                   walkFn(fn, ({rc, qty}) => { if (batches[rc.sub||""]) sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
-                  let t = 0; Object.entries(sc).forEach(([k,v]) => { const b = batches[k] || 3; t += Math.ceil(v/b); });
-                  return Math.max(cfg.minimum || 1, t);
+                  let need = 0; Object.entries(sc).forEach(([k,v]) => { need += v / (batches[k] || 3); }); // ⌈Σ(count÷batch)⌉ — matches the Deal Check derivation
+                  return Math.max(cfg.minimum || 1, Math.ceil(need));
                 }
                 if (type === "Supervisors") return 1;
                 return 0;
@@ -352,7 +354,7 @@ export default function DealCheckOverlay({ ctx }) {
           const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
-          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared }; }); });
+          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null }; }); });
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
           // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
           let fabricPlan = { liza: [], masking: [], curtain: [] };

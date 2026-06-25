@@ -137,7 +137,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // days = the multi-day total cost ÷ (peak crew × day rate) — so the derivation math actually adds up.
   const dayCount = (count, rate, cost) => (count > 0 && rate > 0 && cost > 0) ? Math.max(1, Math.round(cost / (count * rate))) : 1;
   const mpRows = Array.isArray(deptData.mp) ? deptData.mp
-    : (mpDetail ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0, days: dayCount(Number(r.count) || 0, Number(r.rate) || 0, Number(r.cost) || 0) }))
+    : (mpDetail ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0, days: dayCount(Number(r.count) || 0, Number(r.rate) || 0, Number(r.cost) || 0), trace: r.trace || null }))
       : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1 }))
         : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1 }))));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
@@ -598,7 +598,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           {r.shared ? (
                             <>This dept's share of general labour / supervisors, split across departments by each dept's income share. Fixed allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</>
                           ) : (<>
-                            {r.basis && <span className="text-gray-600">📐 {r.basis}<br /></span>}
+                            {/* Sub-category derivation table (same as Deal Check) */}
+                            {r.trace?.kind === "tier2" && Array.isArray(r.trace.rows) && r.trace.rows.length > 0 && (
+                              <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
+                                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[9px] uppercase tracking-wide text-gray-500 font-semibold"><span>Sub-category</span><span className="text-right w-12">Count</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
+                                {r.trace.rows.map((tr, ti) => (
+                                  <div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[10px] text-gray-700"><span>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>
+                                ))}
+                                <div className="px-2 py-1 bg-gray-50 text-[10px] text-right text-gray-600 border-t">Σ {r.trace.need.toFixed(2)} → ⌈ {Math.ceil(r.trace.need)} ⌉ · max(min {r.trace.min}) = <b className="text-gray-900">{r.trace.result}</b></div>
+                              </div>
+                            )}
+                            {r.trace?.kind === "pillars" && (
+                              <div className="mb-1.5 text-[10px] text-gray-600">🏗️ {r.trace.total} pillar(s){r.trace.zoneP ? ` — ${r.trace.zoneP} from truss tool${r.trace.recipeP ? `, ${r.trace.recipeP} from build` : ""}` : ""} → range → <b>{r.trace.result}</b> truss labour</div>
+                            )}
+                            {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
                             {r.sysCount != null && r.sysCount !== "" && (
                               <span className={overridden ? "text-amber-600 font-semibold" : "text-gray-500"}>
                                 Studio plan: {r.sysCount} crew × {fmt(r.sysRate || 0)}/day{days > 1 ? ` × ${days} days` : ""} = {fmt(r.sysCost || 0)}

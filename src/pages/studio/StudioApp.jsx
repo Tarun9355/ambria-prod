@@ -2312,20 +2312,29 @@ export default function StudioApp() {
         return { count: lab, basis: `${Math.round(sq)} sqft fabric → range` };
       }
       if (type === "Truss Labour") {
-        let p = 0; walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) p += qty; });
+        let recipeP = 0; walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
+        let zoneP = 0; try { const tInv = d.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); zoneP += (pv?.topology?.pillars || []).length; }); } } catch {}
+        const p = recipeP + zoneP;
         if (p <= 0 || !trussLabourRanges.length) return { count: 0, basis: "no truss/pillars" };
         let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${p} truss/pillar(s) → range` };
+        return { count: lab, basis: `${p} pillar(s)${zoneP ? ` (${zoneP} from truss tool${recipeP ? ` + ${recipeP} build` : ""})` : ""} → range`, trace: { kind: "pillars", recipeP, zoneP, total: p, result: lab } };
       }
       const cfg = labourTiers[type];
-      if (cfg && cfg.tier === 2) { const batches = cfg.subCatBatches || {}; const sc = {}; walk(fn, ({ rc, qty }) => { if (batches[rc.sub || ""]) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; }); let t = 0; Object.entries(sc).forEach(([k, v]) => { t += Math.ceil(v / (batches[k] || 3)); }); return { count: Math.max(cfg.minimum || 1, t), basis: `sub-category batches (min ${cfg.minimum || 1})` }; }
+      if (cfg && cfg.tier === 2) {
+        const batches = cfg.subCatBatches || {}; const sc = {};
+        walk(fn, ({ rc, qty }) => { if (batches[rc.sub || ""]) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+        const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: batches[k] || 3, need: v / (batches[k] || 3) }));
+        const need = rows.reduce((s, r) => s + r.need, 0);
+        const count = Math.max(cfg.minimum || 1, Math.ceil(need));
+        return { count, basis: `⌈Σ(count÷batch)⌉ = ${count} (min ${cfg.minimum || 1})`, trace: { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count } };
+      }
       if (type === "Supervisors") return { count: 1, basis: "1 per booking" };
       return { count: 0, basis: "" };
     };
     return types.map(type => {
-      let best = { count: 0, basis: "" };
+      let best = { count: 0, basis: "", trace: null };
       (allFns || []).forEach(fn => { const r = calc(fn, type); if (r.count > best.count) best = r; });
-      return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0 };
+      return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
   }, [dealCheckData, rcItems]);
 
