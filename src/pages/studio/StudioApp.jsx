@@ -4372,23 +4372,29 @@ Return ONLY JSON:
             .slice()
             .sort((a, b) => (isStandingAt(fvCfg, venueName, b.id) ? 1 : 0) - (isStandingAt(fvCfg, venueName, a.id) ? 1 : 0));
           const nm = nameMatchUnique(spec.rcName, scoped);
-          let primary = null, alternatives = [], source = null;
+          let primary = null, source = null;
           if (nm.matched) {
             primary = { imsId: nm.item.id, name: nm.item.name };
-            alternatives = scoped.filter(x => x.id !== nm.item.id).slice(0, 12).map(x => ({ imsId: x.id, name: x.name }));
             source = "name-match"; cardsNameMatch += 1;
           } else {
             const ai = await aiMatchCardWithSubcat(spec, scoped, ac.signal);
             if (ai?.aborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
             if (ai?.primary?.imsId) {
               primary = { imsId: ai.primary.imsId, name: ai.primary.name };
-              alternatives = (ai.alternatives || []).slice(0, 12);
               source = spec.kind === "fl" ? "floral" : (spec.photoUrl ? "photo" : "list");
               cardsAi += 1;
             } else {
               source = "no-match"; cardsUnmatched += 1;
             }
           }
+          // Alternatives ALWAYS come from the sub-category catalog (deterministic), independent of the
+          // AI's answer — so even a "no match" card lists every available option in that sub-category and
+          // can never be left blank. The auto-pick (if any) is just highlighted on top. (The AI used to
+          // own the alternatives too, so a null AI reply wiped them — that was the inconsistency.)
+          const alternatives = scoped
+            .filter(x => x.id !== (primary?.imsId || null))
+            .slice(0, 12)
+            .map(x => ({ imsId: x.id, name: x.name }));
           newCards[fnIdx][spec.cardKey] = {
             imsId: primary?.imsId || null,
             imsName: primary?.name || null,
