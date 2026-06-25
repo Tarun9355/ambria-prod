@@ -395,6 +395,24 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   }, [dept, eventOrders, fabricAvail, today]);
 
+  // Derivation box for a crew type — same pattern as Deal Check's "HOW … DERIVED".
+  const renderMpTrace = (t) => {
+    if (!t) return null;
+    if (t.kind === "tier2" && Array.isArray(t.rows) && t.rows.length > 0) return (
+      <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[9px] uppercase tracking-wide text-gray-500 font-semibold"><span>Sub-category</span><span className="text-right w-12">Count</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
+        {t.rows.map((tr, ti) => (<div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[10px] text-gray-700"><span>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>))}
+        <div className="px-2 py-1 bg-gray-50 text-[10px] text-right text-gray-600 border-t">Σ {t.need.toFixed(2)} → ⌈ {Math.ceil(t.need)} ⌉ · max(min {t.min}) = <b className="text-gray-900">{t.result}</b></div>
+      </div>
+    );
+    if (t.kind === "pillars") return <div className="mb-1.5 text-[10px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
+    if (t.kind === "ratio") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
+    if (t.kind === "range") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>;
+    if (t.kind === "labours") return <div className="mb-1.5 text-[10px] text-gray-600">📐 venue min {t.venueMin}{t.mult > 1 ? ` × ${Number(t.mult).toFixed(2)} season/timing` : ""}{t.heavy ? ` + ${t.heavy} heavy-element` : ""} = <b>{t.result}</b> (before split)</div>;
+    if (t.kind === "fixed") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;
+    return null;
+  };
+
   return (
     <div className="flex gap-4">
       {/* ── Left: department + event list ── */}
@@ -602,29 +620,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <div className="text-[10px] text-gray-500 mt-1.5 pl-7 leading-relaxed bg-gray-50 rounded-lg p-2">
                           {r.shared ? (
                             <>
-                              <b>{r.type}</b> are shared crew, split across all departments by each dept's income share.
+                              <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.type} derived → then split</div>
+                              {renderMpTrace(r.trace)}
                               {r.splitInfo && r.splitInfo.directTotal > 0 ? (
                                 <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
+                                  <b>{r.type}</b> are shared crew, split across all departments by income share:<br />
                                   Total {r.type} on this event: <b>{fmt(r.splitInfo.total)}</b><br />
                                   This dept's direct income {fmt(r.splitInfo.deptDirect)} ÷ all-dept income {fmt(r.splitInfo.directTotal)} = <b>{Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}%</b><br />
                                   → {fmt(r.splitInfo.total)} × {Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}% = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b> to {dept}
                                 </div>
-                              ) : <> Fixed allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</>}
+                              ) : <div className="text-gray-500">Split across departments by income share. This dept's allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</div>}
                             </>
                           ) : (<>
-                            {/* Sub-category derivation table (same as Deal Check) */}
-                            {r.trace?.kind === "tier2" && Array.isArray(r.trace.rows) && r.trace.rows.length > 0 && (
-                              <div className="mb-1.5 bg-white border rounded-lg overflow-hidden">
-                                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-gray-100 text-[9px] uppercase tracking-wide text-gray-500 font-semibold"><span>Sub-category</span><span className="text-right w-12">Count</span><span className="text-right w-12">Batch</span><span className="text-right w-12">Need</span></div>
-                                {r.trace.rows.map((tr, ti) => (
-                                  <div key={ti} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-0.5 text-[10px] text-gray-700"><span>{tr.sub}</span><span className="text-right w-12">{tr.count}</span><span className="text-right w-12 text-gray-400">÷{tr.batch}</span><span className="text-right w-12 font-semibold">{tr.need.toFixed(2)}</span></div>
-                                ))}
-                                <div className="px-2 py-1 bg-gray-50 text-[10px] text-right text-gray-600 border-t">Σ {r.trace.need.toFixed(2)} → ⌈ {Math.ceil(r.trace.need)} ⌉ · max(min {r.trace.min}) = <b className="text-gray-900">{r.trace.result}</b></div>
-                              </div>
-                            )}
-                            {r.trace?.kind === "pillars" && (
-                              <div className="mb-1.5 text-[10px] text-gray-600">🏗️ {r.trace.total} pillar(s){r.trace.zoneP ? ` — ${r.trace.zoneP} from truss tool${r.trace.recipeP ? `, ${r.trace.recipeP} from build` : ""}` : ""} → range → <b>{r.trace.result}</b> truss labour</div>
-                            )}
+                            <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.count || r.sysCount || ""} {r.type} derived</div>
+                            {renderMpTrace(r.trace)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
                             {r.sysCount != null && r.sysCount !== "" && (
                               <span className={overridden ? "text-amber-600 font-semibold" : "text-gray-500"}>

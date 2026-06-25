@@ -2310,11 +2310,11 @@ export default function StudioApp() {
           if (!pat) return; const sk = sizeFromMode(rc.inhouseMode, el.size); let c = pat.sizes?.[sk] || pat.sizes?.medium; if (!c && sk === "big" && pat.sizes?.large) c = pat.sizes.large;
           const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { t += Math.ceil(qty / upf); arr += qty; }
         });
-        return { count: t, basis: t > 0 ? `${arr} arrangement(s) ÷ units-per-flowerist` : "no recipe-driven florals" };
+        return { count: t, basis: t > 0 ? `${arr} arrangement(s) ÷ units-per-flowerist` : "no recipe-driven florals", trace: t > 0 ? { kind: "ratio", num: arr, numLabel: "arrangements", denomLabel: "units per flowerist", result: t } : null };
       }
       if (type === "Electricians") {
         let t = 0, n = 0; walk(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = elecProd[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { t += Math.ceil(qty / upe); n += qty; } });
-        return { count: t, basis: t > 0 ? `${n} lighting unit(s) ÷ productivity` : "no lighting" };
+        return { count: t, basis: t > 0 ? `${n} lighting unit(s) ÷ productivity` : "no lighting", trace: t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null };
       }
       if (type === "Labours") {
         const vc = venueMinLabour[fn.fnVenue || ""]; const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
@@ -2322,13 +2322,13 @@ export default function StudioApp() {
         const ss = seasonMap[fn.fnDate || ""]; const cand = [1.0]; if (ss === "kings") cand.push(sayaMultiplier); cand.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); const sm = Math.max(...cand, 1.0);
         const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
         let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat] || 0); });
-        return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}` };
+        return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he } };
       }
       if (type === "Fabric Bangali") {
         let sq = 0; walk(fn, ({ rc, el }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("wall masking") || s.includes("fabric") || s.includes("draping")) { const L = Number(el.L || el.l || 0); const W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) sq += L * W; } });
         if (sq <= 0 || !fabricBangaliRanges.length) return { count: 0, basis: "no fabric sqft" };
         let lab = fabricBangaliRanges[fabricBangaliRanges.length - 1]?.labour || 0; for (const r of fabricBangaliRanges) { if (sq <= r.upTo) { lab = r.labour || 0; break; } }
-        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range` };
+        return { count: lab, basis: `${Math.round(sq)} sqft fabric → range`, trace: { kind: "range", value: Math.round(sq), unit: "sqft", result: lab } };
       }
       if (type === "Truss Labour") {
         let recipeP = 0; walk(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) recipeP += qty; });
@@ -2347,7 +2347,7 @@ export default function StudioApp() {
         const count = Math.max(cfg.minimum || 1, Math.ceil(need));
         return { count, basis: `⌈Σ(count÷batch)⌉ = ${count} (min ${cfg.minimum || 1})`, trace: { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count } };
       }
-      if (type === "Supervisors") return { count: 1, basis: "1 per booking" };
+      if (type === "Supervisors") return { count: 1, basis: "1 per booking", trace: { kind: "fixed", note: "1 supervisor per booking", result: 1 } };
       return { count: 0, basis: "" };
     };
     return types.map(type => {
