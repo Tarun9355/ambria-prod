@@ -1178,13 +1178,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateMarkup = (key, val) => setTrussInv((ti) => ({ ...ti, fabricFreshMarkup: { ...(ti.fabricFreshMarkup || {}), [key]: parseFloat(val) || 0 } }));
         const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
-        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", grade: "old", [qtyField]: 0 }] }));
+        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
         const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
           const stock = Array.isArray(trussInv[which]) ? trussInv[which] : [];
           return (
             <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
-              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour stock (tag each row Old/New) + two owned rental rates + new purchase price + fresh markup %</p></div>
+              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour Old + New stock quantities + their two rental rates + fresh purchase price + markup %. Update the live quantities after each washing cycle.</p></div>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-4 gap-3`}>
                 <div><label className="text-xs text-gray-600">Old-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">Owned OLD fabric — full charge</p></div>
                 <div><label className={`text-xs text-${themeColor}-700 font-medium`}>New-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKeyNew] || 0} onChange={(e) => updateRates(rentalKeyNew, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800`} /><p className="text-[10px] text-gray-400 mt-0.5">Owned NEW fabric — premium rate</p></div>
@@ -1202,24 +1202,21 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 ) : (
                   <table className="w-full text-xs">
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
-                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-28">Grade</th><th className="px-2 py-1.5 text-center">Stock ({qtyLabel})</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Old ({qtyLabel})</th><th className={`px-2 py-1.5 text-center text-${themeColor}-700`}>New ({qtyLabel})</th><th className="px-2 py-1.5 text-center">Total</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
                       {stock.map((row, i) => {
                         const cObj = (settings.colourCatalogue || []).find((c) => c.name === row.colour);
-                        const grade = row.grade === "new" ? "new" : "old";
+                        const oldQ = Number(row[qtyField]) || 0;
+                        const newQ = Number(row[`${qtyField}New`]) || 0;
                         return (
                           <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
                             <td className="px-2 py-1.5"><div className="w-5 h-5 rounded border border-gray-300" style={{ background: cObj?.hex || "#ccc" }} /></td>
                             <td className="px-2 py-1.5">
                               <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
                             </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <div className="inline-flex rounded-lg overflow-hidden border border-gray-200">
-                                <button onClick={() => updateStock(which, i, "grade", "old")} className={"px-2 py-1 text-[11px] font-medium " + (grade === "old" ? "bg-gray-700 text-white" : "bg-white text-gray-500")}>Old</button>
-                                <button onClick={() => updateStock(which, i, "grade", "new")} className={"px-2 py-1 text-[11px] font-medium " + (grade === "new" ? `bg-${themeColor}-600 text-white` : "bg-white text-gray-500")}>New</button>
-                              </div>
-                            </td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-24 border border-${themeColor}-200 rounded px-2 py-1 text-xs font-bold text-center`} /></td>
+                            <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
+                            <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[`${qtyField}New`] || 0} onChange={(e) => updateStock(which, i, `${qtyField}New`, e.target.value)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
+                            <td className="px-2 py-1.5 text-center text-xs font-bold text-gray-700">{oldQ + newQ}</td>
                             <td className="px-2 py-1.5 text-center"><button onClick={() => removeStockRow(which, i)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
                           </tr>
                         );

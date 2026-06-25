@@ -425,15 +425,16 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
 
 // Cost calc for a single fabric allocation (one colour) given stock split.
 // Returns: {reusedQty, freshQty, reusedCost, freshCost, total, shortQty}
-// Two owned grades per colour: OLD stock (rentalRate) and NEW stock (rentalRateNew). A colour can have
-// both an "old" row and a "new" row in the stock array (tagged via row.grade). Consumption order:
-// owned OLD first (depreciating, cheaper) → owned NEW → buy fresh (purchase × markup). Backward-compatible:
-// rows with no grade count as OLD, and an absent rentalRateNew falls back to the OLD rental rate.
+// Two owned grades per colour, stored on the SAME row: OLD stock in `qtyField` (e.g. stockKg) and NEW
+// stock in `qtyField+"New"` (e.g. stockKgNew). Consumption order: owned OLD first (depreciating,
+// cheaper) → owned NEW (premium rate) → buy fresh (purchase × markup). Backward-compatible: a missing
+// New field counts as 0, and an absent rentalRateNew falls back to the OLD rental rate.
 export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct, rentalRateNew) => {
   if (!qty || qty <= 0) return { reusedQty:0, reusedOldQty:0, reusedNewQty:0, freshQty:0, reusedCost:0, freshCost:0, total:0, shortQty:0 };
+  const newField = qtyField + "New";
   const rows = (stockArray||[]).filter(s => s && s.colour === colour);
-  const oldAvail = rows.filter(r => (r.grade||"old") !== "new").reduce((s,r)=>s+(Number(r[qtyField])||0),0);
-  const newAvail = rows.filter(r => r.grade === "new").reduce((s,r)=>s+(Number(r[qtyField])||0),0);
+  const oldAvail = rows.reduce((s,r)=>s+(Number(r[qtyField])||0),0);
+  const newAvail = rows.reduce((s,r)=>s+(Number(r[newField])||0),0);
   const oldRate = Number(rentalRate)||0;
   const newRate = (rentalRateNew === undefined || rentalRateNew === null || rentalRateNew === "") ? oldRate : (Number(rentalRateNew)||0);
   const reusedOldQty = Math.min(qty, oldAvail);
