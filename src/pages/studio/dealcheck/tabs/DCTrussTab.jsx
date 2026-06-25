@@ -391,9 +391,9 @@ export default function DCTrussTab({ ctx }) {
                                       const curtainAlloc = showCurtain ? resolveAlloc("curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
 
                                       // Cost rollup (internal margin tracking — never shown to client)
-                                      const maskingTotals = calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", trussInv.rates?.maskingPieceRate, trussInv.rates?.maskingPiecePurchase, fmkup.masking);
-                                      const lizaTotals    = calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     trussInv.rates?.lizaKgRate,       trussInv.rates?.lizaKgPurchase,       fmkup.liza);
-                                      const curtainTotals = calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", trussInv.rates?.curtainPieceRate, trussInv.rates?.curtainPiecePurchase, fmkup.curtain);
+                                      const maskingTotals = calcFabricAllocationTotal(maskingAlloc, trussInv.maskingStock, "stockPieces", trussInv.rates?.maskingPieceRate, trussInv.rates?.maskingPiecePurchase, fmkup.masking, trussInv.rates?.maskingPieceRateNew);
+                                      const lizaTotals    = calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     trussInv.rates?.lizaKgRate,       trussInv.rates?.lizaKgPurchase,       fmkup.liza,    trussInv.rates?.lizaKgRateNew);
+                                      const curtainTotals = calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", trussInv.rates?.curtainPieceRate, trussInv.rates?.curtainPiecePurchase, fmkup.curtain, trussInv.rates?.curtainPieceRateNew);
 
                                       const updateAllocOnZone = (allocField, newAllocs) => {
                                         // §23 Phase 2.9f — write allocation to zoneConfig of the relevant fn
@@ -533,14 +533,14 @@ export default function DCTrussTab({ ctx }) {
                               if (li?.dims?.drapeDensity) density = li.dims.drapeDensity;
                             }
                             const fab = calcZoneFabric(zCfg, trussInv, density);
-                            const accumulate = (key, totalQty, stockArr, qtyField, allocField, rentalKey, purchaseKey, markupKey) => {
+                            const accumulate = (key, totalQty, stockArr, qtyField, allocField, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
                               if (!totalQty || totalQty <= 0) return;
                               const existing = zCfg[allocField];
                               const allocs = (Array.isArray(existing) && existing.length > 0)
                                 ? existing
                                 : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);
                               agg[key].qty += Math.ceil(totalQty);
-                              const totals = calcFabricAllocationTotal(allocs, stockArr, qtyField, trussInv.rates?.[rentalKey], trussInv.rates?.[purchaseKey], fmkup[markupKey]);
+                              const totals = calcFabricAllocationTotal(allocs, stockArr, qtyField, trussInv.rates?.[rentalKey], trussInv.rates?.[purchaseKey], fmkup[markupKey], trussInv.rates?.[rentalKeyNew]);
                               agg[key].shortQty   += totals.totalShort || 0;
                               agg[key].marginLoss += totals.freshCost  || 0;
                               agg[key].rentalTotal += totals.total || 0;
@@ -548,9 +548,9 @@ export default function DCTrussTab({ ctx }) {
                                 agg[key].byColour[a.colour] = (agg[key].byColour[a.colour] || 0) + (Number(a.qty)||0);
                               });
                             };
-                            accumulate("masking", fab.maskingPieces, trussInv.maskingStock, "stockPieces", "maskingAllocation", "maskingPieceRate", "maskingPiecePurchase", "masking");
-                            accumulate("liza",    fab.lizaKg,         trussInv.lizaStock,    "stockKg",     "lizaAllocation",    "lizaKgRate",       "lizaKgPurchase",       "liza");
-                            accumulate("curtain", fab.curtainPieces,  trussInv.curtainStock, "stockPieces", "curtainAllocation", "curtainPieceRate", "curtainPiecePurchase", "curtain");
+                            accumulate("masking", fab.maskingPieces, trussInv.maskingStock, "stockPieces", "maskingAllocation", "maskingPieceRate", "maskingPiecePurchase", "masking", "maskingPieceRateNew");
+                            accumulate("liza",    fab.lizaKg,         trussInv.lizaStock,    "stockKg",     "lizaAllocation",    "lizaKgRate",       "lizaKgPurchase",       "liza",    "lizaKgRateNew");
+                            accumulate("curtain", fab.curtainPieces,  trussInv.curtainStock, "stockPieces", "curtainAllocation", "curtainPieceRate", "curtainPiecePurchase", "curtain", "curtainPieceRateNew");
                           });
                         });
                         const totalQty = agg.masking.qty + agg.liza.qty + agg.curtain.qty;

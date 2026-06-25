@@ -1177,19 +1177,21 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const rates = trussInv.rates || {};
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateMarkup = (key, val) => setTrussInv((ti) => ({ ...ti, fabricFreshMarkup: { ...(ti.fabricFreshMarkup || {}), [key]: parseFloat(val) || 0 } }));
-        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: key === "colour" ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
-        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0 }] }));
+        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
+        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", grade: "old", [qtyField]: 0 }] }));
         const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
-        const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, purchaseKey, markupKey) => {
+        const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
           const stock = Array.isArray(trussInv[which]) ? trussInv[which] : [];
           return (
             <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
-              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour stock + rental + new purchase price + fresh-stock markup %</p></div>
-              <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-3 gap-3`}>
-                <div><label className="text-xs text-gray-600">Rental price (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">When stock available — full charge</p></div>
+              <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour stock (tag each row Old/New) + two owned rental rates + new purchase price + fresh markup %</p></div>
+              <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-4 gap-3`}>
+                <div><label className="text-xs text-gray-600">Old-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">Owned OLD fabric — full charge</p></div>
+                <div><label className={`text-xs text-${themeColor}-700 font-medium`}>New-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKeyNew] || 0} onChange={(e) => updateRates(rentalKeyNew, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800`} /><p className="text-[10px] text-gray-400 mt-0.5">Owned NEW fabric — premium rate</p></div>
                 <div><label className="text-xs text-gray-600">Fresh purchase price (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[purchaseKey] || 0} onChange={(e) => updateRates(purchaseKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">What Ambria pays to buy new</p></div>
                 <div><label className="text-xs text-gray-600">Fresh markup %</label><input type="number" min="0" max="500" step="1" value={fabricFreshMarkup[markupKey] || 0} onChange={(e) => updateMarkup(markupKey, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800 text-center`} /><p className="text-[10px] text-gray-400 mt-0.5">Shortfall qty = purchase × this %</p></div>
               </div>
+              <p className={`text-[10px] text-${themeColor}-600`}>Costing uses Old stock first, then New stock, then buys fresh.</p>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg overflow-hidden`}>
                 <div className={`flex items-center justify-between px-3 py-2 bg-${themeColor}-100`}>
                   <p className={`text-xs font-bold text-${themeColor}-800`}>Per-colour Stock</p>
@@ -1200,15 +1202,22 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 ) : (
                   <table className="w-full text-xs">
                     <datalist id={`${which}-colours`}>{colourCat.map((cn) => <option key={cn} value={cn} />)}</datalist>
-                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center">Stock ({qtyLabel})</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
+                    <thead className="text-gray-500"><tr><th className="px-2 py-1.5 text-left w-12">Swatch</th><th className="px-2 py-1.5 text-left">Colour</th><th className="px-2 py-1.5 text-center w-28">Grade</th><th className="px-2 py-1.5 text-center">Stock ({qtyLabel})</th><th className="px-2 py-1.5 w-10"></th></tr></thead>
                     <tbody>
                       {stock.map((row, i) => {
                         const cObj = (settings.colourCatalogue || []).find((c) => c.name === row.colour);
+                        const grade = row.grade === "new" ? "new" : "old";
                         return (
                           <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
                             <td className="px-2 py-1.5"><div className="w-5 h-5 rounded border border-gray-300" style={{ background: cObj?.hex || "#ccc" }} /></td>
                             <td className="px-2 py-1.5">
                               <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              <div className="inline-flex rounded-lg overflow-hidden border border-gray-200">
+                                <button onClick={() => updateStock(which, i, "grade", "old")} className={"px-2 py-1 text-[11px] font-medium " + (grade === "old" ? "bg-gray-700 text-white" : "bg-white text-gray-500")}>Old</button>
+                                <button onClick={() => updateStock(which, i, "grade", "new")} className={"px-2 py-1 text-[11px] font-medium " + (grade === "new" ? `bg-${themeColor}-600 text-white` : "bg-white text-gray-500")}>New</button>
+                              </div>
                             </td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-24 border border-${themeColor}-200 rounded px-2 py-1 text-xs font-bold text-center`} /></td>
                             <td className="px-2 py-1.5 text-center"><button onClick={() => removeStockRow(which, i)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
@@ -1247,9 +1256,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               </div>
             </div>
-            {renderFabric("Liza Fabric", "🪡", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgPurchase", "liza")}
-            {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPiecePurchase", "masking")}
-            {renderFabric("Velvet Curtains", "🎀", "purple", "curtainStock", "stockPieces", "pcs", "curtainPieceRate", "curtainPiecePurchase", "curtain")}
+            {renderFabric("Liza Fabric", "🪡", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgPurchase", "liza", "lizaKgRateNew")}
+            {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPiecePurchase", "masking", "maskingPieceRateNew")}
+            {renderFabric("Velvet Curtains", "🎀", "purple", "curtainStock", "stockPieces", "pcs", "curtainPieceRate", "curtainPiecePurchase", "curtain", "curtainPieceRateNew")}
           </div>
         );
       })()}

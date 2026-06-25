@@ -425,16 +425,28 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
 
 // Cost calc for a single fabric allocation (one colour) given stock split.
 // Returns: {reusedQty, freshQty, reusedCost, freshCost, total, shortQty}
-export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct) => {
-  if (!qty || qty <= 0) return { reusedQty:0, freshQty:0, reusedCost:0, freshCost:0, total:0, shortQty:0 };
-  const stockRow = (stockArray||[]).find(s => s.colour === colour);
-  const stockAvail = stockRow ? Number(stockRow[qtyField]||0) : 0;
-  const reusedQty = Math.min(qty, stockAvail);
-  const freshQty  = Math.max(0, qty - stockAvail);
-  const reusedCost = reusedQty * (Number(rentalRate)||0);
+// Two owned grades per colour: OLD stock (rentalRate) and NEW stock (rentalRateNew). A colour can have
+// both an "old" row and a "new" row in the stock array (tagged via row.grade). Consumption order:
+// owned OLD first (depreciating, cheaper) → owned NEW → buy fresh (purchase × markup). Backward-compatible:
+// rows with no grade count as OLD, and an absent rentalRateNew falls back to the OLD rental rate.
+export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct, rentalRateNew) => {
+  if (!qty || qty <= 0) return { reusedQty:0, reusedOldQty:0, reusedNewQty:0, freshQty:0, reusedCost:0, freshCost:0, total:0, shortQty:0 };
+  const rows = (stockArray||[]).filter(s => s && s.colour === colour);
+  const oldAvail = rows.filter(r => (r.grade||"old") !== "new").reduce((s,r)=>s+(Number(r[qtyField])||0),0);
+  const newAvail = rows.filter(r => r.grade === "new").reduce((s,r)=>s+(Number(r[qtyField])||0),0);
+  const oldRate = Number(rentalRate)||0;
+  const newRate = (rentalRateNew === undefined || rentalRateNew === null || rentalRateNew === "") ? oldRate : (Number(rentalRateNew)||0);
+  const reusedOldQty = Math.min(qty, oldAvail);
+  let rem = qty - reusedOldQty;
+  const reusedNewQty = Math.min(rem, newAvail);
+  rem -= reusedNewQty;
+  const freshQty = Math.max(0, rem);
+  const reusedCost = reusedOldQty * oldRate + reusedNewQty * newRate;
   const freshCost  = freshQty  * (Number(purchasePrice)||0) * ((Number(freshMarkupPct)||0)/100);
   return {
-    reusedQty,
+    reusedQty: reusedOldQty + reusedNewQty,
+    reusedOldQty,
+    reusedNewQty,
     freshQty,
     reusedCost: Math.round(reusedCost),
     freshCost:  Math.round(freshCost),
@@ -444,18 +456,20 @@ export const calcFabricAllocCost = (qty, colour, stockArray, qtyField, rentalRat
 };
 
 // Cost rollup across all colours in an allocation array. Returns totals + per-colour breakdown.
-export const calcFabricAllocationTotal = (allocation, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct) => {
+export const calcFabricAllocationTotal = (allocation, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct, rentalRateNew) => {
   const allocs = Array.isArray(allocation) ? allocation : [];
-  let total = 0, reusedCost = 0, freshCost = 0, totalShort = 0;
+  let total = 0, reusedCost = 0, freshCost = 0, totalShort = 0, reusedOldQty = 0, reusedNewQty = 0;
   const perColour = allocs.map(a => {
-    const c = calcFabricAllocCost(a.qty, a.colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct);
+    const c = calcFabricAllocCost(a.qty, a.colour, stockArray, qtyField, rentalRate, purchasePrice, freshMarkupPct, rentalRateNew);
     total      += c.total;
     reusedCost += c.reusedCost;
     freshCost  += c.freshCost;
     totalShort += c.shortQty;
+    reusedOldQty += c.reusedOldQty || 0;
+    reusedNewQty += c.reusedNewQty || 0;
     return { colour: a.colour, qty: a.qty, ...c };
   });
-  return { total, reusedCost, freshCost, totalShort, perColour };
+  return { total, reusedCost, freshCost, totalShort, reusedOldQty, reusedNewQty, perColour };
 };
 
 // §23 Phase 2.9f (26 May 2026) — Auto-fill fabric allocation from function palette + IMS stock.
@@ -514,18 +528,18 @@ export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density) => {
   const fmkup = trussInv.fabricFreshMarkup || { liza:40, masking:40, curtain:40 };
   const rates = trussInv.rates || {};
   let cost = 0;
-  const addFab = (totalQty, stockArr, qtyField, allocField, rentalKey, purchaseKey, markupKey) => {
+  const addFab = (totalQty, stockArr, qtyField, allocField, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
     if (!totalQty || totalQty <= 0) return;
     const existing = zCfg[allocField];
     const allocs = (Array.isArray(existing) && existing.length > 0)
       ? existing
       : autoFillFabricAllocation(Math.ceil(totalQty), paletteAnchors || [], stockArr, qtyField);
-    const totals = calcFabricAllocationTotal(allocs, stockArr, qtyField, rates[rentalKey], rates[purchaseKey], fmkup[markupKey]);
+    const totals = calcFabricAllocationTotal(allocs, stockArr, qtyField, rates[rentalKey], rates[purchaseKey], fmkup[markupKey], rates[rentalKeyNew]);
     cost += totals.total || 0;
   };
-  addFab(fab.maskingPieces, trussInv.maskingStock, "stockPieces", "maskingAllocation", "maskingPieceRate", "maskingPiecePurchase", "masking");
-  addFab(fab.lizaKg,        trussInv.lizaStock,    "stockKg",     "lizaAllocation",    "lizaKgRate",       "lizaKgPurchase",       "liza");
-  addFab(fab.curtainPieces, trussInv.curtainStock, "stockPieces", "curtainAllocation", "curtainPieceRate", "curtainPiecePurchase", "curtain");
+  addFab(fab.maskingPieces, trussInv.maskingStock, "stockPieces", "maskingAllocation", "maskingPieceRate", "maskingPiecePurchase", "masking", "maskingPieceRateNew");
+  addFab(fab.lizaKg,        trussInv.lizaStock,    "stockKg",     "lizaAllocation",    "lizaKgRate",       "lizaKgPurchase",       "liza",    "lizaKgRateNew");
+  addFab(fab.curtainPieces, trussInv.curtainStock, "stockPieces", "curtainAllocation", "curtainPieceRate", "curtainPiecePurchase", "curtain", "curtainPieceRateNew");
   return cost;
 };
 
