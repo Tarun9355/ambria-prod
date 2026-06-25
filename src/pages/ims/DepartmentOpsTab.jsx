@@ -287,7 +287,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     const q = Number(d.qty) || 0; if (q <= 0) return;
     const type = d.type || "return";
     let extra = {};
-    if (type === "transfer") { const ev = (eventOrders || []).find(e => e.id === d.toEventId); if (!ev) return; extra = { toEventId: ev.id, toEventName: ev.clientName || "Event" }; }
+    if (type === "transfer") { const ev = (eventOrders || []).find(e => e.id === d.toEventId); if (!ev) return; extra = { toEventId: ev.id, toEventName: ev.clientName || "Event", vehicle: d.vehicle || "", driver: d.driver || "", phone: d.phone || "" }; }
     addMovement(it, type, q, extra);
     setDraft(key, { qty: "" });
   };
@@ -311,22 +311,27 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       const key = itemKeyFor(m.invId, m.name);
       if (!map[key]) map[key] = { name: m.name, total: 0, sources: [] };
       map[key].total += Number(m.qty) || 0;
-      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0 });
+      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0, vehicle: m.vehicle || "", driver: m.driver || "" });
     });
     return map;
   }, [incomingTransfers]);
-  // Reconcile this event's requirement against its sources: warehouse pull + same-day reuse from other sites.
+  // Ops-manager receiving view: reconcile each item's requirement against its sources — own dispatch
+  // trucks (from the production house / warehouse) + same-day reuse arriving from other sites — each
+  // with vehicle + driver, and a shortfall flag.
   const sourceRows = useMemo(() => {
-    if (incomingTransfers.length === 0) return [];
+    if (incomingTransfers.length === 0 && trucks.length === 0) return [];
     const rows = [], used = new Set();
     blockedItems.forEach(it => {
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
-      if (it.qty > 0 || reused > 0) rows.push({ name: it.name, required: it.qty, reused, fromWarehouse: Math.max(0, it.qty - reused), over: Math.max(0, reused - it.qty), sources: inc?.sources || [] });
+      const whTrucks = trucks.map((t, ti) => ({ n: ti + 1, vehicle: t.vehicle, driver: t.driver, qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
+      const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
+      const totalIn = whQty + reused;
+      if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
     });
-    Object.entries(incomingByItem).forEach(([key, inc]) => { if (!used.has(key)) rows.push({ name: inc.name, required: 0, reused: inc.total, fromWarehouse: 0, over: inc.total, sources: inc.sources }); });
+    Object.entries(incomingByItem).forEach(([key, inc]) => { if (!used.has(key)) rows.push({ name: inc.name, required: 0, reused: inc.total, whTrucks: [], whQty: 0, totalIn: inc.total, shortfall: 0, over: inc.total, sources: inc.sources }); });
     return rows;
-  }, [blockedItems, incomingByItem, incomingTransfers]);
+  }, [blockedItems, incomingByItem, incomingTransfers, trucks]);
 
   // ── Fabric (dept = Fabric): total available (Old + New) vs required, with date-wise shortfall ──
   const FABRIC_TYPES = [
@@ -348,13 +353,31 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     });
     return out;
   }, [trussInv]);
-  // Requirement vs available for the SELECTED event.
+  // Same-day contention: fabric the SAME stock is committed to on OTHER events on the same date —
+  // so each event is checked against the remainder after the others (the same Liza can't be in two
+  // places on the same day).
+  const sameDayReserved = (date, exclId, ftKey, colour) => {
+    if (!date) return 0;
+    let s = 0;
+    (eventOrders || []).forEach(eo => {
+      if (eo.id === exclId || eventDate(eo) !== date || !eo.fabricPlan) return;
+      (Array.isArray(eo.fabricPlan[ftKey]) ? eo.fabricPlan[ftKey] : []).forEach(r => { if ((r.colour || "") === colour) s += Number(r.qty) || 0; });
+    });
+    return s;
+  };
+  // Requirement vs available for the SELECTED event (net of same-day commitments elsewhere).
   const fabricReqRows = (dept === "Fabric" && sel?.fabricPlan) ? FABRIC_TYPES.map(ft => {
     const req = Array.isArray(sel.fabricPlan[ft.key]) ? sel.fabricPlan[ft.key] : [];
-    const rows = req.map(r => { const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 }; const avail = av.old + av.new; return { colour: r.colour, required: r.qty, old: av.old, new: av.new, avail, short: Math.max(0, r.qty - avail) }; });
+    const rows = req.map(r => {
+      const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
+      const stock = av.old + av.new;
+      const otherDay = sameDayReserved(selDateStr, sel.id, ft.key, r.colour);
+      const avail = Math.max(0, stock - otherDay);
+      return { colour: r.colour, required: r.qty, old: av.old, new: av.new, stock, otherDay, avail, short: Math.max(0, r.qty - avail) };
+    });
     return { ...ft, rows };
   }).filter(f => f.rows.length) : [];
-  // All upcoming events scanned for fabric shortfalls → prior heads-up for ordering.
+  // All upcoming events scanned for fabric shortfalls (same-day contention included) → order-ahead heads-up.
   const upcomingFabricShort = useMemo(() => {
     if (dept !== "Fabric") return [];
     const out = [];
@@ -363,8 +386,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       FABRIC_TYPES.forEach(ft => {
         (Array.isArray(eo.fabricPlan[ft.key]) ? eo.fabricPlan[ft.key] : []).forEach(r => {
           const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
-          const short = (Number(r.qty) || 0) - (av.old + av.new);
-          if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short, unit: ft.unit });
+          const otherDay = sameDayReserved(d, eo.id, ft.key, r.colour);
+          const short = (Number(r.qty) || 0) - Math.max(0, (av.old + av.new) - otherDay);
+          if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, short, unit: ft.unit, contended: otherDay > 0 });
         });
       });
     });
@@ -483,7 +507,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       {upcomingFabricShort.map((s, i) => (
                         <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
                           <span className="text-red-800"><b>{s.fabric}</b> · {s.colour}</span>
-                          <span className="text-red-700">short <b>{s.short} {s.unit}</b> for {s.event} on <b>{s.date}</b></span>
+                          <span className="text-red-700">short <b>{s.short} {s.unit}</b> for {s.event} on <b>{s.date}</b>{s.contended ? " (shared with another same-day event)" : ""}</span>
                         </div>
                       ))}
                     </div>
@@ -506,7 +530,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-4 py-1.5 text-xs items-center">
                             <span className="text-gray-800">{r.colour}</span>
                             <span className="text-gray-500 w-24 text-right">need <b>{r.required} {ft.unit}</b></span>
-                            <span className="text-gray-500 w-32 text-right">have {r.avail} <span className="text-gray-400">({r.old} old + {r.new} new)</span></span>
+                            <span className="text-gray-500 w-40 text-right">have {r.avail} <span className="text-gray-400">({r.old} old + {r.new} new{r.otherDay > 0 ? ` − ${r.otherDay} same-day` : ""})</span></span>
                             <span className={"w-24 text-right font-bold " + (r.short > 0 ? "text-red-600" : "text-emerald-600")}>{r.short > 0 ? `short ${r.short} ${ft.unit}` : "✓ ok"}</span>
                           </div>
                         ))}
@@ -791,26 +815,30 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
             </div>
 
-            {/* Incoming & sources — how this event's requirement is met (warehouse + same-day reuse) */}
+            {/* Receiving — ops manager sees every item's sources (which truck + driver, from where) + shortfall */}
             {sourceRows.length > 0 && (
               <div className="bg-sky-50 border border-sky-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800">↪️ Incoming & sources <span className="text-xs font-normal text-sky-600">— where each item is coming from</span></div>
+                <div className="px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800">📥 Receiving — sources per item <span className="text-xs font-normal text-sky-600">— who's bringing what, on which truck</span></div>
+                {sourceRows.some(r => r.shortfall > 0) && (
+                  <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 font-semibold">⚠️ Shortfall on {sourceRows.filter(r => r.shortfall > 0).length} item(s) — not enough assigned from any source. Check with the dept head / production house.</div>
+                )}
                 <div className="divide-y divide-sky-100">
                   {sourceRows.map((r, i) => (
                     <div key={i} className="px-4 py-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-sky-900 font-semibold">{r.name}</span>
-                        <span className="text-sky-800">
-                          {r.required > 0 ? <>need <b>{r.required}</b> = </> : null}
-                          {r.fromWarehouse > 0 && <span>{r.fromWarehouse} from warehouse</span>}
-                          {r.fromWarehouse > 0 && r.reused > 0 && " + "}
-                          {r.reused > 0 && <span className="text-sky-700 font-semibold">{r.reused} reused</span>}
-                          {r.over > 0 && <span className="text-amber-600"> · +{r.over} extra arriving</span>}
+                        <span className={r.shortfall > 0 ? "text-red-600 font-bold" : "text-sky-800"}>
+                          {r.required > 0 ? <>need <b>{r.required}</b> · arriving <b>{r.totalIn}</b></> : <>arriving <b>{r.totalIn}</b></>}
+                          {r.shortfall > 0 && <span> · short {r.shortfall}</span>}
+                          {r.over > 0 && <span className="text-amber-600"> · +{r.over} extra</span>}
+                          {r.required > 0 && r.shortfall === 0 && <span className="text-emerald-600"> ✓</span>}
                         </span>
                       </div>
-                      {r.sources.length > 0 && (
-                        <div className="text-[10px] text-sky-600 mt-0.5 pl-1">{r.sources.map((s, j) => <span key={j}>{j > 0 ? " · " : "↪️ "}{s.qty}× from {s.from} ({s.dept})</span>)}</div>
-                      )}
+                      <div className="text-[10px] text-sky-600 mt-1 pl-1 space-y-0.5">
+                        {r.whTrucks.map((t, j) => <div key={"w" + j}>🚛 {t.qty}× from production house · Truck {t.n}{t.vehicle ? ` (${t.vehicle}${t.driver ? " · " + t.driver : ""})` : t.driver ? ` (${t.driver})` : ""}</div>)}
+                        {r.sources.map((s, j) => <div key={"r" + j} className="text-sky-700">↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</div>)}
+                        {r.whTrucks.length === 0 && r.sources.length === 0 && <div className="text-gray-400">No truck assigned yet.</div>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -853,12 +881,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             <option value="transfer">↪️ Reuse at another site</option>
                             <option value="damage">⚠️ Damaged</option>
                           </select>
-                          {d.type === "transfer" && (
+                          {d.type === "transfer" && (<>
                             <select value={d.toEventId || ""} onChange={e => setDraft(k, { toEventId: e.target.value })} className="border rounded px-2 py-1 text-xs max-w-[180px]">
                               <option value="">Pick destination event…</option>
                               {(eventOrders || []).filter(e => e.id !== sel.id).map(e => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {eventDate(e) || "no date"}</option>)}
                             </select>
-                          )}
+                            {fleet.length > 0 && (
+                              <select value={(fleet.find(f => f.vehicle === d.vehicle && f.driver === d.driver) || {}).id || ""} onChange={e => { const f = fleet.find(x => x.id === e.target.value); setDraft(k, { vehicle: f?.vehicle || "", driver: f?.driver || "", phone: f?.phone || "" }); }} className="border rounded px-2 py-1 text-xs max-w-[150px]">
+                                <option value="">Truck…</option>
+                                {fleet.map(f => <option key={f.id} value={f.id}>🚛 {f.vehicle}{f.driver ? " · " + f.driver : ""}</option>)}
+                              </select>
+                            )}
+                            <input value={d.vehicle || ""} onChange={e => setDraft(k, { vehicle: e.target.value })} placeholder="vehicle" className="w-24 border rounded px-2 py-1 text-xs" />
+                            <input value={d.driver || ""} onChange={e => setDraft(k, { driver: e.target.value })} placeholder="driver" className="w-24 border rounded px-2 py-1 text-xs" />
+                          </>)}
                           <button onClick={() => logRoute(it)} disabled={!(Number(d.qty) > 0) || (d.type === "transfer" && !d.toEventId)} className="text-xs bg-gray-800 hover:bg-gray-900 disabled:opacity-40 text-white px-3 py-1 rounded-lg font-medium">Log</button>
                         </div>
                       </div>
