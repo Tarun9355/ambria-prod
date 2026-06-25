@@ -206,6 +206,32 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const loadedCount = loadKeys.filter(k => loaded[k]).length;
   const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
   const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
+  // ── Multi-truck dispatch — inventory goes out across several trucks, each with its own challan ──
+  const TRUCK_STATUS = ["loading", "dispatched", "at-site", "returned"];
+  const trucks = Array.isArray(deptData.trucks) ? deptData.trucks : [];
+  const addTruck = () => saveDept({ trucks: [...trucks, { id: "trk_" + Date.now(), vehicle: "", driver: "", phone: "", status: "loading", items: {} }] });
+  const setTruck = (id, patch) => saveDept({ trucks: trucks.map(t => t.id === id ? { ...t, ...patch } : t) });
+  const setTruckItem = (id, key, qty) => saveDept({ trucks: trucks.map(t => t.id === id ? { ...t, items: { ...(t.items || {}), [key]: qty } } : t) });
+  const delTruck = (id) => saveDept({ trucks: trucks.filter(t => t.id !== id) });
+  const truckLoadedQty = (key) => trucks.reduce((s, t) => s + (Number(t.items?.[key]) || 0), 0); // total loaded across all trucks
+  const printTruckChallan = (truck, n) => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0)
+      .map(it => `<tr><td>${it.name}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items["inv:" + it.id]) || 0} of ${it.qty}</td></tr>`).join("");
+    const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
+    w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
+      <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
+      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${sel?.functionsDetail?.[0]?.venue || sel?.venue || "-"}</p>
+      <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
+      <h4>Inventory on this truck</h4>
+      <table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
+      ${toolRows ? `<h4>Essentials / tools</h4><table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${toolRows}</table>` : ""}
+      <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
+      <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
+      <button onclick="window.print()">🖨️ Print</button></body></html>`);
+    w.document.close();
+  };
   // Own fleet — vehicle + regular driver + phone, saved once in settings; one tap fills all three.
   const fleet = Array.isArray(settings?.fleet) ? settings.fleet : [];
   const saveFleet = (next) => setSettings && setSettings(s => ({ ...s, fleet: next }));
@@ -585,70 +611,82 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck */}
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
-                <span className="text-sm font-semibold text-gray-800">🚚 Loading & dispatch <span className="text-xs font-normal text-gray-400">— tick each as it goes on the truck</span></span>
+                <span className="text-sm font-semibold text-gray-800">🚚 Loading & dispatch <span className="text-xs font-normal text-gray-400">— split inventory across trucks; each prints its own challan</span></span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">{loadedCount}/{totalLoadItems} loaded</span>
-                  <button onClick={printChallan} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">🖨️ Print challan</button>
-                </div>
-              </div>
-              <div className="px-4 py-3 border-b space-y-2">
-                {/* Own fleet — one tap fills vehicle + driver + phone */}
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Own vehicle — quick fill</span>
                   <button onClick={() => setShowFleet(v => !v)} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">{showFleet ? "Done" : "⚙️ Manage fleet"}</button>
-                </div>
-                {fleet.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {fleet.map(f => {
-                      const on = dispatch.vehicle === f.vehicle && dispatch.driver === f.driver;
-                      return (
-                        <button key={f.id} onClick={() => pickFleet(f)} className={"text-[11px] px-2.5 py-1.5 rounded-lg border text-left " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>
-                          🚛 {f.vehicle}{f.driver ? <span className={on ? "text-indigo-100" : "text-gray-400"}> · {f.driver}</span> : ""}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : <div className="text-[11px] text-gray-400">No own vehicles saved yet — click “Manage fleet” to add them once.</div>}
-                {/* Manage-fleet editor (shared across all departments) */}
-                {showFleet && (
-                  <div className="bg-gray-50 border rounded-lg p-2.5 space-y-2">
-                    {fleet.map(f => (
-                      <div key={f.id} className="flex items-center gap-2 text-xs">
-                        <span className="flex-1 font-medium text-gray-700">🚛 {f.vehicle}</span>
-                        <span className="text-gray-500">{f.driver || "—"}</span>
-                        <span className="text-gray-400">{f.phone || ""}</span>
-                        <button onClick={() => delFleet(f.id)} className="text-red-300 hover:text-red-500">×</button>
-                      </div>
-                    ))}
-                    <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-end">
-                      <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="border rounded px-2 py-1.5 text-xs" />
-                      <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="border rounded px-2 py-1.5 text-xs" />
-                      <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="border rounded px-2 py-1.5 text-xs" />
-                      <button onClick={addFleet} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-medium">Add</button>
-                    </div>
-                  </div>
-                )}
-                {/* Final fields — prefilled by the chip, still editable for outside vehicles */}
-                <div className="grid grid-cols-3 gap-2">
-                  {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
-                    <div key={k}><label className="text-[10px] text-gray-400">{l}</label><input value={dispatch[k] || ""} onChange={e => setDispatch(k, e.target.value)} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
-                  ))}
+                  <button onClick={addTruck} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add truck</button>
                 </div>
               </div>
-              {/* Inventory to load */}
-              {blockedItems.length > 0 && (
+              {showFleet && (
+                <div className="px-4 py-3 border-b bg-gray-50 space-y-2">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Own fleet (shared across departments)</div>
+                  {fleet.map(f => (
+                    <div key={f.id} className="flex items-center gap-2 text-xs">
+                      <span className="flex-1 font-medium text-gray-700">🚛 {f.vehicle}</span>
+                      <span className="text-gray-500">{f.driver || "—"}</span>
+                      <span className="text-gray-400">{f.phone || ""}</span>
+                      <button onClick={() => delFleet(f.id)} className="text-red-300 hover:text-red-500">×</button>
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1.5 items-end">
+                    <input value={newVeh.vehicle} onChange={e => setNewVeh(v => ({ ...v, vehicle: e.target.value }))} placeholder="Vehicle no." className="border rounded px-2 py-1.5 text-xs" />
+                    <input value={newVeh.driver} onChange={e => setNewVeh(v => ({ ...v, driver: e.target.value }))} placeholder="Driver name" className="border rounded px-2 py-1.5 text-xs" />
+                    <input value={newVeh.phone} onChange={e => setNewVeh(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="border rounded px-2 py-1.5 text-xs" />
+                    <button onClick={addFleet} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-medium">Add</button>
+                  </div>
+                </div>
+              )}
+              {/* Per-item loaded summary across all trucks */}
+              {blockedItems.length > 0 && trucks.length > 0 && (
+                <div className="px-4 py-2 border-b bg-gray-50/40">
+                  <div className="text-[10px] uppercase text-gray-400 font-semibold mb-1">Loaded across trucks</div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {blockedItems.map(it => { const k = "inv:" + it.id; const ld = truckLoadedQty(k); const full = ld >= it.qty; return (
+                      <span key={k} className={"text-[11px] " + (full ? "text-emerald-600 font-semibold" : ld > 0 ? "text-amber-600" : "text-gray-400")}>{it.name}: {ld}/{it.qty}</span>
+                    ); })}
+                  </div>
+                </div>
+              )}
+              {/* Trucks */}
+              {trucks.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-gray-400">No trucks yet. Add a truck to load inventory for dispatch across one or more vehicles.</div>
+              ) : (
                 <div className="divide-y">
-                  {blockedItems.map(it => {
-                    const k = "inv:" + it.id; const on = !!loaded[k];
-                    return (
-                      <label key={k} className="flex items-center gap-3 px-4 py-2 cursor-pointer hover:bg-gray-50">
-                        <input type="checkbox" checked={on} onChange={() => toggleLoaded(k)} className="w-4 h-4" />
-                        {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
-                        <span className={"flex-1 text-sm " + (on ? "line-through text-gray-400" : "text-gray-800")}>{it.name}</span>
-                        <span className="text-xs text-gray-500">×{it.qty}</span>
-                      </label>
-                    );
-                  })}
+                  {trucks.map((t, ti) => (
+                    <div key={t.id} className="p-4 space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-sm font-semibold text-gray-700">🚛 Truck {ti + 1}</span>
+                        <div className="flex items-center gap-2">
+                          <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="border rounded-lg px-2 py-1 text-xs capitalize">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                          <button onClick={() => printTruckChallan(t, ti + 1)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg font-medium">🖨️ Challan</button>
+                          <button onClick={() => delTruck(t.id)} className="text-red-400 hover:text-red-600 text-sm">×</button>
+                        </div>
+                      </div>
+                      {fleet.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {fleet.map(f => { const on = t.vehicle === f.vehicle && t.driver === f.driver; return (
+                            <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle}{f.driver ? ` · ${f.driver}` : ""}</button>
+                          ); })}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-3 gap-2">
+                        {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
+                          <div key={k}><label className="text-[10px] text-gray-400">{l}</label><input value={t[k] || ""} onChange={e => setTruck(t.id, { [k]: e.target.value })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-0.5 w-full border rounded-lg px-2 py-1.5 text-sm" /></div>
+                        ))}
+                      </div>
+                      {blockedItems.length > 0 ? (
+                        <div className="border rounded-lg divide-y">
+                          {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const remaining = Math.max(0, it.qty - (truckLoadedQty(k) - onThis)); return (
+                            <div key={k} className="flex items-center gap-3 px-3 py-1.5">
+                              {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                              <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">({remaining} left of {it.qty})</span></span>
+                              <input type="number" min="0" max={it.qty} value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" className="w-16 border rounded px-2 py-1 text-sm text-center" />
+                            </div>
+                          ); })}
+                        </div>
+                      ) : <div className="text-xs text-gray-400">No inventory blocked for this department.</div>}
+                    </div>
+                  ))}
                 </div>
               )}
               {/* Essentials / tools */}
