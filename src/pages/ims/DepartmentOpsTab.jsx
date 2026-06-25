@@ -136,17 +136,26 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const sysPlan = (Array.isArray(sel?.manpowerPlan) ? sel.manpowerPlan : []).filter(p => deptTypes.includes(p.type));
   // days = the multi-day total cost ÷ (peak crew × day rate) — so the derivation math actually adds up.
   const dayCount = (count, rate, cost) => (count > 0 && rate > 0 && cost > 0) ? Math.max(1, Math.round(cost / (count * rate))) : 1;
-  const mpRows = Array.isArray(deptData.mp)
-    // The head edited crew → keep their counts/rates, but ALWAYS re-attach the derivation (trace /
-    // basis / split) from the live snapshot by type, so "how it's derived" shows even after an edit.
-    ? deptData.mp.map(r => {
-        const snap = (mpDetail || []).find(s => s.type === r.type) || null;
-        if (!snap) return r;
-        return { ...r, basis: r.basis || snap.basis || "", trace: r.trace || snap.trace || null, splitInfo: r.splitInfo || snap.splitInfo || null, shared: r.shared != null ? r.shared : !!snap.shared, sysCount: r.sysCount != null ? r.sysCount : snap.count, sysRate: r.sysRate != null ? r.sysRate : (snap.rate || 0), sysCost: r.sysCost != null ? r.sysCost : (snap.cost || 0), days: r.days || dayCount(Number(snap.count) || 0, Number(snap.rate) || 0, Number(snap.cost) || 0) };
-      })
-    : (mpDetail ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0, days: dayCount(Number(r.count) || 0, Number(r.rate) || 0, Number(r.cost) || 0), trace: r.trace || null, splitInfo: r.splitInfo || null }))
-      : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1 }))
-        : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1 }))));
+  // Head edits are stored as per-type OVERRIDES (count/rate only) + any extra crew types they added —
+  // so the SYSTEM figures (sysCount / trace / basis / schedule) are ALWAYS taken fresh from the snapshot
+  // and never freeze. Only the head's actual changes are kept.
+  const migrateOv = () => {
+    if (!Array.isArray(deptData.mp)) return {};
+    const byT = {}; (mpDetail || []).forEach(s => { byT[s.type] = s; });
+    const ov = {};
+    deptData.mp.forEach(r => { const s = byT[r.type]; if (!s) return; const o = {}; if (r.count !== "" && r.count != null && Number(r.count) !== Number(s.count ?? 0)) o.count = r.count; if (Number(r.rate) !== Number(s.rate ?? 0)) o.rate = r.rate; if (Object.keys(o).length) ov[r.type] = o; });
+    return ov;
+  };
+  const mpOverrides = (deptData.mpOverrides && typeof deptData.mpOverrides === "object") ? deptData.mpOverrides : migrateOv();
+  const snapTypes = new Set((mpDetail || []).map(s => s.type));
+  const mpExtra = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : (Array.isArray(deptData.mp) ? deptData.mp.filter(r => !snapTypes.has(r.type)) : []);
+  const mpRows = hasMpSnapshot
+    ? [
+        ...(mpDetail || []).map(s => { const ov = mpOverrides[s.type] || {}; return { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), basis: s.basis || "", shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, days: dayCount(Number(s.count) || 0, Number(s.rate) || 0, Number(s.cost) || 0), trace: s.trace || null, splitInfo: s.splitInfo || null, schedule: s.schedule || null }; }),
+        ...mpExtra.filter(r => !snapTypes.has(r.type)).map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: "added crew", shared: false, sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })),
+      ]
+    : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1, _extra: true }))
+      : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
   const realMandi = deptData.realMandi || "";
 
@@ -172,8 +181,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const realMandiNum = Number(realMandi) || 0;
   const projectedIncome = Math.round(deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost)); // full dept income from Deal Check, else local
 
-  const setMp = (i, key, val) => { const next = mpRows.map((r, j) => j === i ? { ...r, [key]: val } : r); saveDept({ mp: next }); };
-  const addMp = () => saveDept({ mp: [...mpRows, { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
+  const setMp = (i, key, val) => {
+    const row = mpRows[i]; if (!row) return;
+    if (row._extra) {
+      const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
+      const idx = base.findIndex(r => r.type === row.type);
+      const next = base.slice();
+      if (idx >= 0) next[idx] = { ...next[idx], [key]: val }; else next.push({ type: row.type, count: row.count, rate: row.rate, [key]: val });
+      saveDept({ mpExtra: next });
+    } else {
+      saveDept({ mpOverrides: { ...mpOverrides, [row.type]: { ...(mpOverrides[row.type] || {}), [key]: val } } });
+    }
+  };
+  const addMp = () => saveDept({ mpExtra: [...(Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra), { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
   const addExpense = () => saveDept({ expenses: [...expenses, { label: "", amount: "" }] });
   const setExpense = (i, key, val) => { const next = expenses.map((e, j) => j === i ? { ...e, [key]: val } : e); saveDept({ expenses: next }); };
   const delExpense = (i) => saveDept({ expenses: expenses.filter((_, j) => j !== i) });
@@ -419,6 +439,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     if (t.kind === "fixed") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;
     return null;
   };
+  // Working-dihari schedule (which days × how many shifts) — mirrors Deal Check's day/timing breakdown.
+  const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
+  const renderMpSchedule = (sch) => {
+    if (!Array.isArray(sch) || !sch.length) return null;
+    const total = sch.reduce((s, d) => s + (Number(d.windows) || 0), 0);
+    return (
+      <div className="mt-1.5 bg-white border rounded-lg p-2 text-[10px] text-gray-600">
+        <div className="font-semibold text-gray-500 mb-0.5">📅 Working dihari (days × shifts)</div>
+        {sch.map((d, i) => <div key={i} className="flex justify-between"><span>{phaseLbl(d)}</span><span>{d.count} crew × {d.windows} shift{d.windows > 1 ? "s" : ""}</span></div>)}
+        <div className="border-t mt-0.5 pt-0.5 text-right">= <b className="text-gray-800">{total} dihari</b> booked</div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex gap-4">
@@ -629,6 +662,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             <>
                               <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.type} derived → then split</div>
                               {renderMpTrace(r.trace)}
+                              {renderMpSchedule(r.schedule)}
                               {r.splitInfo && r.splitInfo.directTotal > 0 ? (
                                 <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
                                   <b>{r.type}</b> are shared crew, split across all departments by income share:<br />
@@ -639,8 +673,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                               ) : <div className="text-gray-500">Split across departments by income share. This dept's allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</div>}
                             </>
                           ) : (<>
-                            <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.count || r.sysCount || ""} {r.type} derived</div>
+                            <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</div>
                             {renderMpTrace(r.trace)}
+                            {renderMpSchedule(r.schedule)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
                             {r.sysCount != null && r.sysCount !== "" && (
                               <span className={overridden ? "text-amber-600 font-semibold" : "text-gray-500"}>

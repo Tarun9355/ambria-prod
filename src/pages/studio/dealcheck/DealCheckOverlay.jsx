@@ -85,6 +85,7 @@ export default function DealCheckOverlay({ ctx }) {
           let mpRateByType = {}; // rate per type (for editable, reconciling crew rows in Dept Ops)
           const deptMp = {}; DEPTS.forEach(d => { deptMp[d] = {}; }); // per-dept, per-type manpower cost (sums to dept.manpower)
           let dcMpPhases = null; // {minusOne, eventDays, gapDays, dismantle} — the day phases crew is booked across
+          const mpSchedule = {}; // type → [{date, phase, count, windows}] — the working-dihari schedule per crew
           const mpSharedTotals = {}; // type → global cost (for shared crew split explanation)
           const deptDirectMap = {}; // dept → direct income (drives the shared split %)
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
@@ -307,6 +308,7 @@ export default function DealCheckOverlay({ ctx }) {
                     const mpCost = ppl * wins.length * (rateByType[t] || 0);
                     manpower += mpCost;
                     mpByType[t] = (mpByType[t] || 0) + mpCost;
+                    if (wins.length > 0) { if (!mpSchedule[t]) mpSchedule[t] = []; mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length }); }
                   });
                 });
               }
@@ -357,7 +359,7 @@ export default function DealCheckOverlay({ ctx }) {
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
-            mpPhases: dcMpPhases, mpSharedTotals, deptDirectMap, directTotal,
+            mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
         })();
 
@@ -375,7 +377,7 @@ export default function DealCheckOverlay({ ctx }) {
           const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
-          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); const splitInfo = shared ? { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), deptDirect: Math.round(dcCostRollup.deptDirectMap?.[d] || 0), directTotal: Math.round(dcCostRollup.directTotal || 0) } : null; return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo }; }); });
+          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); const splitInfo = shared ? { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), deptDirect: Math.round(dcCostRollup.deptDirectMap?.[d] || 0), directTotal: Math.round(dcCostRollup.directTotal || 0) } : null; return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule: dcCostRollup.mpSchedule?.[type] || null }; }); });
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
           // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
           let fabricPlan = { liza: [], masking: [], curtain: [] };
