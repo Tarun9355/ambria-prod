@@ -845,14 +845,17 @@ export default function StudioApp() {
     : null;
 
   // ═══ APP MODE ═══
-  const [mode, setMode] = useState("studio"); // studio | manage
+  // Remember the last open Studio view so toggling to IMS and back returns here.
+  const [mode, setMode] = useState(() => sessionStorage.getItem("ambria-studio-mode") || "studio"); // studio | manage
   const [events, setEvents] = useState(DEFAULTS);
   const [loaded, setLoaded] = useState(true);
   const [toast, setToast] = useState(null);
 
   // ═══ ADMIN STATE ═══
   const [editEv, setEditEv] = useState(null);
-  const [manageTab, setManageTab] = useState("library");
+  const [manageTab, setManageTab] = useState(() => sessionStorage.getItem("ambria-studio-manage-tab") || "library");
+  useEffect(() => { sessionStorage.setItem("ambria-studio-mode", mode); }, [mode]);
+  useEffect(() => { sessionStorage.setItem("ambria-studio-manage-tab", manageTab); }, [manageTab]);
   const [photoUrl, setPhotoUrl] = useState("");
   const [evEditPhotoIdx, setEvEditPhotoIdx] = useState(null);
   const [tagInput, setTagInput] = useState("");

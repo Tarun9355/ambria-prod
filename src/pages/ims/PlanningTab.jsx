@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs } from "../../components/ui";
 import PaintPlanningTab from "./PaintPlanningTab.jsx";
 import BoxesTab from "./BoxesTab.jsx";
@@ -33,7 +33,8 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   const allowed = isAdmin || !roleConfig?.subTabs?.planning ? allTabs : allTabs.filter((t) => roleConfig.subTabs.planning.includes(t.id));
   const tabs = allowed.length > 0 ? allowed : allTabs;
-  const [sub, setSub] = useState(tabs[0]?.id || "manpower");
+  const [sub, setSub] = useState(() => { const saved = sessionStorage.getItem("ambria-ims-planning-sub"); return tabs.some((t) => t.id === saved) ? saved : (tabs[0]?.id || "manpower"); });
+  useEffect(() => { sessionStorage.setItem("ambria-ims-planning-sub", sub); }, [sub]);
   return (
     <div className="space-y-4">
       <Tabs tabs={tabs} active={sub} onChange={setSub} />

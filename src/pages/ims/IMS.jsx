@@ -88,7 +88,9 @@ const allocToRow = (date, entry) => {
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState("dashboard");
+  // Remember the last open IMS tab so toggling to Studio and back returns here (not Dashboard).
+  const [tab, setTab] = useState(() => sessionStorage.getItem("ambria-ims-tab") || "dashboard");
+  useEffect(() => { sessionStorage.setItem("ambria-ims-tab", tab); }, [tab]);
 
   const [items, setItems] = useState([]);
   const [functions, setFns] = useState([]);
