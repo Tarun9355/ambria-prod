@@ -118,7 +118,7 @@ export default function DealCheckOverlay({ ctx }) {
               rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
               addD(dD, "rental", lineRental);
-              if (lineRental > 0 && deptInv[dD]) deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "" });
+              if (lineRental > 0 && deptInv[dD]) deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
             try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
@@ -164,7 +164,7 @@ export default function DealCheckOverlay({ ctx }) {
                 if (!pickedId) return;
                 const carpetItem = dcInventoryCache.find(x => x.id === pickedId);
                 if (!carpetItem) return;
-                { const cc = calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost; rental += cc; addD("Tenting", "rental", cc); if (cc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: carpetItem.name || "Carpet", photo: imsField.photos(carpetItem)[0] || "", qty: 1, unit: 0, total: Math.round(cc), sub: imsField.subcategory(carpetItem) || "carpet" }); } // carpet → Tenting
+                { const cc = calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost; rental += cc; addD("Tenting", "rental", cc); if (cc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: carpetItem.name || "Carpet", photo: imsField.photos(carpetItem)[0] || "", qty: 1, unit: 0, total: Math.round(cc), sub: imsField.subcategory(carpetItem) || "carpet", imsId: carpetItem.id }); } // carpet → Tenting
               });
             });
           } catch {}

@@ -929,7 +929,7 @@ export default function IMS() {
           />
         ) : tab === "planning" ? (
           <PlanningTab
-            projects={projects} functions={functions} setFunctions={setFunctions} inventory={items}
+            projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
             vendors={vendors} setVendors={setVendors}
             settings={settings} setSettings={setSettings} boxes={boxes} setBoxes={setBoxes}
             trussInv={trussInv} setTrussInv={setTrussInv}

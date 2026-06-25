@@ -19,7 +19,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function PlanningTab({ projects, functions, setFunctions, inventory, vendors, setVendors, settings, setSettings, boxes, setBoxes, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser }) {
+export default function PlanningTab({ projects, functions, setFunctions, inventory, setInventory, vendors, setVendors, settings, setSettings, boxes, setBoxes, trussInv, setTrussInv, trussAlloc, setTrussAlloc, eventOrders, setEventOrders, blocks, studio, authUser }) {
   const allTabs = [
     { id: "deptops", label: "🏦 Dept Ops" },
     { id: "manpower", label: "👷 Manpower" },
@@ -38,7 +38,7 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   return (
     <div className="space-y-4">
       <Tabs tabs={tabs} active={sub} onChange={setSub} />
-      {sub === "deptops" && <DepartmentOpsTab eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} />}
+      {sub === "deptops" && <DepartmentOpsTab eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} />}
       {sub === "manpower" && <ManpowerTab projects={projects} functions={functions} setFunctions={setFunctions} settings={settings} setSettings={setSettings} vendors={vendors} setVendors={setVendors} inventory={inventory} />}
       {sub === "truss" && <TrussPlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}

@@ -41,7 +41,7 @@ const DEFAULT_TOOLS = {
   Furniture: ["Trolley", "Covers", "Cleaning cloth", "Cushion spares"],
 };
 
-export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser }) {
+export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => { const k = String(cat || "").toLowerCase().trim(); if (catDeptCfg[k] && DEPTS.includes(catDeptCfg[k])) return catDeptCfg[k]; return kwDept(cat); };
   const dihari = settings?.dihariSchemes || {};
@@ -58,6 +58,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
   const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
   const [mpOpen, setMpOpen] = useState({}); // which manpower rows have their derivation expanded
+  const [routeDraft, setRouteDraft] = useState({}); // dismantle routing draft per item: {qty, type, toEventId}
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
@@ -104,7 +105,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   const blockedItems = useMemo(() => {
     if (!sel) return [];
-    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "" }));
+    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "" }));
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
@@ -114,7 +115,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       const d = catToDept(item.cat || item.category);
       if (d !== dept) return;
       const unit = Number(item.price ?? item.rentalCost) || 0;
-      out.push({ id: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
+      out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
     });
     return out.sort((a, b) => b.total - a.total);
   }, [sel, blocks, inventory, dept]);
@@ -261,6 +262,47 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
     w.document.close();
   };
+
+  // ── Dismantle routing: after teardown, each item's at-site qty splits into return / transfer-to-Site-2 / damaged ──
+  const movements = Array.isArray(deptData.movements) ? deptData.movements : [];
+  const movedQty = (itemKey, type) => movements.filter(m => m.itemKey === itemKey && (!type || m.type === type)).reduce((s, m) => s + (Number(m.qty) || 0), 0);
+  const adjustInventory = (invId, delta) => {
+    if (!invId || !setInventory) return;
+    setInventory(prev => prev.map(r => String(r.id) === String(invId) ? { ...r, qty: Math.max(0, (Number(r.qty) || 0) + delta), qtyOwned: Math.max(0, (Number(r.qtyOwned ?? r.qty) || 0) + delta) } : r));
+  };
+  const addMovement = (it, type, qty, extra = {}) => {
+    const q = Number(qty) || 0; if (q <= 0) return;
+    const mv = { id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 1000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type, qty: q, at: Date.now(), by: authUser?.name || "—", ...extra };
+    saveDept({ movements: [...movements, mv] });
+    if (type === "damage") adjustInventory(it.invId, -q); // broken units leave owned stock immediately
+  };
+  const delMovement = (id) => {
+    const mv = movements.find(m => m.id === id);
+    saveDept({ movements: movements.filter(m => m.id !== id) });
+    if (mv && mv.type === "damage") adjustInventory(mv.invId, +(Number(mv.qty) || 0)); // undo the decrement
+  };
+  const setDraft = (key, patch) => setRouteDraft(d => ({ ...d, [key]: { type: "return", ...(d[key] || {}), ...patch } }));
+  const logRoute = (it) => {
+    const key = "inv:" + it.id; const d = routeDraft[key] || {};
+    const q = Number(d.qty) || 0; if (q <= 0) return;
+    const type = d.type || "return";
+    let extra = {};
+    if (type === "transfer") { const ev = (eventOrders || []).find(e => e.id === d.toEventId); if (!ev) return; extra = { toEventId: ev.id, toEventName: ev.clientName || "Event" }; }
+    addMovement(it, type, q, extra);
+    setDraft(key, { qty: "" });
+  };
+  // Incoming transfers — items other events routed to THIS event for same-day reuse.
+  const incomingTransfers = useMemo(() => {
+    if (!sel) return [];
+    const out = [];
+    (eventOrders || []).forEach(eo => {
+      if (eo.id === sel.id) return;
+      Object.entries(eo.deptOps || {}).forEach(([dp, od]) => {
+        (Array.isArray(od?.movements) ? od.movements : []).forEach(m => { if (m.type === "transfer" && m.toEventId === sel.id) out.push({ ...m, fromEvent: eo.clientName || "Event", fromDept: dp }); });
+      });
+    });
+    return out;
+  }, [eventOrders, sel]);
 
   // ── Fabric (dept = Fabric): total available (Old + New) vs required, with date-wise shortfall ──
   const FABRIC_TYPES = [
@@ -723,6 +765,88 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Incoming transfers — items routed here from another site for same-day reuse */}
+            {incomingTransfers.length > 0 && (
+              <div className="bg-sky-50 border border-sky-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800">↪️ Incoming reuse — {incomingTransfers.length} item{incomingTransfers.length > 1 ? "s" : ""} arriving from other sites</div>
+                <div className="divide-y divide-sky-100">
+                  {incomingTransfers.map((m, i) => (
+                    <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
+                      <span className="text-sky-900"><b>{m.qty}× {m.name}</b></span>
+                      <span className="text-sky-700">from {m.fromEvent} · {m.fromDept}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Dismantle & return routing */}
+            <div className="bg-white border rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50">
+                <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— after teardown, route each item: back to warehouse, reuse at another site, or mark damaged</span></span>
+              </div>
+              {blockedItems.length === 0 ? (
+                <div className="px-4 py-5 text-center text-xs text-gray-400">No inventory to route for this department.</div>
+              ) : (
+                <div className="divide-y">
+                  {blockedItems.map(it => {
+                    const k = "inv:" + it.id;
+                    const ret = movedQty(k, "return"), tr = movedQty(k, "transfer"), dmg = movedQty(k, "damage");
+                    const routed = ret + tr + dmg;
+                    const unrouted = Math.max(0, it.qty - routed);
+                    const d = routeDraft[k] || { type: "return" };
+                    return (
+                      <div key={k} className="px-4 py-2.5 space-y-1.5">
+                        <div className="flex items-center gap-3">
+                          {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                          <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">out {it.qty}{it.invId ? "" : " · not stock-linked"}</span></span>
+                          <span className="text-[10px] text-gray-400">{unrouted > 0 ? `${unrouted} to route` : "✓ all routed"}</span>
+                        </div>
+                        {(ret > 0 || tr > 0 || dmg > 0) && (
+                          <div className="text-[10px] pl-11 flex gap-3">
+                            {ret > 0 && <span className="text-gray-500">↩️ returned {ret}</span>}
+                            {tr > 0 && <span className="text-sky-600">↪️ reused {tr}</span>}
+                            {dmg > 0 && <span className="text-red-600 font-semibold">⚠️ damaged {dmg}</span>}
+                          </div>
+                        )}
+                        <div className="pl-11 flex items-center gap-1.5 flex-wrap">
+                          <input type="number" min="0" max={unrouted} value={d.qty || ""} onChange={e => setDraft(k, { qty: e.target.value })} placeholder="qty" className="w-16 border rounded px-2 py-1 text-xs text-center" />
+                          <select value={d.type} onChange={e => setDraft(k, { type: e.target.value })} className="border rounded px-2 py-1 text-xs">
+                            <option value="return">↩️ Back to warehouse</option>
+                            <option value="transfer">↪️ Reuse at another site</option>
+                            <option value="damage">⚠️ Damaged</option>
+                          </select>
+                          {d.type === "transfer" && (
+                            <select value={d.toEventId || ""} onChange={e => setDraft(k, { toEventId: e.target.value })} className="border rounded px-2 py-1 text-xs max-w-[180px]">
+                              <option value="">Pick destination event…</option>
+                              {(eventOrders || []).filter(e => e.id !== sel.id).map(e => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {eventDate(e) || "no date"}</option>)}
+                            </select>
+                          )}
+                          <button onClick={() => logRoute(it)} disabled={!(Number(d.qty) > 0) || (d.type === "transfer" && !d.toEventId)} className="text-xs bg-gray-800 hover:bg-gray-900 disabled:opacity-40 text-white px-3 py-1 rounded-lg font-medium">Log</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* Movement log for this event */}
+              {movements.length > 0 && (
+                <div className="border-t bg-gray-50/40">
+                  <div className="px-4 py-1.5 text-[10px] uppercase text-gray-400 font-semibold">Movement log</div>
+                  <div className="divide-y">
+                    {movements.slice().reverse().map(m => (
+                      <div key={m.id} className="flex items-center justify-between px-4 py-1.5 text-xs">
+                        <span className={m.type === "damage" ? "text-red-600 font-semibold" : m.type === "transfer" ? "text-sky-700" : "text-gray-600"}>
+                          {m.type === "damage" ? "⚠️ Damaged" : m.type === "transfer" ? `↪️ Reused → ${m.toEventName || "event"}` : "↩️ Returned"} · {m.qty}× {m.name}
+                        </span>
+                        <span className="flex items-center gap-2 text-[10px] text-gray-400">{m.by}{m.type === "damage" && m.invId ? " · stock −" + m.qty : ""}<button onClick={() => delMovement(m.id)} className="text-red-300 hover:text-red-500 text-sm">×</button></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* P&L summary */}
