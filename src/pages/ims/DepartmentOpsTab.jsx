@@ -766,11 +766,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       </div>
                       {blockedItems.length > 0 ? (
                         <div className="border rounded-lg divide-y">
-                          {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const remaining = Math.max(0, it.qty - (truckLoadedQty(k) - onThis)); return (
+                          {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-3 px-3 py-1.5">
                               {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
-                              <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">({remaining} left of {it.qty})</span></span>
-                              <input type="number" min="0" max={it.qty} value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" className="w-16 border rounded px-2 py-1 text-sm text-center" />
+                              <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">need {it.qty}</span></span>
+                              <span className={"text-[11px] font-semibold w-28 text-right " + matchCls}>{totalLoaded}/{it.qty} loaded{totalLoaded > it.qty ? " ⚠️" : totalLoaded === it.qty ? " ✓" : ""}</span>
+                              <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">this truck</span><input type="number" min="0" value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
                             </div>
                           ); })}
                         </div>

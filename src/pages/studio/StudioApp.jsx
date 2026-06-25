@@ -1705,7 +1705,10 @@ export default function StudioApp() {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
       if (row && row.data) {
         const cur = row.data;
-        if (cur.deptSyncedAt && cur.deptIncomeSig === sig) return; // already in sync — leave the head's edits untouched
+        // Skip only when truly in sync: same signature AND the income snapshot is actually present.
+        // (If the income was lost but the marker lingered, we must re-push to heal it.)
+        const incomeOk = cur.deptIncome && Object.keys(cur.deptIncome).length > 0;
+        if (cur.deptSyncedAt && cur.deptIncomeSig === sig && incomeOk) return; // already in sync — leave the head's edits untouched
         await supabase.from("event_orders").update({ data: applySnap(cur) }).eq("id", eo.id);
       } else {
         // No table row yet → create it from the local EO (first sync).
