@@ -2283,14 +2283,16 @@ export default function StudioApp() {
     const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => { const rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase()); if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) }); }); }); };
     const calc = (fn, type) => {
       if (type === "Flowerists") {
-        let t = 0, arr = 0; walk(fn, ({ rc, el, qty }) => {
+        let t = 0; const agg = {}; walk(fn, ({ rc, el, qty }) => {
           if (String(rc.cat || "").toLowerCase() !== "florals") return;
           if (!recipeSubs.includes(String(rc.sub || "").toLowerCase().trim())) return;
           const pat = fps.find(p => { const n = String(p?.name || "").toLowerCase().trim(); const rn = String(rc.name || "").toLowerCase().trim(); return n && rn && (n === rn || n.includes(rn) || rn.includes(n)); });
           if (!pat) return; const sk = sizeFromMode(rc.inhouseMode, el.size); let c = pat.sizes?.[sk] || pat.sizes?.medium; if (!c && sk === "big" && pat.sizes?.large) c = pat.sizes.large;
-          const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { t += Math.ceil(qty / upf); arr += qty; }
+          const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
         });
-        return { count: t, basis: t > 0 ? `${arr} arrangement(s) ÷ units-per-flowerist` : "no recipe-driven florals", trace: t > 0 ? { kind: "ratio", num: arr, numLabel: "arrangements", denomLabel: "units per flowerist", result: t } : null };
+        const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
+        rows.forEach(r => { t += Math.ceil(r.need); });
+        return { count: t, basis: rows.length ? "arrangements ÷ units-per-flowerist (per recipe)" : "no recipe-driven florals", trace: rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null };
       }
       if (type === "Electricians") {
         let t = 0, n = 0; walk(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = elecProd[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { t += Math.ceil(qty / upe); n += qty; } });
