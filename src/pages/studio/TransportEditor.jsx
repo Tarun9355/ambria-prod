@@ -7,7 +7,31 @@ export default function TransportEditor({ ctx }) {
     S, isDark, accent, border, textP, textS, showMsg,
     trVenues, truckCap, floralPerTruck, gensetRate, bufferTiers, saveTR,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS, TC_UNITS,
+    rcItems, rcCats,
   } = ctx;
+  // Per-sub-category truck capacity, keyed by sub-category name (truckCap[].item === sub).
+  const capForSub = (sub) => (truckCap || []).find((t) => String(t.item || "").toLowerCase().trim() === String(sub || "").toLowerCase().trim());
+  const upsertSubCap = (sub, field, val) => {
+    const existing = capForSub(sub);
+    const conv = (f, v) => (f === "perTruck" ? Number(v) || 0 : v);
+    let next;
+    if (existing) next = (truckCap || []).map((t) => (t === existing ? { ...t, [field]: conv(field, val) } : t));
+    else next = [...(truckCap || []), { id: "TC" + Date.now().toString(36).slice(-5).toUpperCase(), item: sub, perTruck: field === "perTruck" ? Number(val) || 0 : 0, unit: field === "unit" ? val : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc") }];
+    saveTR(null, next);
+  };
+  // Distinct sub-categories grouped by rate-card category.
+  const subsByCat = (() => {
+    const out = [];
+    (rcCats || []).forEach((c) => {
+      const subs = [...new Set((rcItems || []).filter((i) => i.cat === c.id && i.sub).map((i) => i.sub))];
+      if (subs.length) out.push({ cat: c, subs });
+    });
+    // Structural pseudo-subs the calc uses from the zone config (truss/platform/carpet by sqft).
+    const have = new Set((rcItems || []).map((i) => String(i.sub || "").toLowerCase().trim()));
+    const extra = ["Truss", "Platform", "Carpet"].filter((s) => !have.has(s.toLowerCase()));
+    if (extra.length) out.push({ cat: { id: "_struct", l: "Structural (by sqft)", icon: "🏗️" }, subs: extra });
+    return out;
+  })();
 
   // Venues
   const updTrVenue = (id, f, v) => { const num = f === "rate" || f === "gensets"; saveTR(trVenues.map((x) => (x.id === id ? { ...x, [f]: num ? Number(v) || 0 : v } : x))); };
@@ -77,23 +101,21 @@ export default function TransportEditor({ ctx }) {
     {/* Truck capacities */}
     <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
       <div style={{ fontSize: 16, fontWeight: 700, color: accent, marginBottom: 4 }}>🚚 Truck Capacity Rules</div>
-      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Items per truck — used to auto-estimate truck count</div>
-      {truckCap.map((tc) => (
-        <div key={tc.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${border}` }}>
-          <input value={tc.item} onChange={(e) => updTrTC(tc.id, "item", e.target.value)} style={{ fontSize: 14, color: textP, background: "transparent", border: "none", outline: "none", fontFamily: "inherit", flex: 1, minWidth: 0, padding: "4px 0" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            <input type="number" value={tc.perTruck} onChange={(e) => updTrTC(tc.id, "perTruck", e.target.value)} style={{ ...numInput, width: 70, color: (tc.perTruck || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000"), fontSize: 15 }} />
-            <select value={tc.unit || "pc"} onChange={(e) => updTrTC(tc.id, "unit", e.target.value)} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }]).map((u) => <option key={u.id} value={u.id}>{u.l}/truck</option>)}</select>
-            <button onClick={() => delTrTC(tc.id)} style={{ background: "transparent", border: "none", color: "#F87171", cursor: "pointer", fontSize: 14, padding: "2px 6px" }}>✖</button>
-          </div>
+      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>How many of each <b>sub-category</b> fit in one truck. Trucks needed = ⌈Σ(qty ÷ capacity)⌉ across all sub-categories, + buffer. Leave 0 to skip (not transported separately). No separate flower truck — florals count via their sub-category here.</div>
+      {subsByCat.map(({ cat, subs }) => (
+        <div key={cat.id} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: textS, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{cat.icon} {cat.l}</div>
+          {subs.map((sub) => { const tc = capForSub(sub); const pt = tc ? tc.perTruck : 0; const un = tc ? (tc.unit || "pc") : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc"); return (
+            <div key={sub} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${border}` }}>
+              <span style={{ fontSize: 13, color: textP, flex: 1, minWidth: 0 }}>{sub}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <input type="number" value={pt || ""} placeholder="0" onChange={(e) => upsertSubCap(sub, "perTruck", e.target.value)} style={{ ...numInput, width: 70, color: (pt || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000"), fontSize: 15 }} />
+                <select value={un} onChange={(e) => upsertSubCap(sub, "unit", e.target.value)} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }, { id: "sqft", l: "sqft" }]).map((u) => <option key={u.id} value={u.id}>{u.l}/truck</option>)}</select>
+              </div>
+            </div>
+          ); })}
         </div>
       ))}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
-        <input value={newTC.item} onChange={(e) => setNewTC((p) => ({ ...p, item: e.target.value }))} placeholder="Item name" style={{ ...S.input, flex: 1, minWidth: 140 }} />
-        <input type="number" value={newTC.perTruck || ""} onChange={(e) => setNewTC((p) => ({ ...p, perTruck: Number(e.target.value) || 0 }))} placeholder="0" style={{ ...numInput, width: 70 }} />
-        <select value={newTC.unit || "pc"} onChange={(e) => setNewTC((p) => ({ ...p, unit: e.target.value }))} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }]).map((u) => <option key={u.id} value={u.id}>{u.l}/truck</option>)}</select>
-        <button onClick={addTrTC} style={{ ...S.btn(true), padding: "8px 16px", flexShrink: 0 }}>+ Add</button>
-      </div>
     </div>
 
     {/* Florals truck rule */}

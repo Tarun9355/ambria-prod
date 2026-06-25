@@ -778,6 +778,40 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
   });
   return mx > 0 ? mx : fallback;
 }
+// ── Truck count from per-SUB-CATEGORY capacities (carpenter-style: ⌈Σ(qty ÷ capacity)⌉) ──
+// Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
+// (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
+// their rate-card sub-category; truss / platform / carpet contribute sqft via the zone config.
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap) {
+  const capBySub = {};
+  (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
+  const subAgg = {}; // subLower → { label, qty, perTruck, unit }
+  const addSub = (subName, qty) => {
+    const key = String(subName || "").toLowerCase().trim(); const tc = capBySub[key]; if (!tc || !(qty > 0)) return;
+    if (!subAgg[key]) subAgg[key] = { label: tc.item, qty: 0, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc" };
+    subAgg[key].qty += qty;
+  };
+  Object.entries(zoneElements || {}).forEach(([zk, elems]) => {
+    if (!enabledEls[zk] || !elems) return;
+    elems.forEach(el => {
+      const rc = rcItems.find(i => String(i.name || "").toLowerCase() === String(el.name || "").toLowerCase());
+      if (!rc) return;
+      const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
+      if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
+      else addSub(rc.sub, Number(el.qty) || 0);
+    });
+  });
+  Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
+    if (!enabledEls[zk] || !cfg) return;
+    const dims = cfg.dims || {}; const sqft = (Number(dims.w) || 0) * (Number(dims.d) || 0); if (sqft <= 0) return;
+    if (cfg.trT) addSub("Truss", sqft * Math.max(1, Number(cfg.trussQty) || 1));
+    if (cfg.plH) addSub("Platform", sqft);
+    if (cfg.cpT) addSub("Carpet", sqft);
+  });
+  let frac = 0; const breakdown = [];
+  Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
+  return { itemTrucks: Math.ceil(frac), truckFraction: frac, breakdown };
+}
 function normalizePaintAllocation(el, baseColour) {
   if (!el) return [];
   const totalQty = Number(el.qty) || 0;
@@ -1957,9 +1991,8 @@ export default function StudioApp() {
           totalFloralCostFull += (el.qty || 0) * up;
           up = getElPrice(el, null).unitPrice;
         } else {
-          const elN = (el.name || "").toLowerCase();
-          const matchedTC = truckCap.find(tc => tc.perTruck > 0 && elN.includes(tc.item.toLowerCase().replace(/s$/, "")));
-          if (matchedTC) itemAgg[matchedTC.id] = (itemAgg[matchedTC.id] || 0) + (el.qty || 0);
+          const subTc = truckCap.find(tc => (Number(tc.perTruck) || 0) > 0 && String(tc.item || "").toLowerCase().trim() === String(rc.sub || "").toLowerCase().trim());
+          if (subTc) itemAgg[subTc.id] = (itemAgg[subTc.id] || 0) + (el.qty || 0);
         }
         decorCost += (el.qty || 0) * up;
       });
@@ -1967,9 +2000,10 @@ export default function StudioApp() {
     const venueName = ev.venue || "";
     const match = trVenues.find(v => v.name.toLowerCase() === venueName.toLowerCase());
     const tripRate = match ? match.rate : 0;
-    let itemTrucks = 0;
-    Object.entries(itemAgg).forEach(([tcId, qty]) => { const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return; itemTrucks += Math.ceil(qty / tc.perTruck); });
-    const floralTrucks = totalFloralCostFull > 0 ? Math.ceil(totalFloralCostFull / (floralPerTruck || 50000)) : 0;
+    let truckFrac = 0;
+    Object.entries(itemAgg).forEach(([tcId, qty]) => { const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return; truckFrac += qty / tc.perTruck; });
+    const itemTrucks = Math.ceil(truckFrac);
+    const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decorCost >= b.minBudget && decorCost < b.maxBudget);
     const bufTrucks = bt ? bt.bufferTrucks : 0;
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
@@ -2032,46 +2066,9 @@ export default function StudioApp() {
     const tierId = match ? match.tier : "new";
     const tierLabel = match ? (TR_TIERS.find(t => t.id === match.tier)?.label || match.tier) : "New venue";
     const breakdown = [];
-    const itemAgg = {};
-    let totalFloralCost = 0;
-    Object.entries(zoneElements).forEach(([zk, elems]) => {
-      if (!enabledEls[zk] || !elems) return;
-      elems.forEach(el => {
-        const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-        if (!rc) return;
-        if ((rc.cat || "").toLowerCase() === "florals") {
-          let up = 0; const sz = (el.size || "").toUpperCase();
-          if (rcIsSMB(rc)) { if (sz === "S") up = rc.inhouseS || 0; else if (sz === "B") up = rc.inhouseB || 0; else up = rc.inhouseM || 0; }
-          else { up = rc.inhouseFlat || 0; }
-          totalFloralCost += (el.qty || 0) * up;
-        } else {
-          const elN = (el.name || "").toLowerCase();
-          const matchedTC = truckCap.find(tc => tc.perTruck > 0 && elN.includes(tc.item.toLowerCase().replace(/s$/, "")));
-          if (matchedTC) itemAgg[matchedTC.id] = (itemAgg[matchedTC.id] || 0) + (el.qty || 0);
-        }
-      });
-    });
-    Object.entries(zoneConfig).forEach(([zk, cfg]) => {
-      if (!enabledEls[zk] || !cfg) return;
-      const dims = cfg.dims || {}; const w = dims.w || 0; const d = dims.d || 0; const sqft = w * d;
-      if (sqft > 0) {
-        const trussTc = truckCap.find(tc => tc.item.toLowerCase().includes("truss") && tc.perTruck > 0);
-        if (trussTc && cfg.trT) itemAgg[trussTc.id] = (itemAgg[trussTc.id] || 0) + sqft * Math.max(1, cfg.trussQty || 1);
-        const platTc = truckCap.find(tc => tc.item.toLowerCase().includes("platform") && tc.perTruck > 0);
-        if (platTc && cfg.plH) itemAgg[platTc.id] = (itemAgg[platTc.id] || 0) + sqft;
-        const carpTc = truckCap.find(tc => tc.item.toLowerCase().includes("carpet") && tc.perTruck > 0);
-        if (carpTc && cfg.cpT) itemAgg[carpTc.id] = (itemAgg[carpTc.id] || 0) + sqft;
-      }
-    });
-    let itemTrucks = 0;
-    Object.entries(itemAgg).forEach(([tcId, qty]) => {
-      const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return;
-      const trucks = Math.ceil(qty / tc.perTruck);
-      breakdown.push({ label: tc.item, qty, perTruck: tc.perTruck, unit: tc.unit, trucks });
-      itemTrucks += trucks;
-    });
-    const floralTrucks = totalFloralCost > 0 ? Math.ceil(totalFloralCost / (floralPerTruck || 50000)) : 0;
-    if (floralTrucks > 0) breakdown.push({ label: "Florals", qty: totalFloralCost, perTruck: floralPerTruck || 50000, unit: "₹", trucks: floralTrucks, isFloral: true });
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
+    itemBd.forEach(b => breakdown.push(b));
+    const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const decor = totalCost();
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
     const bufTrucks = bt ? bt.bufferTrucks : 0;
@@ -2162,47 +2159,30 @@ export default function StudioApp() {
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
       const tripRate = match ? match.rate : fCustomTripRate;
-      const itemAgg = {};
-      let totalFloralCost = 0;
+      const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
+      const subAgg = {};
+      const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { perTruck: Number(tc.perTruck) || 0, qty: 0 }; subAgg[k].qty += qty; };
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
           const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
           if (!rc) return;
-          if ((rc.cat || "").toLowerCase() === "florals") {
-            let up = 0; const sz = (el.size || "").toUpperCase();
-            if (rcIsSMB(rc)) { if (sz === "S") up = rc.inhouseS || 0; else if (sz === "B") up = rc.inhouseB || 0; else up = rc.inhouseM || 0; }
-            else { up = rc.inhouseFlat || 0; }
-            totalFloralCost += (el.qty || 0) * up;
-          } else {
-            const elN = (el.name || "").toLowerCase();
-            const matchedTC = truckCap.find(tc => tc.perTruck > 0 && elN.includes(tc.item.toLowerCase().replace(/s$/, "")));
-            if (matchedTC) itemAgg[matchedTC.id] = (itemAgg[matchedTC.id] || 0) + (el.qty || 0);
-          }
+          const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
+          else addSub(rc.sub, Number(el.qty) || 0);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         const d = cfg.dims || {};
         const fd = cfg.floorDims || d;
-        if (cfg.trT === "box") {
-          const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1);
-          if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().includes("truss") && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
-        }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) {
-          const platTc = truckCap.find(tc => tc.item.toLowerCase().includes("platform") && tc.perTruck > 0);
-          if (platTc && cfg.plH) itemAgg[platTc.id] = (itemAgg[platTc.id] || 0) + sqft;
-          const carpTc = truckCap.find(tc => tc.item.toLowerCase().includes("carpet") && tc.perTruck > 0);
-          if (carpTc && cfg.cpT) itemAgg[carpTc.id] = (itemAgg[carpTc.id] || 0) + sqft;
-        }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT) addSub("Carpet", sqft); }
       });
-      let itemTrucks = 0;
-      Object.entries(itemAgg).forEach(([tcId, qty]) => {
-        const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return;
-        itemTrucks += Math.ceil(qty / tc.perTruck);
-      });
-      const floralTrucks = totalFloralCost > 0 ? Math.ceil(totalFloralCost / (floralPerTruck || 50000)) : 0;
+      let truckFrac = 0; Object.values(subAgg).forEach(s => { if (s.perTruck > 0) truckFrac += (s.qty || 0) / s.perTruck; });
+      const itemTrucks = Math.ceil(truckFrac);
+      const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
       const bufTrucks = bt ? bt.bufferTrucks : 0;
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
@@ -2406,50 +2386,30 @@ export default function StudioApp() {
       const tierId = match ? match.tier : "new";
       const tierLabel = match ? (TR_TIERS.find(t => t.id === match.tier)?.label || match.tier) : "New venue";
       const breakdown = [];
-      const itemAgg = {};
-      let totalFloralCost = 0;
+      const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
+      const subAgg = {}; const totalFloralCost = 0;
+      const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0 }; subAgg[k].qty += qty; };
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
           const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
           if (!rc) return;
-          if ((rc.cat || "").toLowerCase() === "florals") {
-            let up = 0; const sz = (el.size || "").toUpperCase();
-            if (rcIsSMB(rc)) { if (sz === "S") up = rc.inhouseS || 0; else if (sz === "B") up = rc.inhouseB || 0; else up = rc.inhouseM || 0; }
-            else { up = rc.inhouseFlat || 0; }
-            totalFloralCost += (el.qty || 0) * up;
-          } else {
-            const elN = (el.name || "").toLowerCase();
-            const matchedTC = truckCap.find(tc => tc.perTruck > 0 && elN.includes(tc.item.toLowerCase().replace(/s$/, "")));
-            if (matchedTC) itemAgg[matchedTC.id] = (itemAgg[matchedTC.id] || 0) + (el.qty || 0);
-          }
+          const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
+          else addSub(rc.sub, Number(el.qty) || 0);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
-        const d = cfg.dims || {};
-        const fd = cfg.floorDims || d;
-        if (cfg.trT === "box") {
-          const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1);
-          if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().includes("truss") && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
-        }
+        const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) {
-          const platTc = truckCap.find(tc => tc.item.toLowerCase().includes("platform") && tc.perTruck > 0);
-          if (platTc && cfg.plH) itemAgg[platTc.id] = (itemAgg[platTc.id] || 0) + sqft;
-          const carpTc = truckCap.find(tc => tc.item.toLowerCase().includes("carpet") && tc.perTruck > 0);
-          if (carpTc && cfg.cpT) itemAgg[carpTc.id] = (itemAgg[carpTc.id] || 0) + sqft;
-        }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT) addSub("Carpet", sqft); }
       });
-      let itemTrucks = 0;
-      Object.entries(itemAgg).forEach(([tcId, qty]) => {
-        const tc = truckCap.find(t => t.id === tcId); if (!tc || !tc.perTruck) return;
-        const trucks = Math.ceil(qty / tc.perTruck);
-        breakdown.push({ label: tc.item, qty, perTruck: tc.perTruck, unit: tc.unit, trucks });
-        itemTrucks += trucks;
-      });
-      const floralTrucks = totalFloralCost > 0 ? Math.ceil(totalFloralCost / (floralPerTruck || 50000)) : 0;
-      if (floralTrucks > 0) breakdown.push({ label: "Florals", qty: totalFloralCost, perTruck: floralPerTruck || 50000, unit: "₹", trucks: floralTrucks, isFloral: true });
+      let truckFrac = 0;
+      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck }); } });
+      const itemTrucks = Math.ceil(truckFrac);
+      const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);
       const bufTrucks = bt ? bt.bufferTrucks : 0;
       if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
