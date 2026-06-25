@@ -303,6 +303,30 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     });
     return out;
   }, [eventOrders, sel]);
+  // Group incoming reuse by item (match the receiving event's blocked item by inventory id, else name).
+  const itemKeyFor = (invId, name) => invId ? "id:" + invId : "nm:" + String(name || "").toLowerCase().trim();
+  const incomingByItem = useMemo(() => {
+    const map = {};
+    incomingTransfers.forEach(m => {
+      const key = itemKeyFor(m.invId, m.name);
+      if (!map[key]) map[key] = { name: m.name, total: 0, sources: [] };
+      map[key].total += Number(m.qty) || 0;
+      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0 });
+    });
+    return map;
+  }, [incomingTransfers]);
+  // Reconcile this event's requirement against its sources: warehouse pull + same-day reuse from other sites.
+  const sourceRows = useMemo(() => {
+    if (incomingTransfers.length === 0) return [];
+    const rows = [], used = new Set();
+    blockedItems.forEach(it => {
+      const key = itemKeyFor(it.invId, it.name); used.add(key);
+      const inc = incomingByItem[key]; const reused = inc?.total || 0;
+      if (it.qty > 0 || reused > 0) rows.push({ name: it.name, required: it.qty, reused, fromWarehouse: Math.max(0, it.qty - reused), over: Math.max(0, reused - it.qty), sources: inc?.sources || [] });
+    });
+    Object.entries(incomingByItem).forEach(([key, inc]) => { if (!used.has(key)) rows.push({ name: inc.name, required: 0, reused: inc.total, fromWarehouse: 0, over: inc.total, sources: inc.sources }); });
+    return rows;
+  }, [blockedItems, incomingByItem, incomingTransfers]);
 
   // ── Fabric (dept = Fabric): total available (Old + New) vs required, with date-wise shortfall ──
   const FABRIC_TYPES = [
@@ -767,15 +791,26 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
             </div>
 
-            {/* Incoming transfers — items routed here from another site for same-day reuse */}
-            {incomingTransfers.length > 0 && (
+            {/* Incoming & sources — how this event's requirement is met (warehouse + same-day reuse) */}
+            {sourceRows.length > 0 && (
               <div className="bg-sky-50 border border-sky-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800">↪️ Incoming reuse — {incomingTransfers.length} item{incomingTransfers.length > 1 ? "s" : ""} arriving from other sites</div>
+                <div className="px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800">↪️ Incoming & sources <span className="text-xs font-normal text-sky-600">— where each item is coming from</span></div>
                 <div className="divide-y divide-sky-100">
-                  {incomingTransfers.map((m, i) => (
-                    <div key={i} className="flex items-center justify-between px-4 py-1.5 text-xs">
-                      <span className="text-sky-900"><b>{m.qty}× {m.name}</b></span>
-                      <span className="text-sky-700">from {m.fromEvent} · {m.fromDept}</span>
+                  {sourceRows.map((r, i) => (
+                    <div key={i} className="px-4 py-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-sky-900 font-semibold">{r.name}</span>
+                        <span className="text-sky-800">
+                          {r.required > 0 ? <>need <b>{r.required}</b> = </> : null}
+                          {r.fromWarehouse > 0 && <span>{r.fromWarehouse} from warehouse</span>}
+                          {r.fromWarehouse > 0 && r.reused > 0 && " + "}
+                          {r.reused > 0 && <span className="text-sky-700 font-semibold">{r.reused} reused</span>}
+                          {r.over > 0 && <span className="text-amber-600"> · +{r.over} extra arriving</span>}
+                        </span>
+                      </div>
+                      {r.sources.length > 0 && (
+                        <div className="text-[10px] text-sky-600 mt-0.5 pl-1">{r.sources.map((s, j) => <span key={j}>{j > 0 ? " · " : "↪️ "}{s.qty}× from {s.from} ({s.dept})</span>)}</div>
+                      )}
                     </div>
                   ))}
                 </div>
