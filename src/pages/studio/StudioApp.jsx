@@ -1719,7 +1719,7 @@ export default function StudioApp() {
     const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {} });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work.
-    const applySnap = (base) => ({ ...base, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });
+    const applySnap = (base) => ({ ...base, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();

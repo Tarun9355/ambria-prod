@@ -137,7 +137,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // days = the multi-day total cost ÷ (peak crew × day rate) — so the derivation math actually adds up.
   const dayCount = (count, rate, cost) => (count > 0 && rate > 0 && cost > 0) ? Math.max(1, Math.round(cost / (count * rate))) : 1;
   const mpRows = Array.isArray(deptData.mp) ? deptData.mp
-    : (mpDetail ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0, days: dayCount(Number(r.count) || 0, Number(r.rate) || 0, Number(r.cost) || 0), trace: r.trace || null }))
+    : (mpDetail ? mpDetail.map(r => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: r.basis || "", shared: !!r.shared, sysCount: r.count, sysRate: r.rate || 0, sysCost: r.cost || 0, days: dayCount(Number(r.count) || 0, Number(r.rate) || 0, Number(r.cost) || 0), trace: r.trace || null, splitInfo: r.splitInfo || null }))
       : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1 }))
         : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1 }))));
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
@@ -572,6 +572,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 <span className="text-sm font-semibold text-gray-800">👷 Manpower plan <span className="text-xs font-normal text-gray-400">— from Studio; edit any field, it saves. Sum matches the income card.</span></span>
                 <span className="text-sm font-bold text-gray-900">{fmt(mpCost)}</span>
               </div>
+              {sel.mpPhases && (
+                <div className="px-4 py-1.5 text-[10px] text-gray-500 bg-gray-50/60 border-b">
+                  📅 Crew booked across: {sel.mpPhases.minusOne ? "−1 setup day · " : ""}{sel.mpPhases.eventDays || 0} event day{(sel.mpPhases.eventDays || 0) > 1 ? "s" : ""}{sel.mpPhases.gapDays ? ` · ${sel.mpPhases.gapDays} gap day(s)` : ""}{sel.mpPhases.dismantle ? " · +1 dismantle day" : ""}. Each crew line = peak count × ₹/day × its working days (open a row to see the math).
+                </div>
+              )}
               {mpRows.length === 0 && (
                 <div className="px-4 py-5 text-center text-xs text-gray-400">No crew assigned to {dept} for this event — matches the ₹0 income card. Add a crew type below if you need one.</div>
               )}
@@ -596,7 +601,16 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       {open && (
                         <div className="text-[10px] text-gray-500 mt-1.5 pl-7 leading-relaxed bg-gray-50 rounded-lg p-2">
                           {r.shared ? (
-                            <>This dept's share of general labour / supervisors, split across departments by each dept's income share. Fixed allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</>
+                            <>
+                              <b>{r.type}</b> are shared crew, split across all departments by each dept's income share.
+                              {r.splitInfo && r.splitInfo.directTotal > 0 ? (
+                                <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
+                                  Total {r.type} on this event: <b>{fmt(r.splitInfo.total)}</b><br />
+                                  This dept's direct income {fmt(r.splitInfo.deptDirect)} ÷ all-dept income {fmt(r.splitInfo.directTotal)} = <b>{Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}%</b><br />
+                                  → {fmt(r.splitInfo.total)} × {Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}% = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b> to {dept}
+                                </div>
+                              ) : <> Fixed allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</>}
+                            </>
                           ) : (<>
                             {/* Sub-category derivation table (same as Deal Check) */}
                             {r.trace?.kind === "tier2" && Array.isArray(r.trace.rows) && r.trace.rows.length > 0 && (

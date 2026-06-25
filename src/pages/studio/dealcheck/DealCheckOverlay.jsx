@@ -84,6 +84,9 @@ export default function DealCheckOverlay({ ctx }) {
           const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
           let mpRateByType = {}; // rate per type (for editable, reconciling crew rows in Dept Ops)
           const deptMp = {}; DEPTS.forEach(d => { deptMp[d] = {}; }); // per-dept, per-type manpower cost (sums to dept.manpower)
+          let dcMpPhases = null; // {minusOne, eventDays, gapDays, dismantle} — the day phases crew is booked across
+          const mpSharedTotals = {}; // type → global cost (for shared crew split explanation)
+          const deptDirectMap = {}; // dept → direct income (drives the shared split %)
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
           // Category (rate-card OR inventory) → department. First the admin-editable map
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
@@ -278,6 +281,7 @@ export default function DealCheckOverlay({ ctx }) {
                 let cur = earliest;
                 while (cur <= latest) { const fd = fns.filter(f => f.fnDate === cur); dayList.push({date:cur,phase:fd.length?"event":"gap",fns:fd}); cur = addDays(cur,1); }
                 if (dcMpIncludeDismantle) dayList.push({date:addDays(latest,1),phase:"dismantle",fns:[]});
+                dcMpPhases = { minusOne: dayList.some(d=>d.phase==="minusOne"), eventDays: dayList.filter(d=>d.phase==="event").length, gapDays: dayList.filter(d=>d.phase==="gap").length, dismantle: dayList.some(d=>d.phase==="dismantle") };
                 const peopleByFn = {}; labourTypes.forEach(t => { peopleByFn[t] = {}; fns.forEach((fn, fi) => { peopleByFn[t][fi] = calcPpl(fn, t) || 0; }); });
                 let running = {}; labourTypes.forEach(t => { running[t] = 0; });
                 dayList.forEach(d => {
@@ -304,11 +308,13 @@ export default function DealCheckOverlay({ ctx }) {
           // proportional split of general Labours + Supervisors across all departments.
           const directOf = (d) => dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].production + dept[d].buying;
           const directTotal = DEPTS.reduce((s, d) => s + directOf(d), 0);
+          DEPTS.forEach(d => { deptDirectMap[d] = directOf(d); });
           Object.entries(mpByType).forEach(([t, amt]) => {
             if (!(amt > 0)) return;
             const target = MP_DEPT[t];
             if (target) { addD(target, "manpower", amt); deptMp[target][t] = (deptMp[target][t] || 0) + amt; return; }
             // General Labours + Supervisors (and anything unmapped) → split by direct-income share
+            mpSharedTotals[t] = (mpSharedTotals[t] || 0) + amt;
             if (directTotal > 0) DEPTS.forEach(d => { const sh = amt * (directOf(d) / directTotal); addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; });
             else { addD("Structure", "manpower", amt); deptMp["Structure"][t] = (deptMp["Structure"][t] || 0) + amt; }
           });
@@ -337,6 +343,7 @@ export default function DealCheckOverlay({ ctx }) {
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
+            mpPhases: dcMpPhases, mpSharedTotals, deptDirectMap, directTotal,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
         })();
 
@@ -354,7 +361,7 @@ export default function DealCheckOverlay({ ctx }) {
           const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
-          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null }; }); });
+          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); const splitInfo = shared ? { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), deptDirect: Math.round(dcCostRollup.deptDirectMap?.[d] || 0), directTotal: Math.round(dcCostRollup.directTotal || 0) } : null; return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo }; }); });
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
           // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
           let fabricPlan = { liza: [], masking: [], curtain: [] };
@@ -388,7 +395,7 @@ export default function DealCheckOverlay({ ctx }) {
               fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain) };
             }
           } catch {}
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan };
+          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null };
         };
         if (isSold && persistDeptSnapshot) {
           const _sig = JSON.stringify((dcCostRollup.DEPTS || []).map(d => Math.round(dcCostRollup.dept?.[d]?.total || 0)));
