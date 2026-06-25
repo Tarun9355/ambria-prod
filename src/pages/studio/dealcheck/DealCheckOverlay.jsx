@@ -137,11 +137,14 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!en[zk] || !zc[zk]) return;
                   const pv = calcZoneTrussPreview(zc[zk], tInv);
                   if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
-                  // Truss requirement (pillar + beam pieces) → loadable line items so the head can dispatch them.
+                  // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
+                  // Pushed per-zone here; the size-keyed names merge across all zones below.
                   if (pv?.topology && deptInv["Tenting"]) {
-                    const np = (pv.topology.pillars || []).length, nb = (pv.topology.beams || []).length;
-                    if (np > 0) deptInv["Tenting"].push({ name: "Truss pillars", photo: "", qty: np, unit: 0, total: Math.round(pv.costs?.actual || 0), sub: `${zk} · truss structure` });
-                    if (nb > 0) deptInv["Tenting"].push({ name: "Truss beams", photo: "", qty: nb, unit: 0, total: 0, sub: `${zk} · truss structure` });
+                    const pmap = {}, bmap = {};
+                    (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
+                    (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
+                    Object.entries(pmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
+                    Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
                   }
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
@@ -177,6 +180,17 @@ export default function DealCheckOverlay({ ctx }) {
               });
             });
           } catch {}
+          // Merge duplicate inventory lines (same item across zones) into ONE line with summed qty +
+          // total — Dept Ops shows combined totals, not zone-wise rows.
+          DEPTS.forEach(dn => {
+            const seen = {}, merged = [];
+            (deptInv[dn] || []).forEach(it => {
+              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "");
+              if (seen[key]) { seen[key].qty += (it.qty || 0); seen[key].total += (it.total || 0); }
+              else { seen[key] = { ...it }; merged.push(seen[key]); }
+            });
+            deptInv[dn] = merged;
+          });
           // Manpower — full booking-level day-wise computation (mirrors Manpower tab)
           try {
             const dihariSchemes = dealCheckData?.dihariSchemes || {};
