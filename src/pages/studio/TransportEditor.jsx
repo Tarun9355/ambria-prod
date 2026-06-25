@@ -1,8 +1,10 @@
 // Studio → Pricing → Transport & Power tab. Faithful dark-theme transcription of
 // the reference AdminRates transport tab (App_latest.jsx ~7645), driven off ctx.
 // Edits the transport blob (RC_SK_TR) via ctx.saveTR (per-slice persistence).
+import { useState } from "react";
 
 export default function TransportEditor({ ctx }) {
+  const [openCats, setOpenCats] = useState({}); // collapsible truck-capacity category groups
   const {
     S, isDark, accent, border, textP, textS, showMsg,
     trVenues, truckCap, floralPerTruck, gensetRate, bufferTiers, saveTR,
@@ -106,21 +108,30 @@ export default function TransportEditor({ ctx }) {
     {/* Truck capacities */}
     <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
       <div style={{ fontSize: 16, fontWeight: 700, color: accent, marginBottom: 4 }}>🚚 Truck Capacity Rules</div>
-      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>How many of each <b>sub-category</b> fit in one truck. Trucks needed = ⌈Σ(qty ÷ capacity)⌉ across all sub-categories, + buffer. Leave 0 to skip (not transported separately). No separate flower truck — florals count via their sub-category here.</div>
-      {subsByCat.map(({ cat, subs }) => (
-        <div key={cat.id} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: textS, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{cat.icon} {cat.l}</div>
-          {subs.map((sub) => { const tc = capForSub(sub); const pt = tc ? tc.perTruck : 0; const un = tc ? (tc.unit || "pc") : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc"); return (
-            <div key={sub} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${border}` }}>
-              <span style={{ fontSize: 13, color: textP, flex: 1, minWidth: 0 }}>{sub}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                <input type="number" value={pt || ""} placeholder="0" onChange={(e) => upsertSubCap(sub, "perTruck", e.target.value)} style={{ ...numInput, width: 70, color: (pt || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000"), fontSize: 15 }} />
-                <select value={un} onChange={(e) => upsertSubCap(sub, "unit", e.target.value)} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 11, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }, { id: "sqft", l: "sqft" }]).map((u) => <option key={u.id} value={u.id}>{u.l}/truck</option>)}</select>
-              </div>
+      <div style={{ fontSize: 11, color: textS, marginBottom: 12 }}>How many of each <b>sub-category</b> fit in one truck. Trucks = ⌈Σ(qty ÷ capacity)⌉ + buffer. 0 = skip. No separate flower truck — florals count via their sub-category. <b>Tap a category to expand.</b></div>
+      {subsByCat.map(({ cat, subs }) => {
+        const open = !!openCats[cat.id];
+        const setCount = subs.filter((s) => { const tc = capForSub(s); return tc && (Number(tc.perTruck) || 0) > 0; }).length;
+        return (
+          <div key={cat.id} style={{ marginBottom: 8, border: `1px solid ${border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div onClick={() => setOpenCats((p) => ({ ...p, [cat.id]: !p[cat.id] }))} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", cursor: "pointer", background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: textP }}>{open ? "▾" : "▸"} {cat.icon} {cat.l}</span>
+              <span style={{ fontSize: 10, color: setCount ? "#10B981" : textS }}>{setCount}/{subs.length} set</span>
             </div>
-          ); })}
-        </div>
-      ))}
+            {open && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "4px 12px", padding: "8px 12px" }}>
+                {subs.map((sub) => { const tc = capForSub(sub); const pt = tc ? tc.perTruck : 0; const un = tc ? (tc.unit || "pc") : (/truss|platform|carpet|masking|fabric|batta|ceiling/i.test(sub) ? "sqft" : "pc"); return (
+                  <div key={sub} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: textP, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub}>{sub}</span>
+                    <input type="number" value={pt || ""} placeholder="0" onChange={(e) => upsertSubCap(sub, "perTruck", e.target.value)} style={{ ...numInput, width: 52, padding: "3px 6px", fontSize: 13, color: (pt || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000") }} />
+                    <select value={un} onChange={(e) => upsertSubCap(sub, "unit", e.target.value)} style={{ padding: "3px 4px", borderRadius: 6, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 10, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }, { id: "sqft", l: "sqft" }]).map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select>
+                  </div>
+                ); })}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
 
     {/* Florals truck rule */}
