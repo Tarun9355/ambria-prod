@@ -88,6 +88,10 @@ export default function DealCheckOverlay({ ctx }) {
           const mpSchedule = {}; // type → [{date, phase, count, windows}] — the working-dihari schedule per crew
           const mpSharedTotals = {}; // type → global cost (for shared crew split explanation)
           const deptDirectMap = {}; // dept → direct income (drives the shared split %)
+          // Usage-based Labour: 1 labour per N of each sub-category (labourTiers.Labours.subCatBatches),
+          // each sub-category's labour charged to ITS department. Populated in the manpower block below.
+          const labourUsageByDept = {}; DEPTS.forEach(d => { labourUsageByDept[d] = 0; });
+          let labourUsageTotal = 0, labourUsageMode = false;
           const addD = (d, key, amt) => { if (!d || !dept[d] || !amt || !(amt > 0)) return; dept[d][key] += amt; };
           // Category (rate-card OR inventory) → department. First the admin-editable map
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
@@ -261,7 +265,8 @@ export default function DealCheckOverlay({ ctx }) {
                   const adj = Math.ceil(base * sm);
                   let he = 0; const sc = {}; walkFn(fn, ({rc, qty}) => { sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
                   heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat]||0); });
-                  return adj + he;
+                  // Usage-based labour (Σ qty÷per-unit) with the venue-min (adj+he) as a floor.
+                  return labourUsageMode ? Math.max(adj + he, Math.ceil(labourUsageTotal)) : (adj + he);
                 }
                 if (type === "Fabric Bangali") {
                   let sq = 0; walkFn(fn, ({rc, el}) => { const s = String(rc.sub||"").toLowerCase(); if (s.includes("wall masking")||s.includes("fabric")||s.includes("draping")) { const L = Number(el.L||el.l||rc.defaultDims?.L||0); const W = Number(el.W||el.w||el.H||el.h||rc.defaultDims?.W||0); if (L>0 && W>0) sq += L*W; } });
@@ -287,6 +292,13 @@ export default function DealCheckOverlay({ ctx }) {
                 if (type === "Supervisors") return 1;
                 return 0;
               };
+              // Populate usage-based labour split: per sub-category (labourTiers.Labours.subCatBatches),
+              // labour = qty ÷ per-unit, charged to that sub's department (catToDept of its category).
+              const _labBatches = (labourTiers["Labours"] || {}).subCatBatches || {};
+              labourUsageMode = Object.keys(_labBatches).length > 0;
+              if (labourUsageMode) {
+                fns.forEach(fn => walkFn(fn, ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (!b) return; const need = (Number(qty) || 0) / b; const dp = catToDept(rc.cat); labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + need; labourUsageTotal += need; }));
+              }
               const fnDates = fns.map(f => f.fnDate).filter(Boolean).sort();
               if (fnDates.length) {
                 const addDays = (iso, n) => { const d = new Date(iso+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
@@ -329,9 +341,12 @@ export default function DealCheckOverlay({ ctx }) {
             if (!(amt > 0)) return;
             const target = MP_DEPT[t];
             if (target) { addD(target, "manpower", amt); deptMp[target][t] = (deptMp[target][t] || 0) + amt; return; }
-            // General Labours + Supervisors (and anything unmapped) → split by direct-income share
+            // Labours → split by SUB-CATEGORY USAGE (each sub's labour to its dept) when configured;
+            // Supervisors (and any unmapped) → split by direct-income share.
             mpSharedTotals[t] = (mpSharedTotals[t] || 0) + amt;
-            if (directTotal > 0) DEPTS.forEach(d => { const sh = amt * (directOf(d) / directTotal); addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; });
+            if (t === "Labours" && labourUsageTotal > 0) {
+              DEPTS.forEach(d => { const sh = amt * ((labourUsageByDept[d] || 0) / labourUsageTotal); if (sh > 0) { addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; } });
+            } else if (directTotal > 0) DEPTS.forEach(d => { const sh = amt * (directOf(d) / directTotal); addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; });
             else { addD("Structure", "manpower", amt); deptMp["Structure"][t] = (deptMp["Structure"][t] || 0) + amt; }
           });
           DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].manpower + dept[d].production + dept[d].buying; });
@@ -359,7 +374,7 @@ export default function DealCheckOverlay({ ctx }) {
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
-            mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal,
+            mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
         })();
 
@@ -377,7 +392,10 @@ export default function DealCheckOverlay({ ctx }) {
           const planByType = {}; manpowerPlan.forEach(p => { planByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
-          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); const splitInfo = shared ? { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), deptDirect: Math.round(dcCostRollup.deptDirectMap?.[d] || 0), directTotal: Math.round(dcCostRollup.directTotal || 0) } : null; return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule: dcCostRollup.mpSchedule?.[type] || null }; }); });
+          (dcCostRollup.DEPTS || []).forEach(d => { manpowerDetail[d] = Object.entries(dcCostRollup.deptMp?.[d] || {}).filter(([, c]) => c > 0).map(([type, cost]) => { const pl = planByType[type]; const rate = (dcCostRollup.mpRateByType || {})[type] || pl?.rate || 0; const shared = SHARED.has(type); const usageMode = type === "Labours" && (dcCostRollup.labourUsageTotal || 0) > 0;
+              const splitInfo = shared ? (usageMode
+                ? { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), byUsage: true, deptUsage: +(dcCostRollup.labourUsageByDept?.[d] || 0).toFixed(2), usageTotal: +(dcCostRollup.labourUsageTotal || 0).toFixed(2) }
+                : { total: Math.round(dcCostRollup.mpSharedTotals?.[type] || 0), deptDirect: Math.round(dcCostRollup.deptDirectMap?.[d] || 0), directTotal: Math.round(dcCostRollup.directTotal || 0) }) : null; return { type, cost: Math.round(cost), count: shared ? null : (pl?.count || 0), rate, basis: pl?.basis || "", shared, trace: pl?.trace || null, splitInfo, schedule: dcCostRollup.mpSchedule?.[type] || null }; }); });
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
           // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
           let fabricPlan = { liza: [], masking: [], curtain: [] };

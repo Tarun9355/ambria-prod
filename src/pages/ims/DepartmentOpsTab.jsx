@@ -663,14 +663,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                               <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.type} derived → then split</div>
                               {renderMpTrace(r.trace)}
                               {renderMpSchedule(r.schedule)}
-                              {r.splitInfo && r.splitInfo.directTotal > 0 ? (
+                              {r.splitInfo && r.splitInfo.byUsage && r.splitInfo.usageTotal > 0 ? (
+                                <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
+                                  <b>{r.type}</b> split by <b>sub-category usage</b> — each sub-category's labour goes to its department:<br />
+                                  This dept's labour usage <b>{r.splitInfo.deptUsage}</b> ÷ all-dept usage <b>{r.splitInfo.usageTotal}</b> = <b>{Math.round((r.splitInfo.deptUsage / r.splitInfo.usageTotal) * 100)}%</b><br />
+                                  → total {r.type} {fmt(r.splitInfo.total)} × {Math.round((r.splitInfo.deptUsage / r.splitInfo.usageTotal) * 100)}% = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b> to {dept}
+                                </div>
+                              ) : r.splitInfo && r.splitInfo.directTotal > 0 ? (
                                 <div className="mt-1 bg-white border rounded-lg p-2 text-gray-600">
                                   <b>{r.type}</b> are shared crew, split across all departments by income share:<br />
                                   Total {r.type} on this event: <b>{fmt(r.splitInfo.total)}</b><br />
                                   This dept's direct income {fmt(r.splitInfo.deptDirect)} ÷ all-dept income {fmt(r.splitInfo.directTotal)} = <b>{Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}%</b><br />
                                   → {fmt(r.splitInfo.total)} × {Math.round((r.splitInfo.deptDirect / r.splitInfo.directTotal) * 100)}% = <b className="text-gray-900">{fmt(Number(r.sysCost) || 0)}</b> to {dept}
                                 </div>
-                              ) : <div className="text-gray-500">Split across departments by income share. This dept's allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</div>}
+                              ) : <div className="text-gray-500">Split across departments. This dept's allocation = <b>{fmt(Number(r.sysCost) || 0)}</b>.</div>}
                             </>
                           ) : (<>
                             <div className="text-[10px] uppercase tracking-wide text-indigo-500 font-semibold mb-1">How {r.sysCount != null && r.sysCount !== "" ? r.sysCount : (r.count || "")} {r.type} derived</div>
