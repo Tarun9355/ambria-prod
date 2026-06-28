@@ -675,9 +675,14 @@ export default function ManageLibrary({ ctx }) {
     const q = corrSearch.trim().toLowerCase();
     const kindOf = (e) => e.kind === "video" ? "video" : "photo";
     // Range + kind + text-search (search matches person OR photo/video name). User filter applied only to the detail list.
-    const base = (corrLog || []).filter(e => (e.ts || 0) >= since
+    const baseRaw = (corrLog || []).filter(e => (e.ts || 0) >= since
       && (corrKind === "all" || kindOf(e) === corrKind)
       && (!q || (e.user || "").toLowerCase().includes(q) || (e.photoName || "").toLowerCase().includes(q)));
+    // Dedupe to ONE row per person + item (keep the latest save), so repeated saves of the same photo
+    // don't show as duplicates or inflate counts — a contribution = a unique photo/video a person fixed.
+    const dedup = new Map();
+    baseRaw.forEach(e => { const k = (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + kindOf(e); const p = dedup.get(k); if (!p || (e.ts || 0) > (p.ts || 0)) dedup.set(k, e); });
+    const base = Array.from(dedup.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0));
     const inRange = base.filter(e => !corrUser || e.user === corrUser);
     const byUser = {};
     base.forEach(e => { const u = e.user || "—"; const b = byUser[u] || (byUser[u] = { total: 0, photo: 0, video: 0 }); b.total++; b[kindOf(e)]++; });
@@ -1024,7 +1029,7 @@ export default function ManageLibrary({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libItems.length})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
-        {libAllowed("corrections") && <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({(corrLog || []).length})</button>}
+        {libAllowed("corrections") && <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes ({imsPaletteCatalogue.length})</button>
       </div>
       {libView === "palettes" && (

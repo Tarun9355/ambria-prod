@@ -1707,7 +1707,17 @@ export default function StudioApp() {
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === CLI_SK) { const a = pj(await kvGet(CLI_SK)); if (Array.isArray(a)) setClientLedger(a); }
-          else if (key === LIB_SK) { const a = pj(await kvGet(LIB_SK)); if (Array.isArray(a)) setLibItems(a); }
+          else if (key === LIB_SK) {
+            const a = pj(await kvGet(LIB_SK));
+            if (Array.isArray(a)) {
+              // Merge, don't blind-replace: if an incoming whole-blob write is MISSING a verification we
+              // already hold locally (a concurrent reviewer / the bulk-tagger rewrote the blob from a
+              // pre-verify snapshot), keep our verified stamp so it doesn't slide back to needs-review.
+              const localById = {}; (libItemsRef.current || []).forEach(it => { if (it && it.id) localById[it.id] = it; });
+              const merged = a.map(it => { const loc = localById[it.id]; return (loc && loc._verified && !it._verified) ? { ...it, _verified: true, _verifiedBy: loc._verifiedBy, _verifiedAt: loc._verifiedAt } : it; });
+              libItemsRef.current = merged; setLibItems(merged);
+            }
+          }
           else if (key === CORR_SK) { const a = pj(await kvGet(CORR_SK)); if (Array.isArray(a)) { setCorrLog(a); corrLogRef.current = a; } }
         } catch { /* ignore */ }
       })
@@ -1716,7 +1726,10 @@ export default function StudioApp() {
   }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
   const saveZD = useCallback(async (nd) => { setZoneDefs(nd); await reliableSave(ZONE_DEF_SK, JSON.stringify(nd), "Zone config"); }, []);
-  const saveLib = useCallback(async (nl) => { setLibItems(nl); await reliableSave(LIB_SK, JSON.stringify(nl), "Library"); }, []);
+  // Sync libItemsRef SYNCHRONOUSLY (not just via the [libItems] effect) so the background bulk-tagger's
+  // next flush merges into the just-saved array — otherwise it can flush a pre-save snapshot and wipe a
+  // manual _verified stamp. (Root cause of "verified images sliding back to needs-review".)
+  const saveLib = useCallback(async (nl) => { libItemsRef.current = nl; setLibItems(nl); await reliableSave(LIB_SK, JSON.stringify(nl), "Library"); }, []);
   // Append one human correction to the shared log (who/what/when) for contribution reporting.
   // Best-effort append (same shared-blob model as the rest of the app); capped to the latest 5000.
   const logCorrection = useCallback((info) => {
