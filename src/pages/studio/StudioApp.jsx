@@ -1592,24 +1592,10 @@ export default function StudioApp() {
           }
         } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); loadedTax = DEFAULT_TAX; }
       } catch {}
-      // AUTO-SEED + AREAS↔ZONES SYNC (additive, mirrors reference)
-      try {
-        if (loadedTax && loadedZones) {
-          const areasNow = Array.isArray(loadedTax.areasElements) ? loadedTax.areasElements.slice() : [];
-          const zonesNow = { ...(loadedZones.meta || {}) };
-          let changed = false;
-          for (const [zid, zm] of Object.entries(ZONE_META)) { if (!zonesNow[zid]) { zonesNow[zid] = { ...zm }; changed = true; } }
-          for (const area of areasNow) { if (!findZoneForArea(area, zonesNow)) { const newId = makeZoneId(area, zonesNow); zonesNow[newId] = defaultZoneFromArea(area); changed = true; } }
-          for (const [zid, zm] of Object.entries(zonesNow)) { if (zm?.label && !findAreaForZone(zid, zm, areasNow)) { areasNow.push(zm.label); changed = true; } }
-          if (changed && !cancelled) {
-            const newTax = { ...loadedTax, areasElements: areasNow };
-            const newZones = { ...loadedZones, meta: zonesNow };
-            reliableSave(TAX_SK, JSON.stringify(newTax), "Taxonomy").catch(() => {});
-            reliableSave(ZONE_DEF_SK, JSON.stringify(newZones), "Zone config").catch(() => {});
-            setTaxonomy(newTax); setZoneDefs(newZones);
-          }
-        }
-      } catch {}
+      // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
+      // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
+      // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
+      // taxonomy are now fully user-managed; create/delete via the Zone editor.
       // Library
       try { const v = await kvGet(LIB_SK); if (v != null) { const lp = parse(v); if (Array.isArray(lp) && !cancelled) setLibItems(lp); } } catch {}
       // Correction log (contribution tracking)
