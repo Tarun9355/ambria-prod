@@ -34,12 +34,17 @@ Deno.serve(async (req) => {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  const { model = "claude-haiku-4-5-20251001", max_tokens = 2000, messages, system } = body || {};
+  const { model = "claude-haiku-4-5-20251001", max_tokens = 2000, messages, system, output_config, thinking } = body || {};
   if (!Array.isArray(messages)) return json({ error: "messages[] required" }, 400);
 
   try {
     const payload: Record<string, unknown> = { model, max_tokens, messages };
     if (system) payload.system = system;
+    // Forward structured-outputs + adaptive-thinking when the caller supplies them (used by the image
+    // tagger: output_config.format locks tags to the exact taxonomy; thinking improves count/dim accuracy).
+    // cache_control rides inside the messages content blocks, so it passes through untouched.
+    if (output_config) payload.output_config = output_config;
+    if (thinking) payload.thinking = thinking;
     const resp = await fetch(ANTHROPIC_URL, {
       method: "POST",
       headers: {

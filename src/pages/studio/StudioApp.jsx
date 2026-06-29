@@ -3648,6 +3648,48 @@ Return ONLY JSON:
     const STRUCTURAL_CATS = new Set(["truss", "platform", "masking", "fixed"]);
     const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
     const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this Rate Card list. Copy the name character-for-character:\n${elemList}\n2. For each visible element, estimate quantity and pick size (S/M/B) if available.\n3. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional.\n4. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"short descriptive name","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal"},{"name":"Custom Drape Structure","qty":2,"unit":"pc","size":"","detail":"fabric","new":true}]}`;
+    // Structured-outputs schema — the 7 tag fields are LOCKED to your exact taxonomy values (enums), so
+    // Claude can never return an off-list or mis-cased tag (the root of photos not matching their zone).
+    // Element names stay free text (the fuzzy match below maps them to the rate card / flags new items).
+    const paletteVals = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette;
+    // Lock to the taxonomy values; if a list is empty, fall back to a free string array (an empty
+    // enum is an invalid schema and would 400 every request).
+    const enumArr = (vals) => ({ type: "array", items: (Array.isArray(vals) && vals.length) ? { type: "string", enum: vals } : { type: "string" } });
+    const tagSchema = {
+      type: "object", additionalProperties: false,
+      required: ["name", "tags", "dims", "elements"],
+      properties: {
+        name: { type: "string" },
+        tags: {
+          type: "object", additionalProperties: false,
+          required: ["eventType", "venueType", "areasElements", "colorPalette", "categoryTier", "designStyle", "timeSetting"],
+          properties: {
+            eventType: enumArr(taxonomy.eventType), venueType: enumArr(taxonomy.venueType),
+            areasElements: enumArr(taxonomy.areasElements), colorPalette: enumArr(paletteVals),
+            categoryTier: enumArr(taxonomy.categoryTier), designStyle: enumArr(taxonomy.designStyle),
+            timeSetting: enumArr(taxonomy.timeSetting),
+          },
+        },
+        dims: {
+          type: "object", additionalProperties: false,
+          required: ["trussL", "trussW", "trussH", "floorL", "floorW", "plH", "mkT", "mkWalls"],
+          properties: {
+            trussL: { type: "number" }, trussW: { type: "number" }, trussH: { type: "number" },
+            floorL: { type: "number" }, floorW: { type: "number" },
+            plH: { type: "string" }, mkT: { type: "string", enum: ["fabric", "acrylic", "flex", "vinyl", ""] },
+            mkWalls: { type: "object", additionalProperties: false, required: ["back", "left", "right"], properties: { back: { type: "boolean" }, left: { type: "boolean" }, right: { type: "boolean" } } },
+          },
+        },
+        elements: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["name", "qty", "unit", "size", "detail", "new"],
+            properties: { name: { type: "string" }, qty: { type: "number" }, unit: { type: "string" }, size: { type: "string", enum: ["S", "M", "B", ""] }, detail: { type: "string" }, new: { type: "boolean" } },
+          },
+        },
+      },
+    };
     const toBase64 = (imgUrl) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Image load timeout")), 10000);
       const img = new Image();
@@ -3656,12 +3698,12 @@ Return ONLY JSON:
         clearTimeout(timer);
         try {
           const c = document.createElement("canvas");
-          const maxW = 800;
+          const maxW = 1536; // higher res so Opus can read decor detail / count elements (was 800)
           const scale = img.width > maxW ? maxW / img.width : 1;
           c.width = img.width * scale;
           c.height = img.height * scale;
           c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-          resolve(c.toDataURL("image/jpeg", 0.7).split(",")[1]);
+          resolve(c.toDataURL("image/jpeg", 0.85).split(",")[1]);
         } catch (e) { reject(e); }
       };
       img.onerror = () => { clearTimeout(timer); reject(new Error("Image load failed")); };
@@ -3697,14 +3739,19 @@ Return ONLY JSON:
           }
         }
       }
-      const msgContent = b64
-        ? [{ type: "image", source: { type: "base64", media_type: mediaType, data: b64 } }, { type: "text", text: prompt }]
-        : [{ type: "image", source: { type: "url", url } }, { type: "text", text: prompt }];
+      // Static prompt FIRST (with cache_control) so the big taxonomy + rate-card block is cached and
+      // reused across every photo; the volatile image goes LAST so it isn't part of the cached prefix.
+      const imageBlock = b64
+        ? { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } }
+        : { type: "image", source: { type: "url", url } };
+      const msgContent = [{ type: "text", text: prompt, cache_control: { type: "ephemeral" } }, imageBlock];
       const txt = await callClaudeStreaming({
         contentBlocks: msgContent,
-        model: "claude-sonnet-4-6",
-        maxTokens: 1500,
+        model: "claude-opus-4-8",
+        maxTokens: 8000, // room for adaptive thinking + the JSON
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
+        outputConfig: { format: { type: "json_schema", schema: tagSchema } },
+        thinking: { type: "adaptive" },
       });
       if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();

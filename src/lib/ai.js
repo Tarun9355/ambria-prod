@@ -10,11 +10,14 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const FN_URL = `${SUPABASE_URL}/functions/v1/anthropic`;
 
-export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku-4-5-20251001", maxTokens = 2000, system }) {
+export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku-4-5-20251001", maxTokens = 2000, system, outputConfig, thinking }) {
   const userContent = contentBlocks;
   try {
     const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: userContent }] };
     if (system) body.system = system;
+    // outputConfig → structured outputs (locks JSON to a schema); thinking → adaptive reasoning.
+    if (outputConfig) body.output_config = outputConfig;
+    if (thinking) body.thinking = thinking;
     const resp = await fetch(FN_URL, {
       method: "POST",
       headers: {
