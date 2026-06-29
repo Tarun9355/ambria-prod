@@ -1542,15 +1542,16 @@ export default function StudioApp() {
         if (v != null) { const rp = parse(v); if (Array.isArray(rp) && rp.length) { const mapped = rp.map(i => ({ zones: [], ...i })); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); } }
         else { reliableSave(RC_SK, JSON.stringify(RC_D), "Rate card").catch(() => {}); }
       } catch {}
-      // Rate Card Categories — reconcile any category that items reference but the saved list is
-      // missing (e.g. a category added in the editor but never "Saved", or trimmed later). Without
-      // this, those items have no group to render under and silently disappear from the Pricing tab.
+      // Rate Card Categories — on first boot (v == null), seed defaults and recover orphaned
+      // category IDs so items still have a group to render under. When a saved blob exists,
+      // skip recovery entirely: the team intentionally manages categories via the editor and
+      // orphan-recovery would silently undo deliberate deletes.
       try {
         const v = await kvGet(RC_SK_CATS);
         let cats = (v != null) ? (Array.isArray(parse(v)) ? parse(v) : null) : null;
         if (!cats || !cats.length) { cats = RC_CATS_DEFAULT; if (v == null) reliableSave(RC_SK_CATS, JSON.stringify(RC_CATS_DEFAULT), "Categories").catch(() => {}); }
         const items = loadedRcItems || [];
-        if (items.length) {
+        if (items.length && v == null) {
           const haveIds = new Set(cats.map(c => c.id));
           const orphanIds = [...new Set(items.map(i => i && i.cat).filter(id => id && !haveIds.has(id)))];
           if (orphanIds.length) {
