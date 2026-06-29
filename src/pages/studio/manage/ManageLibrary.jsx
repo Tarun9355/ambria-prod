@@ -23,7 +23,7 @@ export default function ManageLibrary({ ctx }) {
     S, isDark, accent, border, textS, fmt,
     accentBg, accentText, textP, cardBg,
     // taxonomy
-    taxonomy, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData,
+    taxonomy, setTaxonomy, saveTax, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData,
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
     allInhouseVenues, allOutdoorDB, customOutdoor,
@@ -140,6 +140,7 @@ export default function ManageLibrary({ ctx }) {
       if (first && first !== libView) setLibView(first);
     }
   }, [studioLibraryAllowed, libView]);
+  const [tagRules, setTagRules] = useState(null); // editable house tagging-rules draft (null = modal closed)
   const [corrRange, setCorrRange] = useState("today"); // contributions panel date range
   const [corrUser, setCorrUser] = useState("");          // contributions panel user filter
   const [corrKind, setCorrKind] = useState("all");       // all | photo | video
@@ -243,6 +244,7 @@ export default function ManageLibrary({ ctx }) {
                 <span style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 8, marginLeft: 2, borderLeft: `1px solid ${border}` }} title={tagKB?.fromCount ? `Knowledge base learned from ${tagKB.fromCount} verified photos. Fed to the AI tagger so it follows your conventions.` : "No knowledge base yet — verify some photos, then rebuild."}>
                   <span style={{ fontSize: 10, color: textS }}>🧠 KB: {tagKB?.fromCount ? `${tagKB.fromCount} verified · ${rel}` : "not built"}</span>
                   <button onClick={() => { const kb = rebuildTagKB(); showMsg(kb ? `🧠 Knowledge base rebuilt from ${kb.fromCount} verified photos` : "No verified photos yet to learn from", kb ? "green" : "orange"); }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>↻ Rebuild</button>
+                  {saveTax && <button onClick={() => setTagRules(String(taxonomy.taggingStandards || ""))} title="House tagging rules the AI must follow (e.g. 'always count every light')" style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>📋 Rules</button>}
                 </span>
               );
             })()}
@@ -274,6 +276,20 @@ export default function ManageLibrary({ ctx }) {
             </div>
           ))}
         </div>
+        {/* House tagging-rules editor — saved to taxonomy.taggingStandards, injected into the tagger */}
+        {tagRules !== null && (
+          <div onClick={() => setTagRules(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 20 }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 620, margin: "24px auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, padding: 18, boxShadow: "0 12px 48px rgba(0,0,0,0.45)" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>📋 House Tagging Rules</div>
+              <div style={{ fontSize: 11, color: textS, marginBottom: 10 }}>Plain-English rules the AI follows on every photo, on top of the knowledge base. One per line — e.g. "Always count every light fixture and report the total." · "A Stage always has a backdrop — tag it." · "Bar counters are sub-category BAR."</div>
+              <textarea value={tagRules} onChange={e => setTagRules(e.target.value)} rows={10} style={{ ...S.input, fontSize: 12, width: "100%", fontFamily: "inherit", lineHeight: 1.5 }} placeholder={"Always count every light fixture and report the total.\nChairs and tables are Furniture; count them.\n..."} />
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
+                <button onClick={() => setTagRules(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Cancel</button>
+                <button onClick={() => { saveTax({ ...taxonomy, taggingStandards: tagRules }); setTagRules(null); showMsg("📋 Tagging rules saved — applied to all future tagging", "green"); }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px", background: "#7C3AED" }}>Save rules</button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Detail panel — opens as a centered popup so you don't scroll past the whole grid */}
         {libEditImg && (
           <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 20 }}>
@@ -295,6 +311,8 @@ export default function ManageLibrary({ ctx }) {
                           if(tagSrc){updated.tags={...(updated.tags||{})};Object.keys(taxonomy).forEach(k=>{if(Array.isArray(tagSrc[k])&&tagSrc[k].length)updated.tags[k]=tagSrc[k];});}
                           if(result.name&&(!updated.name||updated.name.startsWith("img ")))updated.name=result.name;
                           if(Array.isArray(result.elements)&&result.elements.length>0)updated.elements=result.elements;
+                          if(typeof result.lightCount==="number")updated.lightCount=result.lightCount;
+                          if(Array.isArray(result.unrecognized))updated.unrecognized=result.unrecognized;
                           // Handle dims
                           const d=result.dims||{};
                           const hasDims=(d.trussL||d.trussW||d.trussH||d.floorL||d.floorW);
@@ -328,6 +346,20 @@ export default function ManageLibrary({ ctx }) {
                     <button onClick={() => setLibEditImg(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Close</button>
                   </div>
                 </div>
+                {/* Light count (💡) + missing/unrecognized elements (⚠) surfaced for the reviewer */}
+                {(() => {
+                  const lc = (typeof libEditImg.lightCount === "number") ? libEditImg.lightCount : null;
+                  const newEls = (libEditImg.elements || []).filter(e => e && e.new).map(e => e.name).filter(Boolean);
+                  const unrec = Array.isArray(libEditImg.unrecognized) ? libEditImg.unrecognized : [];
+                  const attention = [...newEls, ...unrec];
+                  if (lc == null && attention.length === 0) return null;
+                  return (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "2px 0 8px" }}>
+                      {lc != null && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#F59E0B22", color: "#F59E0B" }}>💡 {lc} light{lc === 1 ? "" : "s"}</span>}
+                      {attention.length > 0 && <span style={{ fontSize: 10, color: "#EF4444", display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>⚠ Needs attention: {attention.map((a, i) => <span key={i} style={{ padding: "1px 6px", borderRadius: 6, background: "#EF444418" }}>{a}</span>)}</span>}
+                    </div>
+                  );
+                })()}
                 {/* Venue tag (2-level chip picker — mirrors Browse page) */}
                 <div style={{ marginBottom: 6 }}>
                   <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>Venue</div>
