@@ -64,9 +64,10 @@ import {
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
-  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK,
+  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK,
   PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
+import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -922,6 +923,8 @@ export default function StudioApp() {
   const [libItems, setLibItems] = useState([]);
   const [corrLog, setCorrLog] = useState([]); // append-only photo-correction log (who/what/when)
   const corrLogRef = useRef([]);
+  const [tagKB, setTagKB] = useState(null); // AI-tagging knowledge base distilled from verified photos
+  const tagKBRebuildRef = useRef(false);    // guards the auto-rebuild from firing more than once per load
   const libItemsRef = useRef([]); // latest library array, for the background bulk-tagger to merge into
   const [bulkTag, setBulkTag] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk AI tagging progress
   const bulkTagStop = useRef(false);
@@ -1610,6 +1613,7 @@ export default function StudioApp() {
       try { const v = await kvGet(LIB_SK); if (v != null) { const lp = parse(v); if (Array.isArray(lp) && !cancelled) setLibItems(lp); } } catch {}
       // Correction log (contribution tracking)
       try { const v = await kvGet(CORR_SK); if (v != null) { const cp = parse(v); if (Array.isArray(cp) && !cancelled) { setCorrLog(cp); corrLogRef.current = cp; } } } catch {}
+      try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
       // Team
       try {
         const v = await kvGet(TEAM_SK);
@@ -1739,6 +1743,29 @@ export default function StudioApp() {
     setCorrLog(next);
     reliableSave(CORR_SK, JSON.stringify(next), "Corrections log").catch(() => {});
   }, [authUser]);
+  // ── AI-tagging knowledge base (distilled from VERIFIED photos) ──────────────────────────────────
+  // Rebuilt from the current verified library; injected into the tagger's cached prompt. Lighting
+  // rate-card names let it total "lights" per photo. Returns the new KB (or null if nothing verified).
+  const rebuildTagKB = useCallback(() => {
+    const verified = (libItemsRef.current || []).filter((i) => i && i._verified && i.tags);
+    if (!verified.length) return null;
+    const lightNames = new Set((rcItems || []).filter((i) => String(i.cat || "").toLowerCase() === "lighting").map((i) => String(i.name).toLowerCase().trim()));
+    const kb = buildTagKB(verified, lightNames);
+    setTagKB(kb);
+    reliableSave(TAG_KB_SK, JSON.stringify(kb), "Tag knowledge base").catch(() => {});
+    return kb;
+  }, [rcItems]);
+  // Auto-refresh: once the library has loaded, rebuild the KB if it's missing or older than 24h.
+  // Runs at most once per app load (the ref guard); the manual "Rebuild now" button bypasses it.
+  useEffect(() => {
+    if (tagKBRebuildRef.current) return;
+    const verifiedCount = (libItems || []).filter((i) => i && i._verified).length;
+    if (verifiedCount === 0) return; // nothing to learn from yet
+    const stale = !tagKB || !tagKB.builtAt || (Date.now() - tagKB.builtAt > 24 * 3600 * 1000);
+    if (!stale) { tagKBRebuildRef.current = true; return; }
+    tagKBRebuildRef.current = true;
+    rebuildTagKB();
+  }, [libItems, tagKB, rebuildTagKB]);
   const saveTax = useCallback(async (nt) => { setTaxonomy(nt); await reliableSave(TAX_SK, JSON.stringify(nt), "Taxonomy"); }, []);
   const saveTeam = useCallback(async (nt) => { setTeamData(nt); await reliableSave(TEAM_SK, JSON.stringify(nt), "Team"); }, []);
   const saveClientLedger = useCallback(async (nl) => { setClientLedger(nl); await reliableSave(CLI_SK, JSON.stringify(nl), "Clients"); }, []);
@@ -3739,20 +3766,44 @@ Return ONLY JSON:
           }
         }
       }
-      // Static prompt FIRST (with cache_control) so the big taxonomy + rate-card block is cached and
-      // reused across every photo; the volatile image goes LAST so it isn't part of the cached prefix.
+      // Static content FIRST (knowledge base + house prompt + verified few-shot examples) so it's
+      // cached and reused across every photo; the volatile target image goes LAST, after the cache
+      // breakpoint, so it isn't part of the cached prefix.
       const imageBlock = b64
         ? { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } }
         : { type: "image", source: { type: "url", url } };
-      const msgContent = [{ type: "text", text: prompt, cache_control: { type: "ephemeral" } }, imageBlock];
-      const txt = await callClaudeStreaming({
-        contentBlocks: msgContent,
+      const kbText = renderTagKBText(tagKB);
+      const promptText = kbText ? (kbText + "\n\n" + prompt) : prompt;
+      const exemplars = (tagKB && Array.isArray(tagKB.exemplars)) ? tagKB.exemplars.slice(0, 4).filter(e => e && e.url) : [];
+      const buildContent = (withExamples) => {
+        const blocks = [{ type: "text", text: promptText }];
+        if (withExamples) exemplars.forEach((ex, i) => {
+          blocks.push({ type: "image", source: { type: "url", url: ex.url } });
+          const summ = `Verified example ${i + 1} — your team tagged the photo above as: area=${ex.area}`
+            + (ex.event ? `, event=${ex.event}` : "") + (ex.style ? `, style=${ex.style}` : "")
+            + (ex.palette ? `, palette=${ex.palette}` : "") + (ex.time ? `, time=${ex.time}` : "")
+            + (ex.lights ? `, lights total=${ex.lights}` : "")
+            + (ex.elements && ex.elements.length ? `, elements: ${ex.elements.join(", ")}` : "") + ".";
+          blocks.push({ type: "text", text: summ });
+        });
+        blocks[blocks.length - 1].cache_control = { type: "ephemeral" }; // cache the whole static prefix
+        return [...blocks, imageBlock];
+      };
+      const callTag = (content) => callClaudeStreaming({
+        contentBlocks: content,
         model: "claude-opus-4-8",
         maxTokens: 8000, // room for adaptive thinking + the JSON
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
         thinking: { type: "adaptive" },
       });
+      let txt;
+      try {
+        txt = await callTag(buildContent(exemplars.length > 0));
+      } catch (eEx) {
+        // A bad/unreachable exemplar image URL shouldn't break tagging — retry once without examples.
+        if (exemplars.length) txt = await callTag(buildContent(false)); else throw eEx;
+      }
       if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
@@ -4618,7 +4669,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, tagKB, rebuildTagKB, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,

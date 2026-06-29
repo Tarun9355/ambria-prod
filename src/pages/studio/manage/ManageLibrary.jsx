@@ -44,7 +44,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -235,6 +235,17 @@ export default function ManageLibrary({ ctx }) {
             ) : (
               untaggedCount > 0 && <button onClick={startTagAll} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#7C3AED" }}>🤖 Tag all untagged ({untaggedCount})</button>
             )}
+            {/* Knowledge base — distilled from verified photos, fed to the AI tagger. */}
+            {rebuildTagKB && (()=>{
+              const built = tagKB?.builtAt ? Math.round((Date.now() - tagKB.builtAt) / 3600000) : null;
+              const rel = built == null ? "not built yet" : built < 1 ? "updated just now" : built < 24 ? `updated ${built}h ago` : `updated ${Math.round(built/24)}d ago`;
+              return (
+                <span style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 8, marginLeft: 2, borderLeft: `1px solid ${border}` }} title={tagKB?.fromCount ? `Knowledge base learned from ${tagKB.fromCount} verified photos. Fed to the AI tagger so it follows your conventions.` : "No knowledge base yet — verify some photos, then rebuild."}>
+                  <span style={{ fontSize: 10, color: textS }}>🧠 KB: {tagKB?.fromCount ? `${tagKB.fromCount} verified · ${rel}` : "not built"}</span>
+                  <button onClick={() => { const kb = rebuildTagKB(); showMsg(kb ? `🧠 Knowledge base rebuilt from ${kb.fromCount} verified photos` : "No verified photos yet to learn from", kb ? "green" : "orange"); }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>↻ Rebuild</button>
+                </span>
+              );
+            })()}
           </div>
         </div>
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
