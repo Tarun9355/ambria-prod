@@ -68,7 +68,19 @@ export default function StudioBuild({ ctx }) {
   const getMatchedPhotos = (elKey, tier) => {
     const targetCat = TIER_TO_CAT[tier] || "Silver";
     const areaNamesRaw = ZONE_TYPE_TO_AREA[elKey];
-    const areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
+    let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
+    // Custom / renamed zones (keys living in zoneDefs.meta, not the static map) have no direct
+    // area mapping. Resolve them by display label so they're still zone-restricted instead of
+    // falling through to the "show any library photo" padding below (which leaks e.g. Bar photos
+    // into a Lounge section). Reverse-lookup the area-set that contains the label; else use the
+    // label itself as the area name.
+    if (!areaNames.length) {
+      const label = (zoneLabelsD[elKey]?.label) || elKey || "";
+      if (label) {
+        const hit = Object.values(ZONE_TYPE_TO_AREA).find(arr => (arr || []).includes(label));
+        areaNames = hit ? [...hit] : [label];
+      }
+    }
     const photos = [];
     const seen = new Set();
 
