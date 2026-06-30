@@ -193,8 +193,9 @@ export default function ManageLibrary({ ctx }) {
             {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "2px 6px", borderRadius: 10, fontSize: 9, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
           </div>}
         </div>
-        {Object.keys(taxonomy).map(k => {
+        {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
           // colorPalette: use paletteCatalogue names instead of legacy taxonomy values
+          // (filter to array-valued keys so non-array fields like taggingStandards never .map-crash)
           const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
             ? imsPaletteCatalogue.map(p => p.name)
             : taxonomy[k];
@@ -401,7 +402,7 @@ export default function ManageLibrary({ ctx }) {
                     </>;
                   })()}
                 </div>
-                {Object.keys(taxonomy).map(k => {
+                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
                   const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
                     ? imsPaletteCatalogue.map(p => p.name)
                     : taxonomy[k];
@@ -697,7 +698,7 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ flex: 1 }}>
                 <div style={{ display: "inline-block", fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "#0EA5E918", color: "#0EA5E9", marginBottom: 8 }}>AI auto-tagged</div>
                 <input value={libAddPreview.name} onChange={e => setLibAddPreview({ ...libAddPreview, name: e.target.value })} style={{ ...S.input, fontSize: 12, fontWeight: 600, marginBottom: 8 }} placeholder="Image name..." />
-                {Object.keys(taxonomy).map(k => (
+                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => (
                   <div key={k} style={{ marginBottom: 5 }}>
                     <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>{getTaxLabel(k)}</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
