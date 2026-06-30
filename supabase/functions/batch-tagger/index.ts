@@ -18,6 +18,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2", RC_SK = "ambria-ratecard-v4";
 const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1";
+const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // "cat::sub" keys flagged not-taggable in Pricing
 const MAX_PER_RUN = 10; // temporary cap while testing — raise (e.g. 50) once validated
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -40,8 +41,8 @@ Deno.serve(async (req) => {
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const getKv = async (key: string) => { const { data } = await db.from("settings").select("value").eq("key", key).maybeSingle(); return parse(data?.value); };
 
-  const [library, taxonomy, rateCard, palette, kb] = await Promise.all(
-    [LIB_SK, TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK].map(getKv));
+  const [library, taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
+    [LIB_SK, TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
   if (!Array.isArray(library)) return json({ error: "library blob not found" }, 500);
   const tax = taxonomy || {};
   const rc = Array.isArray(rateCard) ? rateCard : [];
@@ -60,11 +61,15 @@ Deno.serve(async (req) => {
     ? "PREVIOUS HUMAN CORRECTIONS — the corrected value is right:\n" + corr!.map((c) => `- ${c.field}: was "${c.ai_value || "(blank)"}" → correct is "${c.corrected_value || "(blank)"}"`).join("\n")
     : "";
 
+  // Sub-categories flagged not-taggable in Pricing ("cat::sub") — dropped from the vocabulary and
+  // the exact-name element list so the batch tagger never re-adds already-costed / IMS-only subs.
+  const hiddenSubSet = new Set(Array.isArray(hiddenSubs) ? hiddenSubs.filter((x: any) => typeof x === "string") : []);
+  const isSubHidden = (cat: any, sub: any) => hiddenSubSet.has(`${String(cat || "").trim()}::${String(sub || "").trim()}`);
   // Sub-category vocabulary by category (from the rate card).
   const subByCat: Record<string, Set<string>> = {};
-  rc.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.sub || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
+  rc.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.sub || "").trim(); if (c && s && !isSubHidden(c, s)) (subByCat[c] = subByCat[c] || new Set()).add(s); });
   const subcatText = Object.keys(subByCat).length ? "Sub-category vocabulary by category:\n" + Object.entries(subByCat).map(([c, s]) => `- ${c}: ${[...s].join(", ")}`).join("\n") : "";
-  const elemList = rc.filter((i: any) => !STRUCTURAL.has(i.cat)).map((i: any) => `"${i.name}"`).join(", ");
+  const elemList = rc.filter((i: any) => !STRUCTURAL.has(i.cat) && !isSubHidden(i.cat, i.sub)).map((i: any) => `"${i.name}"`).join(", ");
   // Names/keywords for structural items that must NEVER appear in the element breakdown (they're
   // captured in the dedicated truss/floor/masking sections — listing them too double-counts).
   const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();

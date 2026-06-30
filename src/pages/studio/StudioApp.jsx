@@ -65,7 +65,7 @@ import {
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK, AITAG_QUOTA_SK,
-  PREMIA_CFG_SK,
+  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 
 // Temporary daily cap on AI image-tagging calls while testing. Raise (or set to Infinity) to lift.
@@ -1217,6 +1217,11 @@ export default function StudioApp() {
   const [sourceEvent, setSourceEvent] = useState(null);
   const [sourceVideo, setSourceVideo] = useState(null);
   const [filterPriority, setFilterPriority] = useState(DEFAULT_FILTER_PRIORITY);
+  // Sub-categories flagged in Pricing as NOT taggable — array of "cat::sub" keys. Hidden from the
+  // element-search boxes (Build + Library tagger) and dropped from the AI tagger's vocabulary, so
+  // already-costed structural subs (truss/platform/carpet/fabric) and IMS-only subs (tools) can't
+  // be re-added during tagging. Items still exist in pricing & IMS inventory.
+  const [tagHiddenSubs, setTagHiddenSubs] = useState([]);
   const [customTripRate, setCustomTripRate] = useState(0);
   const [venueCustom, setVenueCustom] = useState(false);
   const [customGensets, setCustomGensets] = useState(null);
@@ -1644,6 +1649,8 @@ export default function StudioApp() {
       try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {}
       // Filter priority
       try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {}
+      // Tagging-hidden sub-categories (Pricing flags)
+      try { const v = await kvGet(TAG_HIDDEN_SUBS_SK); if (v != null) { const hs = parse(v); if (Array.isArray(hs) && !cancelled) setTagHiddenSubs(hs.filter((x) => typeof x === "string")); } } catch {}
       // Palette catalogue (Studio-owned) + IMS settings (paint cats)
       try {
         const palv = await kvGet(PALETTE_SK);
@@ -1696,6 +1703,16 @@ export default function StudioApp() {
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   const saveRC = useCallback(async (ni) => { setRcItems(ni); await reliableSave(RC_SK, JSON.stringify(ni), "Rate card"); }, []);
   const saveRcCats = useCallback(async (nc) => { setRcCats(nc); return await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
+  // Tagging-hidden sub-categories — keyed "cat::sub". Set for O(1) lookup; toggle flips one sub.
+  const tagSubKey = useCallback((cat, sub) => `${String(cat || "").trim()}::${String(sub || "").trim()}`, []);
+  const tagHiddenSubSet = useMemo(() => new Set(tagHiddenSubs), [tagHiddenSubs]);
+  const isSubTagHidden = useCallback((cat, sub) => tagHiddenSubSet.has(tagSubKey(cat, sub)), [tagHiddenSubSet, tagSubKey]);
+  const toggleTagHiddenSub = useCallback(async (cat, sub) => {
+    const key = tagSubKey(cat, sub);
+    const next = tagHiddenSubs.includes(key) ? tagHiddenSubs.filter((k) => k !== key) : [...tagHiddenSubs, key];
+    setTagHiddenSubs(next);
+    await reliableSave(TAG_HIDDEN_SUBS_SK, JSON.stringify(next), "Tagging-hidden sub-categories");
+  }, [tagHiddenSubs, tagSubKey]);
   // ── Realtime: reload shared config blobs live when changed (other device or IMS) ──
   useEffect(() => {
     const pj = (v) => { try { return typeof v === "string" ? JSON.parse(v) : v; } catch { return null; } };
@@ -3675,9 +3692,13 @@ Return ONLY JSON:
     // Temporary daily cap (testing). Block before any work once the day's limit is reached.
     if (aiTagCountToday() >= AI_TAG_DAILY_LIMIT) { showMsg(`Daily AI-tagging limit reached (${AI_TAG_DAILY_LIMIT}/day during testing).`, "red"); return null; }
     const STRUCTURAL_CATS = new Set(["truss", "platform", "masking", "fixed"]);
-    const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
+    // Exclude structural cats AND any sub-category flagged not-taggable in Pricing, so the AI's
+    // "use these exact names" list never contains an item we don't want re-added during tagging.
+    const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat) && !isSubTagHidden(i.cat, i.sub)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
     // #5 — Sub-category vocabulary by category (grounds element naming + routing to the right IMS sub-cat).
-    const subByCat = {}; rcItems.forEach(i => { const c = String(i.cat || "").trim(); const s = String(i.sub || "").trim(); if (!c || !s) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
+    // Skip sub-categories the team flagged as NOT taggable in Pricing (already-costed structural subs +
+    // IMS-only subs) so the AI never suggests/re-adds them.
+    const subByCat = {}; rcItems.forEach(i => { const c = String(i.cat || "").trim(); const s = String(i.sub || "").trim(); if (!c || !s || isSubTagHidden(c, s)) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
     const subcatText = Object.keys(subByCat).length ? ("Sub-category vocabulary by category (use these names and route each element to the right one):\n" + Object.entries(subByCat).map(([c, set]) => `- ${c}: ${[...set].join(", ")}`).join("\n")) : "";
     // #1 — House tagging rules (admin-editable in Manage → Library), followed strictly.
     const houseRules = (taxonomy.taggingStandards && String(taxonomy.taggingStandards).trim()) ? ("HOUSE TAGGING RULES (set by your team — follow strictly):\n" + String(taxonomy.taggingStandards).trim()) : "";
@@ -4769,6 +4790,8 @@ Return ONLY JSON:
     // notifications
     notifications, setNotifications, notifOpen, setNotifOpen, notifLastRead, setNotifLastRead, unreadCount, markAllRead,
     filterPriority, setFilterPriority,
+    // tagging-hidden sub-categories (Pricing flags)
+    tagHiddenSubs, isSubTagHidden, toggleTagHiddenSub,
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, imsPaintableCategories, setImsPaintableCategories,

@@ -43,7 +43,7 @@ export default function ManageLibrary({ ctx }) {
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub,
     setPreviewImg,
     // rate card (element breakdown)
-    rcItems, rcCats, rcIsSMB,
+    rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // misc
     showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
@@ -579,7 +579,7 @@ export default function ManageLibrary({ ctx }) {
                     <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
                     {libElSearch.length >= 1 && (() => {
                       const q = libElSearch.toLowerCase();
-                      const matches = rcItems.filter(rc => !(libEditImg.elements || []).find(el => el.name === rc.name) && (rc.name.toLowerCase().includes(q) || (rc.cat || "").toLowerCase().includes(q) || (rc.sub || "").toLowerCase().includes(q))).slice(0, 8);
+                      const matches = rcItems.filter(rc => !(libEditImg.elements || []).find(el => el.name === rc.name) && !(isSubTagHidden && isSubTagHidden(rc.cat, rc.sub)) && (rc.name.toLowerCase().includes(q) || (rc.cat || "").toLowerCase().includes(q) || (rc.sub || "").toLowerCase().includes(q))).slice(0, 8);
                       return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 200, overflowY: "auto" }}>
                         {matches.map(rc => <div key={rc.id} onClick={() => {
                           if (!(libEditImg.elements || []).find(el => el.name === rc.name)) {
