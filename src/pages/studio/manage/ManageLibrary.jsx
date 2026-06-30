@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
+import { logTagCorrections } from "../../../lib/studio/tagFeedback";
 
 // ═══ MANAGE: LIBRARY & CONTENT ═══
 // Faithful rebuild of the reference AmbriStudioInner library view.
@@ -44,7 +45,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -313,6 +314,8 @@ export default function ManageLibrary({ ctx }) {
                           if(Array.isArray(result.elements)&&result.elements.length>0)updated.elements=result.elements;
                           if(typeof result.lightCount==="number")updated.lightCount=result.lightCount;
                           if(Array.isArray(result.unrecognized))updated.unrecognized=result.unrecognized;
+                          if(result.tags&&typeof result.tags==="object")updated._aiTags=result.tags; // snapshot AI suggestion for the corrections diff
+                          updated._aiTagged=true;
                           // Handle dims
                           const d=result.dims||{};
                           const hasDims=(d.trussL||d.trussW||d.trussH||d.floorL||d.floorW);
@@ -337,6 +340,9 @@ export default function ManageLibrary({ ctx }) {
                       saveLib(libItems.map(i => i.id === libEditImg.id ? verified : i));
                       setLibEditImg(verified);
                       logCorrection?.({ photoId: libEditImg.id, photoName: libEditImg.name, source: "library" });
+                      // Capture per-field corrections (AI suggestion → what the human saved) so future
+                      // tagging learns from them; then refresh the in-session corrections feed.
+                      if (libEditImg._aiTags) logTagCorrections(libEditImg.id, libEditImg._aiTags, libEditImg.tags || {}, authUser?.name).then((n) => { if (n) refreshTagCorrections?.(); });
                       showMsg("✅ Saved & verified", "green");
                     }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px",
                       // Dim the Save button when Full Box + no density to give visual cue
@@ -346,15 +352,19 @@ export default function ManageLibrary({ ctx }) {
                     <button onClick={() => setLibEditImg(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Close</button>
                   </div>
                 </div>
-                {/* Light count (💡) + missing/unrecognized elements (⚠) surfaced for the reviewer */}
+                {/* Review status (🤖 AI suggested / ✓ Reviewed) + light count (💡) + missing items (⚠) */}
                 {(() => {
                   const lc = (typeof libEditImg.lightCount === "number") ? libEditImg.lightCount : null;
                   const newEls = (libEditImg.elements || []).filter(e => e && e.new).map(e => e.name).filter(Boolean);
                   const unrec = Array.isArray(libEditImg.unrecognized) ? libEditImg.unrecognized : [];
                   const attention = [...newEls, ...unrec];
-                  if (lc == null && attention.length === 0) return null;
+                  const reviewed = !!libEditImg._verified;
+                  const aiSuggested = !!libEditImg._aiTagged && !reviewed;
+                  if (lc == null && attention.length === 0 && !reviewed && !aiSuggested) return null;
                   return (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "2px 0 8px" }}>
+                      {reviewed && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#05966922", color: "#059669" }}>✓ Reviewed</span>}
+                      {aiSuggested && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#7C3AED22", color: "#7C3AED" }}>🤖 AI suggested — review</span>}
                       {lc != null && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#F59E0B22", color: "#F59E0B" }}>💡 {lc} light{lc === 1 ? "" : "s"}</span>}
                       {attention.length > 0 && <span style={{ fontSize: 10, color: "#EF4444", display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>⚠ Needs attention: {attention.map((a, i) => <span key={i} style={{ padding: "1px 6px", borderRadius: 6, background: "#EF444418" }}>{a}</span>)}</span>}
                     </div>

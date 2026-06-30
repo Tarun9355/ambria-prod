@@ -68,6 +68,7 @@ import {
   PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
+import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/tagFeedback.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -925,6 +926,9 @@ export default function StudioApp() {
   const corrLogRef = useRef([]);
   const [tagKB, setTagKB] = useState(null); // AI-tagging knowledge base distilled from verified photos
   const tagKBRebuildRef = useRef(false);    // guards the auto-rebuild from firing more than once per load
+  const [tagCorrections, setTagCorrections] = useState([]); // recent per-field corrections, fed into the tagging prompt
+  const refreshTagCorrections = useCallback(() => { fetchRecentCorrections(20).then(setTagCorrections).catch(() => {}); }, []);
+  useEffect(() => { refreshTagCorrections(); }, [refreshTagCorrections]);
   const libItemsRef = useRef([]); // latest library array, for the background bulk-tagger to merge into
   const [bulkTag, setBulkTag] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk AI tagging progress
   const bulkTagStop = useRef(false);
@@ -1738,6 +1742,7 @@ export default function StudioApp() {
     if (!verified.length) return null;
     const lightNames = new Set((rcItems || []).filter((i) => String(i.cat || "").toLowerCase() === "lighting").map((i) => String(i.name).toLowerCase().trim()));
     const kb = buildTagKB(verified, lightNames);
+    kb.promptText = renderTagKBText(kb); // persist the rendered text so the nightly edge function can reuse it
     setTagKB(kb);
     reliableSave(TAG_KB_SK, JSON.stringify(kb), "Tag knowledge base").catch(() => {});
     return kb;
@@ -3767,9 +3772,10 @@ Return ONLY JSON:
         ? { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } }
         : { type: "image", source: { type: "url", url } };
       const kbText = renderTagKBText(tagKB);
-      // House rules first (highest authority), then the learned knowledge base, then sub-category
-      // vocabulary, then the base instructions — all static, so the whole block is cached.
-      const promptText = [houseRules, kbText, subcatText, prompt].filter(Boolean).join("\n\n");
+      const corrText = renderCorrectionsText(tagCorrections);
+      // House rules first (highest authority), then human corrections to learn from, then the learned
+      // knowledge base, then sub-category vocabulary, then the base instructions — all static, cached.
+      const promptText = [houseRules, corrText, kbText, subcatText, prompt].filter(Boolean).join("\n\n");
       const exemplars = (tagKB && Array.isArray(tagKB.exemplars)) ? tagKB.exemplars.slice(0, 4).filter(e => e && e.url) : [];
       const buildContent = (withExamples) => {
         const blocks = [{ type: "text", text: promptText }];
@@ -3865,6 +3871,7 @@ Return ONLY JSON:
           if (Array.isArray(result.elements) && result.elements.length > 0) { upd.elements = result.elements; gotTags = true; }
           if (typeof result.lightCount === "number") upd.lightCount = result.lightCount;
           if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
+          if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags; // snapshot for the corrections diff at review time
           const d = result.dims || {};
           if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
         }
@@ -4667,7 +4674,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, tagKB, rebuildTagKB, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,
