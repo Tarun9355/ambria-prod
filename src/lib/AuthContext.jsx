@@ -1,11 +1,34 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { getStoredUser, login as doLogin, logout as doLogout } from "./auth";
+import { getStoredUser, login as doLogin, logout as doLogout, fetchProfile } from "./auth";
 import { supabase } from "./supabase";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
+  // Start from the cached profile (instant, no login flash). The Supabase session is then validated
+  // below: a live session refreshes the profile; signing out clears it. During the migration a cached
+  // legacy user (no Supabase session) still works because RLS is off until cutover.
   const [user, setUser] = useState(() => getStoredUser());
+
+  useEffect(() => {
+    let active = true;
+    // Rehydrate from a live Supabase session on load (post-migration source of truth).
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active || !data?.session) return;
+      const profile = await fetchProfile();
+      if (active && profile) setUser(profile);
+    });
+    // React to auth changes (token refresh, sign-out, sign-in from another tab).
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event) => {
+      if (!active) return;
+      if (event === "SIGNED_OUT") { setUser(null); return; }
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        const profile = await fetchProfile();
+        if (active && profile) setUser(profile);
+      }
+    });
+    return () => { active = false; sub?.subscription?.unsubscribe?.(); };
+  }, []);
   // Per-role access config (settings.roleTabs) — drives the cross-app switcher + route
   // gating so app visibility is role-driven. Loaded once when a user is present.
   const [roleTabs, setRoleTabs] = useState({});
@@ -28,8 +51,8 @@ export function AuthProvider({ children }) {
     return account;
   }, []);
 
-  const logout = useCallback(() => {
-    doLogout();
+  const logout = useCallback(async () => {
+    await doLogout();
     setUser(null);
   }, []);
 
