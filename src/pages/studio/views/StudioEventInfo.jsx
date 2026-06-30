@@ -88,9 +88,8 @@ export default function StudioEventInfo({ ctx }) {
                 <span style={{fontSize:11,fontWeight:600,color:"#3B82F6"}}>🔍 Searching LMS leads…</span>
               </div>;
             }
-            // ── LMS HAS RESULTS → show LMS section only (strict LMS-first)
-            if (lmsLeads && lmsLeads.length > 0) {
-              return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.04)",border:`1px solid ${isDark?"rgba(34,197,94,0.25)":"rgba(34,197,94,0.2)"}`}}>
+            // ── LMS results block (shown ALONGSIDE matching Studio clients, not instead of them) ──
+            const lmsBlock = (lmsLeads && lmsLeads.length > 0) ? (<div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.04)",border:`1px solid ${isDark?"rgba(34,197,94,0.25)":"rgba(34,197,94,0.2)"}`}}>
                 <div style={{fontSize:11,fontWeight:600,color:"#15803D",marginBottom:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>📥</span><span>{lmsLeads.length} LMS lead{lmsLeads.length>1?"s":""} found — load to capture full lead context</span>
                   {lmsFilling && <span style={{fontSize:10,fontWeight:600,color:"#D97706",display:"inline-flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
@@ -139,33 +138,31 @@ export default function StudioEventInfo({ ctx }) {
                     <button onClick={() => loadLmsLead(lead)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:"#15803D",color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
                   </div>;
                 })}
-              </div>;
-            }
-            // ── LMS EMPTY or ERRORED → fall back to Studio ledger
+              </div>
+            ) : null;
+            // ── Studio clientLedger matches — shown ALONGSIDE LMS, not only when LMS is empty ──
             const matches = clientLedger.filter(c => {
               if (!c.name) return false;
               const nameMatch = qName.length >= 2 && c.name.toLowerCase().includes(qName);
               const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
               return nameMatch || phoneMatch;
             }).slice(0, 5);
-            const fallbackNote = lmsError
-              ? "⚠ LMS unavailable — showing Studio clients"
-              : lmsFilling
-              ? "⏳ LMS cache loading… results will appear shortly"
-              : (clientName.trim().length >= 2 ? "No LMS match — showing Studio clients" : null);
-            if (matches.length === 0) {
-              // No Studio match either — show only the explanatory note if LMS was attempted
-              if (!fallbackNote) return null;
+            if (!lmsBlock && matches.length === 0) {
+              // Nothing from LMS or Studio — show only an explanatory note if a search was attempted.
+              const note = lmsError ? "⚠ LMS unavailable — showing Studio clients"
+                : lmsFilling ? "⏳ LMS cache loading… results will appear shortly"
+                : (clientName.trim().length >= 2 ? "No matching LMS lead or Studio client" : null);
+              if (!note) return null;
               return <div style={{marginBottom:16,padding:"8px 12px",borderRadius:8,background:isDark?"rgba(245,158,11,0.06)":"rgba(245,158,11,0.05)",border:`1px solid ${isDark?"rgba(245,158,11,0.2)":"rgba(245,158,11,0.15)"}`,fontSize:11,color:"#B45309",display:"flex",alignItems:"center",gap:8}}>
-                <span style={{flex:1}}>{fallbackNote} · no matches found</span>
+                <span style={{flex:1}}>{note}</span>
                 <button onClick={() => { lmsCacheRef.current.clear(); fetch("/api/lms?op=force-refresh",{method:"POST"}).catch(()=>{}); setLmsRefreshCounter(c=>c+1); }} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(180,131,9,0.2)",background:"transparent",color:"#B45309",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Refresh</button>
               </div>;
             }
-            return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.06)":"rgba(99,102,241,0.04)",border:`1px solid ${isDark?"rgba(99,102,241,0.2)":"rgba(99,102,241,0.15)"}`}}>
+            const studioBlock = matches.length > 0 ? (<div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.06)":"rgba(99,102,241,0.04)",border:`1px solid ${isDark?"rgba(99,102,241,0.2)":"rgba(99,102,241,0.15)"}`}}>
               <div style={{fontSize:11,fontWeight:600,color:"#6366F1",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                 <span>💡</span>
                 <span style={{flex:1}}>
-                  {fallbackNote || `Found ${matches.length} existing client${matches.length>1?"s":""} — load to continue previous work?`}
+                  {`Found ${matches.length} existing Studio client${matches.length>1?"s":""} — load to continue previous work?`}
                 </span>
                 <button onClick={() => { lmsCacheRef.current.clear(); fetch("/api/lms?op=force-refresh",{method:"POST"}).catch(()=>{}); setLmsRefreshCounter(c=>c+1); }} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(99,102,241,0.2)",background:"transparent",color:"#6366F1",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Refresh</button>
               </div>
@@ -194,7 +191,8 @@ export default function StudioEventInfo({ ctx }) {
                   <button onClick={() => loadClientSession(c, latest || null, 0)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
                 </div>;
               })}
-            </div>;
+            </div>) : null;
+            return <>{lmsBlock}{studioBlock}</>;
           })()}
           <div style={{marginBottom:20}}><div style={S.label}>Bride & Groom Name</div><input value={clientBrideGroom} onChange={e=>setClientBrideGroom(e.target.value)} placeholder="e.g. Rahul & Priya" style={S.input}/></div>
 

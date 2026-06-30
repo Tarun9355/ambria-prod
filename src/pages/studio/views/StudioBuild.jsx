@@ -98,7 +98,11 @@ export default function StudioBuild({ ctx }) {
     if (areaNames.length) {
       const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
       const {exact, similar, fallback} = getLibPhotosForZone(areaNames, vTag);
-      const allMatches = [...exact, ...similar, ...fallback];
+      // getLibPhotosForZone merges non-zone "overflow" fillers into `fallback` (the Manage
+      // zone-picker wants those). On Build we must show ONLY photos actually tagged for this
+      // zone — otherwise a Stage panel surfaces photos tagged Entry Passage / Bar Counter, etc.
+      const allMatches = [...exact, ...similar, ...fallback].filter(img =>
+        (img.tags?.areasElements || []).some(a => areaNames.includes(a)));
       for (const img of allMatches) {
         if (photos.length >= 50) break;
         if (!img.url || seen.has(img.url)) continue;
@@ -114,8 +118,10 @@ export default function StudioBuild({ ctx }) {
       }
     }
 
-    // 3. EVENT PHOTOS — keep as fallback if Library is sparse
-    if (photos.length < 50) {
+    // 3. EVENT PHOTOS — only for zones with NO area mapping (untagged custom zones).
+    // For mapped zones we deliberately stop at zone-tagged library photos above; event
+    // photos aren't tagged per-zone, so padding with them re-introduces wrong-zone images.
+    if (!areaNames.length && photos.length < 50) {
       const catEvents = events.filter(ev => {
         if (getCat(getFullCost(ev)).label !== targetCat) return false;
         return (ev.enabledEls || []).includes(elKey) || (ev.elements && ev.elements[elKey]);
@@ -143,8 +149,9 @@ export default function StudioBuild({ ctx }) {
       }
     }
 
-    // 4. NEVER EMPTY — if still 0, show any Library photos
-    if (photos.length === 0) {
+    // 4. NEVER EMPTY — only for unmapped zones. A mapped zone with no tagged photos shows
+    // its empty state (prompting the team to tag/upload) rather than random library photos.
+    if (!areaNames.length && photos.length === 0) {
       for (const img of libItems.slice(0, 50)) {
         if (!img.url || seen.has(img.url)) continue;
         seen.add(img.url);
