@@ -42,7 +42,7 @@ export default function DealCheckOverlay({ ctx }) {
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // orchestration + persistence
-    openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    openDealCheck, runDealCheckGenerate, saveDcDraft, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     // misc
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
@@ -560,6 +560,16 @@ export default function DealCheckOverlay({ ctx }) {
                   return (
                     <div title={`Last AI run: ${cachedAt.toLocaleString("en-IN")}`} style={{padding:"5px 10px",borderRadius:6,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.30)",fontSize:10,color:"#10B981",fontWeight:600,letterSpacing:0.4}}>
                       💾 Cached · {relTime}
+                    </div>
+                  );
+                })()}
+                {activeClientId && cli?.dcDraftSavedAt && !dcGenerating && (() => {
+                  const savedAt = new Date(cli.dcDraftSavedAt);
+                  const minsAgo = Math.round((Date.now() - savedAt.getTime()) / 60000);
+                  const relTime = minsAgo < 1 ? "just now" : minsAgo < 60 ? `${minsAgo} min ago` : minsAgo < 1440 ? `${Math.round(minsAgo/60)}h ago` : `${Math.round(minsAgo/1440)}d ago`;
+                  return (
+                    <div title={`Draft saved: ${savedAt.toLocaleString("en-IN")}${cli.dcDraftSavedBy ? ` by ${cli.dcDraftSavedBy}` : ""}`} style={{padding:"5px 10px",borderRadius:6,background:"rgba(251,191,36,0.10)",border:"1px solid rgba(251,191,36,0.35)",fontSize:10,color:"#F59E0B",fontWeight:600,letterSpacing:0.4}}>
+                      📝 Draft · {relTime}
                     </div>
                   );
                 })()}
@@ -1721,10 +1731,12 @@ export default function DealCheckOverlay({ ctx }) {
                 if (dcSavingDraft) return;
                 setDcSavingDraft(true);
                 try {
-                  // Persist dcCards + dcZoneState + manpower overrides onto active client record · saved via existing client ledger flow
+                  // 1. Save to client ledger (local fast path)
                   const ledger = clientLedger.map(c => c.id !== activeClientId ? c : ({ ...c, dcCards: dcCards, dcZoneState: dcZoneState, dcKitEdits: dcKitEdits, dcCarpetPick: dcCarpetPick, dcMpOverrides: dcMpOverrides, dcMpIncludeMinusOne: dcMpIncludeMinusOne, dcMpIncludeDismantle: dcMpIncludeDismantle, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" }));
                   await saveClientLedger(ledger);
-                  showMsg("✓ Deal Check draft saved", "green");
+                  // 2. Persist to event_orders + inventory_soft_holds
+                  await saveDcDraft({ dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, dcManualItems, dcCustomItems, dcDedupOverrides, floralColorPrefs: {}, artFlowerAlloc: {} });
+                  showMsg("✓ Deal Check draft saved · soft holds written (24h)", "green");
                 } catch (e) { showMsg("⚠ Save failed — try again", "red"); }
                 finally { setDcSavingDraft(false); }
               };

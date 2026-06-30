@@ -4357,6 +4357,7 @@ Return ONLY JSON:
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
 
       setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], venueParents, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDcInventoryCache(inventory);
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
@@ -4644,6 +4645,37 @@ Return ONLY JSON:
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
   }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds]);
 
+  // ═══ DEAL CHECK — Save Draft to Supabase event_orders + soft holds ═══
+  const saveDcDraft = useCallback(async ({ dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, dcManualItems, dcCustomItems, dcDedupOverrides, floralColorPrefs, artFlowerAlloc }) => {
+    const cli = clientLedger.find(c => c.id === activeClientId);
+    if (!cli) throw new Error("no-client");
+    const salesperson = authUser?.name || "—";
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const draftPayload = { dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, dcManualItems, dcCustomItems, dcDedupOverrides, floralColorPrefs, artFlowerAlloc, savedAt: new Date().toISOString(), savedBy: salesperson };
+    // Upsert draft row in event_orders keyed by client id
+    const eoId = "draft-" + activeClientId;
+    const { error: eoErr } = await supabase.from("event_orders").upsert(
+      { id: eoId, client_name: cli.name || "—", status: "draft", draft_data: draftPayload, expires_at: expiresAt, held_by: salesperson },
+      { onConflict: "id" }
+    );
+    if (eoErr) throw new Error(eoErr.message);
+    // Write soft holds for every matched item across all functions
+    const holds = [];
+    Object.values(dcCards).forEach(fnCards => {
+      Object.values(fnCards || {}).forEach(card => {
+        if (!card?.imsId) return;
+        holds.push({ item_id: card.imsId, event_id: eoId, client_name: cli.name || "—", held_by: salesperson, qty: card.qty || 1, expires_at: expiresAt });
+      });
+    });
+    if (holds.length > 0) {
+      // Delete stale holds for this draft first, then insert fresh
+      await supabase.from("inventory_soft_holds").delete().eq("event_id", eoId);
+      const { error: shErr } = await supabase.from("inventory_soft_holds").insert(holds);
+      if (shErr) throw new Error(shErr.message);
+    }
+    return { eoId, expiresAt };
+  }, [activeClientId, clientLedger, authUser]);
+
   // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
   // ═══════════════════════════════════════════════════════════════
@@ -4814,7 +4846,7 @@ Return ONLY JSON:
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
-    openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    openDealCheck, runDealCheckGenerate, saveDcDraft, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     writeStudioTrussSoftHolds,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
