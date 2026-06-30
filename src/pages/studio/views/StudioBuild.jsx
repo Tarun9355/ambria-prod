@@ -1239,7 +1239,7 @@ export default function StudioBuild({ ctx }) {
               </div>}
             </div>;
           })()}
-          {Object.keys(taxonomy).map(key=>{
+          {Object.keys(taxonomy).filter(key=>Array.isArray(taxonomy[key])).map(key=>{
             const vals=key==="colorPalette"&&imsPaletteCatalogue.length>0?imsPaletteCatalogue.map(p=>p.name):taxonomy[key];
             return <div key={key} style={{marginBottom:8}}>
               <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
