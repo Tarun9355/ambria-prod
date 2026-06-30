@@ -18,7 +18,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2", RC_SK = "ambria-ratecard-v4";
 const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1";
-const MAX_PER_RUN = 50;
+const MAX_PER_RUN = 10; // temporary cap while testing — raise (e.g. 50) once validated
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
@@ -65,6 +65,12 @@ Deno.serve(async (req) => {
   rc.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.sub || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
   const subcatText = Object.keys(subByCat).length ? "Sub-category vocabulary by category:\n" + Object.entries(subByCat).map(([c, s]) => `- ${c}: ${[...s].join(", ")}`).join("\n") : "";
   const elemList = rc.filter((i: any) => !STRUCTURAL.has(i.cat)).map((i: any) => `"${i.name}"`).join(", ");
+  // Names/keywords for structural items that must NEVER appear in the element breakdown (they're
+  // captured in the dedicated truss/floor/masking sections — listing them too double-counts).
+  const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  const structuralNames = new Set(rc.filter((i: any) => STRUCTURAL.has(i.cat)).map((i: any) => normName(i.name)));
+  const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
+  const dropStructural = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => e && e.name && !structuralNames.has(normName(e.name)) && !STRUCT_KW.test(e.name));
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";
 
   const basePrompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:
@@ -133,7 +139,7 @@ Return ONLY JSON matching the provided schema.`;
   for (const img of targets) {
     try {
       const r = await tagOne(img);
-      patches[img.id] = { tags: r.tags || {}, elements: Array.isArray(r.elements) ? r.elements : [], lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      patches[img.id] = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       logs.push({ photo_id: img.id, success: true }); ok++;
     } catch (e) {
       logs.push({ photo_id: img.id, success: false, error: String((e as Error)?.message || e) }); fail++;

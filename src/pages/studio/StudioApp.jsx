@@ -64,9 +64,12 @@ import {
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
-  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK,
+  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK, AITAG_QUOTA_SK,
   PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
+
+// Temporary daily cap on AI image-tagging calls while testing. Raise (or set to Infinity) to lift.
+const AI_TAG_DAILY_LIMIT = 10;
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
 import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/tagFeedback.js";
 
@@ -929,6 +932,10 @@ export default function StudioApp() {
   const [tagCorrections, setTagCorrections] = useState([]); // recent per-field corrections, fed into the tagging prompt
   const refreshTagCorrections = useCallback(() => { fetchRecentCorrections(20).then(setTagCorrections).catch(() => {}); }, []);
   useEffect(() => { refreshTagCorrections(); }, [refreshTagCorrections]);
+  // Global daily AI-tagging cap (temporary). Counter persisted in settings so it holds across reloads/users.
+  const aiTagQuotaRef = useRef({ date: "", count: 0 });
+  const aiTagCountToday = () => { const q = aiTagQuotaRef.current; return q && q.date === new Date().toISOString().slice(0, 10) ? (q.count || 0) : 0; };
+  const aiTagBump = () => { const today = new Date().toISOString().slice(0, 10); const next = { date: today, count: aiTagCountToday() + 1 }; aiTagQuotaRef.current = next; reliableSave(AITAG_QUOTA_SK, JSON.stringify(next), "AI tag quota").catch(() => {}); };
   const libItemsRef = useRef([]); // latest library array, for the background bulk-tagger to merge into
   const [bulkTag, setBulkTag] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk AI tagging progress
   const bulkTagStop = useRef(false);
@@ -1605,6 +1612,7 @@ export default function StudioApp() {
       // Correction log (contribution tracking)
       try { const v = await kvGet(CORR_SK); if (v != null) { const cp = parse(v); if (Array.isArray(cp) && !cancelled) { setCorrLog(cp); corrLogRef.current = cp; } } } catch {}
       try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
+      try { const v = await kvGet(AITAG_QUOTA_SK); if (v != null) { const q = parse(v); if (q && typeof q === "object") aiTagQuotaRef.current = q; } } catch {}
       // Team
       try {
         const v = await kvGet(TEAM_SK);
@@ -3664,6 +3672,8 @@ Return ONLY JSON:
 
   // ── AI tag an image (Claude vision) — routes via callClaudeStreaming (Supabase Edge Fn) ──
   const aiTagImage = async (url) => {
+    // Temporary daily cap (testing). Block before any work once the day's limit is reached.
+    if (aiTagCountToday() >= AI_TAG_DAILY_LIMIT) { showMsg(`Daily AI-tagging limit reached (${AI_TAG_DAILY_LIMIT}/day during testing).`, "red"); return null; }
     const STRUCTURAL_CATS = new Set(["truss", "platform", "masking", "fixed"]);
     const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
     // #5 — Sub-category vocabulary by category (grounds element naming + routing to the right IMS sub-cat).
@@ -3799,6 +3809,7 @@ Return ONLY JSON:
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
         thinking: { type: "adaptive" },
       });
+      aiTagBump(); // count this against the daily cap (we're about to call the API)
       let txt;
       try {
         txt = await callTag(buildContent(exemplars.length > 0));
@@ -3837,6 +3848,12 @@ Return ONLY JSON:
           }
           return { ...el, new: true };
         });
+        // Drop structural items (truss / floor-carpet / masking) from the element breakdown — they're
+        // captured in the dedicated Zone-Dimensions/Masking sections, so listing them as elements too
+        // double-counts cost AND double-blocks inventory.
+        const structuralNames = new Set(rcItems.filter(i => STRUCTURAL_CATS.has(i.cat)).map(i => normalize(i.name)));
+        const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
+        parsed.elements = parsed.elements.filter(el => !structuralNames.has(normalize(el.name)) && !STRUCT_KW.test(el.name || ""));
       }
       return parsed;
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
@@ -3859,6 +3876,7 @@ Return ONLY JSON:
     const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); libItemsRef.current = merged; saveLib(merged); };
     for (let n = 0; n < targets.length; n++) {
       if (bulkTagStop.current) break;
+      if (aiTagCountToday() >= AI_TAG_DAILY_LIMIT) { showMsg(`Daily AI-tagging limit reached (${AI_TAG_DAILY_LIMIT}/day during testing) — stopped.`, "orange"); break; }
       const img = targets[n];
       try {
         const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
