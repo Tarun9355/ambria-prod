@@ -44,7 +44,7 @@ export default function StudioBuild({ ctx }) {
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto,
     // rate card
-    rcItems, rcCats, rcIsSMB,
+    rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // taxonomy
     taxonomy,
     // paint / deal check
@@ -547,7 +547,7 @@ export default function StudioBuild({ ctx }) {
                     <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
-                      const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
+                      const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&!(isSubTagHidden&&isSubTagHidden(rc.cat,rc.sub))&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
                       return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:200,overflowY:"auto"}}>
                         {matches.map(rc=><div key={rc.id} onClick={()=>{
                           if(!(zoneElements[k]||[]).find(el=>el.name===rc.name)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:rc.name,qty:0,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
@@ -980,7 +980,7 @@ export default function StudioBuild({ ctx }) {
                 <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                 {(zoneElSearch[k]||"").length>=1&&(()=>{
                   const q=(zoneElSearch[k]||"").toLowerCase();
-                  const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
+                  const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&!(isSubTagHidden&&isSubTagHidden(rc.cat,rc.sub))&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
                   return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:200,overflowY:"auto"}}>
                     {matches.map(rc=><div key={rc.id} onClick={()=>{
                       if(!(zoneElements[k]||[]).find(el=>el.name===rc.name)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:rc.name,qty:1,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
