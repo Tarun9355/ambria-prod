@@ -66,8 +66,11 @@ const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o
 const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active });
 const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
 
-const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, password: row.password, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, createdAt: row.created_at });
-const userToRow = (u) => ({ id: u.id, name: u.name ?? null, username: u.username ?? null, password: u.password ?? null, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null });
+const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, createdAt: row.created_at });
+// Passwords live in Supabase Auth now — NEVER write a `password` column (it was dropped in migration
+// 005). Sending it makes every users upsert fail ("Could not find the 'password' column"). Password
+// changes go through the user-admin edge function instead.
+const userToRow = (u) => ({ id: u.id, name: u.name ?? null, username: u.username ?? null, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null });
 
 const rowToProd = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
 const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.functionId ?? null, status: p.status ?? "Requested", data: p });

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge, Modal } from "../../components/ui";
 import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS } from "../../lib/ims/constants";
+import { callUserAdmin } from "../../lib/userAdmin";
 
 // App-access default derived from role (the one addition to the reference).
 const defaultApps = (role) => role === "Admin" ? ["studio","ims"] : role === "Sales" ? ["studio"] : ["ims"];
@@ -40,12 +41,13 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   function togglePerm(p){ setForm(f=>({ ...f, permissions:(f.permissions||[]).includes(p)?(f.permissions||[]).filter(x=>x!==p):[...(f.permissions||[]),p] })); }
   function toggleApp(a){ setForm(f=>{ const cur=f.apps || defaultApps(f.role); return { ...f, apps:cur.includes(a)?cur.filter(x=>x!==a):[...cur,a] }; }); }
 
-  function save(){
+  const [busy, setBusy] = useState(false);
+  async function save(){
     if(!form.name || !form.name.trim()){ alert("Name is required"); return; }
     const username = deriveUsername(form.name);
     if(!username){ alert("Name must contain at least one letter or digit"); return; }
     if(editUser){
-      // Edit path: keep existing username + password (password reset has its own flow)
+      // Edit path: profile fields only (password has its own flow). Writes non-password columns.
       const { password, ...rest } = form;
       setUsers(prev=>prev.map(u=>u.id===editUser.id?{...u, ...rest, username: editUser.username || username}:u));
       setModal(false);
@@ -61,29 +63,35 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     const mint = () => "U" + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 10) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
     const taken = new Set((users || []).map(u => String(u.id)));
     let newId = mint(); while (taken.has(newId)) newId = mint();
-    const newUser = { ...form, username, password: form.password.trim(), id: newId, createdAt: Date.now() };
-    // Pure INSERT — addUser writes ONLY this new row, never updating/deleting any existing user.
-    // (Falls back to setUsers append if addUser wasn't provided.)
-    if (addUser) addUser(newUser);
-    else setUsers(prev => [...(prev || []), newUser]);
+    // Create the Supabase Auth account + profile row server-side (service role, admin-gated).
+    // The new row arrives via realtime; we just confirm the credentials.
+    const profile = { id: newId, name: form.name.trim(), username, role: form.role, permissions: form.permissions || [], apps: form.apps || defaultApps(form.role), phone: form.phone || "", email: form.email || "", active: form.active ?? true };
+    setBusy(true);
+    try { await callUserAdmin("createUser", { user: profile, password: form.password.trim() }); }
+    catch(e){ setBusy(false); alert("Create user failed: " + e.message); return; }
+    setBusy(false);
     setModal(false);
-    // Show one-time credential confirmation
     setCredsShown({ name: form.name.trim(), username, password: form.password.trim(), isReset: false });
   }
   function toggleActive(id){ setUsers(prev=>prev.map(u=>u.id===id?{...u,active:!u.active}:u)); }
-  function deleteUser(id){
+  async function deleteUser(id){
     const u = users.find(x=>x.id===id);
     if(!window.confirm(`Delete user "${u?.name || u?.username || "this user"}"?\n\nThis cannot be undone.`)) return;
-    setUsers(prev=>prev.filter(u=>u.id!==id), [id]);
+    try { await callUserAdmin("deleteUser", { userId: id }); }
+    catch(e){ alert("Delete failed: " + e.message); }
   }
 
-  // Reset Password flow
+  // Reset Password flow — sets the password in Supabase Auth (creates the account if the user hasn't
+  // been migrated yet), via the admin-gated edge function.
   function openReset(u){ setResetFor(u); setResetPw(""); }
-  function confirmReset(){
+  async function confirmReset(){
     if(!resetPw || !resetPw.trim()){ alert("Enter a new password"); return; }
     const newPw = resetPw.trim();
-    setUsers(prev => prev.map(u => u.id===resetFor.id ? {...u, password: newPw} : u));
     const u = resetFor;
+    setBusy(true);
+    try { await callUserAdmin("setPassword", { userId: u.id, password: newPw }); }
+    catch(e){ setBusy(false); alert("Reset failed: " + e.message); return; }
+    setBusy(false);
     setResetFor(null);
     setResetPw("");
     setCredsShown({ name: u.name, username: u.username || deriveUsername(u.name), password: newPw, isReset: true });
