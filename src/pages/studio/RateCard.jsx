@@ -13,7 +13,6 @@ export default function RateCard({ ctx }) {
     rcCat, setRcCat, rcSearch, setRcSearch, rcEditId, setRcEditId, rcTab, setRcTab,
     rcCatEditMode, setRcCatEditMode, rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen,
     rcNewForm, setRcNewForm, RC_UNITS, rcIsSMB, getFloralMode,
-    isSubTagHidden, toggleTagHiddenSub,
   } = ctx;
 
   const isNotRated = (i) => i.unit !== "included" && i.unit !== "multiplier" && (i.inhouseFlat || 0) === 0 && (i.inhouseS || 0) === 0 && (i.inhouseM || 0) === 0 && (i.inhouseB || 0) === 0;
@@ -166,14 +165,7 @@ export default function RateCard({ ctx }) {
 
         {groupEntries.map(([sub, items]) => (
           <div key={sub} style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><div style={{ width: 3, height: 12, borderRadius: 2, background: curCat?.c || accent }} /><div style={{ fontSize: 13, fontWeight: 700, color: curCat?.c || accent }}>{sub}</div><div style={{ fontSize: 10, color: textS }}>({items.length})</div>
-              {/* Tagging visibility — flag a whole sub-category so it can't be re-added during photo
-                  tagging (already costed by dims, or IMS-only). Keyed by the items' raw sub value so
-                  it matches the per-item filters in the tagging search boxes + AI vocabulary. */}
-              {(() => { const subRaw = (items[0]?.sub) || ""; const hidden = isSubTagHidden ? isSubTagHidden(rcCat, subRaw) : false; return (
-                <button onClick={() => toggleTagHiddenSub && toggleTagHiddenSub(rcCat, subRaw)} title={hidden ? "Hidden from photo tagging — click to make taggable" : "Shows during photo tagging — click to hide it"} style={{ marginLeft: "auto", padding: "3px 9px", borderRadius: 12, border: `1px solid ${hidden ? "#F87171" : border}`, background: hidden ? "rgba(248,113,113,0.12)" : "rgba(255,255,255,0.04)", color: hidden ? "#F87171" : textS, fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>{hidden ? "🚫 No-tag" : "🏷️ Taggable"}</button>
-              ); })()}
-            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><div style={{ width: 3, height: 12, borderRadius: 2, background: curCat?.c || accent }} /><div style={{ fontSize: 13, fontWeight: 700, color: curCat?.c || accent }}>{sub}</div><div style={{ fontSize: 10, color: textS }}>({items.length})</div></div>
             {items.map((item) => { const isO = rcEditId === item.id; const isFloral = (item.cat || "").toLowerCase() === "florals"; return (
               <div key={item.id} style={{ ...S.card, marginBottom: 5, overflow: "hidden", border: isO ? `2px solid ${accent}` : `1px solid ${border}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", cursor: "pointer" }} onClick={() => setRcEditId(isO ? null : item.id)}>

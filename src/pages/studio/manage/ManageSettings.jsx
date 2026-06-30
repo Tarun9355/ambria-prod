@@ -419,7 +419,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Add, rename, or remove tag options. Changes apply to all new and existing images.</div>
 
       {/* ═══ TAG CATEGORIES (existing taxonomy) ═══ */}
-      {Object.keys(taxonomy).filter(k => k !== "categoryTier" && Array.isArray(taxonomy[k])).map(k => (
+      {Object.keys(taxonomy).filter(k => k !== "categoryTier").map(k => (
         <div key={k} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "12px 16px", marginBottom: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: textP }}>{getTaxLabel(k)}</div>

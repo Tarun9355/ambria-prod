@@ -43,7 +43,7 @@ export default function ManageLibrary({ ctx }) {
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub,
     setPreviewImg,
     // rate card (element breakdown)
-    rcItems, rcCats, rcIsSMB, isSubTagHidden,
+    rcItems, rcCats, rcIsSMB,
     // misc
     showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
@@ -193,9 +193,8 @@ export default function ManageLibrary({ ctx }) {
             {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "2px 6px", borderRadius: 10, fontSize: 9, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
           </div>}
         </div>
-        {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
+        {Object.keys(taxonomy).map(k => {
           // colorPalette: use paletteCatalogue names instead of legacy taxonomy values
-          // (filter to array-valued keys so non-array fields like taggingStandards never .map-crash)
           const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
             ? imsPaletteCatalogue.map(p => p.name)
             : taxonomy[k];
@@ -402,7 +401,7 @@ export default function ManageLibrary({ ctx }) {
                     </>;
                   })()}
                 </div>
-                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
+                {Object.keys(taxonomy).map(k => {
                   const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
                     ? imsPaletteCatalogue.map(p => p.name)
                     : taxonomy[k];
@@ -580,7 +579,7 @@ export default function ManageLibrary({ ctx }) {
                     <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
                     {libElSearch.length >= 1 && (() => {
                       const q = libElSearch.toLowerCase();
-                      const matches = rcItems.filter(rc => !(libEditImg.elements || []).find(el => el.name === rc.name) && !(isSubTagHidden && isSubTagHidden(rc.cat, rc.sub)) && (rc.name.toLowerCase().includes(q) || (rc.cat || "").toLowerCase().includes(q) || (rc.sub || "").toLowerCase().includes(q))).slice(0, 8);
+                      const matches = rcItems.filter(rc => !(libEditImg.elements || []).find(el => el.name === rc.name) && (rc.name.toLowerCase().includes(q) || (rc.cat || "").toLowerCase().includes(q) || (rc.sub || "").toLowerCase().includes(q))).slice(0, 8);
                       return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 200, overflowY: "auto" }}>
                         {matches.map(rc => <div key={rc.id} onClick={() => {
                           if (!(libEditImg.elements || []).find(el => el.name === rc.name)) {
@@ -698,7 +697,7 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ flex: 1 }}>
                 <div style={{ display: "inline-block", fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "#0EA5E918", color: "#0EA5E9", marginBottom: 8 }}>AI auto-tagged</div>
                 <input value={libAddPreview.name} onChange={e => setLibAddPreview({ ...libAddPreview, name: e.target.value })} style={{ ...S.input, fontSize: 12, fontWeight: 600, marginBottom: 8 }} placeholder="Image name..." />
-                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => (
+                {Object.keys(taxonomy).map(k => (
                   <div key={k} style={{ marginBottom: 5 }}>
                     <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>{getTaxLabel(k)}</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
