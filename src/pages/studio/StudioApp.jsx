@@ -901,6 +901,9 @@ async function loadLibraryRows() {
   return all;
 }
 
+// truss_allocations row → in-memory entry (mirrors IMS rowToAlloc): pool spread + date + events.
+function rowToAlloc(row) { return { ...(row.pool || {}), date: row.date, events: row.events || [] }; }
+
 // ═══ Event orders ↔ `event_orders` TABLE (migrated off the EO_SK blob; shared Studio↔IMS) ═══
 // IMS already persists this table row-level; Studio now reads/writes the SAME table so it finally
 // sees IMS-owned fields (deptOps / dept actuals) live — the missing link behind stale Dept-Ops data.
@@ -1779,24 +1782,21 @@ export default function StudioApp() {
       try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {}
       try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
       try {
-        const v = await kvGet(SOFT_HOLDS_SK);
-        if (v != null) { const sh = parse(v); if (sh && typeof sh === "object" && !Array.isArray(sh) && !cancelled) { const now = Date.now(); const live = {}; for (const k of Object.keys(sh)) { const exp = typeof sh[k]?.expiry === "number" ? sh[k].expiry : Date.parse(sh[k]?.expiry || ""); if (exp && exp > now) live[k] = sh[k]; } setSoftHolds(live); } }
+        const rows = await fetchAll("soft_holds");
+        if (Array.isArray(rows) && !cancelled) { const now = Date.now(); const live = {}; for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; } setSoftHolds(live); }
       } catch {}
       try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
       try {
-        const v = await kvGet(TRUSS_ALLOC_SK);
-        if (v != null) {
-          const ta = parse(v);
-          if (ta && typeof ta === "object" && !Array.isArray(ta) && !cancelled) {
-            const now = Date.now(); const cleaned = {};
-            for (const d of Object.keys(ta)) {
-              const entry = ta[d];
-              if (!entry || !Array.isArray(entry.events)) { cleaned[d] = entry; continue; }
-              const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
-              cleaned[d] = { ...entry, events: liveEvents };
-            }
-            setTrussAlloc(cleaned);
+        const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
+        if (Array.isArray(rows) && !cancelled) {
+          const now = Date.now(); const cleaned = {};
+          for (const r of rows) {
+            const entry = rowToAlloc(r);
+            if (!Array.isArray(entry.events)) { cleaned[entry.date] = entry; continue; }
+            const liveEvents = entry.events.filter(ev => { if (ev.state !== "soft") return true; const exp = typeof ev.expiry === "number" ? ev.expiry : Date.parse(ev.expiry || ""); return exp && exp > now; });
+            cleaned[entry.date] = { ...entry, events: liveEvents };
           }
+          setTrussAlloc(cleaned);
         }
       } catch {}
     })();
@@ -4862,11 +4862,14 @@ Return ONLY JSON:
       const salesperson = (typeof authUser !== "undefined" ? authUser?.name : "") || "—";
       const eventName = cli.name || "—";
       const nextHolds = { ...softHolds };
+      const holdRows = [];
       for (const itemId of matchedItemIds) {
-        nextHolds[itemId] = { salesperson, expiry, clientId: counterKey, eventName };
+        const h = { salesperson, expiry, clientId: counterKey, eventName };
+        nextHolds[itemId] = h; holdRows.push({ id: itemId, data: h });
       }
       setSoftHolds(nextHolds);
-      try { await reliableSave(SOFT_HOLDS_SK, JSON.stringify(nextHolds)); } catch {}
+      // Row-per-item to the soft_holds TABLE (off the whole-blob write) — only the items we just held.
+      try { if (holdRows.length) await supabase.from("soft_holds").upsert(holdRows, { onConflict: "id" }); } catch {}
     }
     // ════════════════════════════════════════════════════════════════════════
     // §23 PHASE 3 — Write truss soft-hold draft to the truss_allocations TABLE.

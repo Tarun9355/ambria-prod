@@ -1,4 +1,5 @@
 import { kvGet, reliableSave } from "./kv";
+import { supabase } from "../supabase";
 
 // Tier 2.3 Phase 3 (26 May 2026) — audit log of every allocation/cascade/promotion/amend event.
 // Append-only ring buffer, last 500 entries retained. See §23 Phase 3 SHIP LOG.
@@ -716,14 +717,10 @@ export const expireStaleSoftHolds = (eventsForDate, now) => {
   return changed ? kept : null;
 };
 
-// ─── Layer 4.6 — Append audit log entry (last 500 retained) ─────────────────
+// ─── Layer 4.6 — Append audit entry — one INSERT into the truss_audit TABLE (off the blob) ──
 export const appendTrussAudit = async (entry) => {
   try {
-    const existing = await kvGet(TRUSS_AUDIT_SK);
-    const arr = existing ? (JSON.parse(existing) || []) : [];
-    arr.push({ ts: Date.now(), ...entry });
-    const trimmed = arr.length > 500 ? arr.slice(-500) : arr;
-    await reliableSave(TRUSS_AUDIT_SK, JSON.stringify(trimmed), "Truss audit");
+    await supabase.from("truss_audit").insert({ data: { ts: Date.now(), ...entry } });
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn("[tier23-p3] audit append failed:", e?.message || e);

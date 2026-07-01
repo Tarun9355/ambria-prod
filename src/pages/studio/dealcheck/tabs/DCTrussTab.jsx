@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { calcZoneFabric, autoFillFabricAllocation, calcFabricAllocationTotal } from "../../../../lib/studio/pricing";
 import { TRUSS_ALLOC_SK } from "../../../../lib/studio/keys.js";
+import { supabase } from "../../../../lib/supabase";
 
 export default function DCTrussTab({ ctx }) {
   const {
@@ -232,7 +233,8 @@ export default function DCTrussTab({ ctx }) {
                                   entry.amendReason      = dcAmendDiff.reason || "";
                                 }
                                 setTrussAlloc(next);
-                                try { await reliableSave(TRUSS_ALLOC_SK, JSON.stringify(next)); } catch {}
+                                // Write the amended date row to the shared truss_allocations TABLE (off the blob).
+                                try { const e = next[d] || {}; const { date: _d, events: _e, ...pool } = e; await supabase.from("truss_allocations").upsert({ date: d, events: e.events || [], pool }, { onConflict: "date" }); } catch {}
                                 showMsg("Amend submitted — IMS will recompute pool", "green");
                                 setDcAmendDiff(null);
                               } catch (e) {

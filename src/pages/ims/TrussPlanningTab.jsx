@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { allocateForDate, applyOverridesToEvents, expireStaleSimulations, isDeptHead, buildEventAllocation, simulateImpact, TRUSS_AUDIT_SK, TRUSS_OVERRIDES_SK, TRUSS_SIMULATIONS_SK } from "../../lib/ims/trussEngine";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
+import { fetchAll, supabase } from "../../lib/supabase";
 import { Modal } from "../../components/ui";
 
 export default function TrussPlanningTab({ trussAlloc, setTrussAlloc, trussInv, eventOrders, authUser }){
@@ -17,32 +18,16 @@ export default function TrussPlanningTab({ trussAlloc, setTrussAlloc, trussInv, 
 
   const canEdit = isDeptHead(authUser);
 
-  // Load overrides + simulations + audit log on mount
+  // Load overrides + simulations + audit on mount — now from row-per-key TABLES (off the blobs),
+  // with realtime so concurrent dept-head edits sync live.
   useEffect(() => {
-    (async () => {
-      try {
-        const v = await kvGet(TRUSS_OVERRIDES_SK);
-        let parsed = v;
-        for (let i = 0; i < 2; i++) { if (typeof parsed === "string") { try { parsed = JSON.parse(parsed); } catch {} } }
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) setOverrides(parsed);
-      } catch {}
-      try {
-        const v = await kvGet(TRUSS_SIMULATIONS_SK);
-        let parsed = v;
-        for (let i = 0; i < 2; i++) { if (typeof parsed === "string") { try { parsed = JSON.parse(parsed); } catch {} } }
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          // Auto-prune expired
-          const cleaned = expireStaleSimulations(parsed, Date.now()) || parsed;
-          setSimulations(cleaned);
-        }
-      } catch {}
-      try {
-        const v = await kvGet(TRUSS_AUDIT_SK);
-        let parsed = v;
-        for (let i = 0; i < 2; i++) { if (typeof parsed === "string") { try { parsed = JSON.parse(parsed); } catch {} } }
-        if (Array.isArray(parsed)) setAuditLog(parsed.slice(-50).reverse()); // newest first
-      } catch {}
-    })();
+    const loadOverrides = async () => { try { const rows = await fetchAll("truss_overrides"); if (Array.isArray(rows)) setOverrides(Object.fromEntries(rows.map(r => [r.id, r.data || {}]))); } catch {} };
+    const loadSims = async () => { try { const rows = await fetchAll("truss_simulations"); if (Array.isArray(rows)) { const obj = Object.fromEntries(rows.map(r => [r.id, r.data || {}])); setSimulations(expireStaleSimulations(obj, Date.now()) || obj); } } catch {} };
+    const loadAudit = async () => { try { const { data } = await supabase.from("truss_audit").select("data").order("id", { ascending: false }).limit(50); if (Array.isArray(data)) setAuditLog(data.map(r => r.data).filter(Boolean)); } catch {} };
+    loadOverrides(); loadSims(); loadAudit();
+    const chO = supabase.channel("realtime:truss_overrides").on("postgres_changes", { event: "*", schema: "public", table: "truss_overrides" }, loadOverrides).subscribe();
+    const chS = supabase.channel("realtime:truss_simulations").on("postgres_changes", { event: "*", schema: "public", table: "truss_simulations" }, loadSims).subscribe();
+    return () => { try { supabase.removeChannel(chO); supabase.removeChannel(chS); } catch {} };
   }, []);
 
   // Date entry & events
@@ -91,27 +76,33 @@ export default function TrussPlanningTab({ trussAlloc, setTrussAlloc, trussInv, 
   const shortageEvents = useMemo(() => dateEvents.filter(ev => ev.shortageBorne || ev.selfShortage), [dateEvents]);
 
   // Save handlers (writes to Redis + state)
+  // Row-level: upsert only changed keys + delete removed ones (no whole-blob clobber).
   const saveOverrides = async (newOverrides) => {
+    const prev = overrides;
     setOverrides(newOverrides);
-    try { await reliableSave(TRUSS_OVERRIDES_SK, JSON.stringify(newOverrides), "Truss Overrides"); } catch {}
+    try {
+      for (const [k, val] of Object.entries(newOverrides)) if (JSON.stringify(prev[k]) !== JSON.stringify(val)) await supabase.from("truss_overrides").upsert({ id: k, data: val }, { onConflict: "id" });
+      for (const k of Object.keys(prev)) if (!(k in newOverrides)) await supabase.from("truss_overrides").delete().eq("id", k);
+    } catch {}
   };
   const saveSimulations = async (newSims) => {
+    const prev = simulations;
     setSimulations(newSims);
-    try { await reliableSave(TRUSS_SIMULATIONS_SK, JSON.stringify(newSims), "Truss Simulations"); } catch {}
+    try {
+      for (const [k, val] of Object.entries(newSims)) if (JSON.stringify(prev[k]) !== JSON.stringify(val)) await supabase.from("truss_simulations").upsert({ id: k, data: val }, { onConflict: "id" });
+      for (const k of Object.keys(prev)) if (!(k in newSims)) await supabase.from("truss_simulations").delete().eq("id", k);
+    } catch {}
   };
 
   const applyOverride = async (eoId, zoneKey, ovrData) => {
     const key = `${eoId}:${zoneKey}`;
     const next = { ...overrides, [key]: { ...ovrData, overrideBy: authUser?.name || "—", overrideAt: Date.now(), locked: true } };
     await saveOverrides(next);
-    // Append audit log
+    // Append audit — one INSERT into the truss_audit TABLE (no read-modify-write of a blob).
     try {
-      const existing = await kvGet(TRUSS_AUDIT_SK);
-      const arr = existing ? (JSON.parse(existing) || []) : [];
-      arr.push({ ts: Date.now(), date: selectedDate, event: "override-applied", eoId, zoneKey, by: authUser?.name || "—", reason: ovrData.reason || "" });
-      const trimmed = arr.length > 500 ? arr.slice(-500) : arr;
-      await reliableSave(TRUSS_AUDIT_SK, JSON.stringify(trimmed), "Truss audit (override)");
-      setAuditLog(trimmed.slice(-50).reverse());
+      const rec = { ts: Date.now(), date: selectedDate, event: "override-applied", eoId, zoneKey, by: authUser?.name || "—", reason: ovrData.reason || "" };
+      await supabase.from("truss_audit").insert({ data: rec });
+      setAuditLog(prev => [rec, ...prev].slice(0, 50));
     } catch {}
     // Trigger Layer 4 re-cascade for this date — locked entries preserved automatically
     if (dateEntry && trussInv) {
@@ -128,12 +119,9 @@ export default function TrussPlanningTab({ trussAlloc, setTrussAlloc, trussInv, 
     delete next[key];
     await saveOverrides(next);
     try {
-      const existing = await kvGet(TRUSS_AUDIT_SK);
-      const arr = existing ? (JSON.parse(existing) || []) : [];
-      arr.push({ ts: Date.now(), date: selectedDate, event: "override-removed", key, by: authUser?.name || "—" });
-      const trimmed = arr.length > 500 ? arr.slice(-500) : arr;
-      await reliableSave(TRUSS_AUDIT_SK, JSON.stringify(trimmed), "Truss audit (override removed)");
-      setAuditLog(trimmed.slice(-50).reverse());
+      const rec = { ts: Date.now(), date: selectedDate, event: "override-removed", key, by: authUser?.name || "—" };
+      await supabase.from("truss_audit").insert({ data: rec });
+      setAuditLog(prev => [rec, ...prev].slice(0, 50));
     } catch {}
     if (dateEntry && trussInv) {
       const recomputed = allocateForDate(trussAlloc, selectedDate, dateEntry.events, trussInv, `override-removed-by-${authUser?.name || "—"}`);
