@@ -111,9 +111,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         <span className="text-xs text-gray-400">%</span>
                       </div>
                     </div>
-                    {(cfg.tier === 2 || type === "Labours") && (
+                    {cfg.tier === 2 && type !== "Labours" && (
                       <div className="mt-2">
-                        <p className="text-xs text-gray-500 mb-1.5">Sub-Categories & Batch Size <span className="text-gray-400">{type === "Labours" ? "(1 labour per N units of each sub-category — each sub's labour is charged to its department; venue-min is the floor)" : "(click to add, set how many elements 1 worker handles)"}</span>:</p>
+                        <p className="text-xs text-gray-500 mb-1.5">Sub-Categories & Batch Size <span className="text-gray-400">(click to add, set how many elements 1 worker handles)</span>:</p>
                         <div className="flex flex-wrap gap-1.5 mb-2">
                           {Object.entries(cfg.subCatBatches || {}).map(([sc, batch]) => (
                             <div key={sc} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2 py-1">
@@ -133,7 +133,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     )}
                     {type === "Labours" && (
                       <div className="mt-2 pt-2 border-t border-gray-200">
-                        <p className="text-xs text-gray-500 mb-1.5">🏗️ Heavy Element Add-ons <span className="text-gray-400">(extra Labours by quantity — 1 per N, summed across elements then rounded up once)</span>:</p>
+                        <p className="text-xs text-gray-500 mb-1.5">🏗️ Heavy Element Add-ons <span className="text-gray-400">(1 labour per N units of each sub-category — drives the headcount AND routes each sub-category's labour to its department. Summed across elements, rounded up once.)</span>:</p>
                         <div className="flex flex-wrap gap-1.5 mb-2">
                           {(settings.heavyElementRanges || []).map((her, hi) => {
                             const per = her.perCount ?? 10;

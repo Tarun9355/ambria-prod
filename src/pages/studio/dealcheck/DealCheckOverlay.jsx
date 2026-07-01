@@ -352,7 +352,10 @@ export default function DealCheckOverlay({ ctx }) {
               };
               // Usage-based labour split, computed PER FUNCTION (drives the per-day split): for each fn,
               // 1 labour per N units of each sub-category, charged to that sub's department (catToDept).
-              const _labBatches = (labourTiers["Labours"] || {}).subCatBatches || {};
+              // Department usage-split uses the SAME "Heavy Element Add-ons" ratios (subCat → 1 labour
+              // per perCount) that drive the Labours headcount — one source of truth; no separate
+              // subCatBatches config needed. Each sub-category's labour is routed to its dept via catToDept.
+              const _labBatches = {}; (heavyElementRanges || []).forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
               labourUsageMode = Object.keys(_labBatches).length > 0;
               const labourUsageByFn = {};
               fns.forEach((fn, fi) => {
