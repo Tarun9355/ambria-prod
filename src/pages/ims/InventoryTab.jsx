@@ -19,8 +19,16 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
     const scoped = studioSubcatsByCat[catLabel];
     return (scoped && scoped.length > 0) ? scoped : studioSubcats;
   };
-  // Legacy cat names that still need migration — used to highlight items in UI
-  const isLegacyCat = (cat) => cat === "Stage" || cat === "Structural" || cat === "Consumable" || cat === "Floral" || cat === "Lighting" || cat === "Furniture" || cat === "Fabric" || cat === "Props";
+  // A category "needs migration" only if it can't be resolved to a CURRENT Studio category
+  // (the live rate-card cats). The old hardcoded legacy list wrongly flagged names like
+  // Lighting / Furniture / Fabric that are now real Studio categories — false "needs migration"
+  // warnings. Empty list = cats not loaded yet → don't flag anything. normCat() is defined below
+  // but only referenced at call time (render), by which point it exists.
+  const isLegacyCat = (cat) => {
+    const raw = String(cat ?? "").trim();
+    if (!raw || !studioCatLabels || studioCatLabels.length === 0) return false;
+    return !studioCatLabels.includes(normCat(raw));
+  };
 
   // ── Category/sub-cat normalization (non-destructive display layer) ─────────
   // Inventory imported from the old Supabase carries spellings that diverge from the current
