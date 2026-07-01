@@ -237,7 +237,12 @@ export default function DealCheckOverlay({ ctx }) {
               };
               const calcPpl = (fn, type) => {
                 if (type === "Flowerists") {
-                  let t = 0;
+                  // Aggregate all arrangements of the same recipe (same name + units-per-flowerist)
+                  // BEFORE rounding, then ceil once per recipe — flowerists are fungible, so 396 Reet
+                  // ÷ 50 = 8, NOT a rounded-up count per zone/element. This MUST match traceOf()'s
+                  // "HOW N DERIVED" box (which aggregates the same way); ceiling per element here was
+                  // over-counting (e.g. showing 11 when the recipe derivation says 8).
+                  const agg = {};
                   walkFn(fn, ({rc, el, qty}) => {
                     if (String(rc.cat||"").toLowerCase() !== "florals") return;
                     if (!recipeSubsMP.includes(String(rc.sub||"").toLowerCase().trim())) return;
@@ -246,8 +251,9 @@ export default function DealCheckOverlay({ ctx }) {
                     const sz = pattern.sizes || {};
                     const sk = sizeFromMode(rc.inhouseMode, el.size);
                     let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
-                    const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) t += Math.ceil(qty / upf);
-                  }); return t;
+                    const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name||"flower")+"|"+upf; agg[k] = (agg[k]||0) + qty/upf; }
+                  });
+                  let t = 0; Object.values(agg).forEach(need => { t += Math.ceil(need); }); return t;
                 }
                 if (type === "Electricians") {
                   let t = 0; walkFn(fn, ({rc, el, qty}) => {
