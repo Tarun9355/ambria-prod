@@ -4724,15 +4724,20 @@ Return ONLY JSON:
         reliableSave(DC_CACHE_SK, JSON.stringify(next), "Deal Check cache").catch(() => {});
         return next;
       });
-      // Durable auto-save: write the full draft onto the client_ledger ROW (per-client, clobber-safe)
-      // so it survives across sessions/devices and reopening restores it — no Save Draft click needed.
+      // Durable auto-save: write onto the client_ledger ROW (per-client, clobber-safe). Writes BOTH
+      // the top-level fields that loadClientSession restores (dcCards/dcZoneState/dcKitEdits/
+      // dcCarpetPick/dcMp*) — the exact payload the manual Save Draft wrote — AND the full dcDraft
+      // snapshot that openDealCheck restores. So both reopen paths work with no Save Draft click.
       const cur = clientLedgerRef.current || [];
       if (cur.some(c => c.id === activeClientId)) {
-        saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c, dcDraft: snapshot, dcDraftSavedAt: Date.now() } : c));
+        saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
+          dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides,
+          dcMpIncludeMinusOne, dcMpIncludeDismantle,
+          dcDraft: snapshot, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" } : c));
       }
     }, 1000);
     return () => clearTimeout(t);
-  }, [activeClientId, dcFullPageOpen, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, saveClientLedger]);
+  }, [activeClientId, dcFullPageOpen, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   const runDealCheckGenerate = useCallback(async (fnIdxFilter = null) => {
