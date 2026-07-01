@@ -4713,6 +4713,11 @@ Return ONLY JSON:
     // on each change floods Supabase with big upserts (503/504). dcGenerating is a dep, so the effect
     // fires once more when generation finishes and saves the settled result.
     if (dcGenerating) return;
+    // ROOT-CAUSE GUARD (recurring "draft lost on refresh"): never persist an EMPTY card set. On open/
+    // client-switch there's a window where dcCards is briefly empty (before restore completes); saving
+    // then would overwrite the good saved draft with empty and permanently corrupt it — every reload
+    // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
+    if (!dcCards || Object.keys(dcCards).length === 0) return;
     const t = setTimeout(() => {
       const snapshot = {
         resolved: dcResolved,
