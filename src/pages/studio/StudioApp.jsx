@@ -4522,7 +4522,12 @@ Return ONLY JSON:
     setDealCheckError(null);
     setDealCheckData(null);
     // ═══ Cache restore — restore cached DC state BEFORE state resets ═══
-    const cachedForThisClient = activeClientId ? dcCache[activeClientId] : null;
+    // Prefer the DURABLE per-client draft stored on the client_ledger row (a real table row now —
+    // clobber-safe), so reopening always shows the last saved state. Fall back to the legacy
+    // whole-blob dc-cache only if there's no row draft yet.
+    const clientRec = activeClientId ? (clientLedger || []).find(c => c.id === activeClientId) : null;
+    const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
+    const cachedForThisClient = rowDraft || (activeClientId ? dcCache[activeClientId] : null);
     const hasCache = !!cachedForThisClient;
     if (hasCache) {
       setDcResolved(cachedForThisClient.resolved || {});
@@ -4677,7 +4682,7 @@ Return ONLY JSON:
       }
     }
     setDcAbortRef(null);
-  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId]);
+  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
   useEffect(() => {
@@ -4719,9 +4724,15 @@ Return ONLY JSON:
         reliableSave(DC_CACHE_SK, JSON.stringify(next), "Deal Check cache").catch(() => {});
         return next;
       });
+      // Durable auto-save: write the full draft onto the client_ledger ROW (per-client, clobber-safe)
+      // so it survives across sessions/devices and reopening restores it — no Save Draft click needed.
+      const cur = clientLedgerRef.current || [];
+      if (cur.some(c => c.id === activeClientId)) {
+        saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c, dcDraft: snapshot, dcDraftSavedAt: Date.now() } : c));
+      }
     }, 1000);
     return () => clearTimeout(t);
-  }, [activeClientId, dcFullPageOpen, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems]);
+  }, [activeClientId, dcFullPageOpen, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, saveClientLedger]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   const runDealCheckGenerate = useCallback(async (fnIdxFilter = null) => {
