@@ -1155,6 +1155,13 @@ export default function DealCheckOverlay({ ctx }) {
                                           );
                                         })()}
                                       </div>
+                                      {/* Right-aligned line total (matches the Platform rental presentation). */}
+                                      {card.imsId && item && rental * (Number(card.qty) || 1) > 0 && (
+                                        <div style={{flexShrink:0,alignSelf:"center",textAlign:"right",minWidth:74}}>
+                                          <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>₹{(rental * (Number(card.qty) || 1)).toLocaleString("en-IN")}</div>
+                                          <div style={{fontSize:9,color:textS,marginTop:1,letterSpacing:0.3}}>rental</div>
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })}
