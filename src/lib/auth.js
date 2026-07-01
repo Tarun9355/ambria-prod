@@ -88,7 +88,11 @@ export function userApps(user, roleTabs = {}) {
   const apps = [];
   if (hasStudio) apps.push("studio");
   if (hasIms) apps.push("ims");
-  return apps.length ? apps : ["ims"];
+  if (apps.length) return apps;
+  // Nothing resolved — fall back to the role's NATURAL app, not a hard "ims".
+  // (A Sales user must never get bounced into IMS-only; that left them stuck on a
+  // section they can't use instead of opening Studio.)
+  return role === "Sales" ? ["studio"] : ["ims"];
 }
 
 /** Where a given user (or none) should land — their preferred app, gated by access. */

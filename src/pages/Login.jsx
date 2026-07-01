@@ -4,7 +4,7 @@ import { useAuth } from "../lib/AuthContext";
 import { landingPath } from "../lib/auth";
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, roleTabs } = useAuth();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -17,7 +17,9 @@ export default function Login() {
     setLoading(true);
     try {
       const user = await login(username.trim(), password);
-      navigate(landingPath(user), { replace: true });
+      // Use the loaded roleTabs so this redirect agrees with the route guard's own
+      // landingPath() — otherwise the two can disagree and bounce the user in a loop.
+      navigate(landingPath(user, roleTabs), { replace: true });
     } catch (err) {
       setError(err.message || "Login failed");
     } finally {
