@@ -1335,6 +1335,9 @@ export default function StudioApp() {
   const [sourceEvent, setSourceEvent] = useState(null);
   const [sourceVideo, setSourceVideo] = useState(null);
   const [filterPriority, setFilterPriority] = useState(DEFAULT_FILTER_PRIORITY);
+  // Persist photo-filter priority (single-source admin config) — was only setState'd, so it reset on
+  // refresh. Stored in the settings row FILTER_PRIORITY_SK (config, single-writer — not clobber-prone).
+  const saveFilterPriority = useCallback((np) => { setFilterPriority(np); reliableSave(FILTER_PRIORITY_SK, JSON.stringify(np), "Filter priority").catch(() => {}); }, []);
   // Sub-categories flagged in Pricing as NOT taggable — array of "cat::sub" keys. Hidden from the
   // element-search boxes (Build + Library tagger) and dropped from the AI tagger's vocabulary, so
   // already-costed structural subs (truss/platform/carpet/fabric) and IMS-only subs (tools) can't
@@ -5075,7 +5078,7 @@ Return ONLY JSON:
     zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
     // notifications
     notifications, setNotifications, notifOpen, setNotifOpen, notifLastRead, setNotifLastRead, unreadCount, markAllRead,
-    filterPriority, setFilterPriority,
+    filterPriority, setFilterPriority, saveFilterPriority,
     // tagging-hidden sub-categories (Pricing flags)
     tagHiddenSubs, isSubTagHidden, toggleTagHiddenSub,
     // deal check
