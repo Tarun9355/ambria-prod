@@ -41,6 +41,13 @@ Deno.serve(async (req) => {
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const getKv = async (key: string) => { const { data } = await db.from("settings").select("value").eq("key", key).maybeSingle(); return parse(data?.value); };
 
+  // One-time skip flag — Studio UI can set this to skip a single nightly run.
+  const skipFlag = await getKv("batch-tagger-skip-next");
+  if (skipFlag === true || skipFlag === "true") {
+    await db.from("settings").upsert({ key: "batch-tagger-skip-next", value: JSON.stringify(false) }, { onConflict: "key" });
+    return json({ ok: true, tagged: 0, message: "skipped — one-time skip was scheduled via Studio UI" });
+  }
+
   const [taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
     [TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
 

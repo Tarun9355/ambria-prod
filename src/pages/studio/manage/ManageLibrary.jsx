@@ -45,7 +45,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder, skipNightlyRun, toggleSkipNightlyRun,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -130,7 +130,9 @@ export default function ManageLibrary({ ctx }) {
     const hasTag = t._aiTagged || t.venue || t.fn || t.tier || t.io || (t.styles || []).length || (t.colors || []).length || Object.keys(t.zonePhotos || {}).length;
     return hasTag ? "review" : "untagged";
   };
-  const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged
+  const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged | nightly | manual
+  const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
+  useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
   // Permission gate for the Images / Videos / Contributions sub-views. If the current view isn't
   // allowed for this role, fall back to the first one that is.
@@ -249,6 +251,7 @@ export default function ManageLibrary({ ctx }) {
   // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
   const libVisible = libStatus === "all" ? libFiltered
     : libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
+    : libStatus === "manual" ? libFiltered.filter(i => i.tagSource === "manual")
     : libFiltered.filter(i => photoStatus(i) === libStatus);
 
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
@@ -312,6 +315,7 @@ export default function ManageLibrary({ ctx }) {
             ["review", "🤖", "Needs review", "AI-tagged — to check", libFiltered.filter(i => photoStatus(i) === "review").length, "#7C3AED"],
             ["untagged", "❓", "Untagged", "no tags yet", libFiltered.filter(i => photoStatus(i) === "untagged").length, "#9CA3AF"],
             ["nightly", "🌙", "Nightly Tagged", "tagged by nightly cron", libFiltered.filter(i => i.tagSource === "nightly").length, "#0EA5E9"],
+            ["manual", "✋", "Manual Tagged", "tagged via manual selection", libFiltered.filter(i => i.tagSource === "manual").length, "#F59E0B"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
             return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
@@ -341,10 +345,38 @@ export default function ManageLibrary({ ctx }) {
                 </span>
               );
             })()}
+            {/* Skip tonight's nightly batch-tagger run */}
+            {toggleSkipNightlyRun && (
+              <span title={skipNightlyRun ? "Tonight's 2 AM nightly run is scheduled to be skipped. Click to cancel the skip." : "Schedule a one-time skip for tonight's 2 AM nightly batch-tagger run."} style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: 8, marginLeft: 2, borderLeft: `1px solid ${border}` }}>
+                <button onClick={toggleSkipNightlyRun} style={{ ...S.btn(skipNightlyRun), fontSize: 10, padding: "4px 10px", background: skipNightlyRun ? "#F59E0B" : undefined, color: skipNightlyRun ? "#fff" : undefined }}>
+                  {skipNightlyRun ? "⏭ Skip tonight ✓" : "🌙 Skip tonight"}
+                </button>
+              </span>
+            )}
           </div>
         </div>
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
-        <div style={{ fontSize: 11, color: textS, marginBottom: 8 }}>Showing {libVisible.length} of {libItems.length} images</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libItems.length} images</span>
+          {libStatus === "untagged" && libVisible.length > 0 && (
+            <>
+              <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>
+                {libSelected.size === libVisible.length ? "Deselect all" : `Select all (${libVisible.length})`}
+              </button>
+              {libSelected.size > 0 && (
+                <>
+                  <span style={{ fontSize: 10, color: "#7C3AED", fontWeight: 600 }}>{libSelected.size} selected</span>
+                  <button onClick={() => setLibSelected(new Set())} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>Clear</button>
+                  <button
+                    disabled={bulkTag?.running}
+                    onClick={() => { runTagSelected?.([...libSelected]); setLibSelected(new Set()); }}
+                    style={{ ...S.btn(true), fontSize: 10, padding: "4px 12px", background: "#7C3AED", opacity: bulkTag?.running ? 0.5 : 1 }}
+                  >🤖 Tag selected ({libSelected.size})</button>
+                </>
+              )}
+            </>
+          )}
+        </div>
         {libFiltered.length === 0 && libItems.length === 0 && (
           <div style={{ textAlign: "center", padding: 60, color: textS }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📸</div>
@@ -353,11 +385,19 @@ export default function ManageLibrary({ ctx }) {
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
-          {libVisible.map(img => (
-            <div key={img.id} onClick={() => setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: cardBg, position: "relative" }}>
+          {libVisible.map(img => {
+            const isSel = libSelected.has(img.id);
+            return (
+            <div key={img.id} onClick={() => libStatus === "untagged" && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
               <img src={img.url} alt="" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
               {(() => { const st = photoStatus(img); const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" }; return <div title={st === "verified" ? "Verified by a person" : st === "review" ? "AI-tagged — needs review" : "Untagged"} style={{ position: "absolute", top: 6, left: 6, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>; })()}
-              {(img.linkedTemplates || []).length > 0 && <div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
+              {/* Checkbox — shown in untagged view; clicking it toggles selection without opening detail */}
+              {libStatus === "untagged" && (
+                <div onClick={e => { e.stopPropagation(); setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }); }} style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSel ? "#7C3AED" : "rgba(255,255,255,0.8)"}`, background: isSel ? "#7C3AED" : "rgba(0,0,0,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", fontWeight: 700 }}>
+                  {isSel ? "✓" : ""}
+                </div>
+              )}
+              {libStatus !== "untagged" && (img.linkedTemplates || []).length > 0 && <div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
               {(img.elements || []).length > 0 && <div style={{ position: "absolute", top: 28, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(124,58,237,0.8)", fontSize: 9, color: "#fff" }}>📋 {(img.elements || []).length}</div>}
               <div style={{ padding: "6px 8px" }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
@@ -367,7 +407,8 @@ export default function ManageLibrary({ ctx }) {
                 </div>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
         {/* House tagging-rules editor — saved to taxonomy.taggingStandards, injected into the tagger */}
         {tagRules !== null && (

@@ -65,7 +65,7 @@ import {
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK, AITAG_QUOTA_SK,
-  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
+  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, SKIP_NIGHTLY_SK,
 } from "../../lib/studio/keys.js";
 
 // Temporary daily cap on AI image-tagging calls while testing. Raise (or set to Infinity) to lift.
@@ -1270,6 +1270,7 @@ export default function StudioApp() {
   const [dcCollapsedZones, setDcCollapsedZones] = useState({});
   const [floralHardPropMap, setFloralHardPropMap] = useState(FLORAL_HARDPROP_DEFAULT);
   const [softHolds, setSoftHolds] = useState({});
+  const [skipNightlyRun, setSkipNightlyRun] = useState(false);
   const [trussAlloc, setTrussAlloc] = useState({});
   const [dcAmendDiff, setDcAmendDiff] = useState(null);
   const [amendRequests, setAmendRequests] = useState([]);
@@ -1793,6 +1794,7 @@ export default function StudioApp() {
           for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
         }
       } catch {}
+      try { const v = await kvGet(SKIP_NIGHTLY_SK); if (!cancelled) setSkipNightlyRun(v === true || v === "true"); } catch {}
       try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
       try {
         const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
@@ -4151,6 +4153,59 @@ Return ONLY JSON:
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
   };
 
+  // ── Skip tonight's nightly batch-tagger run ──────────────────────────────────
+  const toggleSkipNightlyRun = useCallback(async () => {
+    const next = !skipNightlyRun;
+    setSkipNightlyRun(next);
+    try { await reliableSave(SKIP_NIGHTLY_SK, JSON.stringify(next), "nightly skip flag"); } catch {}
+  }, [skipNightlyRun]);
+
+  // ── Tag a specific selection of images (manual select in Library UI) ──────────
+  // Same AI flow as runBulkTag but operates only on the caller-provided IDs.
+  // Sets tagSource:"manual" so results appear in the Manual Tagged chip.
+  const runTagSelected = useCallback(async (ids) => {
+    if (!ids || !ids.length) return null;
+    if (bulkTag.running) { showMsg("Tagging already running — stop it first.", "orange"); return null; }
+    const idSet = new Set(ids);
+    const targets = (libItemsRef.current || []).filter(i => idSet.has(i.id));
+    if (!targets.length) { showMsg("No matching images found.", "orange"); return null; }
+    bulkTagStop.current = false;
+    setBulkTag({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
+    const patch = {};
+    let ok = 0, fail = 0;
+    const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); saveLib(merged); };
+    for (let n = 0; n < targets.length; n++) {
+      if (bulkTagStop.current) break;
+      const img = targets[n];
+      try {
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const upd = {};
+        let gotTags = false;
+        if (result) {
+          const tagSrc = result.tags || result;
+          if (tagSrc) { const t = { ...(img.tags || {}) }; let any = false; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) { t[k] = tagSrc[k]; any = true; } }); if (any) { upd.tags = t; gotTags = true; } }
+          if (result.name && (!img.name || img.name.startsWith("img ") || img.name === "Untitled")) upd.name = result.name;
+          if (Array.isArray(result.elements) && result.elements.length > 0) { upd.elements = result.elements; gotTags = true; }
+          if (typeof result.lightCount === "number") upd.lightCount = result.lightCount;
+          if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
+          if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags;
+          const d = result.dims || {};
+          if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
+        }
+        if (gotTags) { upd._aiTagged = true; upd._aiTaggedAt = Date.now(); upd.tagSource = "manual"; ok++; }
+        else { upd._aiFailed = true; upd._aiFailedAt = Date.now(); fail++; }
+        patch[img.id] = upd;
+      } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
+      setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
+      if ((n + 1) % 8 === 0) flush();
+    }
+    flush();
+    const stopped = bulkTagStop.current;
+    setBulkTag({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
+    showMsg(`🤖 Done — ${ok} tagged, ${fail} failed. See Manual Tagged chip.`, "green");
+    return { ok, fail };
+  }, [bulkTag.running, aiTagImage, saveLib, showMsg, taxonomy]);
+
   // ── Soft-hold expiry sweeper ─────────────────────────────────────────────────
   // Runs every 5 minutes while the app is open. Expired soft holds are removed from
   // in-memory state AND deleted from the soft_holds DB table so other salesperson
@@ -5039,7 +5094,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, skipNightlyRun, toggleSkipNightlyRun, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,

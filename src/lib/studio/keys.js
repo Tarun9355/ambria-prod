@@ -66,6 +66,7 @@ export const TAG_KB_SK = "ambria-tag-knowledgebase-v1"; // AI-tagging knowledge 
 export const AITAG_QUOTA_SK = "ambria-aitag-quota-v1"; // { date, count } — global daily AI-tagging cap (temporary, for testing)
 export const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // array of "cat::sub" keys flagged in Pricing as NOT taggable (hidden from element-search boxes + AI vocabulary; items still exist in pricing/IMS)
 export const PREMIA_CFG_SK = "ambria-premia-config-v1";
+export const SKIP_NIGHTLY_SK = "batch-tagger-skip-next";
 
 export const DEFAULT_FILTER_PRIORITY = [
   { id: "tier", label: "Tier", icon: "🏷️" },
