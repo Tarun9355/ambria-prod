@@ -902,6 +902,32 @@ async function loadLibraryRows() {
   return all;
 }
 
+// ═══ Client ledger ↔ `client_ledger` TABLE mappers (migrated off the settings blob) ═══
+// Full client object in `data`; typed columns (name/phone/email/status/budget/created_by) mirrored.
+function rowToClient(row) {
+  if (!row) return null;
+  const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
+  const base = d ? { ...d, id: row.id } : { id: row.id, name: row.name, phone: row.phone, email: row.email, budget: row.budget };
+  return { ...base, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
+}
+function clientToRow(c) {
+  return {
+    id: c.id, name: c.name || "", phone: c.phone ?? null, email: c.email ?? null,
+    status: c.status || "ongoing", budget: Number(c.budget) || 0, created_by: c.createdBy ?? null,
+    data: c,
+  };
+}
+async function loadClientRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.from("client_ledger").select("*").order("id").range(from, from + SIZE - 1);
+    if (error) throw error;
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -1673,11 +1699,8 @@ export default function StudioApp() {
       try { const v = await kvGet(NOTIF_SK); if (v != null) { const np = parse(v); if (Array.isArray(np) && !cancelled) setNotifications(np); } } catch {}
       // Video tags
       try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
-      // Client ledger — normalize old clients missing status/createdBy
-      try {
-        const v = await kvGet(CLI_SK);
-        if (v != null) { const cp = parse(v); if (Array.isArray(cp) && !cancelled) setClientLedger(cp.map(c => ({ ...c, status: c.status || "ongoing", createdBy: c.createdBy || "—" }))); }
-      } catch {}
+      // Client ledger — now row-per-client in the `client_ledger` TABLE (off the settings blob).
+      try { const rows = await loadClientRows(); if (Array.isArray(rows) && !cancelled) setClientLedger(rows.map(rowToClient).filter(Boolean)); } catch { /* ignore */ }
       // Date types
       try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
       // Event orders
@@ -1769,7 +1792,6 @@ export default function StudioApp() {
           else if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
-          else if (key === CLI_SK) { const a = pj(await kvGet(CLI_SK)); if (Array.isArray(a)) setClientLedger(a); }
           else if (key === CORR_SK) { const a = pj(await kvGet(CORR_SK)); if (Array.isArray(a)) { setCorrLog(a); corrLogRef.current = a; } }
         } catch { /* ignore */ }
       })
@@ -1791,6 +1813,21 @@ export default function StudioApp() {
           const idx = prev.findIndex((it) => it.id === item.id);
           const next = idx >= 0 ? prev.map((it) => (it.id === item.id ? item : it)) : [...prev, item];
           libItemsRef.current = next; setLibItems(next);
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: client ledger is now a TABLE — apply row-level changes live. ──
+  useEffect(() => {
+    const ch = subscribeTable("client_ledger", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setClientLedger((prev) => prev.filter((c) => c.id !== id));
+        } else if (payload.new) {
+          const c = rowToClient(payload.new); if (!c?.id) return;
+          setClientLedger((prev) => { const i = prev.findIndex((x) => x.id === c.id); return i >= 0 ? prev.map((x) => (x.id === c.id ? c : x)) : [...prev, c]; });
         }
       } catch { /* ignore */ }
     });
@@ -1855,7 +1892,26 @@ export default function StudioApp() {
   }, [libItems, tagKB, rebuildTagKB]);
   const saveTax = useCallback(async (nt) => { setTaxonomy(nt); await reliableSave(TAX_SK, JSON.stringify(nt), "Taxonomy"); }, []);
   const saveTeam = useCallback(async (nt) => { setTeamData(nt); await reliableSave(TEAM_SK, JSON.stringify(nt), "Team"); }, []);
-  const saveClientLedger = useCallback(async (nl) => { setClientLedger(nl); await reliableSave(CLI_SK, JSON.stringify(nl), "Clients"); }, []);
+  // Row-level client-ledger persistence (off the whole-blob save). Upserts only changed rows and
+  // deletes only explicit ids — never deletes a client just because it's absent from `nl` (so the
+  // slice(0,500) cap in the Client Tracker can't drop rows). Mirrors the library approach.
+  const clientLedgerRef = useRef([]);
+  useEffect(() => { clientLedgerRef.current = clientLedger; }, [clientLedger]);
+  const saveClientLedger = useCallback(async (nl, deletedIds) => {
+    const prev = clientLedgerRef.current || [];
+    const prevById = {}; prev.forEach((c) => { if (c && c.id) prevById[c.id] = c; });
+    clientLedgerRef.current = nl; setClientLedger(nl);
+    const changed = (nl || []).filter((c) => c && c.id && JSON.stringify(prevById[c.id]) !== JSON.stringify(c));
+    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    try {
+      if (changed.length) {
+        const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
+        const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
+        if (error) throw error;
+      }
+      for (const id of dels) await deleteRow("client_ledger", id);
+    } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
+  }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
   const savePremiaConfig = useCallback(async (nc) => { const m = { ...PREMIA_DEFAULTS, ...nc }; setPremiaConfig(m); await reliableSave(PREMIA_CFG_SK, JSON.stringify(m), "Premia config"); }, []);
   // Submit a last-minute amendment request to the department head. Re-reads the
