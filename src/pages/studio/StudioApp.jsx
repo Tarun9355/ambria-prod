@@ -4704,6 +4704,10 @@ Return ONLY JSON:
       Object.keys(dcDedupOverrides).length === 0 &&
       Object.keys(dcProductionAccepted).length === 0;
     if (allEmpty) return;
+    // Don't auto-save DURING a Generate — dcCards changes rapidly then, and saving the (large) draft
+    // on each change floods Supabase with big upserts (503/504). dcGenerating is a dep, so the effect
+    // fires once more when generation finishes and saves the settled result.
+    if (dcGenerating) return;
     const t = setTimeout(() => {
       const snapshot = {
         resolved: dcResolved,
@@ -4719,15 +4723,11 @@ Return ONLY JSON:
         customItems: dcCustomItems,
         cachedAt: new Date().toISOString()
       };
-      setDcCache(prev => {
-        const next = { ...prev, [activeClientId]: snapshot };
-        reliableSave(DC_CACHE_SK, JSON.stringify(next), "Deal Check cache").catch(() => {});
-        return next;
-      });
-      // Durable auto-save: write onto the client_ledger ROW (per-client, clobber-safe). Writes BOTH
-      // the top-level fields that loadClientSession restores (dcCards/dcZoneState/dcKitEdits/
-      // dcCarpetPick/dcMp*) — the exact payload the manual Save Draft wrote — AND the full dcDraft
-      // snapshot that openDealCheck restores. So both reopen paths work with no Save Draft click.
+      // In-session cache only (no network write — the old whole-blob reliableSave hammered the
+      // settings table). The DURABLE copy is the per-client client_ledger row below.
+      setDcCache(prev => ({ ...prev, [activeClientId]: snapshot }));
+      // Durable auto-save → client_ledger ROW (per-client, clobber-safe). dcDraft (full snapshot for
+      // openDealCheck) + the top-level fields loadClientSession restores. One write, after edits settle.
       const cur = clientLedgerRef.current || [];
       if (cur.some(c => c.id === activeClientId)) {
         saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
@@ -4735,9 +4735,9 @@ Return ONLY JSON:
           dcMpIncludeMinusOne, dcMpIncludeDismantle,
           dcDraft: snapshot, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" } : c));
       }
-    }, 1000);
+    }, 2500);
     return () => clearTimeout(t);
-  }, [activeClientId, dcFullPageOpen, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+  }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   const runDealCheckGenerate = useCallback(async (fnIdxFilter = null) => {
