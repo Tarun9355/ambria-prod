@@ -29,6 +29,9 @@ const BLOCKS_SK = "ambria-ims-blocks-v1"; // blocks document blob (faithful to r
 const RC_SK = "ambria-ratecard-v4"; // Studio Rate Card blob — the live source the Studio app writes
 const RC_SK_CATS = "ambria-rccats-v1"; // Studio Rate Card *categories* — the team edits/adds these in Studio
 
+// blocks `blocks` TABLE rows (row-per-item) → in-memory { [itemId]: [reservations] } shape.
+const blocksRowsToMap = (rows) => Object.fromEntries((rows || []).map((r) => [r.item_id || r.id, Array.isArray(r.data) ? r.data : []]));
+
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
   { id: "dashboard", label: "🏠 Dashboard" },
@@ -192,8 +195,7 @@ export default function IMS() {
   // Apply settings-table rows → blocks blob, Studio rate-card mirror (RC_SK), settings object.
   // Shared by the initial load and the settings Realtime subscription so config syncs live.
   const applySettingsRows = useCallback((setRows) => {
-    const blocksRow = setRows.find((r) => r.key === BLOCKS_SK);
-    if (blocksRow?.value != null) { try { setBlocksState(typeof blocksRow.value === "string" ? JSON.parse(blocksRow.value) : blocksRow.value); } catch { /* keep */ } }
+    // blocks now come from the `blocks` TABLE (boot fetch + its own realtime), not this blob.
     // Rate-card ITEMS now live in the `rate_card` TABLE (read on load + via its own realtime), not
     // the RC_SK settings blob — so it's intentionally no longer read here.
     // Studio Rate Card *categories* — load the live list the team edits in Studio (adds like
@@ -303,7 +305,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -320,8 +322,10 @@ export default function IMS() {
           fetchAll("truss_inventory").catch(() => []),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
+          fetchAll("blocks").catch(() => []),
         ]);
         if (!active) return;
+        { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
         const loadedItems = invRows.map(rowToItem);
         itemsRef.current = loadedItems; // keep the ref in lockstep from the very first paint
         setItems(loadedItems);
@@ -386,6 +390,7 @@ export default function IMS() {
     };
     liveTable("settings", (rows) => applySettingsRows(rows));
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id }))));
+    liveTable("blocks", (rows) => { const bm = blocksRowsToMap(rows); blocksRef.current = bm; setBlocksState(bm); });
     liveTable("event_orders", (rows) => setEventOrdersState(rows.map(rowToEO)));
     liveTable("functions", (rows) => setFns(rows.map(rowToFn)));
     liveTable("projects", (rows) => setProjectsState(rows.map(rowToProject)));
@@ -786,23 +791,37 @@ export default function IMS() {
   // the same row-level persistence (setEventOrders already writes through).
   const saveEventOrders = useCallback((val, del = []) => { setEventOrders(val, del); }, [setEventOrders]);
 
-  // blocks — one document blob ({ [itemId]: [reservations] }); persisted whole under
-  // BLOCKS_SK (faithful to the reference's single Redis blob).
-  const persistBlocks = (next) => {
-    reliableSave(BLOCKS_SK, JSON.stringify(next || {}), "Blocks").then((r) => { if (!r.ok && r.error) setError(`Save failed: ${r.error}`); });
+  // blocks — migrated off the single BLOCKS_SK blob to the `blocks` TABLE, ROW-PER-ITEM
+  // (id = itemId, data = that item's reservation array). Row-level diff so a stale session only
+  // rewrites the items it actually changed — no whole-blob clobber. In-memory shape is unchanged
+  // ({ [itemId]: [reservations] }), so every consumer stays the same.
+  const persistBlocks = async (next, prev) => {
+    const nextO = next || {}, prevO = prev || {};
+    const upserts = [], deletes = [];
+    for (const [itemId, arr] of Object.entries(nextO)) {
+      if (JSON.stringify(prevO[itemId]) === JSON.stringify(arr)) continue; // unchanged → skip
+      if (Array.isArray(arr) && arr.length) upserts.push({ id: itemId, item_id: itemId, data: arr });
+      else deletes.push(itemId); // emptied → remove the row
+    }
+    for (const itemId of Object.keys(prevO)) if (!(itemId in nextO)) deletes.push(itemId); // item removed
+    try {
+      if (upserts.length) { const { error } = await supabase.from("blocks").upsert(upserts, { onConflict: "id" }); if (error) throw error; }
+      for (const id of deletes) { const { error } = await supabase.from("blocks").delete().eq("id", id); if (error) throw error; }
+    } catch (e) { setError(`Save failed: ${e?.message || e}`); }
   };
   const setBlocks = useCallback((updater) => {
     const prev = blocksRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     blocksRef.current = next;
     setBlocksState(next);
-    persistBlocks(next);
+    persistBlocks(next, prev);
   }, []);
   const saveBlocks = useCallback((val) => {
-    const next = typeof val === "function" ? val(blocksRef.current) : val;
+    const prev = blocksRef.current;
+    const next = typeof val === "function" ? val(prev) : val;
     blocksRef.current = next;
     setBlocksState(next);
-    persistBlocks(next);
+    persistBlocks(next, prev);
   }, []);
   // Last-minute amendment requests (JSON blob under AMEND_SK, like blocks).
   useEffect(() => {

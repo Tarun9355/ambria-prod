@@ -843,20 +843,19 @@ function paintPillLabel(el, baseColour) {
 }
 
 // ═══ IMS cross-fetch — REWIRED to Supabase (Part 2). §25 LMS lead search is LIVE.
-// Reads inventory (inventory table → rowToItem) + blocks (settings blob IMS_BLOCKS_SK).
+// Reads inventory (inventory table → rowToItem) + blocks (now the `blocks` TABLE, row-per-item).
 // Returns the same per-date shape the reference returned: { inventory, blocksForDate }.
 // blocksForDate: { imsId: totalBlockedQty for that date }.
 async function fetchIMSData(date) {
   try {
-    const [invRows, blocksBlob] = await Promise.all([
+    const [invRows, blockRows] = await Promise.all([
       fetchAll("inventory").catch(() => []),
-      kvGet("ambria-ims-blocks-v1").catch(() => null),
+      fetchAll("blocks").catch(() => []),
     ]);
     let inventory = Array.isArray(invRows) ? invRows.map(rowToItem).filter(Boolean) : [];
-    let blocks = blocksBlob;
-    // Defensive double-parse (blob may be a JSON string)
-    for (let i = 0; i < 2; i++) { if (typeof blocks === "string") { try { blocks = JSON.parse(blocks); } catch {} } }
-    if (typeof blocks !== "object" || !blocks) blocks = {};
+    // blocks table is row-per-item: { id/item_id, data: [reservations] } → { itemId: [reservations] }
+    const blocks = {};
+    for (const r of (Array.isArray(blockRows) ? blockRows : [])) { const id = r.item_id || r.id; if (id) blocks[id] = Array.isArray(r.data) ? r.data : []; }
     const blocksForDate = {};
     for (const [imsId, blockList] of Object.entries(blocks)) {
       if (!Array.isArray(blockList)) continue;
