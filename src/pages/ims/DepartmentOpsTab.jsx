@@ -714,7 +714,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     <div key={i} className="px-4 py-2.5">
                       <div className="flex items-center gap-3">
                         <button onClick={() => setMpOpen(o => ({ ...o, [i]: !o[i] }))} className="shrink-0 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-0.5" title="How this crew number was calculated">{open ? "▾ hide" : "▸ how"}</button>
-                        <span className="flex-1 text-sm font-medium text-gray-800">{r.type}{r.shared && <span className="ml-2 text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}{days > 1 && !r.shared && <span className="ml-2 text-[10px] text-gray-400 font-normal">{days} days</span>}</span>
+                        <span className="flex-1 text-sm font-medium text-gray-800">{r.type}{r.shared && <span className="ml-2 text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}{(() => { const dh = Number(r.rate) > 0 ? Math.round(Number(lineCost(r)) / Number(r.rate)) : 0; return dh > 0 && !r.shared ? <span className="ml-2 text-[10px] text-gray-400 font-normal">{dh} dihari</span> : null; })()}</span>
                         {r.shared && !dayWise(r) ? (
                           <span className="text-[10px] text-gray-400 mr-2">split allocation</span>
                         ) : (<>
@@ -756,12 +756,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {renderMpTrace(r.trace)}
                             {renderMpSchedule(r)}
                             {r.basis && !r.trace && <span className="text-gray-600">📐 {r.basis}<br /></span>}
-                            {r.sysCount != null && r.sysCount !== "" && (
+                            {r.sysCount != null && r.sysCount !== "" && (() => {
+                              // Cost is DIHARI-based (crew × shifts per day + dismantle), not crew×days — show it that
+                              // way so the math reconciles with the day-wise total (e.g. 33 dihari × ₹1,500 = ₹49,500)
+                              // instead of the misleading "N crew × days" which doesn't multiply to the shown total.
+                              const sysDihari = Number(r.sysRate) > 0 ? Math.round((Number(r.sysCost) || 0) / Number(r.sysRate)) : (Number(r.sysCount) || 0);
+                              const ovrDihari = Number(r.rate) > 0 ? Math.round(Number(lineCost(r)) / Number(r.rate)) : (Number(r.count) || 0);
+                              return (
                               <span className={overridden ? "text-amber-600 font-semibold" : "text-gray-500"}>
-                                Studio plan: {r.sysCount} crew × {fmt(r.sysRate || 0)}/day{days > 1 ? ` × ${days} days` : ""} = {fmt(r.sysCost || 0)}
-                                {overridden && <> → you set <b>{r.count || 0} × {fmt(r.rate || 0)}/day{days > 1 ? ` × ${days} days` : ""} = {fmt(lineCost(r))}</b></>}
+                                Studio plan: {sysDihari} dihari × {fmt(r.sysRate || 0)} = {fmt(r.sysCost || 0)}
+                                {overridden && <> → you set <b>{ovrDihari} dihari × {fmt(r.rate || 0)} = {fmt(lineCost(r))}</b></>}
                               </span>
-                            )}
+                              );
+                            })()}
                           </>)}
                         </div>
                       )}
