@@ -70,5 +70,18 @@ Flowers → Recipes.
 
 ---
 
+## Library → row-per-photo table migration — ⬜ RUN AFTER restoring the 29-Jun backup
+The Studio library moved off the `ambria-library-v2` settings blob (whole-array saves caused mass
+data loss) to the row-per-photo `library` table. The table + realtime already exist (migration 001);
+this only adds a `data` JSONB catch-all for fields without typed columns (_verified, _aiTagged,
+lightCount, unrecognized, etc.). Run this ONCE in the SQL editor, then tell Claude to run the backfill.
+```sql
+ALTER TABLE public.library ADD COLUMN IF NOT EXISTS data JSONB DEFAULT '{}'::jsonb;
+```
+Then: (1) Claude backfills `library` rows from the restored blob, (2) Claude merges the branch to
+deploy the app, (3) redeploy the tagger: `supabase functions deploy batch-tagger`.
+
+---
+
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)

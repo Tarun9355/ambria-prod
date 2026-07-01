@@ -41,9 +41,25 @@ Deno.serve(async (req) => {
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const getKv = async (key: string) => { const { data } = await db.from("settings").select("value").eq("key", key).maybeSingle(); return parse(data?.value); };
 
-  const [library, taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
-    [LIB_SK, TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
-  if (!Array.isArray(library)) return json({ error: "library blob not found" }, 500);
+  const [taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
+    [TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
+
+  // Library is now the `library` TABLE (row-per-photo), not the settings blob. The full item lives
+  // in the `data` JSONB column; typed columns are mirrors. Read all rows (paginated — 1000 cap).
+  const rowToItem = (row: any) => (row?.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length)
+    ? { ...row.data, id: row.id }
+    : { id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [], dims: row.dims || {} };
+  const fetchLibraryRows = async () => {
+    const all: any[] = []; const SIZE = 1000;
+    for (let from = 0; ; from += SIZE) {
+      const { data, error } = await db.from("library").select("*").order("id").range(from, from + SIZE - 1);
+      if (error) throw new Error(error.message);
+      all.push(...(data || []));
+      if (!data || data.length < SIZE) break;
+    }
+    return all;
+  };
+  const library = (await fetchLibraryRows()).map(rowToItem);
   const tax = taxonomy || {};
   const rc = Array.isArray(rateCard) ? rateCard : [];
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
@@ -151,12 +167,16 @@ Return ONLY JSON matching the provided schema.`;
     }
   }
 
-  // Merge back into the LATEST library blob (re-read right before write to minimise clobber).
+  // Write back row-level to the `library` TABLE — only the tagged rows, so nothing else is touched.
   if (ok > 0) {
-    const latest = await getKv(LIB_SK);
-    const arr = Array.isArray(latest) ? latest : library;
-    const merged = arr.map((i: any) => patches[i.id] ? { ...i, ...patches[i.id] } : i);
-    await db.from("settings").upsert({ key: LIB_SK, value: JSON.stringify(merged) }, { onConflict: "key" });
+    const rows = targets.filter((img: any) => patches[img.id]).map((img: any) => {
+      const item = { ...img, ...patches[img.id] };
+      return { id: item.id, name: item.name ?? null, url: item.url ?? null, tags: item.tags || {}, elements: item.elements || [], dims: item.dims || {}, data: item, updated_at: new Date().toISOString() };
+    });
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await db.from("library").upsert(rows.slice(i, i + 500), { onConflict: "id" });
+      if (error) return json({ error: error.message, tagged: ok }, 500);
+    }
   }
   if (logs.length) await db.from("batch_tag_log").insert(logs);
 

@@ -54,7 +54,7 @@ import {
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { supabase, fetchAll } from "../../lib/supabase";
+import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
@@ -872,6 +872,36 @@ async function fetchIMSData(date) {
   }
 }
 
+// ═══ Studio library ↔ `library` TABLE mappers (migrated off the settings blob) ═══
+// The full item lives in the `data` JSONB column (all fields, incl. _verified/_aiTagged/lightCount/
+// unrecognized); typed columns (name/url/tags/elements/dims/linked_templates) are mirrored for
+// queries. Reading prefers `data` (full fidelity) and falls back to typed columns.
+function rowToLibItem(row) {
+  if (!row) return null;
+  const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
+  if (d) return { ...d, id: row.id };
+  return { id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [], dims: row.dims || {}, linkedTemplates: row.linked_templates || [] };
+}
+function libItemToRow(it) {
+  return {
+    id: it.id, name: it.name ?? null, url: it.url ?? null,
+    tags: it.tags || {}, elements: it.elements || [], dims: it.dims || {},
+    linked_templates: it.linkedTemplates || it.linked_templates || [],
+    data: it,
+  };
+}
+// Paginated load — fetchAll caps at 1000 rows; the library can be 2000+.
+async function loadLibraryRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.from("library").select("*").order("id").range(from, from + SIZE - 1);
+    if (error) throw error;
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -1624,8 +1654,9 @@ export default function StudioApp() {
       // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
       // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
       // taxonomy are now fully user-managed; create/delete via the Zone editor.
-      // Library
-      try { const v = await kvGet(LIB_SK); if (v != null) { const lp = parse(v); if (Array.isArray(lp) && !cancelled) setLibItems(lp); } } catch {}
+      // Library — now row-per-photo in the `library` TABLE (migrated off the settings blob so a
+      // single stale whole-array save can't wipe everyone's tags). Paginated: fetchAll caps at 1000.
+      try { const rows = await loadLibraryRows(); if (Array.isArray(rows) && !cancelled) { const items = rows.map(rowToLibItem); libItemsRef.current = items; setLibItems(items); } } catch { /* ignore */ }
       // Correction log (contribution tracking)
       try { const v = await kvGet(CORR_SK); if (v != null) { const cp = parse(v); if (Array.isArray(cp) && !cancelled) { setCorrLog(cp); corrLogRef.current = cp; } } } catch {}
       try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
@@ -1739,29 +1770,56 @@ export default function StudioApp() {
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === CLI_SK) { const a = pj(await kvGet(CLI_SK)); if (Array.isArray(a)) setClientLedger(a); }
-          else if (key === LIB_SK) {
-            const a = pj(await kvGet(LIB_SK));
-            if (Array.isArray(a)) {
-              // Merge, don't blind-replace: if an incoming whole-blob write is MISSING a verification we
-              // already hold locally (a concurrent reviewer / the bulk-tagger rewrote the blob from a
-              // pre-verify snapshot), keep our verified stamp so it doesn't slide back to needs-review.
-              const localById = {}; (libItemsRef.current || []).forEach(it => { if (it && it.id) localById[it.id] = it; });
-              const merged = a.map(it => { const loc = localById[it.id]; return (loc && loc._verified && !it._verified) ? { ...it, _verified: true, _verifiedBy: loc._verifiedBy, _verifiedAt: loc._verifiedAt } : it; });
-              libItemsRef.current = merged; setLibItems(merged);
-            }
-          }
           else if (key === CORR_SK) { const a = pj(await kvGet(CORR_SK)); if (Array.isArray(a)) { setCorrLog(a); corrLogRef.current = a; } }
         } catch { /* ignore */ }
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
+  // ── Realtime: library is now a TABLE — apply row-level INSERT/UPDATE/DELETE live (replaces the
+  // old whole-blob LIB_SK reload). Echoes of our own writes are idempotent (same row back). ──
+  useEffect(() => {
+    const ch = subscribeTable("library", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          const next = (libItemsRef.current || []).filter((it) => it.id !== id);
+          libItemsRef.current = next; setLibItems(next);
+        } else if (payload.new) {
+          const item = rowToLibItem(payload.new); if (!item?.id) return;
+          const prev = libItemsRef.current || [];
+          const idx = prev.findIndex((it) => it.id === item.id);
+          const next = idx >= 0 ? prev.map((it) => (it.id === item.id ? item : it)) : [...prev, item];
+          libItemsRef.current = next; setLibItems(next);
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
   const saveZD = useCallback(async (nd) => { setZoneDefs(nd); await reliableSave(ZONE_DEF_SK, JSON.stringify(nd), "Zone config"); }, []);
   // Sync libItemsRef SYNCHRONOUSLY (not just via the [libItems] effect) so the background bulk-tagger's
   // next flush merges into the just-saved array — otherwise it can flush a pre-save snapshot and wipe a
   // manual _verified stamp. (Root cause of "verified images sliding back to needs-review".)
-  const saveLib = useCallback(async (nl) => { libItemsRef.current = nl; setLibItems(nl); await reliableSave(LIB_SK, JSON.stringify(nl), "Library"); }, []);
+  // Row-level library persistence (migrated off the whole-blob save that caused mass data loss).
+  // Callers still pass the full next array (+ optional deletedIds); we UPSERT only the rows that
+  // actually changed and DELETE only ids explicitly passed. Crucially we NEVER delete a row just
+  // because it's absent from `nl` — so a stale client holding a partial library can't wipe the rest.
+  const saveLib = useCallback(async (nl, deletedIds) => {
+    const prev = libItemsRef.current || [];
+    const prevById = {}; prev.forEach((it) => { if (it && it.id) prevById[it.id] = it; });
+    libItemsRef.current = nl; setLibItems(nl);
+    const changed = (nl || []).filter((it) => it && it.id && JSON.stringify(prevById[it.id]) !== JSON.stringify(it));
+    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    try {
+      if (changed.length) {
+        const rows = changed.map((it) => ({ ...libItemToRow(it), updated_at: new Date().toISOString() }));
+        const { error } = await supabase.from("library").upsert(rows, { onConflict: "id" });
+        if (error) throw error;
+      }
+      for (const id of dels) await deleteRow("library", id);
+    } catch (e) { showMsg?.("Library save failed: " + (e?.message || e), "red"); }
+  }, [showMsg]);
   // Append one human correction to the shared log (who/what/when) for contribution reporting.
   // Best-effort append (same shared-blob model as the rest of the app); capped to the latest 5000.
   const logCorrection = useCallback((info) => {
@@ -3906,7 +3964,9 @@ Return ONLY JSON:
     setBulkTag({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
     const patch = {}; // id -> changed fields only
     let ok = 0, fail = 0;
-    const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); libItemsRef.current = merged; saveLib(merged); };
+    // NOTE: don't pre-set libItemsRef here — saveLib diffs the new array against the current ref to
+    // decide which rows to upsert, so it must still see the pre-flush state as "previous".
+    const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); saveLib(merged); };
     for (let n = 0; n < targets.length; n++) {
       if (bulkTagStop.current) break;
       if (aiTagCountToday() >= AI_TAG_DAILY_LIMIT) { showMsg(`Daily AI-tagging limit reached (${AI_TAG_DAILY_LIMIT}/day during testing) — stopped.`, "orange"); break; }
@@ -4003,8 +4063,7 @@ Return ONLY JSON:
       return { id: "LIB" + stamp + ix.toString(36) + Math.random().toString(36).slice(2, 4), url: r.secure_url, name: fname, tags: { eventType: [], venueType: [], venue: "", areasElements: zone ? [zone] : [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] }, elements: [], addedAt: Date.now(), source: "folder-import", _event: eventName };
     });
     const merged = [...(libItemsRef.current || []), ...newImgs];
-    libItemsRef.current = merged;
-    saveLib(merged);
+    saveLib(merged); // saveLib sets libItemsRef + upserts only the new rows
     showMsg(`✓ Imported ${newImgs.length} new photo(s) from "${eventName}" (whole folder tree)${skipped ? ` · skipped ${skipped} already in library` : ""}. Run "Tag all untagged" to AI-tag them.`, "green");
     return { added: newImgs.length, skipped, scanned, eventName };
   }, [cldAdmin, saveLib, showMsg, taxonomy]);
