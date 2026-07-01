@@ -147,6 +147,8 @@ export default function ManageLibrary({ ctx }) {
   const [corrKind, setCorrKind] = useState("all");       // all | photo | video
   const [corrSearch, setCorrSearch] = useState("");      // search by person or photo/video name
   const [importingFolder, setImportingFolder] = useState(false); // recursive folder import in progress
+  const [rebuildRunning, setRebuildRunning] = useState(false);
+  const [rebuildMsg, setRebuildMsg] = useState("");
   const untaggedCount = useMemo(() => libItems.filter(i => i.url && photoStatus(i) === "untagged").length, [libItems]);
 
   // Bulk "Tag all untagged" now runs APP-WIDE (in StudioApp) so it keeps going while you move
@@ -158,8 +160,96 @@ export default function ManageLibrary({ ctx }) {
     runBulkTag?.();
   };
 
+  // Rebuild Library — scans ALL Cloudinary folders and inserts missing images.
+  // Uses the same cldAdmin edge-function path as importCloudinaryFolder.
+  // Existing images (and their tags) are always preserved.
+  const handleRebuildLibrary = async () => {
+    const TOP_FOLDERS = ["Ambria", "inhouse venues", "inventory", "Outside Venues", "client-uploads", "production-ref"];
+    if (!window.confirm(
+      `Rebuild Library from Cloudinary?\n\n` +
+      `Scans all ${TOP_FOLDERS.length} folders (~9,987 images total).\n` +
+      `• Existing tags are preserved — nothing is overwritten\n` +
+      `• Missing images are added as Untagged\n` +
+      `• May take 3–8 minutes\n\n` +
+      `Run "🤖 Tag all untagged" afterwards.`
+    )) return;
+
+    setRebuildRunning(true);
+    setRebuildMsg("Starting…");
+
+    const existUrls = new Set(libItems.map(l => l.url));
+    const existIds  = new Set(libItems.map(l => l.id));
+    const fresh = [];
+    let totalScanned = 0;
+
+    try {
+      for (const topFolder of TOP_FOLDERS) {
+        setRebuildMsg(`Scanning "${topFolder}"…`);
+
+        // Page through all images under this prefix (catches all depths)
+        let cursor = "";
+        let folderScanned = 0;
+        for (let pg = 0; pg < 100; pg++) {
+          const d = await ctx.cldAdmin("list", {
+            prefix: topFolder,
+            max_results: 500,
+            ...(cursor ? { next_cursor: cursor } : {}),
+          });
+          for (const r of d.resources || []) {
+            if (!r.secure_url) continue;
+            folderScanned++;
+            totalScanned++;
+            if (existUrls.has(r.secure_url) || existIds.has(r.public_id)) continue;
+            existUrls.add(r.secure_url);
+            existIds.add(r.public_id);
+            const name = (r.public_id ?? "").split("/").pop().replace(/[-_]/g, " ");
+            fresh.push({
+              id: r.public_id,
+              name,
+              url: r.secure_url,
+              folder: topFolder,
+              tags: {},
+              elements: [],
+              addedAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+              width:  r.width  ?? null,
+              height: r.height ?? null,
+              source: "cloudinary-rebuild",
+            });
+          }
+          setRebuildMsg(`"${topFolder}": ${folderScanned} scanned · ${fresh.length} new total…`);
+          if (!d.next_cursor) break;
+          cursor = d.next_cursor;
+        }
+        console.log(`Rebuild: "${topFolder}" — ${folderScanned} scanned`);
+      }
+
+      const skipped = totalScanned - fresh.length;
+      if (fresh.length === 0) {
+        showMsg(`Library up to date — all ${totalScanned} Cloudinary images already in Library.`, "green");
+        return;
+      }
+
+      setRebuildMsg(`Saving ${fresh.length} new images…`);
+      const merged = [...libItems, ...fresh];
+      await saveLib(merged);
+      showMsg(
+        `✅ Library rebuilt: ${fresh.length} added (${skipped} already existed, ${merged.length} total). ` +
+        `Run "🤖 Tag all untagged" next.`,
+        "green"
+      );
+      setRebuildMsg("");
+    } catch (e) {
+      showMsg("Rebuild failed: " + (e.message || "Unknown error"), "red");
+      setRebuildMsg("");
+    } finally {
+      setRebuildRunning(false);
+    }
+  };
+
   // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
-  const libVisible = libStatus === "all" ? libFiltered : libFiltered.filter(i => photoStatus(i) === libStatus);
+  const libVisible = libStatus === "all" ? libFiltered
+    : libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
+    : libFiltered.filter(i => photoStatus(i) === libStatus);
 
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   const LibraryBrowse = () => (
@@ -221,6 +311,7 @@ export default function ManageLibrary({ ctx }) {
             ["verified", "✅", "Verified", "reviewed by a person", libFiltered.filter(i => photoStatus(i) === "verified").length, "#059669"],
             ["review", "🤖", "Needs review", "AI-tagged — to check", libFiltered.filter(i => photoStatus(i) === "review").length, "#7C3AED"],
             ["untagged", "❓", "Untagged", "no tags yet", libFiltered.filter(i => photoStatus(i) === "untagged").length, "#9CA3AF"],
+            ["nightly", "🌙", "Nightly Tagged", "tagged by nightly cron", libFiltered.filter(i => i.tagSource === "nightly").length, "#0EA5E9"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
             return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
@@ -918,7 +1009,9 @@ export default function ManageLibrary({ ctx }) {
         }} disabled={libAiLoading} style={{ ...S.btn(true), fontSize: 11, opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "Tagging..." : "🤖 AI tag & add"}</button>
         <button onClick={() => setLibShowBulk(!libShowBulk)} style={{ ...S.btn(false), fontSize: 11 }}>📦 Bulk</button>
         <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>☁️ Cloudinary</button>
+        <button onClick={handleRebuildLibrary} disabled={rebuildRunning} title="Scan all Cloudinary folders and add any missing images to the Library" style={{ ...S.btn(false), fontSize: 11, opacity: rebuildRunning ? 0.5 : 1, border: `1px solid ${rebuildRunning ? "#9CA3AF" : "#7C3AED"}`, color: rebuildRunning ? "#9CA3AF" : "#7C3AED" }}>{rebuildRunning ? "⏳ Rebuilding…" : "🔄 Rebuild Library"}</button>
       </div>
+      {rebuildMsg && <div style={{ padding: "8px 14px", borderRadius: 8, background: "#7C3AED12", border: "1px solid #7C3AED30", marginBottom: 8, fontSize: 11, color: "#7C3AED" }}>⏳ {rebuildMsg}</div>}
       {/* Cloudinary Browser for Library */}
       {cldOpen==="library"&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:14,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>

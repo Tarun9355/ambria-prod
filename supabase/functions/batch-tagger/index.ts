@@ -19,7 +19,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2", RC_SK = "ambria-ratecard-v4";
 const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1";
 const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // "cat::sub" keys flagged not-taggable in Pricing
-const MAX_PER_RUN = 10; // temporary cap while testing — raise (e.g. 50) once validated
+const MAX_PER_RUN = 100;
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
@@ -160,7 +160,7 @@ Return ONLY JSON matching the provided schema.`;
   for (const img of targets) {
     try {
       const r = await tagOne(img);
-      patches[img.id] = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      patches[img.id] = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       logs.push({ photo_id: img.id, success: true }); ok++;
     } catch (e) {
       logs.push({ photo_id: img.id, success: false, error: String((e as Error)?.message || e) }); fail++;

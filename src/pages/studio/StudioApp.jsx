@@ -4184,7 +4184,7 @@ Return ONLY JSON:
         }
         // Only mark "AI-tagged" when we actually got tags — a failed/empty pass (e.g. credits out)
         // stays untagged so it's retried on the next run instead of looking done-but-blank.
-        if (gotTags) { upd._aiTagged = true; upd._aiTaggedAt = Date.now(); ok++; }
+        if (gotTags) { upd._aiTagged = true; upd._aiTaggedAt = Date.now(); upd.tagSource = "manual"; ok++; }
         else { upd._aiFailed = true; upd._aiFailedAt = Date.now(); fail++; }
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
