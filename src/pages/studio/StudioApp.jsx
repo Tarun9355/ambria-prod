@@ -1007,6 +1007,7 @@ export default function StudioApp() {
   const [lmsError, setLmsError] = useState(false);
   const [lmsFilling, setLmsFilling] = useState(false);
   const [lmsRefreshCounter, setLmsRefreshCounter] = useState(0);
+  const [lmsSyncing, setLmsSyncing] = useState(false);
   const lmsCacheRef = useRef(new Map());
   const lmsDebounceRef = useRef(null);
   const lmsAbortRef = useRef(null);
@@ -1077,6 +1078,17 @@ export default function StudioApp() {
         if (Date.now() - lastSync > 30 * 60 * 1000) triggerLmsSync().catch(() => {});
       } catch { /* ignore */ }
     })();
+  }, []);
+
+  // Manual "🔄 Refresh" in Event Info: run the REAL server-side LMS sync (Supabase Edge Fn),
+  // then clear the local search cache and re-run the search so brand-new LMS leads (created after
+  // the last sync) show up on demand. (The old button hit a dead /api/lms route that never synced.)
+  const refreshLmsSync = useCallback(async () => {
+    setLmsSyncing(true);
+    try { await triggerLmsSync(); } catch { /* surfaced via lmsError on re-search */ }
+    lmsCacheRef.current.clear();
+    setLmsRefreshCounter((c) => c + 1);
+    setLmsSyncing(false);
   }, []);
 
   const [sessionHistoryExpanded, setSessionHistoryExpanded] = useState(false);
@@ -4716,6 +4728,7 @@ Return ONLY JSON:
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,
+    refreshLmsSync, lmsSyncing,
     // dates / orders / preflight
     dateTypes, setDateTypes, saveDateTypes, eventOrders, setEventOrders, saveEventOrders,
     photoImsMap, setPhotoImsMap, savePhotoImsMap, scanHistory, setScanHistory, saveScanHistory,

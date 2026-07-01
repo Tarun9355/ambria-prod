@@ -17,6 +17,7 @@ export default function StudioEventInfo({ ctx }) {
     activeClient, loadClientSession,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
+    refreshLmsSync, lmsSyncing,
     taxonomy,
     customTripRate, setCustomTripRate, customGensets, setCustomGensets,
     setFilterFn, setBrowseVenues, setVenueGroup,
@@ -96,7 +97,7 @@ export default function StudioEventInfo({ ctx }) {
                     <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:"#F59E0B",animation:"pulse 1.5s infinite"}}></span>
                     more loading…
                   </span>}
-                  <button onClick={() => { lmsCacheRef.current.clear(); fetch("/api/lms?op=force-refresh",{method:"POST"}).catch(()=>{}); setLmsRefreshCounter(c=>c+1); }} style={{marginLeft:"auto",padding:"2px 8px",borderRadius:4,border:"1px solid rgba(21,128,61,0.2)",background:"transparent",color:"#15803D",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Refresh</button>
+                  <button onClick={refreshLmsSync} disabled={lmsSyncing} style={{marginLeft:"auto",padding:"2px 8px",borderRadius:4,border:"1px solid rgba(21,128,61,0.2)",background:"transparent",color:"#15803D",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{lmsSyncing ? "⏳ Syncing…" : "🔄 Refresh"}</button>
                 </div>
                 {lmsLeads.map(lead => {
                   const deptBadgeStyle = lead.dept === "decor"
@@ -155,7 +156,7 @@ export default function StudioEventInfo({ ctx }) {
               if (!note) return null;
               return <div style={{marginBottom:16,padding:"8px 12px",borderRadius:8,background:isDark?"rgba(245,158,11,0.06)":"rgba(245,158,11,0.05)",border:`1px solid ${isDark?"rgba(245,158,11,0.2)":"rgba(245,158,11,0.15)"}`,fontSize:11,color:"#B45309",display:"flex",alignItems:"center",gap:8}}>
                 <span style={{flex:1}}>{note}</span>
-                <button onClick={() => { lmsCacheRef.current.clear(); fetch("/api/lms?op=force-refresh",{method:"POST"}).catch(()=>{}); setLmsRefreshCounter(c=>c+1); }} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(180,131,9,0.2)",background:"transparent",color:"#B45309",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Refresh</button>
+                <button onClick={refreshLmsSync} disabled={lmsSyncing} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(180,131,9,0.2)",background:"transparent",color:"#B45309",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{lmsSyncing ? "⏳ Syncing…" : "🔄 Refresh"}</button>
               </div>;
             }
             const studioBlock = matches.length > 0 ? (<div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.06)":"rgba(99,102,241,0.04)",border:`1px solid ${isDark?"rgba(99,102,241,0.2)":"rgba(99,102,241,0.15)"}`}}>
@@ -164,7 +165,7 @@ export default function StudioEventInfo({ ctx }) {
                 <span style={{flex:1}}>
                   {`Found ${matches.length} existing Studio client${matches.length>1?"s":""} — load to continue previous work?`}
                 </span>
-                <button onClick={() => { lmsCacheRef.current.clear(); fetch("/api/lms?op=force-refresh",{method:"POST"}).catch(()=>{}); setLmsRefreshCounter(c=>c+1); }} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(99,102,241,0.2)",background:"transparent",color:"#6366F1",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Refresh</button>
+                <button onClick={refreshLmsSync} disabled={lmsSyncing} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(99,102,241,0.2)",background:"transparent",color:"#6366F1",fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{lmsSyncing ? "⏳ Syncing…" : "🔄 Refresh"}</button>
               </div>
               {matches.map(c => {
                 const latest = c.sessions?.[0];
