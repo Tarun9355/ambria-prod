@@ -4578,6 +4578,10 @@ Return ONLY JSON:
       }
       // Single inventory (shared), per-date blocks
       const inventory = invResults[0].inventory || [];
+      // Populate the card-render lookup cache on OPEN too (not only on Generate) — otherwise a
+      // restored draft's cards have imsIds but can't resolve to items, so every card wrongly shows
+      // "No IMS match" after a refresh. (Root cause of the recurring load bug.)
+      setDcInventoryCache(inventory);
       const blocksByDate = {};
       uniqueDates.forEach((d, i) => { blocksByDate[d] = invResults[i]?.blocksForDate || {}; });
       // Reduce settings rows → object s (EXACT key/field names the reference uses)
