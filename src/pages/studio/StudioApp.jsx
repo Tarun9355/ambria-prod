@@ -902,6 +902,25 @@ async function loadLibraryRows() {
   return all;
 }
 
+// ═══ Event orders ↔ `event_orders` TABLE (migrated off the EO_SK blob; shared Studio↔IMS) ═══
+// IMS already persists this table row-level; Studio now reads/writes the SAME table so it finally
+// sees IMS-owned fields (deptOps / dept actuals) live — the missing link behind stale Dept-Ops data.
+// Full eo in `data`; column map mirrors IMS's writer exactly.
+function rowToEO(row) { return { ...(row?.data || {}), id: row.id, status: row.status ?? row?.data?.status }; }
+function eoToRow(eo) {
+  return { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo };
+}
+async function loadEoRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.from("event_orders").select("*").order("id").range(from, from + SIZE - 1);
+    if (error) throw error;
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+
 // ═══ Rate card ↔ `rate_card` TABLE mappers (migrated off the settings blob; shared Studio↔IMS) ═══
 // Full item in `data`; typed columns mirrored for queries. IMS reads/writes the SAME table now.
 function rowToRcItem(row) {
@@ -1736,7 +1755,7 @@ export default function StudioApp() {
       // Date types
       try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
       // Event orders
-      try { const v = await kvGet(EO_SK); if (v != null) { const ep = parse(v); if (Array.isArray(ep) && !cancelled) setEventOrders(ep); } } catch {}
+      try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ }
       // Photo→IMS cache
       try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {}
       // Scan history
@@ -1883,6 +1902,22 @@ export default function StudioApp() {
     });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
+  // ── Realtime: event orders are now a TABLE — apply row-level changes live so Studio sees IMS's
+  // dept-ops / actuals edits (deptOps in the data column) without a refresh. ──
+  useEffect(() => {
+    const ch = subscribeTable("event_orders", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setEventOrders((prev) => { const next = prev.filter((e) => e.id !== id); eventOrdersRef2.current = next; return next; });
+        } else if (payload.new) {
+          const eo = rowToEO(payload.new); if (!eo?.id) return;
+          setEventOrders((prev) => { const i = prev.findIndex((e) => e.id === eo.id); const next = i >= 0 ? prev.map((e) => (e.id === eo.id ? eo : e)) : [...prev, eo]; eventOrdersRef2.current = next; return next; });
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
   // ── Realtime: client ledger is now a TABLE — apply row-level changes live. ──
   useEffect(() => {
     const ch = subscribeTable("client_ledger", (payload) => {
@@ -1989,7 +2024,29 @@ export default function StudioApp() {
     await reliableSave(AMEND_SK, JSON.stringify(next), "Amend requests");
     return req;
   }, []);
-  const saveEventOrders = useCallback(async (neo) => { setEventOrders(neo); await reliableSave(EO_SK, JSON.stringify(neo), "Event orders"); }, []);
+  // Row-level event-order persistence to the shared `event_orders` TABLE (mirrors IMS's writer).
+  // Upserts only changed EOs + deletes removed/explicit ids. Because Studio now READS the table,
+  // each eo carries IMS-owned deptOps, so writing it back preserves them (no clobber).
+  const eventOrdersRef2 = useRef([]);
+  useEffect(() => { eventOrdersRef2.current = eventOrders; }, [eventOrders]);
+  const saveEventOrders = useCallback(async (neo, deletedIds = []) => {
+    const prev = eventOrdersRef2.current || [];
+    eventOrdersRef2.current = neo; setEventOrders(neo);
+    const prevMap = new Map(prev.map((e) => [e.id, e]));
+    const nextIds = new Set((neo || []).map((e) => e.id));
+    try {
+      for (const eo of (neo || [])) {
+        const before = prevMap.get(eo.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
+          const { error } = await supabase.from("event_orders").upsert(eoToRow(eo), { onConflict: "id" });
+          if (error) throw error;
+        }
+      }
+      for (const id of [...(deletedIds || []), ...[...prevMap.keys()].filter((id) => !nextIds.has(id))]) {
+        await deleteRow("event_orders", id);
+      }
+    } catch (e) { showMsg?.("Event order save failed: " + (e?.message || e), "red"); }
+  }, [showMsg]);
   // Persist the Deal Check department breakdown onto the client's SOLD event-order row (table), so
   // IMS Dept Ops shows the SAME numbers (income, inventory-with-photos, manpower) Studio computed.
   const persistDeptSnapshot = useCallback(async (snap) => {
