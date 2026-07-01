@@ -20,7 +20,7 @@ export default function RateCard({ ctx }) {
   const rcFmt = (n) => { const v = Number(n) || 0; return v >= 100000 ? `₹${(v / 100000).toFixed(1)}L` : `₹${v.toLocaleString("en-IN")}`; };
   const rcStats = { t: rcItems.length, nr: rcItems.filter(isNotRated).length };
   const rcUpd = (id, f, v) => { const isN = NUM_FIELDS.includes(f); saveRC(rcItems.map((i) => (i.id === id ? { ...i, [f]: isN ? Number(v) || 0 : v } : i))); };
-  const rcDel = (id) => { const it = rcItems.find((i) => i.id === id); if (!window.confirm(`Delete "${it?.name || "item"}"? This cannot be undone.`)) return; saveRC(rcItems.filter((i) => i.id !== id)); };
+  const rcDel = (id) => { const it = rcItems.find((i) => i.id === id); if (!window.confirm(`Delete "${it?.name || "item"}"? This cannot be undone.`)) return; saveRC(rcItems.filter((i) => i.id !== id), [id]); };
   const rcAddItem = () => {
     if (!(rcNewForm.name || "").trim()) { showMsg && showMsg("Item needs a name", "red"); return; }
     const item = { ...rcNewForm, id: "RC" + Date.now().toString(36), cat: rcNewForm.cat || rcCat, sub: rcNewForm.sub || "General", name: rcNewForm.name.trim() };

@@ -902,6 +902,35 @@ async function loadLibraryRows() {
   return all;
 }
 
+// ═══ Rate card ↔ `rate_card` TABLE mappers (migrated off the settings blob; shared Studio↔IMS) ═══
+// Full item in `data`; typed columns mirrored for queries. IMS reads/writes the SAME table now.
+function rowToRcItem(row) {
+  if (!row) return null;
+  const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
+  if (d) return { zones: [], ...d, id: row.id };
+  return { id: row.id, name: row.name, cat: row.cat, sub: row.sub, unit: row.unit, inhouseMode: row.inhouse_mode, inhouseFlat: row.inhouse_flat, inhouseS: row.inhouse_s, inhouseM: row.inhouse_m, inhouseB: row.inhouse_b, outS: row.out_s, outM: row.out_m, outB: row.out_b, zones: Array.isArray(row.zones) ? row.zones : [], floralMode: row.floral_mode, defaultRealPct: row.default_real_pct };
+}
+function rcItemToRow(it) {
+  return {
+    id: it.id, name: it.name || "", cat: it.cat ?? null, sub: it.sub ?? null, unit: it.unit ?? null,
+    inhouse_mode: it.inhouseMode ?? "flat", inhouse_flat: Number(it.inhouseFlat) || 0,
+    inhouse_s: Number(it.inhouseS) || 0, inhouse_m: Number(it.inhouseM) || 0, inhouse_b: Number(it.inhouseB) || 0,
+    out_s: Number(it.outS) || 0, out_m: Number(it.outM) || 0, out_b: Number(it.outB) || 0,
+    zones: Array.isArray(it.zones) ? it.zones : [], floral_mode: it.floralMode ?? null,
+    default_real_pct: it.defaultRealPct ?? null, data: it,
+  };
+}
+async function loadRcRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.from("rate_card").select("*").order("id").range(from, from + SIZE - 1);
+    if (error) throw error;
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+
 // ═══ Client ledger ↔ `client_ledger` TABLE mappers (migrated off the settings blob) ═══
 // Full client object in `data`; typed columns (name/phone/email/status/budget/created_by) mirrored.
 function rowToClient(row) {
@@ -1619,13 +1648,16 @@ export default function StudioApp() {
         }
         if (!cancelled) { setCustomInhouse(inhouseArr); setCustomOutdoor(outdoorArr); }
       } catch {}
-      // Rate Card
+      // Rate Card — now row-per-item in the `rate_card` TABLE (off the settings blob; shared with IMS).
       let loadedRcItems = null;
       try {
-        const v = await kvGet(RC_SK);
-        if (v != null) { const rp = parse(v); if (Array.isArray(rp) && rp.length) { const mapped = rp.map(i => ({ zones: [], ...i })); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); } }
-        else { reliableSave(RC_SK, JSON.stringify(RC_D), "Rate card").catch(() => {}); }
-      } catch {}
+        const rows = await loadRcRows();
+        if (Array.isArray(rows) && rows.length) { const mapped = rows.map(rowToRcItem).filter(Boolean); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); }
+        else { // empty table → seed defaults as rows (first boot)
+          try { await supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id" }); } catch { /* ignore */ }
+          loadedRcItems = RC_D; if (!cancelled) setRcItems(RC_D);
+        }
+      } catch { /* ignore */ }
       // Rate Card Categories — on first boot (v == null), seed defaults and recover orphaned
       // category IDs so items still have a group to render under. When a saved blob exists,
       // skip recovery entirely: the team intentionally manages categories via the editor and
@@ -1767,7 +1799,25 @@ export default function StudioApp() {
     ...Object.fromEntries((customOutdoor || []).filter(v => v.name).map(v => [v.name, v.name])),
   }), [customInhouse, customOutdoor]);
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
-  const saveRC = useCallback(async (ni) => { setRcItems(ni); await reliableSave(RC_SK, JSON.stringify(ni), "Rate card"); }, []);
+  // Row-level rate-card persistence (off the whole-blob save; shared table with IMS). Upserts only
+  // changed rows + deletes only explicit ids (rcDel passes the id) — never deletes on absence.
+  const rcItemsRef = useRef([]);
+  useEffect(() => { rcItemsRef.current = rcItems; }, [rcItems]);
+  const saveRC = useCallback(async (ni, deletedIds) => {
+    const prev = rcItemsRef.current || [];
+    const prevById = {}; prev.forEach((i) => { if (i && i.id) prevById[i.id] = i; });
+    rcItemsRef.current = ni; setRcItems(ni);
+    const changed = (ni || []).filter((i) => i && i.id && JSON.stringify(prevById[i.id]) !== JSON.stringify(i));
+    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    try {
+      if (changed.length) {
+        const rows = changed.map((i) => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() }));
+        const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" });
+        if (error) throw error;
+      }
+      for (const id of dels) await deleteRow("rate_card", id);
+    } catch (e) { showMsg?.("Rate card save failed: " + (e?.message || e), "red"); }
+  }, [showMsg]);
   const saveRcCats = useCallback(async (nc) => { setRcCats(nc); return await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
   // Tagging-hidden sub-categories — keyed "cat::sub". Set for O(1) lookup; toggle flips one sub.
   const tagSubKey = useCallback((cat, sub) => `${String(cat || "").trim()}::${String(sub || "").trim()}`, []);
@@ -1788,8 +1838,7 @@ export default function StudioApp() {
         const key = payload?.new?.key || payload?.old?.key;
         if (!key) return;
         try {
-          if (key === RC_SK) { const a = pj(await kvGet(RC_SK)); if (Array.isArray(a)) setRcItems(a.map((i) => ({ zones: [], ...i }))); }
-          else if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
+          if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === CORR_SK) { const a = pj(await kvGet(CORR_SK)); if (Array.isArray(a)) { setCorrLog(a); corrLogRef.current = a; } }
@@ -1813,6 +1862,22 @@ export default function StudioApp() {
           const idx = prev.findIndex((it) => it.id === item.id);
           const next = idx >= 0 ? prev.map((it) => (it.id === item.id ? item : it)) : [...prev, item];
           libItemsRef.current = next; setLibItems(next);
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: rate card is now a TABLE — apply row-level changes live (Studio price edits AND
+  // IMS recipe-driven reconciliation both land here). Echoes of our own writes are idempotent. ──
+  useEffect(() => {
+    const ch = subscribeTable("rate_card", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setRcItems((prev) => { const next = prev.filter((i) => i.id !== id); rcItemsRef.current = next; return next; });
+        } else if (payload.new) {
+          const it = rowToRcItem(payload.new); if (!it?.id) return;
+          setRcItems((prev) => { const i = prev.findIndex((x) => x.id === it.id); const next = i >= 0 ? prev.map((x) => (x.id === it.id ? it : x)) : [...prev, it]; rcItemsRef.current = next; return next; });
         }
       } catch { /* ignore */ }
     });

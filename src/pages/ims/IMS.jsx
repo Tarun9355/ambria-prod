@@ -194,8 +194,8 @@ export default function IMS() {
   const applySettingsRows = useCallback((setRows) => {
     const blocksRow = setRows.find((r) => r.key === BLOCKS_SK);
     if (blocksRow?.value != null) { try { setBlocksState(typeof blocksRow.value === "string" ? JSON.parse(blocksRow.value) : blocksRow.value); } catch { /* keep */ } }
-    const rcBlob = setRows.find((r) => r.key === RC_SK);
-    if (rcBlob?.value != null) { let a = rcBlob.value; if (typeof a === "string") { try { a = JSON.parse(a); } catch { a = null; } } if (Array.isArray(a)) setStudioRcItems(a); }
+    // Rate-card ITEMS now live in the `rate_card` TABLE (read on load + via its own realtime), not
+    // the RC_SK settings blob — so it's intentionally no longer read here.
     // Studio Rate Card *categories* — load the live list the team edits in Studio (adds like
     // Fabric / Birthday / Printing) so IMS sub-categories stay in sync instead of frozen on the seed.
     const rcCatsBlob = setRows.find((r) => r.key === RC_SK_CATS);
@@ -274,8 +274,11 @@ export default function IMS() {
       if (updated || cleared) {
         studioRcItemsRef.current = next;
         setStudioRcItems(next);
-        const r = await reliableSave(RC_SK, JSON.stringify(next), "Rate card");
-        if (!r.ok) { if (!silent) setError(`Sync failed: ${r.error}`); return { error: r.error, updated, cleared }; }
+        // Row-level upsert to the shared `rate_card` TABLE (migrated off the RC_SK blob) — only the
+        // items whose recipe-driven price actually changed, so nothing else is touched.
+        const changedItems = next.filter((it, idx) => JSON.stringify(it) !== JSON.stringify(items[idx]));
+        const rows = changedItems.map((it) => ({ id: it.id, name: it.name || "", cat: it.cat ?? null, sub: it.sub ?? null, unit: it.unit ?? null, inhouse_mode: it.inhouseMode ?? "flat", inhouse_flat: Number(it.inhouseFlat) || 0, inhouse_s: Number(it.inhouseS) || 0, inhouse_m: Number(it.inhouseM) || 0, inhouse_b: Number(it.inhouseB) || 0, out_s: Number(it.outS) || 0, out_m: Number(it.outM) || 0, out_b: Number(it.outB) || 0, zones: Array.isArray(it.zones) ? it.zones : [], floral_mode: it.floralMode ?? null, default_real_pct: it.defaultRealPct ?? null, data: it, updated_at: new Date().toISOString() }));
+        if (rows.length) { const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" }); if (error) { if (!silent) setError(`Sync failed: ${error.message}`); return { error: error.message, updated, cleared }; } }
       }
       setTier15LastSync(Date.now());
       return { updated, cleared };
@@ -339,8 +342,8 @@ export default function IMS() {
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
-        // Fallback: if Studio hasn't written the rate-card blob yet, seed from the table.
-        if (!setRows.some((r) => r.key === RC_SK)) setStudioRcItems(rcRows.map((r) => ({ ...(r.data || {}), id: r.id })));
+        // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
+        setStudioRcItems(rcRows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id })));
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
@@ -382,6 +385,7 @@ export default function IMS() {
       extraChannels.push(ch);
     };
     liveTable("settings", (rows) => applySettingsRows(rows));
+    liveTable("rate_card", (rows) => setStudioRcItems(rows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id }))));
     liveTable("event_orders", (rows) => setEventOrdersState(rows.map(rowToEO)));
     liveTable("functions", (rows) => setFns(rows.map(rowToFn)));
     liveTable("projects", (rows) => setProjectsState(rows.map(rowToProject)));
