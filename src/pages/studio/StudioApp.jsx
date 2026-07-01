@@ -4523,15 +4523,17 @@ Return ONLY JSON:
     setDealCheckData(null);
     // ═══ Cache restore — restore cached DC state BEFORE state resets ═══
     // Prefer the DURABLE per-client draft stored on the client_ledger row (a real table row now —
-    // clobber-safe), so reopening always shows the last saved state. Fall back to the legacy
-    // whole-blob dc-cache only if there's no row draft yet.
+    // clobber-safe), so reopening always shows the last saved state. NOTE: we deliberately do NOT
+    // fall back to the legacy whole-blob dc-cache — it's no longer network-persisted, so on a hard
+    // refresh it can be stale/empty and would clobber the saved draft (the row is the source of truth).
     const clientRec = activeClientId ? (clientLedger || []).find(c => c.id === activeClientId) : null;
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
-    const cachedForThisClient = rowDraft || (activeClientId ? dcCache[activeClientId] : null);
+    const cachedForThisClient = rowDraft;
     const hasCache = !!cachedForThisClient;
     if (hasCache) {
       setDcResolved(cachedForThisClient.resolved || {});
-      setDcCards(cachedForThisClient.cards || {});
+      // Guard: never clobber a good card set with an empty one (belt-and-suspenders vs a race).
+      if (cachedForThisClient.cards && Object.keys(cachedForThisClient.cards).length) setDcCards(cachedForThisClient.cards);
       setDcZoneState(cachedForThisClient.zoneState || {});
       setDcPhotoOverrides(cachedForThisClient.photoOverrides || {});
       setDcSkipped(cachedForThisClient.skipped || {});
