@@ -823,17 +823,37 @@ export default function IMS() {
     setBlocksState(next);
     persistBlocks(next, prev);
   }, []);
-  // Last-minute amendment requests (JSON blob under AMEND_SK, like blocks).
+  // Last-minute amendment requests — migrated off the AMEND_SK blob to the `amend_requests` TABLE.
+  const amendReqRef = useRef([]);
+  useEffect(() => { amendReqRef.current = amendRequests; }, [amendRequests]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try { const v = await kvGet(AMEND_SK); if (!cancelled && v != null) { const a = typeof v === "string" ? JSON.parse(v) : v; if (Array.isArray(a)) setAmendRequests(a); } } catch { /* none yet */ }
+      try { const rows = await fetchAll("amend_requests"); if (!cancelled && Array.isArray(rows)) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* none yet */ }
     })();
-    return () => { cancelled = true; };
+    const ch = supabase.channel("realtime:amend_requests")
+      .on("postgres_changes", { event: "*", schema: "public", table: "amend_requests" }, async () => {
+        const rows = await fetchAll("amend_requests").catch(() => null);
+        if (rows) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status })));
+      }).subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
-  const saveAmendRequests = useCallback((next) => {
-    setAmendRequests(next);
-    reliableSave(AMEND_SK, JSON.stringify(next || []), "Amend requests");
+  // Row-level: upsert only changed requests + delete removed ones (never on-absence beyond removal).
+  const saveAmendRequests = useCallback(async (next) => {
+    const prev = amendReqRef.current || [];
+    amendReqRef.current = next; setAmendRequests(next);
+    const prevMap = new Map(prev.map((r) => [r.id, r]));
+    const nextIds = new Set((next || []).map((r) => r.id));
+    try {
+      for (const req of (next || [])) {
+        const before = prevMap.get(req.id);
+        if (!before || JSON.stringify(before) !== JSON.stringify(req)) {
+          const { error } = await supabase.from("amend_requests").upsert({ id: req.id, status: req.status ?? null, data: req }, { onConflict: "id" });
+          if (error) throw error;
+        }
+      }
+      for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await supabase.from("amend_requests").delete().eq("id", id);
+    } catch (e) { setError(`Save failed: ${e?.message || e}`); }
   }, []);
 
   // projects — row-level diff persistence to the projects table.

@@ -1775,7 +1775,7 @@ export default function StudioApp() {
         if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
       } catch {}
       // Deal Check boot loaders
-      try { const v = await kvGet(AMEND_SK); if (v != null) { const a = parse(v); if (Array.isArray(a) && !cancelled) setAmendRequests(a); } } catch {}
+      try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
       try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {}
       try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
       try {
@@ -1901,6 +1901,21 @@ export default function StudioApp() {
     });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
+  // ── Realtime: amend requests are now a TABLE — reflect IMS approve/reject decisions live. ──
+  useEffect(() => {
+    const ch = subscribeTable("amend_requests", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setAmendRequests((prev) => prev.filter((r) => r.id !== id));
+        } else if (payload.new) {
+          const req = { ...(payload.new.data || {}), id: payload.new.id, status: payload.new.status ?? payload.new.data?.status };
+          setAmendRequests((prev) => { const i = prev.findIndex((r) => r.id === req.id); return i >= 0 ? prev.map((r) => (r.id === req.id ? req : r)) : [...prev, req]; });
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
   // ── Realtime: event orders are now a TABLE — apply row-level changes live so Studio sees IMS's
   // dept-ops / actuals edits (deptOps in the data column) without a refresh. ──
   useEffect(() => {
@@ -2016,13 +2031,14 @@ export default function StudioApp() {
   // Submit a last-minute amendment request to the department head. Re-reads the
   // shared list first so a concurrent IMS-side decision isn't clobbered.
   const submitAmendRequest = useCallback(async (req) => {
-    let list = [];
-    try { const v = await kvGet(AMEND_SK); if (v != null) { const a = typeof v === "string" ? JSON.parse(v) : v; if (Array.isArray(a)) list = a; } } catch {}
-    const next = [...list, req];
-    setAmendRequests(next);
-    await reliableSave(AMEND_SK, JSON.stringify(next), "Amend requests");
-    return req;
-  }, []);
+    // amend_requests is now a TABLE — submitting is a single-row upsert (inherently clobber-safe:
+    // it only writes this request, never the whole list).
+    const r = { ...req, id: req.id || ("AMR" + Date.now().toString(36)) };
+    setAmendRequests((prev) => [...prev.filter((x) => x.id !== r.id), r]);
+    try { const { error } = await supabase.from("amend_requests").upsert({ id: r.id, status: r.status ?? null, data: r }, { onConflict: "id" }); if (error) throw error; }
+    catch (e) { showMsg?.("Amend request failed: " + (e?.message || e), "red"); }
+    return r;
+  }, [showMsg]);
   // Row-level event-order persistence to the shared `event_orders` TABLE (mirrors IMS's writer).
   // Upserts only changed EOs + deletes removed/explicit ids. Because Studio now READS the table,
   // each eo carries IMS-owned deptOps, so writing it back preserves them (no clobber).
