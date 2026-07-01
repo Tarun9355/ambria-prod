@@ -1786,7 +1786,12 @@ export default function StudioApp() {
       try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
       try {
         const rows = await fetchAll("soft_holds");
-        if (Array.isArray(rows) && !cancelled) { const now = Date.now(); const live = {}; for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; } setSoftHolds(live); }
+        if (Array.isArray(rows) && !cancelled) {
+          const now = Date.now(); const live = {}; const expiredIds = [];
+          for (const r of rows) { const h = r.data || {}; const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); if (exp && exp > now) live[r.id] = h; else expiredIds.push(r.id); }
+          setSoftHolds(live);
+          for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
+        }
       } catch {}
       try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
       try {
@@ -4145,6 +4150,30 @@ Return ONLY JSON:
       return parsed;
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
   };
+
+  // ── Soft-hold expiry sweeper ─────────────────────────────────────────────────
+  // Runs every 5 minutes while the app is open. Expired soft holds are removed from
+  // in-memory state AND deleted from the soft_holds DB table so other salesperson
+  // sessions immediately see freed inventory. The draft in client_ledger is untouched.
+  useEffect(() => {
+    if (!authUser) return;
+    const sweep = () => {
+      const now = Date.now();
+      setSoftHolds(prev => {
+        const expiredIds = Object.entries(prev)
+          .filter(([, h]) => { const exp = typeof h.expiry === "number" ? h.expiry : Date.parse(h.expiry || ""); return !exp || exp <= now; })
+          .map(([id]) => id);
+        if (!expiredIds.length) return prev;
+        const next = { ...prev };
+        expiredIds.forEach(id => delete next[id]);
+        for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
+        return next;
+      });
+    };
+    sweep();
+    const id = setInterval(sweep, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [authUser]);
 
   // ── App-wide background bulk AI tagging ─────────────────────────────────────
   // Tags every untagged library photo. Lives at the app root so it keeps running while you move
