@@ -718,7 +718,10 @@ export default function StudioBuild({ ctx }) {
             const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
-            const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],dims:{...(p[k]?.dims||{}),[d]:parseFloat(v)||0}}}));};
+            const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
+              // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
+              const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
+              return {...p,[k]:{...cur,dims,trT}};});};
             const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
             const fd=zc.floorDims||{};
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
@@ -883,13 +886,13 @@ export default function StudioBuild({ ctx }) {
                 return <div style={{marginBottom:10,padding:"8px 10px",borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8",border:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                     <span style={{fontSize:11,fontWeight:600,color:textS}}>Truss Type:</span>
-                    {tr.source==="default-on-forget" && <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"rgba(217,119,6,0.12)",color:"#A16207",fontWeight:600}}>defaulted to Half Box</span>}
+                    {tr.source==="default-on-forget" && <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"rgba(217,119,6,0.12)",color:"#A16207",fontWeight:600}}>defaulted to Single U</span>}
                   </div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                     {opts.map(o=>{
                       const isOn = picked === o.id;
-                      // When not picked, half_box visually shows as the default (lighter highlight)
-                      const isDefault = !picked && o.id === "half_box";
+                      // When not picked, Single U (u_only) visually shows as the default (lighter highlight)
+                      const isDefault = !picked && o.id === "u_only";
                       return <button key={o.id} onClick={()=>sZ({trussType:o.id})}
                         style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${isOn?textP:(isDefault?"rgba(217,119,6,0.4)":border)}`,background:isOn?"rgba(0,0,0,0.06)":(isDefault?"rgba(217,119,6,0.06)":"transparent"),color:isOn?textP:textS,fontSize:10,cursor:"pointer",fontWeight:isOn?700:(isDefault?600:400)}}
                         title={o.hint}>{o.label}</button>;
@@ -1057,7 +1060,10 @@ export default function StudioBuild({ ctx }) {
             const fd=zc.floorDims||{};
             const st=calcStructCost(k,zc);
             const sZ=u=>{setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
-            const sD=(d,v)=>{setZoneConfig(p=>({...p,[k]:{...p[k],dims:{...(p[k]?.dims||{}),[d]:parseFloat(v)||0}}}));};
+            const sD=(d,v)=>{setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
+              // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
+              const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
+              return {...p,[k]:{...cur,dims,trT}};});};
             const sFD=(d,v)=>{setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
             const mw={back:true,left:true,right:true};
             return <div style={{borderRadius:10,padding:"10px 14px",border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",marginBottom:8}}>

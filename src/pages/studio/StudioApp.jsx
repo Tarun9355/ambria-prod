@@ -205,7 +205,12 @@ const FLORAL_HARDPROP_DEFAULT = {
 function calcStructCost(zk, zc) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
-  if (zc.trT === "box") {
+  // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at
+  // the Single U rate (₹30) even if the toggle still reads Box (stale from a 3-dim state or an older
+  // saved zone) — "2 dims ⇒ Single U, 3 dims ⇒ Box".
+  const _trussDims = [d.L, (d.W || d.S), d.H].filter((x) => (Number(x) || 0) > 0).length;
+  const _trMode = (zc.trT === "box" && _trussDims < 3) ? "singleU" : zc.trT;
+  if (_trMode === "box") {
     const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
     r.truss = v[0] * v[1] * 50;
     // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
@@ -215,7 +220,7 @@ function calcStructCost(zk, zc) {
     const ext = Number(zc.trussFrontExt) || 0;
     if (ext > 0) { const extH = Number(zc.trussFrontExtH) || (d.H || 0); r.truss += 2 * ext * extH * 30; }
   }
-  else if (zc.trT === "singleU") { r.truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
+  else if (_trMode === "singleU") { r.truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
   // Multiple identical trusses in one zone/photo (e.g. 3× Single U) — cost scales by quantity.
   r.truss *= Math.max(1, zc.trussQty || 1);
   if (zc.mkOn && zc.mkT) {

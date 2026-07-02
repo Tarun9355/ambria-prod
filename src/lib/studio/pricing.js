@@ -85,8 +85,9 @@ export const resolveTrussConfig = (zc) => {
   if (zc.trussType === "u_only" || zc.trussType === "half_box") {
     return { config: zc.trussType, source: "sales-pick", spanFt };
   }
-  // Sales forgot to pick → default to half_box (engineering setting default)
-  return { config: "half_box", source: "default-on-forget", spanFt, warning: true };
+  // Sales forgot to pick → default to Single U (u_only): a 2-dim zone is a top + 2 sides, the
+  // standard/cheapest for 2 dims. Sales can still switch to Half Box.
+  return { config: "u_only", source: "default-on-forget", spanFt, warning: true };
 };
 
 // ─── §23 Layer 1 — Topology Calculator (Studio side, deterministic) ──────────
