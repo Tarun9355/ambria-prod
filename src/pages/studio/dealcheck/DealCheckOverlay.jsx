@@ -1119,7 +1119,9 @@ export default function DealCheckOverlay({ ctx }) {
                                           const cardQty = Number(card.qty)||1;
                                           const setComps = (next)=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: next}}));
                                           const resetKit = ()=> setDcKitEdits(prev=>{ const fnE={...(prev[fnIdx]||{})}; delete fnE[editKey]; return {...prev,[fnIdx]:fnE}; });
-                                          const kitTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?imsField.rentalCost(ci):0)*(Number(c.qty)||0); },0);
+                                          const kitBase = Number(item.kitBase) || 0;  // kit's own charge, added on top of parts
+                                          const partsTotal = comps.reduce((s,c)=>{ const ci=dcInventoryCache.find(x=>x.id===c.itemId); return s + (ci?imsField.rentalCost(ci):0)*(Number(c.qty)||0); },0);
+                                          const kitTotal = kitBase + partsTotal;
                                           return (
                                             <div style={{marginTop:5,marginBottom:6,padding:"8px 10px",borderRadius:8,background:"rgba(99,102,241,0.05)",border:"1px solid rgba(99,102,241,0.25)"}}>
                                               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
@@ -1157,7 +1159,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 </datalist>
                                               </div>
                                               <div style={{marginTop:5,paddingTop:5,borderTop:"1px solid rgba(99,102,241,0.2)",display:"flex",justifyContent:"space-between",fontSize:10}}>
-                                                <span style={{color:textS}}>Kit rental = sum of parts (₹{kitTotal.toLocaleString("en-IN")}){cardQty>1?` × ${cardQty}`:""}</span>
+                                                <span style={{color:textS}}>Kit rental = {kitBase>0?`base ₹${kitBase.toLocaleString("en-IN")} + `:""}parts ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}</span>
                                                 <span style={{color:"#A5B4FC",fontWeight:700}}>₹{(kitTotal*cardQty).toLocaleString("en-IN")}</span>
                                               </div>
                                             </div>

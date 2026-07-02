@@ -377,6 +377,7 @@ Rules:
       printW: it.printable_LxW?.w ?? "",
       printUnit: it.printable_LxW?.unit || "Feet",
       isKit: Array.isArray(it.subItems) && it.subItems.length > 0,
+      kitBase: it.kitBase ?? 0,
       subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
     });
     setEditModal(itemId);
@@ -405,10 +406,11 @@ Rules:
     }
   }
 
-  // §7.9.5 — kit price = Σ(component rental × qty).
-  function kitPriceFrom(subItems) {
-    if (!Array.isArray(subItems)) return 0;
-    return subItems.reduce((sum, si) => {
+  // §7.9.5 — kit price = base rental (the kit's own assembly/shell charge) + Σ(component rental × qty).
+  function kitPriceFrom(subItems, base = 0) {
+    const b = Number(base) || 0;
+    if (!Array.isArray(subItems)) return b;
+    return b + subItems.reduce((sum, si) => {
       const c = inventory.find((i) => i.id === si.itemId);
       const r = c ? (Number(c.price ?? c.rentalCost) || 0) : 0;
       return sum + r * (Number(si.qty) || 0);
@@ -433,7 +435,8 @@ Rules:
     const isKit = !!f.isKit && Array.isArray(f.subItems) && f.subItems.length > 0;
     const cleanSubItems = isKit ? f.subItems.filter((s) => s.itemId).map((s) => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : [];
     // When item is a kit, rental price = auto-summed component cost (overrides manual field)
-    const priceNum = isKit ? kitPriceFrom(cleanSubItems) : (parseFloat(f.price) || 0);
+    const kitBaseNum = isKit ? (Number(f.kitBase) || 0) : 0;
+    const priceNum = isKit ? kitPriceFrom(cleanSubItems, kitBaseNum) : (parseFloat(f.price) || 0);
     const costNum = parseFloat(f.cost) || 0;
     const breakNum = parseFloat(f.breakagePct) || 0;
     setInventory((prev) => prev.map((i) => {
@@ -459,6 +462,7 @@ Rules:
         paintable: f.paintable !== undefined ? !!f.paintable
           : (!!(f.baseColour || f.paintCost) || PAINT_TOKENS.some((tok) => String(f.cat || "").toLowerCase().includes(tok) || String(f.subCat || "").toLowerCase().includes(tok))),
         subItems: cleanSubItems,
+        kitBase: kitBaseNum,
         printable_LxW: (f.printL || f.printW) ? { l: f.printL || "", w: f.printW || "", unit: f.printUnit || "Feet" } : (i.printable_LxW || null),
       };
       if (hasDims) {
@@ -1188,7 +1192,7 @@ Rules:
           const subOpts = subcatsForCat(editForm.cat);
           const catOpts = studioCatLabels.length > 0 ? studioCatLabels : (categories || INV_CATS);
           const isLegacy = isLegacyCat(editForm.cat);
-          const kitPrice = kitPriceFrom(editForm.subItems);
+          const kitPrice = kitPriceFrom(editForm.subItems, Number(editForm.kitBase) || 0);
           const kitComponentOpts = inventory.filter((i) => i.id !== editForm.id && !(editForm.subItems || []).some((s) => s.itemId === i.id));
           return (
             <div className="space-y-4">
@@ -1323,6 +1327,14 @@ Rules:
                   <label className="text-xs text-gray-500">Rental Price (₹){editForm.isKit && <span className="text-indigo-600 font-bold"> · auto (kit)</span>}</label>
                   <input type="number" min="0" value={editForm.isKit ? kitPrice : (editForm.price || "")} disabled={editForm.isKit} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))}
                     className={"mt-1 w-full border rounded-lg px-3 py-2 text-sm " + (editForm.isKit ? "bg-indigo-50 text-indigo-700 font-semibold" : (orig?._needsPricing ? "border-red-300 bg-red-50" : ""))} />
+                  {editForm.isKit && (
+                    <div className="mt-1.5">
+                      <label className="text-[10px] text-gray-500">+ Kit base rental (₹) <span className="text-gray-400">— the kit's own charge, added on top of parts</span></label>
+                      <input type="number" min="0" value={editForm.kitBase || ""} onChange={(e) => setEditForm((f) => ({ ...f, kitBase: e.target.value }))} placeholder="0"
+                        className="mt-0.5 w-full border rounded-lg px-3 py-1.5 text-sm" />
+                      <div className="text-[10px] text-indigo-600 mt-0.5">base {fmt(Number(editForm.kitBase) || 0)} + parts {fmt(kitPrice - (Number(editForm.kitBase) || 0))} = <b>{fmt(kitPrice)}</b>/unit</div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-gray-500">Cost (₹)</label>

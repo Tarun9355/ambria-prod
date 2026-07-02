@@ -10,7 +10,7 @@ const num = (v) => Number(v) || 0;
 
 // Keys we map to dedicated columns; everything else `_`-prefixed (+ a few extras) is
 // stashed in the `flags` JSONB so no superset data is lost on round-trip.
-const FLAG_EXTRAS = ["source", "usageChargePct", "tier"];
+const FLAG_EXTRAS = ["source", "usageChargePct", "tier", "kitBase"];
 
 // DB row (snake_case) → component item (camelCase superset).
 export function rowToItem(row) {
