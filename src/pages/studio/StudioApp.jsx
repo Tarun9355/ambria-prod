@@ -3609,7 +3609,7 @@ Return ONLY JSON:
   }, [ytVideoTags, allVideos, pickAndLoad]);
 
   // ── Save session — VERBATIM ──
-  const saveSession = useCallback(() => {
+  const saveSession = useCallback((opts = {}) => {
     if (!clientName.trim()) return;
     const totalFns = 1 + (extraFunctions || []).length;
     const fnSnapshots = {};
@@ -3656,6 +3656,7 @@ Return ONLY JSON:
       fnSnapshots,
       savedActiveFnIdx: activeFnIdx,
       customItems: dcCustomItems,
+      auto: !!opts.auto,   // background auto-draft (rolling, updated in place) vs a manual Save Draft
     };
     let updated = [...clientLedger];
     let client = updated.find(c => c.id === activeClientId);
@@ -3678,13 +3679,37 @@ Return ONLY JSON:
     ];
     if (!client.createdBy) client.createdBy = authUser?.name || "—";
     if (!client.status) client.status = "ongoing";
-    client.sessions = [snapshot, ...(client.sessions || [])].slice(0, 20);
+    // Auto-drafts update the rolling draft IN PLACE (replace a leading auto session) so the background
+    // save doesn't spam the 20-session history; a manual Save Draft always prepends a fresh entry.
+    const prevSessions = client.sessions || [];
+    client.sessions = (opts.auto && prevSessions[0]?.auto)
+      ? [snapshot, ...prevSessions.slice(1)].slice(0, 20)
+      : [snapshot, ...prevSessions].slice(0, 20);
     setActiveClientId(client.id);
     const finalLedger = updated.slice(0, 200);
     saveClientLedger(finalLedger);
-    showMsg("✓ Session saved to " + client.name, "green");
+    if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
     return { client, ledger: finalLedger };
   }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems]);
+
+  // ── Build auto-save ──────────────────────────────────────────────────────
+  // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
+  // manual "Save Draft" / booking, so a refresh before saving reverted the client to an older session
+  // (wrong photos/tab/dims on reopen). This debounced effect rolls a background auto-draft into the
+  // client's latest session so a refresh always restores the exact last build. A ref holds saveSession
+  // so the effect fires on real BUILD-state changes only (not when saveSession/clientLedger re-create),
+  // avoiding a save→ledger→save loop.
+  const saveSessionRef = useRef(saveSession);
+  useEffect(() => { saveSessionRef.current = saveSession; }, [saveSession]);
+  useEffect(() => {
+    if (!activeClientId || !clientName.trim()) return;
+    const hasData = Object.keys(zoneElements || {}).length > 0
+      || Object.keys(elSelectedPhoto || {}).length > 0
+      || Object.values(enabledEls || {}).some(Boolean);
+    if (!hasData) return;
+    const t = setTimeout(() => { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } }, 2500);
+    return () => clearTimeout(t);
+  }, [activeClientId, clientName, zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades, customZones, customMode, activeZones, activeFnIdx, fnBuilds]);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
   const markSold = useCallback(() => {
