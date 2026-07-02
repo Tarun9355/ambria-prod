@@ -867,6 +867,12 @@ export default function DealCheckOverlay({ ctx }) {
                         const totalRowCount = zoneCards.length + (hasPlatform ? 1 : 0) + recipeFlorals.length + manualItemsInZone.length;
                         const zonePhoto = fns[fnIdx]?.elSelectedPhoto?.[zk]?.src || null;
                         const zonePhotoName = fns[fnIdx]?.elSelectedPhoto?.[zk]?.eventName || "";
+                        // Total rental of every matched item in this zone (kit rentals already equal the
+                        // sum of their parts, so no double count) + any manual blocks.
+                        let zoneRentalTotal = 0;
+                        zoneCards.forEach(c => { if (!c.imsId) return; const it = dcInventoryCache.find(x => x.id === c.imsId); if (it) zoneRentalTotal += imsField.rentalCost(it) * (Number(c.qty) || 1); });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (it) zoneRentalTotal += imsField.rentalCost(it) * (Number(mi.qty) || 1); });
+                        zoneRentalTotal = Math.round(zoneRentalTotal);
                         return (
                           <div key={zk} style={{borderRadius:10,border:`1px solid ${border}`,background:"rgba(255,255,255,0.02)",overflow:"hidden"}}>
                             <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 14px",cursor:"pointer",background:"rgba(255,255,255,0.03)",borderBottom:collapsed?"none":`1px solid ${border}`}}>
@@ -875,6 +881,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 {zonePhoto && <img src={zonePhoto} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
                                 <span style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:0.2,textTransform:"capitalize"}}>{zk}</span>
                                 <span style={{fontSize:10,color:textS}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
+                                {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:11,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                 {hasPlatform && <span title="Structural platform (fatta + stand)" style={{fontSize:9,padding:"3px 7px",borderRadius:4,background:platformShort?"rgba(245,158,11,0.18)":"rgba(16,185,129,0.18)",color:platformShort?"#F59E0B":"#10B981",fontWeight:700,letterSpacing:0.4}}>🏗️ {platformShort?"⚠":"✓"}</span>}
@@ -1134,6 +1141,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                         <span style={{color:"#fff",minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:qtyEach+1}:x))} style={{cursor:"pointer",color:textS,fontSize:14,padding:"0 4px",userSelect:"none"}}>+</span>
                                                       </div>
+                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{color:textS,whiteSpace:"nowrap",opacity:0.85}}>₹{cr.toLocaleString("en-IN")}{qtyEach>1?` ×${qtyEach}`:""} = <b style={{color:"#A5B4FC"}}>₹{(cr*qtyEach).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
                                                         ? <span style={{color:"#F59E0B",fontWeight:600,whiteSpace:"nowrap"}}>⚠ need {needed}, {owned} owned</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap"}}>✓ {owned} owned</span>)}
@@ -1149,7 +1157,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 </datalist>
                                               </div>
                                               <div style={{marginTop:5,paddingTop:5,borderTop:"1px solid rgba(99,102,241,0.2)",display:"flex",justifyContent:"space-between",fontSize:10}}>
-                                                <span style={{color:textS}}>Kit rental{cardQty>1?` × ${cardQty}`:""}</span>
+                                                <span style={{color:textS}}>Kit rental = sum of parts (₹{kitTotal.toLocaleString("en-IN")}){cardQty>1?` × ${cardQty}`:""}</span>
                                                 <span style={{color:"#A5B4FC",fontWeight:700}}>₹{(kitTotal*cardQty).toLocaleString("en-IN")}</span>
                                               </div>
                                             </div>
