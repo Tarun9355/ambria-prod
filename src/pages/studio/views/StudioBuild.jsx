@@ -386,13 +386,23 @@ export default function StudioBuild({ ctx }) {
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||"📦"}:zoneLabelsD[k];
       const isOn=enabledEls[k];const tier=elTiers[k]||"simple";const isCust=customMode[k];
-      const matchedPhotos = getMatchedPhotos(srcType, tier).filter(ph => {
+      let matchedPhotos = getMatchedPhotos(srcType, tier).filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
         const li = libItems.find(l => l.id === ph.eventId);
         if (!li) return true;
         return zpFilterPhoto(li);
       });
+      // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
+      // filters would drop it), so re-opening a saved session shows the saved pick first — no
+      // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/
+      // zoneConfig and are already restored; keeping it first also stops an accidental click on a
+      // different photo from resetting those edits.
+      const selP = elSelectedPhoto[k];
+      if (selP?.src) {
+        const existing = matchedPhotos.find(ph => ph.src === selP.src);
+        matchedPhotos = [existing || selP, ...matchedPhotos.filter(ph => ph.src !== selP.src)];
+      }
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>toggleEl(k)}>
