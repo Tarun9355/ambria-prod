@@ -29,6 +29,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
+    photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
     dcZoneState, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
@@ -1017,6 +1018,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const hold = card.imsId ? getActiveSoftHold(softHolds, card.imsId, authUser?.name, Date.now()) : null;
                                   const sourceMeta = {
                                     "name-match": { icon: "📋", color: "#94A3B8", label: "name match" },
+                                    "knowledge":  { icon: "🧠", color: "#22C55E", label: "learned" },
                                     "manual-swap":{ icon: "✋", color: "#A78BFA", label: "swapped" },
                                     "photo":      { icon: "📷", color: "#38BDF8", label: "photo AI" },
                                     "list":       { icon: "📋", color: "#94A3B8", label: "list AI" },
@@ -1044,6 +1046,21 @@ export default function DealCheckOverlay({ ctx }) {
                                         ) : (
                                           <div style={{fontSize:11,color:"#EF4444",marginBottom:6,fontStyle:"italic"}}>No IMS match — pick from alternatives below or browse subcategory</div>
                                         )}
+                                        {/* Teach button — write the CURRENT pick to the knowledge set as the correct visual match
+                                            for this photo+element. Applies to future deals (availability still checked per-deal).
+                                            Use only to fix a genuine mis-match — ordinary swaps stay deal-local and never teach. */}
+                                        {card.imsId && item && zonePhoto && (() => {
+                                          const kKey = dcKnowledgeKey?.(zonePhoto, card.rcName, card.propType);
+                                          if (!kKey) return null;
+                                          const learned = photoKnowledge?.[kKey]?.imsId === card.imsId;
+                                          return (
+                                            <div style={{marginBottom:6}}>
+                                              {learned
+                                                ? <span style={{fontSize:9.5,color:"#22C55E",fontWeight:600}}>🧠 learned for this photo</span>
+                                                : <span onClick={()=>{ const rc=rcItems.find(r=>String(r?.name||"").toLowerCase().trim()===String(card.rcName||"").toLowerCase().trim()); saveKnowledgeEntry?.(kKey,{imsId:card.imsId,subcat:rc?.sub||"",source:"taught"}); }} title="Teach the knowledge set: this IMS item is what this photo shows, so future deals using this photo auto-pick it (availability is still checked each deal). Use ONLY when the auto-match was wrong — not for availability/preference swaps, which stay on this deal only." style={{fontSize:9.5,color:"#22C55E",fontWeight:600,cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>🧠 Set as correct match for this photo</span>}
+                                            </div>
+                                          );
+                                        })()}
                                         {/* §7.9.5 — Kit composite: expand to components, per-deal editable */}
                                         {item && Array.isArray(item.subItems) && item.subItems.length > 0 && (()=>{
                                           const editKey = card._cardKey;

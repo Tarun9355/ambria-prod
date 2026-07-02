@@ -1224,6 +1224,24 @@ export default function StudioApp() {
   const [dateTypes, setDateTypes] = useState({});
   const [eventOrders, setEventOrders] = useState([]);
   const [photoImsMap, setPhotoImsMap] = useState({});
+  // ── Deal Check knowledge set (learned photo→IMS visual identity) ──────────────
+  // Row-per-entry table `dc_photo_knowledge`, id = `${photoUrl}::${rcNameLower}`, data =
+  // { imsId, subcat, source: "ai"|"name"|"taught", updatedAt }. On Generate we consult this BEFORE
+  // calling the AI (hit → skip the AI, huge cost/speed win); on an AI/name match we store the visual
+  // identity; the "Teach" button stores an explicit human correction. It is AVAILABILITY-INDEPENDENT
+  // (pure "what the photo shows") — per-deal availability is applied on top, and ordinary swaps stay
+  // deal-local (they never write here). Fail-safe: missing table or deleted item → fall back to AI.
+  const [photoKnowledge, setPhotoKnowledge] = useState({});
+  const photoKnowledgeRef = useRef({});
+  useEffect(() => { photoKnowledgeRef.current = photoKnowledge; }, [photoKnowledge]);
+  const dcKnowledgeKey = useCallback((photoUrl, rcName, propType) => (photoUrl && rcName) ? `${photoUrl}::${String(rcName).toLowerCase().trim()}${propType ? "::" + propType : ""}` : null, []);
+  // Persist one entry (row-level upsert) + mirror into local state. Never throws (table may not exist).
+  const saveKnowledgeEntry = useCallback(async (key, entry) => {
+    if (!key || !entry?.imsId) return;
+    const rec = { imsId: entry.imsId, subcat: entry.subcat || "", source: entry.source || "ai", updatedAt: Date.now() };
+    setPhotoKnowledge(prev => ({ ...prev, [key]: rec }));
+    try { await upsertRow("dc_photo_knowledge", { id: key, data: rec }); } catch { /* table missing / offline — keep local, retry next time */ }
+  }, []);
   const [scanHistory, setScanHistory] = useState({});
   const [showSoldConfetti, setShowSoldConfetti] = useState(false);
   const [csData, setCsData] = useState(null);
@@ -1806,6 +1824,8 @@ export default function StudioApp() {
       } catch {}
       // Deal Check boot loaders
       try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
+      // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
+      try { const rows = await fetchAll("dc_photo_knowledge"); if (Array.isArray(rows) && !cancelled) { const m = {}; for (const r of rows) { if (r?.id && r.data?.imsId) m[r.id] = r.data; } setPhotoKnowledge(m); } } catch { /* table missing → knowledge disabled, AI still works */ }
       try { const v = await kvGet(FLORAL_HARDPROP_MAP_SK); if (v != null) { const m = parse(v); if (m && typeof m === "object" && !Array.isArray(m) && !cancelled) setFloralHardPropMap(m); } } catch {}
       try { const v = await kvGet(DC_RUN_COUNTER_SK); if (v != null) { const rc = parse(v); if (rc && typeof rc === "object" && !Array.isArray(rc) && !cancelled) setDcRunCounter(rc); } } catch {}
       try {
@@ -1929,6 +1949,20 @@ export default function StudioApp() {
         } else if (payload.new) {
           const it = rowToRcItem(payload.new); if (!it?.id) return;
           setRcItems((prev) => { const i = prev.findIndex((x) => x.id === it.id); const next = i >= 0 ? prev.map((x) => (x.id === it.id ? it : x)) : [...prev, it]; rcItemsRef.current = next; return next; });
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: knowledge set — a teach/learn from any salesperson propagates to everyone live. ──
+  useEffect(() => {
+    const ch = subscribeTable("dc_photo_knowledge", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setPhotoKnowledge((prev) => { const n = { ...prev }; delete n[id]; return n; });
+        } else if (payload.new?.id && payload.new.data?.imsId) {
+          setPhotoKnowledge((prev) => ({ ...prev, [payload.new.id]: payload.new.data }));
         }
       } catch { /* ignore */ }
     });
@@ -4912,7 +4946,7 @@ Return ONLY JSON:
     const newCards = { ...dcCards };
     const newZoneState = { ...dcZoneState };
     const matchedItemIds = new Set();
-    let zonesProcessed = 0, cardsResolved = 0, cardsAi = 0, cardsNameMatch = 0, cardsUnmatched = 0;
+    let zonesProcessed = 0, cardsResolved = 0, cardsAi = 0, cardsNameMatch = 0, cardsUnmatched = 0, cardsKnown = 0;
     const ac = new AbortController();
     setDcAbortRef(ac);
     for (let fi = 0; fi < fnsToProcess.length; fi++) {
@@ -4932,7 +4966,9 @@ Return ONLY JSON:
       for (const zoneKey of enabledZoneKeys) {
         const zoneElems = fn.zoneElements?.[zoneKey] || [];
         if (zoneElems.length === 0) continue;
-        const photoUrl = fn.elSelectedPhoto?.[zoneKey] || null;
+        // elSelectedPhoto[zoneKey] is an object { src, eventName, … } — use its .src URL string
+        // (passing the object as an image url silently broke the visual matcher + knowledge key).
+        const photoUrl = fn.elSelectedPhoto?.[zoneKey]?.src || null;
         const specs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
         zoneSpecs[zoneKey] = { specs, photoUrl };
         specs.forEach(s => validKeys.add(s.cardKey));
@@ -4957,20 +4993,38 @@ Return ONLY JSON:
             .filter((it) => availableAtVenue(fvCfg, venueName, it) > 0)
             .slice()
             .sort((a, b) => (isStandingAt(fvCfg, venueName, b.id) ? 1 : 0) - (isStandingAt(fvCfg, venueName, a.id) ? 1 : 0));
-          const nm = nameMatchUnique(spec.rcName, scoped);
           let primary = null, source = null;
-          if (nm.matched) {
-            primary = { imsId: nm.item.id, name: nm.item.name };
-            source = "name-match"; cardsNameMatch += 1;
+          // 1) KNOWLEDGE SET first — a learned/taught visual identity for this photo+element. It's
+          //    availability-independent: take the item straight from the full sub-category list (per-deal
+          //    availability is shown via `alternatives`, and the salesperson can swap deal-local). Verify
+          //    it still exists; else fall through and re-derive. Hit = we skip the AI entirely.
+          const kKey = dcKnowledgeKey(spec.photoUrl, spec.rcName, spec.propType);
+          const known = kKey ? photoKnowledgeRef.current[kKey] : null;
+          const knownItem = known?.imsId ? subcatList.find(i => i.id === known.imsId) : null;
+          if (knownItem) {
+            primary = { imsId: knownItem.id, name: knownItem.name };
+            source = "knowledge"; cardsKnown += 1;
           } else {
-            const ai = await aiMatchCardWithSubcat(spec, scoped, ac.signal);
-            if (ai?.aborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
-            if (ai?.primary?.imsId) {
-              primary = { imsId: ai.primary.imsId, name: ai.primary.name };
-              source = spec.kind === "fl" ? "floral" : (spec.photoUrl ? "photo" : "list");
-              cardsAi += 1;
+            const nm = nameMatchUnique(spec.rcName, scoped);
+            if (nm.matched) {
+              primary = { imsId: nm.item.id, name: nm.item.name };
+              source = "name-match"; cardsNameMatch += 1;
             } else {
-              source = "no-match"; cardsUnmatched += 1;
+              const ai = await aiMatchCardWithSubcat(spec, scoped, ac.signal);
+              if (ai?.aborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
+              if (ai?.primary?.imsId) {
+                primary = { imsId: ai.primary.imsId, name: ai.primary.name };
+                source = spec.kind === "fl" ? "floral" : (spec.photoUrl ? "photo" : "list");
+                cardsAi += 1;
+              } else {
+                source = "no-match"; cardsUnmatched += 1;
+              }
+            }
+            // LEARN: store the freshly-derived visual identity so future generates skip the work.
+            // Only with a photo key + a real match, and only when new/changed. Ordinary swaps happen
+            // later in the UI and never call this — so availability/preference picks don't pollute it.
+            if (kKey && primary?.imsId && known?.imsId !== primary.imsId) {
+              saveKnowledgeEntry(kKey, { imsId: primary.imsId, subcat: spec.subcategory, source: source === "name-match" ? "name" : "ai" });
             }
           }
           // Alternatives = the WHOLE sub-category (NOT venue-filtered), deterministic and independent of
@@ -5240,6 +5294,7 @@ Return ONLY JSON:
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
     amendRequests, submitAmendRequest, isLastMinute, makeAmendRequest,
     dcInventoryCache, setDcInventoryCache, dcBrowseAllOpen, setDcBrowseAllOpen, dcSwapModal, setDcSwapModal, dcColorModal, setDcColorModal,
+    photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
