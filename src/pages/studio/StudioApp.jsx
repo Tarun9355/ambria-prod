@@ -573,35 +573,50 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems)
 // REWIRED: posts through callClaudeStreaming (Supabase Edge Function) instead of /api/anthropic.
 async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
   if (!Array.isArray(scopedItems) || scopedItems.length === 0) return { primary: null, alternatives: [] };
-  // Bound prompt size — top 40 candidates after subcategory filter
-  const candidates = scopedItems.slice(0, 40).map(i => ({
-    id: i.id,
-    name: i.name,
-    cat: imsField.category(i),
-    subCat: imsField.subcategory(i),
-    size: imsField.sizeText(i),
-    qty: imsField.qtyOwned(i),
-  }));
-  const prompt = "You are an inventory matcher for Ambria Decorations. Match a Rate Card element to the best IMS inventory item.\n\n" +
+  // Split candidates: those WITH a photo (for true visual comparison, capped for cost/latency) and
+  // the rest listed name-only. Bound total to 40 names as before.
+  const MAX_IMG = 10;
+  const withPhoto = [], noPhoto = [];
+  for (const i of scopedItems) {
+    const rec = { id: i.id, name: i.name, cat: imsField.category(i), subCat: imsField.subcategory(i), size: imsField.sizeText(i), qty: imsField.qtyOwned(i), photo: imsField.photos(i)[0] || null };
+    if (rec.photo && withPhoto.length < MAX_IMG) withPhoto.push(rec); else noPhoto.push(rec);
+  }
+  const textOnly = noPhoto.slice(0, Math.max(0, 40 - withPhoto.length)).map(({ photo, ...r }) => r);
+  const useVision = !!cardSpec.photoUrl && withPhoto.length > 0;
+  const intro = "You are an inventory matcher for Ambria Decorations. Match a Rate Card element to the best IMS inventory item.\n\n" +
     "RC element details:\n" +
     "  name: " + (cardSpec.rcName || "(unknown)") + "\n" +
     "  subcategory: " + (cardSpec.subcategory || "(unscoped)") + "\n" +
     (cardSpec.propType ? "  prop type: " + cardSpec.propType + " (this is a floral hard-prop card — match to the physical vessel/stand, not the flowers)\n" : "") +
-    (cardSpec.photoUrl
-      ? "\nA design photo of this zone is attached. Find the '" + (cardSpec.rcName || "element") + "' within it and note its specific style/shape/colour/material, then pick the IMS candidate that best matches THAT specific item. Only the candidate NAMES are given (no candidate images), so use the photo to disambiguate between similarly-named options. If the item isn't clearly visible, fall back to the best name/subcategory match.\n"
-      : "") +
-    "\n" +
-    "Candidate IMS items (already scoped to subcategory):\n" + JSON.stringify(candidates, null, 2) + "\n\n" +
+    (useVision
+      ? "\nVISUAL MATCH: the FIRST image is the DESIGN PHOTO (the look the client wants). Each image after it is an IMS inventory candidate, preceded by a line with its [id] and name. Find the '" + (cardSpec.rcName || "element") + "' in the design photo, then pick the candidate whose photo looks MOST similar (shape, style, colour, material). Use names only to break ties. If the item isn't clearly visible, fall back to the best name/subcategory match.\n"
+      : (cardSpec.photoUrl
+          ? "\nA design photo of this zone is attached. Find the '" + (cardSpec.rcName || "element") + "' within it and match the closest candidate by appearance + name.\n"
+          : "")) +
+    "\n";
+  const tail = (textOnly.length ? "Additional candidates (name only, no photo):\n" + JSON.stringify(textOnly, null, 2) + "\n\n" : "") +
     "Return ONLY valid JSON, no markdown:\n" +
     "{ \"primary\": { \"imsId\": \"X-####\", \"reasoning\": \"short why\" }, \"alternatives\": [ { \"imsId\": \"X-####\" }, { \"imsId\": \"X-####\" }, { \"imsId\": \"X-####\" } ] }\n\n" +
     "If nothing matches reasonably, return: { \"primary\": null, \"alternatives\": [] }";
   try {
     if (signal?.aborted) return { primary: null, alternatives: [], aborted: true };
-    // Include the zone design photo so the AI identifies the SPECIFIC variant (which console table /
-    // chandelier), not just a name match. Same call count as before — the image rides the existing call.
-    const contentBlocks = cardSpec.photoUrl
-      ? [{ type: "image", source: { type: "url", url: cardSpec.photoUrl } }, { type: "text", text: prompt }]
-      : prompt;
+    let contentBlocks;
+    if (useVision) {
+      // Interleave: instructions → design photo → each candidate's photo with its id/name → JSON ask.
+      // This lets the AI compare the design against every IMS item's ACTUAL photo, not just names.
+      contentBlocks = [{ type: "text", text: intro + "DESIGN PHOTO (match to this):" }, { type: "image", source: { type: "url", url: cardSpec.photoUrl } }];
+      withPhoto.forEach(r => {
+        contentBlocks.push({ type: "text", text: `Candidate [${r.id}] ${r.name}${r.size ? " · " + r.size : ""} (qty ${r.qty}):` });
+        contentBlocks.push({ type: "image", source: { type: "url", url: r.photo } });
+      });
+      contentBlocks.push({ type: "text", text: tail });
+    } else {
+      // No design photo, or no candidate has a photo → name/subcategory match (with design photo if present).
+      const prompt = intro + "Candidate IMS items (already scoped to subcategory):\n" + JSON.stringify([...withPhoto.map(({ photo, ...r }) => r), ...textOnly], null, 2) + "\n\n" + tail;
+      contentBlocks = cardSpec.photoUrl
+        ? [{ type: "image", source: { type: "url", url: cardSpec.photoUrl } }, { type: "text", text: prompt }]
+        : prompt;
+    }
     const text = await callClaudeStreaming({
       contentBlocks,
       model: "claude-sonnet-4-6",
