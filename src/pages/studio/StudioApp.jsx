@@ -3697,24 +3697,41 @@ Return ONLY JSON:
     return { client, ledger: finalLedger };
   }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems]);
 
-  // ── Build auto-save ──────────────────────────────────────────────────────
+  // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
   // manual "Save Draft" / booking, so a refresh before saving reverted the client to an older session
-  // (wrong photos/tab/dims on reopen). This debounced effect rolls a background auto-draft into the
-  // client's latest session so a refresh always restores the exact last build. A ref holds saveSession
-  // so the effect fires on real BUILD-state changes only (not when saveSession/clientLedger re-create),
-  // avoiding a save→ledger→save loop.
+  // (wrong photos/tab/dims on reopen — e.g. Gold clicks lost, zones back to Silver). We roll a
+  // background auto-draft into the client's latest session. THREE triggers so nothing is ever lost:
+  //   1) debounced 1.5s after an edit pause,
+  //   2) a 15s periodic fallback (covers CONTINUOUS editing where the debounce timer keeps resetting),
+  //   3) on tab hide / pagehide (captures the state right before a refresh or tab switch).
+  // Refs hold the latest saveSession + a "has data" guard so the interval/listeners call the current
+  // closure without re-subscribing (and never overwrite good data with an empty snapshot).
   const saveSessionRef = useRef(saveSession);
-  useEffect(() => { saveSessionRef.current = saveSession; }, [saveSession]);
+  useEffect(() => { saveSessionRef.current = saveSession; });
+  const buildHasDataRef = useRef(false);
   useEffect(() => {
-    if (!activeClientId || !clientName.trim()) return;
-    const hasData = Object.keys(zoneElements || {}).length > 0
+    buildHasDataRef.current = !!(activeClientId && clientName.trim() && (
+      Object.keys(zoneElements || {}).length > 0
       || Object.keys(elSelectedPhoto || {}).length > 0
-      || Object.values(enabledEls || {}).some(Boolean);
-    if (!hasData) return;
-    const t = setTimeout(() => { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } }, 2500);
+      || Object.values(enabledEls || {}).some(Boolean)
+    ));
+  });
+  const autoSaveBuild = useCallback(() => { if (buildHasDataRef.current) { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } } }, []);
+  // 1) Debounced on edits.
+  useEffect(() => {
+    if (!buildHasDataRef.current) return;
+    const t = setTimeout(autoSaveBuild, 1500);
     return () => clearTimeout(t);
-  }, [activeClientId, clientName, zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades, customZones, customMode, activeZones, activeFnIdx, fnBuilds]);
+  }, [activeClientId, clientName, zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades, customZones, customMode, activeFnIdx, fnBuilds, autoSaveBuild]);
+  // 2) Periodic fallback + 3) save on tab hide / refresh.
+  useEffect(() => {
+    const id = setInterval(autoSaveBuild, 15000);
+    const onVis = () => { if (document.visibilityState === "hidden") autoSaveBuild(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", autoSaveBuild);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); };
+  }, [autoSaveBuild]);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
   const markSold = useCallback(() => {
