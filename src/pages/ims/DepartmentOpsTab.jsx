@@ -108,7 +108,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   const blockedItems = useMemo(() => {
     if (!sel) return [];
-    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "" }));
+    if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null }));
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
@@ -678,14 +678,33 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               ) : (
                 <div className="divide-y">
                   {blockedItems.map(it => (
-                    <div key={it.id} className="flex items-center gap-3 px-4 py-2.5">
-                      {it.photo ? <img src={it.photo} alt="" className="w-12 h-12 rounded-lg object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg">📦</div>}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-900 truncate">{it.name}</div>
-                        <div className="text-xs text-gray-500">{it.sub || "—"} · {fmt(it.unit)}/unit</div>
+                    <div key={it.id}>
+                      <div className="flex items-center gap-3 px-4 py-2.5">
+                        {it.photo ? <img src={it.photo} alt="" className="w-12 h-12 rounded-lg object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg">📦</div>}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">{it.name}{it.isKit && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}</div>
+                          <div className="text-xs text-gray-500">{it.sub || "—"} · {fmt(it.unit)}/unit</div>
+                        </div>
+                        <div className="text-sm font-semibold text-gray-700">×{it.qty}</div>
+                        <div className="text-sm font-bold text-gray-900 w-20 text-right">{fmt(it.total)}</div>
                       </div>
-                      <div className="text-sm font-semibold text-gray-700">×{it.qty}</div>
-                      <div className="text-sm font-bold text-gray-900 w-20 text-right">{fmt(it.total)}</div>
+                      {/* Kit contents — each sub-element loaded separately, with its own rental (customised
+                          per-deal by the salesperson). Their totals sum to the kit total above. */}
+                      {it.isKit && it.components && it.components.length > 0 && (
+                        <div className="pl-8 pr-4 pb-2 pt-0.5 bg-indigo-50/30">
+                          <div className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wide mb-1">↳ Kit contents (load these)</div>
+                          <div className="space-y-1">
+                            {it.components.map((cp, ci) => (
+                              <div key={ci} className="flex items-center gap-2 text-xs">
+                                <span className="text-indigo-300">└</span>
+                                <span className="flex-1 min-w-0 truncate text-gray-700">{cp.name} <span className="text-gray-400">· {cp.sub || "—"} · {fmt(cp.unit)}/unit</span></span>
+                                <span className="font-medium text-gray-500">×{cp.qty}</span>
+                                <span className="font-semibold text-gray-700 w-20 text-right">{fmt(cp.total)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

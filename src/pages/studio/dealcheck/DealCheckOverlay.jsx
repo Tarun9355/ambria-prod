@@ -133,7 +133,23 @@ export default function DealCheckOverlay({ ctx }) {
               rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
               addD(dD, "rental", lineRental);
-              if (lineRental > 0 && deptInv[dD]) deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId });
+              if (lineRental > 0 && deptInv[dD]) {
+                // Kit composite → also carry its component items (customised per-deal via dcKitEdits,
+                // else the master subItems) so Dept Ops can list each sub-element with its own rental.
+                let components;
+                if (Array.isArray(item.subItems) && item.subItems.length > 0) {
+                  const edited = dcKitEdits[fi]?.[ck];
+                  const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 }));
+                  components = comps.map(cp => {
+                    const ci = dcInventoryCache.find(x => x.id === cp.itemId);
+                    if (!ci) return null;
+                    const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
+                    const cr = imsField.rentalCost(ci);
+                    return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "" };
+                  }).filter(Boolean);
+                }
+                deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}) });
+              }
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
             try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
@@ -198,8 +214,18 @@ export default function DealCheckOverlay({ ctx }) {
             const seen = {}, merged = [];
             (deptInv[dn] || []).forEach(it => {
               const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "");
-              if (seen[key]) { seen[key].qty += (it.qty || 0); seen[key].total += (it.total || 0); }
-              else { seen[key] = { ...it }; merged.push(seen[key]); }
+              if (seen[key]) {
+                seen[key].qty += (it.qty || 0); seen[key].total += (it.total || 0);
+                if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
+                  const base = seen[key].components || (seen[key].components = []);
+                  it.components.forEach(cp => {
+                    const ck2 = (cp.name || "") + "|" + (cp.imsId || "");
+                    const ex = base.find(b => ((b.name || "") + "|" + (b.imsId || "")) === ck2);
+                    if (ex) { ex.qty += (cp.qty || 0); ex.total += (cp.total || 0); } else base.push({ ...cp });
+                  });
+                }
+              }
+              else { seen[key] = { ...it, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined }; merged.push(seen[key]); }
             });
             deptInv[dn] = merged;
           });
