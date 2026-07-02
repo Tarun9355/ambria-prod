@@ -587,6 +587,9 @@ async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
     "  name: " + (cardSpec.rcName || "(unknown)") + "\n" +
     "  subcategory: " + (cardSpec.subcategory || "(unscoped)") + "\n" +
     (cardSpec.propType ? "  prop type: " + cardSpec.propType + " (this is a floral hard-prop card — match to the physical vessel/stand, not the flowers)\n" : "") +
+    (cardSpec.photoUrl
+      ? "\nA design photo of this zone is attached. Find the '" + (cardSpec.rcName || "element") + "' within it and note its specific style/shape/colour/material, then pick the IMS candidate that best matches THAT specific item. Only the candidate NAMES are given (no candidate images), so use the photo to disambiguate between similarly-named options. If the item isn't clearly visible, fall back to the best name/subcategory match.\n"
+      : "") +
     "\n" +
     "Candidate IMS items (already scoped to subcategory):\n" + JSON.stringify(candidates, null, 2) + "\n\n" +
     "Return ONLY valid JSON, no markdown:\n" +
@@ -594,8 +597,13 @@ async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
     "If nothing matches reasonably, return: { \"primary\": null, \"alternatives\": [] }";
   try {
     if (signal?.aborted) return { primary: null, alternatives: [], aborted: true };
+    // Include the zone design photo so the AI identifies the SPECIFIC variant (which console table /
+    // chandelier), not just a name match. Same call count as before — the image rides the existing call.
+    const contentBlocks = cardSpec.photoUrl
+      ? [{ type: "image", source: { type: "url", url: cardSpec.photoUrl } }, { type: "text", text: prompt }]
+      : prompt;
     const text = await callClaudeStreaming({
-      contentBlocks: prompt,
+      contentBlocks,
       model: "claude-sonnet-4-6",
       maxTokens: 800,
     });
@@ -4899,14 +4907,32 @@ Return ONLY JSON:
       newCards[fnIdx] = { ...(newCards[fnIdx] || {}) };
       newZoneState[fnIdx] = { ...(newZoneState[fnIdx] || {}) };
       const enabledZoneKeys = Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]);
+      // Card specs come straight from the CURRENT build (getCardSpecsForZone(zoneElements)). Build the
+      // full valid key-set for this function first, then PRUNE any card that no longer maps to a current
+      // build element — removed elements, a swapped zone photo, or a disabled/emptied zone. Without this,
+      // cards from a previous build state linger and Deal Check shows elements the salesperson never
+      // saved (the reported mismatch). Deal Check must mirror the build exactly.
+      const zoneSpecs = {};
+      const validKeys = new Set();
       for (const zoneKey of enabledZoneKeys) {
         const zoneElems = fn.zoneElements?.[zoneKey] || [];
         if (zoneElems.length === 0) continue;
-        if (!isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey)) continue;  // §7.9.6 #5 — skip clean zones
         const photoUrl = fn.elSelectedPhoto?.[zoneKey] || null;
+        const specs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
+        zoneSpecs[zoneKey] = { specs, photoUrl };
+        specs.forEach(s => validKeys.add(s.cardKey));
+      }
+      Object.keys(newCards[fnIdx]).forEach(k => { if (!validKeys.has(k)) delete newCards[fnIdx][k]; });
+      for (const zoneKey of enabledZoneKeys) {
+        const entry = zoneSpecs[zoneKey];
+        if (!entry) continue;
+        const { specs: cardSpecs, photoUrl } = entry;
+        // Re-match when the zone is flagged dirty OR any current element is missing a card (build changed
+        // since the last run). Otherwise the zone is up to date — skip the AI to save calls.
+        const needsMatch = cardSpecs.some(s => !newCards[fnIdx][s.cardKey]) || isZoneDirty(dcZoneState, dcCards, fnIdx, zoneKey);
+        if (!needsMatch) continue;
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
-        const cardSpecs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
         const venueName = fn.fnVenue || "";
         const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || venueParents };
         for (const spec of cardSpecs) {
