@@ -579,8 +579,9 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems)
 async function aiMatchCardWithSubcat(cardSpec, scopedItems, signal) {
   if (!Array.isArray(scopedItems) || scopedItems.length === 0) return { primary: null, alternatives: [] };
   // Split candidates: those WITH a photo (for true visual comparison, capped for cost/latency) and
-  // the rest listed name-only. Bound total to 40 names as before.
-  const MAX_IMG = 10;
+  // the rest listed name-only. Bound total to 40 names as before. Cap images at 6 — enough to pick
+  // the right variant while keeping each vision call fast (10 images was noticeably slow).
+  const MAX_IMG = 6;
   const withPhoto = [], noPhoto = [];
   for (const i of scopedItems) {
     const rec = { id: i.id, name: i.name, cat: imsField.category(i), subCat: imsField.subcategory(i), size: imsField.sizeText(i), qty: imsField.qtyOwned(i), photo: imsField.photos(i)[0] || null };
@@ -5033,7 +5034,11 @@ Return ONLY JSON:
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
         const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || venueParents };
-        for (const spec of cardSpecs) {
+        // Match one element spec → its card. The AI vision call dominates wall-clock, so these run in
+        // parallel below (bounded) instead of one-at-a-time — the main "Generate is slow" fix.
+        let zoneAborted = false;
+        const runSpec = async (spec) => {
+          if (zoneAborted) return;
           // Hide inventory locked to OTHER fixed venues; surface THIS venue's standing items first.
           const subcatList = filterImsBySubcategory(inventory, spec.subcategory);
           const scoped = subcatList
@@ -5058,7 +5063,7 @@ Return ONLY JSON:
               source = "name-match"; cardsNameMatch += 1;
             } else {
               const ai = await aiMatchCardWithSubcat(spec, scoped, ac.signal);
-              if (ai?.aborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
+              if (ai?.aborted) { zoneAborted = true; return; }
               if (ai?.primary?.imsId) {
                 primary = { imsId: ai.primary.imsId, name: ai.primary.name };
                 source = spec.kind === "fl" ? "floral" : (spec.photoUrl ? "photo" : "list");
@@ -5097,7 +5102,15 @@ Return ONLY JSON:
             resolvedAt: Date.now(),
           };
           if (primary?.imsId) { matchedItemIds.add(primary.imsId); cardsResolved += 1; }
-        }
+        };
+        // Bounded-concurrency runner — ~6 element matches in flight at once (each cardKey writes its own
+        // entry, so no collisions). Cuts a zone's match time to roughly (elements/6) × per-call time.
+        const CONCURRENCY = 6;
+        let _si = 0;
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, cardSpecs.length) }, async () => {
+          while (_si < cardSpecs.length && !zoneAborted) { await runSpec(cardSpecs[_si++]); }
+        }));
+        if (zoneAborted) { setDcGenerating(false); setDcGenStatus("Cancelled"); setDcAbortRef(null); return { ok: false, error: "aborted" }; }
         newZoneState[fnIdx][zoneKey] = { ...(newZoneState[fnIdx][zoneKey] || {}), lastResolvedAt: Date.now() };
       }
     }
