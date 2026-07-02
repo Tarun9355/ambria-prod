@@ -151,6 +151,22 @@ export default function DealCheckOverlay({ ctx }) {
                 deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}) });
               }
             });
+            // Manually-added inventory blocks (dcManualItems) — the salesperson added these directly in
+            // Deal Check; they must reserve + show in Dept Ops just like matched cards (they were being
+            // dropped from the snapshot entirely, so Dept Ops never saw them).
+            (dcManualItems || []).filter(mi => mi.fnIdx === fi).forEach(mi => {
+              const item = dcInventoryCache.find(x => x.id === mi.imsId);
+              if (!item) return;
+              const q = Number(mi.qty) || 1;
+              const baseR = imsField.rentalCost(item);
+              const venueName = fn.fnVenue || fn.venue || "";
+              const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, venueName, mi.imsId, q);
+              const lineRental = sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
+              rental += lineRental;
+              const dD = catToDept(imsField.category(item));
+              addD(dD, "rental", lineRental);
+              if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
+            });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
             try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
             try {

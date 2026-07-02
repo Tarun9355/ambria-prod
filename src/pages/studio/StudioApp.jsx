@@ -5101,7 +5101,17 @@ Return ONLY JSON:
             zoneKey,
             resolvedAt: Date.now(),
           };
-          if (primary?.imsId) { matchedItemIds.add(primary.imsId); cardsResolved += 1; }
+          if (primary?.imsId) {
+            matchedItemIds.add(primary.imsId); cardsResolved += 1;
+            // Kit → soft-hold each COMPONENT individually too (customised per-deal via dcKitEdits, else
+            // the master subItems), so every sub-item is reserved in IMS, not just the kit shell.
+            const pItem = inventory.find(i => i.id === primary.imsId);
+            if (pItem && Array.isArray(pItem.subItems) && pItem.subItems.length) {
+              const edited = dcKitEdits[fnIdx]?.[spec.cardKey];
+              const comps = Array.isArray(edited) ? edited : pItem.subItems;
+              comps.forEach(cp => { if (cp?.itemId) matchedItemIds.add(cp.itemId); });
+            }
+          }
         };
         // Bounded-concurrency runner — ~6 element matches in flight at once (each cardKey writes its own
         // entry, so no collisions). Cuts a zone's match time to roughly (elements/6) × per-call time.
