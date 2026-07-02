@@ -2543,7 +2543,7 @@ export default function StudioApp() {
       if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
-    let tReal = 0, tArt = 0;
+    let tReal = 0, tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0;
     const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
@@ -2552,6 +2552,16 @@ export default function StudioApp() {
         if (!rc || String(rc.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc) / 100, ap = 1 - rp;
+        // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
+        // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
+        // getElPrice's blend). Computed at element level, before the recipe gate below.
+        { const szU = String(el.size || "").toUpperCase(); let rr, ar;
+          if (rcIsSMB(rc)) {
+            if (szU === "S" || szU === "SMALL") { rr = rc.inhouseS || 0; ar = rc.artificialS || 0; }
+            else if (szU === "B" || szU === "BIG" || szU === "LARGE" || szU === "PREMIUM" || szU === "HEAVY") { rr = rc.inhouseB || 0; ar = rc.artificialB || 0; }
+            else { rr = rc.inhouseM || 0; ar = rc.artificialM || 0; }
+          } else { rr = rc.inhouseFlat || 0; ar = rc.artificialFlat || 0; }
+          realIncome += q * rp * rr; artIncome += q * ap * ar; }
         const tn = (rc.name || "").toLowerCase().trim();
         let pat = fp.find(p => (p.name || "").toLowerCase().trim() === tn);
         if (!pat) pat = fp.find(p => { const n = (p.name || "").toLowerCase().trim(); return n && (n.includes(tn) || tn.includes(n)); });
@@ -2579,12 +2589,13 @@ export default function StudioApp() {
             const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
             const bunches = (fl.qty || 0) * q * effA * bpu;
             const isG = ft === "green";
+            if (isG) artGreenBunches += bunches; else artFlowerBunches += bunches;
             tArt += bunches * (isG ? artGreenRate / artGreenBPK : artFlowerRate / artFlowerBPK);
           }
         });
       });
     });
-    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost) };
+    return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
   }, [dealCheckData, rcItems, floralRatio]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept

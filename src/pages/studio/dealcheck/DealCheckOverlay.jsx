@@ -502,7 +502,29 @@ export default function DealCheckOverlay({ ctx }) {
         const dcSeasonInfo = { key: dcSeasonKey, mult: dcMandiMult[dcSeasonKey] || 1, label: (dcSeasonKey === "kings" || dcSeasonKey === "heavy_saya") ? "Saya" : dcSeasonKey === "competition" ? "Competition" : "Non-Saya" };
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
-          try { const agg = {}; let artTotal = 0; (dcCostRollup.fns || []).forEach(fn => { const r = calcFnFloralSourcingCost(fn); artTotal += r.totalArtificial || 0; (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; }); }); const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost); if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true }); floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, season: dcSeasonInfo, capturedAt: Date.now() }; } catch {}
+          try {
+            // Artificial sourcing rates (bunches→kg→₹) — captured so IMS Dept Ops can show the "how".
+            const afBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
+            const agBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
+            const afRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
+            const agRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
+            const agg = {}; let artTotal = 0, afBunches = 0, agBunches = 0, incReal = 0, incArt = 0;
+            (dcCostRollup.fns || []).forEach(fn => {
+              const r = calcFnFloralSourcingCost(fn);
+              artTotal += r.totalArtificial || 0;
+              afBunches += r.artFlowerBunches || 0; agBunches += r.artGreenBunches || 0;
+              incReal += r.income?.real || 0; incArt += r.income?.art || 0;
+              (r.breakdown || []).forEach(f => { if (!agg[f.name]) agg[f.name] = { name: f.name, qty: 0, cost: 0, unit: f.unit }; agg[f.name].qty += f.qty; agg[f.name].cost += f.cost; });
+            });
+            const flowers = Object.values(agg).sort((a, b) => b.cost - a.cost);
+            if (artTotal >= 1) flowers.push({ name: "Artificial flowers / greens", qty: 0, cost: Math.round(artTotal), unit: "per kg", artificial: true });
+            const flowerKg = afBunches / afBPK, greenKg = agBunches / agBPK;
+            // Full artificial derivation (bunches ÷ bunches-per-kg = kg × ₹/kg = cost), flowers + greens.
+            const artificial = (afBunches + agBunches) > 0 ? { flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches), flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate, flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100, flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate), total: Math.round(artTotal) } : null;
+            // Billed floral income split (what the client pays at real vs artificial rates).
+            const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
+            floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, season: dcSeasonInfo, capturedAt: Date.now() };
+          } catch {}
           // Manpower plan + per-dept detail are computed once in dcCostRollup (so the actuals delta and
           // this snapshot stay identical). Reuse them here rather than recomputing.
           const manpowerPlan = dcCostRollup.manpowerPlan || [];

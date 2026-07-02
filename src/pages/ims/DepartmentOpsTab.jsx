@@ -57,6 +57,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const now = new Date();
   const [calRef, setCalRef] = useState({ y: now.getFullYear(), m: now.getMonth() }); // visible calendar month
   const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
+  const [artHowOpen, setArtHowOpen] = useState(false); // expand the artificial-flower "how derived" box
   const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
   const [mpOpen, setMpOpen] = useState({}); // which manpower rows have their derivation expanded
   const [mpDayHow, setMpDayHow] = useState({}); // which per-day rows have their "how" derivation expanded
@@ -791,12 +792,24 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   const variance = mandiActualTotal - projectedTotal;
                   return (
                     <div className="space-y-2">
+                      {/* Billed floral income — split real vs artificial arrangements (from Deal Check). */}
+                      {fp.income && Number(fp.income.total) > 0 && (
+                        <div className="bg-white border border-indigo-100 rounded-lg overflow-hidden text-xs">
+                          <div className="px-3 py-2 bg-indigo-50 font-semibold text-indigo-900 flex justify-between"><span>💰 Floral income (billed to client)</span><span>{fmt(fp.income.total)}</span></div>
+                          <div className="divide-y">
+                            <div className="flex justify-between px-3 py-1.5"><span className="text-gray-600">🌿 Real arrangements</span><span className="font-medium text-gray-800">{fmt(fp.income.real)}</span></div>
+                            <div className="flex justify-between px-3 py-1.5"><span className="text-gray-600">🌸 Artificial arrangements</span><span className="font-medium text-gray-800">{fmt(fp.income.artificial)}</span></div>
+                          </div>
+                          <div className="px-3 py-1.5 bg-gray-50 border-t text-[10px] text-gray-500">Cost {fmt(mandiActualTotal)} (mandi {fmt(mandiActualReal)}{fp.artificial ? ` + artificial ${fmt(fp.artificial.total)}` : ""}) · margin <b className={fp.income.total - mandiActualTotal >= 0 ? "text-emerald-600" : "text-red-500"}>{fmt(fp.income.total - mandiActualTotal)}</b></div>
+                        </div>
+                      )}
                       {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
                       {/* Projected vs real mandi — side by side, editable real shopping list */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden">
                         <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide">
                           <span>🌸 Flower</span><span className="text-right w-28">Projected (plan)</span><span className="text-right w-44">Real shopping</span>
                         </div>
+                        <div className="px-3 py-1 bg-emerald-50/40 text-[9px] text-emerald-700/80 border-b border-emerald-50">Real shopping = <b>qty × ₹/unit</b>. Projected = planned units from the recipe × mandi price{fp.season && fp.season.mult && fp.season.mult !== 1 ? ` × ${fp.season.mult} season` : ""}.</div>
                         {mandiRows.length === 0 && fpFlowers.length === 0 ? (
                           <div className="px-3 py-3 text-xs text-gray-400 text-center">No mandi plan captured. Add flowers below, or run Deal Check before marking Sold to auto-capture it.</div>
                         ) : (
@@ -818,7 +831,32 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                 </div>
                               );
                             })}
-                            {artificialProj > 0 && <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center bg-gray-50/60"><div className="text-xs text-gray-500">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></div><div className="text-right w-28 text-xs text-gray-400">{fmt(artificialProj)}</div><div className="text-right w-44 text-xs text-gray-500 pr-6">{fmt(artificialProj)}</div></div>}
+                            {(fp.artificial || artificialProj > 0) && (() => {
+                              const art = fp.artificial;
+                              const artTot = art ? art.total : artificialProj;
+                              return (
+                                <div className="bg-gray-50/60">
+                                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center">
+                                    <div className="text-xs text-gray-500 flex items-center gap-1.5 min-w-0">
+                                      {art && <button onClick={() => setArtHowOpen(o => !o)} className="shrink-0 text-[9px] font-semibold text-indigo-500 hover:text-indigo-700 border border-indigo-200 rounded px-1 leading-tight" title="How the artificial cost was calculated">{artHowOpen ? "▾" : "▸"} how</button>}
+                                      <span className="truncate">Artificial flowers / greens <span className="text-[10px] text-gray-400">(not mandi-shopped)</span></span>
+                                    </div>
+                                    <div className="text-right w-28 text-xs text-gray-400">{fmt(artTot)}</div>
+                                    <div className="text-right w-44 text-xs text-gray-500 pr-6">{fmt(artTot)}</div>
+                                  </div>
+                                  {art && artHowOpen && (
+                                    <div className="px-3 pb-2">
+                                      <div className="bg-white border rounded-lg p-2 text-[10px] text-gray-600 space-y-1">
+                                        {art.flowerBunches > 0 && <div>🌸 Flowers: <b>{art.flowerBunches}</b> bunches ÷ {art.flowerBPK}/kg = <b>{art.flowerKg} kg</b> × {fmt(art.flowerRate)}/kg = <b className="text-gray-900">{fmt(art.flowerCost)}</b></div>}
+                                        {art.greenBunches > 0 && <div>🌿 Greens: <b>{art.greenBunches}</b> bunches ÷ {art.greenBPK}/kg = <b>{art.greenKg} kg</b> × {fmt(art.greenRate)}/kg = <b className="text-gray-900">{fmt(art.greenCost)}</b></div>}
+                                        {art.flowerBunches <= 0 && art.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
+                                        <div className="pt-1 border-t text-right">Total artificial = <b className="text-gray-900">{fmt(art.total)}</b></div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                         {/* Totals row */}
