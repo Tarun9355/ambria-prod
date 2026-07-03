@@ -88,6 +88,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const events = useMemo(() => {
     const q = search.toLowerCase().trim();
     return allEvents
+      // Ops plans only for SOLD/finalised events — hide un-finalised (pending) ones (matches Events tab).
+      .filter(({ eo }) => eo.status && eo.status !== "pending")
       .filter(({ eo, date }) => (!q || (eo.clientName || "").toLowerCase().includes(q) || (eo.functionsDetail?.[0]?.venue || eo.venue || "").toLowerCase().includes(q)) && (!dateFilter || date === dateFilter))
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
   }, [allEvents, search, dateFilter]);
@@ -607,20 +609,28 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               {nearby.length > 0 && <div className="text-xs text-gray-500">📅 {nearby.length} nearby event{nearby.length > 1 ? "s" : ""} (±7 days)</div>}
             </div>
 
-            {/* Department income (from Deal Check snapshot — matches Studio) */}
-            {deptIncome ? (
+            {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
+                (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
+            {deptIncome ? (() => {
+              const artTotal = fp.artificial ? Math.round(fp.artificial.total) : 0;
+              const realFloral = Math.max(0, Math.round((deptIncome.florals || 0) - artTotal));
+              const liveManpower = Math.round(mpCost);   // edited crew plan (not the stale snapshot)
+              const liveTotal = Math.round((deptIncome.total || 0) - (deptIncome.manpower || 0) + liveManpower);
+              const rows = [["📦 Inventory rental", deptIncome.rental], ["🏗️ Truss", deptIncome.truss], ["🧵 Fabric / draping", deptIncome.fabric], ["🌿 Real flowers (mandi)", realFloral], ["🌸 Artificial flowers", artTotal], ["👷 Manpower", liveManpower], ["🏭 Production", deptIncome.production], ["🛒 Buying", deptIncome.buying], ["🚚 Transport", deptIncome.transport]];
+              return (
               <div className="bg-indigo-50 border border-indigo-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-2.5 flex items-center justify-between bg-indigo-100/60">
                   <span className="text-sm font-semibold text-indigo-900">📊 {dept} income (from Deal Check)</span>
-                  <span className="text-sm font-bold text-indigo-900">{fmt(Math.round(deptIncome.total || 0))}</span>
+                  <span className="text-sm font-bold text-indigo-900">{fmt(liveTotal)}</span>
                 </div>
                 <div className="divide-y divide-indigo-100">
-                  {[["📦 Inventory rental", deptIncome.rental], ["🏗️ Truss", deptIncome.truss], ["🧵 Fabric / draping", deptIncome.fabric], ["🌸 Floral (mandi)", deptIncome.florals], ["👷 Manpower", deptIncome.manpower], ["🏭 Production", deptIncome.production], ["🛒 Buying", deptIncome.buying], ["🚚 Transport", deptIncome.transport]].filter(([, v]) => v > 0).map(([l, v], i) => (
+                  {rows.filter(([, v]) => v > 0).map(([l, v], i) => (
                     <div key={i} className="flex justify-between px-4 py-1.5 text-xs"><span className="text-indigo-800">{l}</span><span className="font-semibold text-indigo-900">{fmt(Math.round(v))}</span></div>
                   ))}
                 </div>
               </div>
-            ) : (
+              );
+            })() : (
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">No Deal Check breakdown synced yet for this event. In Studio → Deal Check → <b>Dept Income</b>, click <b>📤 Sync to IMS Dept Ops</b> to push the numbers here.</div>
             )}
 
