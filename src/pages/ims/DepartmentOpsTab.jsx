@@ -376,7 +376,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       const whTrucks = trucks.map((t, ti) => ({ n: ti + 1, vehicle: t.vehicle, driver: t.driver, qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
       const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
       const totalIn = whQty + reused;
-      if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
+      if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, photo: it.photo || "", required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
     });
     Object.entries(incomingByItem).forEach(([key, inc]) => { if (!used.has(key)) rows.push({ name: inc.name, required: 0, reused: inc.total, whTrucks: [], whQty: 0, totalIn: inc.total, shortfall: 0, over: inc.total, sources: inc.sources }); });
     return rows;
@@ -1087,6 +1087,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             </>)}
 
             {opsView === "onsite" && (<>
+            {/* Department chips — the on-site ops manager runs the WHOLE function; tap a dept to see
+                its receiving + dismantle list (with photos). Only depts that have inventory show. */}
+            {(() => {
+              const deptsWithItems = DEPTS.filter(d => (sel.deptInventory?.[d]?.length || 0) > 0);
+              if (deptsWithItems.length <= 1) return null;
+              return (
+                <div className="flex flex-wrap gap-1.5 -mt-1">
+                  {deptsWithItems.map(d => (
+                    <button key={d} onClick={() => setDept(d)} className={"px-3 py-1.5 rounded-full text-xs font-semibold border transition " + (dept === d ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>{DEPT_ICON[d] || "📦"} {d} <span className={dept === d ? "text-indigo-200" : "text-gray-400"}>{sel.deptInventory[d].length}</span></button>
+                  ))}
+                </div>
+              );
+            })()}
             {/* Receiving — ops manager sees every item's sources (which truck + driver, from where) + shortfall */}
             {sourceRows.length > 0 && (
               <div className="bg-sky-50 border border-sky-200 rounded-xl overflow-hidden">
@@ -1098,7 +1111,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   {sourceRows.map((r, i) => (
                     <div key={i} className="px-4 py-2">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-sky-900 font-semibold">{r.name}</span>
+                        <span className="text-sky-900 font-semibold flex items-center gap-2">
+                          {r.photo ? <img src={r.photo} alt="" onClick={() => setZoomImg(r.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-sky-100 flex items-center justify-center text-sky-300 text-xs">📦</div>}
+                          {r.name}
+                        </span>
                         <span className={r.shortfall > 0 ? "text-red-600 font-bold" : "text-sky-800"}>
                           {r.required > 0 ? <>need <b>{r.required}</b> · arriving <b>{r.totalIn}</b></> : <>arriving <b>{r.totalIn}</b></>}
                           {r.shortfall > 0 && <span> · short {r.shortfall}</span>}
@@ -1140,7 +1156,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     return (
                       <div key={k} className="px-4 py-2.5 space-y-1.5">
                         <div className="flex items-center gap-3">
-                          {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                          {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
                           <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">out {it.qty}{it.invId ? "" : " · not stock-linked"}</span></span>
                           <span className="text-[10px] text-gray-400">{unrouted > 0 ? `${unrouted} to route` : "✓ all routed"}</span>
                         </div>
