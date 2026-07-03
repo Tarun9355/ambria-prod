@@ -53,6 +53,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [dept, setDept] = useState(roleDept || "Floral");
   const [search, setSearch] = useState("");
   const [selId, setSelId] = useState(null);
+  const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
+  const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD selected on the calendar (or "")
   const now = new Date();
   const [calRef, setCalRef] = useState({ y: now.getFullYear(), m: now.getMonth() }); // visible calendar month
@@ -609,6 +611,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               {nearby.length > 0 && <div className="text-xs text-gray-500">📅 {nearby.length} nearby event{nearby.length > 1 ? "s" : ""} (±7 days)</div>}
             </div>
 
+            {/* Sub-view: Planning (dept head) vs On-site (ops manager — receiving & dismantle) */}
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+              {[["planning", "📋 Planning"], ["onsite", "🚚 On-site"]].map(([k, l]) => (
+                <button key={k} onClick={() => setOpsView(k)} className={"px-4 py-1.5 rounded-lg text-xs font-semibold transition " + (opsView === k ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700")}>{l}</button>
+              ))}
+            </div>
+
+            {opsView === "planning" && (<>
+
             {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
                 (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
             {deptIncome ? (() => {
@@ -692,7 +703,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   {blockedItems.map(it => (
                     <div key={it.id}>
                       <div className="flex items-center gap-3 px-4 py-2.5">
-                        {it.photo ? <img src={it.photo} alt="" className="w-12 h-12 rounded-lg object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg">📦</div>}
+                        {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg">📦</div>}
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-900 truncate">{it.name}{it.isKit && <span className="ml-2 align-middle text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">KIT</span>}</div>
                           <div className="text-xs text-gray-500">{it.sub || "—"} · {fmt(it.unit)}/unit</div>
@@ -709,7 +720,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {it.components.map((cp, ci) => (
                               <div key={ci} className="flex items-center gap-2 text-xs">
                                 <span className="text-indigo-300">└</span>
-                                {cp.photo ? <img src={cp.photo} alt="" className="w-6 h-6 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">🌸</div>}
+                                {cp.photo ? <img src={cp.photo} alt="" onClick={() => setZoomImg(cp.photo)} className="w-6 h-6 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">🌸</div>}
                                 <span className="flex-1 min-w-0 truncate text-gray-700">{cp.name} <span className="text-gray-400">· {cp.sub || "—"} · {fmt(cp.unit)}/unit</span></span>
                                 <span className="font-medium text-gray-500">×{cp.qty}</span>
                                 <span className="font-semibold text-gray-700 w-20 text-right">{fmt(cp.total)}</span>
@@ -1025,7 +1036,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         <div className="border rounded-lg divide-y">
                           {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-3 px-3 py-1.5">
-                              {it.photo ? <img src={it.photo} alt="" className="w-8 h-8 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                              {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
                               <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">need {it.qty}</span></span>
                               <span className={"text-[11px] font-semibold w-28 text-right " + matchCls}>{totalLoaded}/{it.qty} loaded{totalLoaded > it.qty ? " ⚠️" : totalLoaded === it.qty ? " ✓" : ""}</span>
                               <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">this truck</span><input type="number" min="0" value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value)} placeholder="0" className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
@@ -1073,6 +1084,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
             </div>
 
+            </>)}
+
+            {opsView === "onsite" && (<>
             {/* Receiving — ops manager sees every item's sources (which truck + driver, from where) + shortfall */}
             {sourceRows.length > 0 && (
               <div className="bg-sky-50 border border-sky-200 rounded-xl overflow-hidden">
@@ -1185,6 +1199,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               )}
             </div>
 
+            </>)}
+
             {/* P&L summary */}
             <div className="bg-gray-900 text-white rounded-xl p-4 space-y-1.5">
               <div className="flex justify-between text-sm"><span className="text-gray-300">Projected income (rental + crew)</span><span className="font-semibold">{fmt(projectedIncome)}</span></div>
@@ -1198,6 +1214,12 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
           </div>
         )}
       </div>
+      {/* Click-to-enlarge lightbox — ops can view any item/kit photo big & clear */}
+      {zoomImg && (
+        <div onClick={() => setZoomImg(null)} className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out">
+          <img src={zoomImg} alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
     </div>
   );
 }
