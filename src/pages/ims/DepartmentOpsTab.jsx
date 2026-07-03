@@ -229,6 +229,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
   const delMandi = (i) => saveMandi(mandiRows.filter((_, j) => j !== i));
   const addMandi = (cat) => { saveMandi([...mandiRows, { name: cat.name, unit: cat.unit || "", projQty: 0, projCost: 0, qty: 1, price: Number(cat.currentPrice) || 0 }]); setMandiQuery(""); };
+  // Reset the real shopping list back to the system's original mandi plan (from Deal Check).
+  const resetMandi = () => saveMandi(seedMandi.map(r => ({ ...r })));
   const mandiSuggest = useMemo(() => {
     const q = mandiQuery.toLowerCase().trim();
     if (!q) return [];
@@ -697,6 +699,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {it.components.map((cp, ci) => (
                               <div key={ci} className="flex items-center gap-2 text-xs">
                                 <span className="text-indigo-300">└</span>
+                                {cp.photo ? <img src={cp.photo} alt="" className="w-6 h-6 rounded object-cover border" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">🌸</div>}
                                 <span className="flex-1 min-w-0 truncate text-gray-700">{cp.name} <span className="text-gray-400">· {cp.sub || "—"} · {fmt(cp.unit)}/unit</span></span>
                                 <span className="font-medium text-gray-500">×{cp.qty}</span>
                                 <span className="font-semibold text-gray-700 w-20 text-right">{fmt(cp.total)}</span>
@@ -839,8 +842,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
                       {/* Projected vs real mandi — side by side, editable real shopping list */}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden">
-                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide">
-                          <span>🌸 Flower</span><span className="text-right w-28">Projected (plan)</span><span className="text-right w-44">Real shopping</span>
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 bg-emerald-100/60 text-[10px] font-semibold text-emerald-900 uppercase tracking-wide items-center">
+                          <span className="flex items-center gap-2">🌸 Flower
+                            {seedMandi.length > 0 && <button onClick={resetMandi} title="Undo your edits — restore the system's original mandi plan from Deal Check" className="normal-case text-[9px] font-semibold text-emerald-700 border border-emerald-300 rounded px-1.5 py-0.5 hover:bg-emerald-200/60">↺ Reset to system plan</button>}
+                          </span>
+                          <span className="text-right w-28">Projected (plan)</span>
+                          <span className="text-right w-44">Real shopping</span>
+                        </div>
+                        {/* Column labels for the two editable fields */}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 pt-1 text-[8px] text-emerald-700/70 uppercase tracking-wide">
+                          <span></span><span className="w-28"></span>
+                          <span className="flex items-center justify-end gap-1 w-44"><span className="w-12 text-center">qty</span><span className="text-transparent">×</span><span className="w-16 text-center">₹/unit</span><span className="w-14 text-right">total</span><span className="w-3"></span></span>
                         </div>
                         <div className="px-3 py-1 bg-emerald-50/40 text-[9px] text-emerald-700/80 border-b border-emerald-50">Real shopping = <b>qty × ₹/unit</b>. Projected = planned units from the recipe × mandi price{fp.season && fp.season.mult && fp.season.mult !== 1 ? ` × ${fp.season.mult} season` : ""}.</div>
                         {mandiRows.length === 0 && fpFlowers.length === 0 ? (

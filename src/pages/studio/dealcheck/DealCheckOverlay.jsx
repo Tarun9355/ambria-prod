@@ -166,7 +166,7 @@ export default function DealCheckOverlay({ ctx }) {
                     if (!ci) return null;
                     const cq = (Number(cp.qty) || 1) * qty;   // component qty × number of kits
                     const cr = imsField.rentalCost(ci);
-                    return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "" };
+                    return { name: ci.name, imsId: ci.id, qty: cq, unit: cr, total: Math.round(cr * cq), sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
                   }).filter(Boolean);
                 }
                 deptInv[dD].push({ name: item.name || c.name || "Item", photo: imsField.photos(item)[0] || "", qty, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: c.imsId, ...(components && components.length ? { isKit: true, components } : {}) });
@@ -1158,6 +1158,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                   const short = cItem && needed > owned;
                                                   return (
                                                     <div key={ci} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
+                                                      {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img src={cp} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>🌸</span>; })()}
                                                       <span style={{color:cItem?"#fff":"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
                                                       <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:textS,fontSize:14,padding:"0 4px",userSelect:"none"}}>−</span>
