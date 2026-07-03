@@ -2115,6 +2115,9 @@ export default function StudioApp() {
   // Row-level event-order persistence to the shared `event_orders` TABLE (mirrors IMS's writer).
   // Upserts only changed EOs + deletes removed/explicit ids. Because Studio now READS the table,
   // each eo carries IMS-owned deptOps, so writing it back preserves them (no clobber).
+  // When a salesperson REGENERATES the Deal Check, the next sync wipes deptOps for a full fresh
+  // start (dept head's plan + actuals discarded, per owner decision) — set by runDealCheckGenerate.
+  const deptWipeRef = useRef(false);
   const eventOrdersRef2 = useRef([]);
   useEffect(() => { eventOrdersRef2.current = eventOrders; }, [eventOrders]);
   const saveEventOrders = useCallback(async (neo, deletedIds = []) => {
@@ -2146,7 +2149,9 @@ export default function StudioApp() {
     const sig = JSON.stringify({ inc: snap.income || {}, mp: snap.manpowerDetail || {}, inv: snap.inventory || {}, fab: snap.fabricPlan || {} });
     // Merge ONLY the Studio-owned projected fields. deptOps (the dept head's edits / actuals — IMS-owned)
     // is preserved verbatim, so re-syncing never wipes their work.
-    const applySnap = (base) => ({ ...base, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });
+    // After a regenerate, wipe deptOps (dept head's plan + actuals) so IMS starts fresh from the new plan.
+    const wipe = deptWipeRef.current; if (wipe) deptWipeRef.current = false; // one-shot per regenerate
+    const applySnap = (base) => ({ ...base, ...(wipe ? { deptOps: {} } : {}), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now() });
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -5126,6 +5131,9 @@ Return ONLY JSON:
     }
     setDcCards(newCards);
     setDcZoneState(newZoneState);
+    // A fresh regenerate on a SOLD deal → the next dept-snapshot sync wipes the dept head's edits
+    // (plan + actuals) so IMS reflects the new system plan, not the old overrides.
+    if (isSold) deptWipeRef.current = true;
     // §26 — Add artificial flower allocated item IDs to soft-holds
     Object.values(dcArtFlowerAlloc).forEach(allocs => {
       (allocs || []).forEach(a => { if (a.itemId) matchedItemIds.add(a.itemId); });

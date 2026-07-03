@@ -10,9 +10,11 @@
 //
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
+import { useState } from "react";
 import { getCat } from "../../../lib/studio/taxonomy";
 
 export default function StudioSummary({ ctx }) {
+  const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
   const {
     // theme / chrome
     S, isDark, border, textS, textP, accentBg, accentText, fmt,
@@ -541,11 +543,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                   {/* Transport for this function */}
                   {breakdown.transport && breakdown.transport.total > 0 && (
                     <div style={{borderTop:`1px solid ${border}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",background:isDark?"rgba(201,169,110,0.03)":"#FAFAF7"}}>
+                      <div onClick={()=>setTxOpen(p=>({...p,[fnData.fnIdx]:!p[fnData.fnIdx]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",background:isDark?"rgba(201,169,110,0.03)":"#FAFAF7",cursor:"pointer"}}>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <span style={{fontSize:11,color:textS,transition:"transform 0.15s",display:"inline-block",transform:txOpen[fnData.fnIdx]?"rotate(0)":"rotate(-90deg)"}}>▼</span>
                           <span style={{fontSize:18}}>🚛</span>
                           <div>
-                            <div style={{fontSize:14,fontWeight:600}}>Transport</div>
+                            <div style={{fontSize:14,fontWeight:600}}>Transport <span style={{fontSize:10,fontWeight:400,color:textS}}>· tap to {txOpen[fnData.fnIdx]?"hide":"see"} details</span></div>
                             <div style={{display:"flex",gap:6,alignItems:"center"}}>
                               <span style={{fontSize:10,padding:"1px 8px",borderRadius:4,background:breakdown.transport.isNew?"rgba(245,158,11,0.15)":"rgba(99,102,241,0.15)",color:breakdown.transport.isNew?"#F59E0B":"#818cf8"}}>{breakdown.transport.isNew?"New venue":breakdown.transport.tierLabel}</span>
                               <span style={{fontSize:10,color:textS}}>{fnData.fnVenue}</span>
@@ -554,6 +557,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                         </div>
                         <div style={{fontSize:15,fontWeight:700,color:accentText}}>{fmt(breakdown.transport.total)}</div>
                       </div>
+                      {txOpen[fnData.fnIdx] && (
                       <div style={{padding:"6px 20px 12px 48px"}}>
                         {breakdown.transport.breakdown.map((bd, bi) => (
                           <div key={bi} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}>
@@ -566,6 +570,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                           <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span style={{color:textS}}>🚛 Trucks × {breakdown.transport.trucks} × 2 trips @ {fmt(breakdown.transport.tripRate)}</span><span>{fmt(breakdown.transport.truckTotal)}</span></div>
                         </div>
                       </div>
+                      )}
                     </div>
                   )}
                   {/* Function grand total */}
