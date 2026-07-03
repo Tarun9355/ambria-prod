@@ -48,6 +48,20 @@ export default function DealCheckOverlay({ ctx }) {
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
 
+  // Effective per-unit rental for a card's item. For an EDITED kit (dcKitEdits) it is
+  // kit base + Σ(edited component rentals) so customising add-ons updates the rental everywhere;
+  // otherwise it's the item's stored price (which already = base + master parts).
+  const effKitRental = (item, fnIdx, cardKey) => {
+    let r = imsField.rentalCost(item);
+    if (item && Array.isArray(item.subItems) && item.subItems.length) {
+      const edited = dcKitEdits?.[fnIdx]?.[cardKey];
+      if (Array.isArray(edited)) {
+        r = (Number(item.kitBase) || 0) + edited.reduce((s, cp) => { const ci = dcInventoryCache.find(x => x.id === cp.itemId); return s + (ci ? imsField.rentalCost(ci) : 0) * (Number(cp.qty) || 0); }, 0);
+      }
+    }
+    return r;
+  };
+
   // Pull the latest dept-head actuals (IMS) whenever Deal Check opens for this client.
   useEffect(() => { refreshDcEoActuals && refreshDcEoActuals(); }, [activeClientId]);
 
@@ -125,7 +139,14 @@ export default function DealCheckOverlay({ ctx }) {
               if (!item) return;
               // Fixed-venue rental discount: standing units (already installed here) bill at a
               // discount; fresh units / other venues / swapped designs bill full rate-card.
-              const baseR = imsField.rentalCost(item);
+              // For an EDITED kit (dcKitEdits), the per-unit rental = kit base + Σ(edited component
+              // rentals) — NOT the stored master price — so customising add-ons updates the total.
+              let baseR = imsField.rentalCost(item);
+              const _kitEdited = (Array.isArray(item.subItems) && item.subItems.length) ? dcKitEdits[fi]?.[ck] : null;
+              if (Array.isArray(_kitEdited)) {
+                const _kb = Number(item.kitBase) || 0;
+                baseR = _kb + _kitEdited.reduce((s, cp) => { const ci = dcInventoryCache.find(x => x.id === cp.itemId); return s + (ci ? imsField.rentalCost(ci) : 0) * (Number(cp.qty) || 0); }, 0);
+              }
               const qty = c.qty || 1;
               const venueName = fn.fnVenue || fn.venue || "";
               const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, venueName, c.imsId, qty);
@@ -694,11 +715,11 @@ export default function DealCheckOverlay({ ctx }) {
                       // Per-fn decor cost (rental + floral) — spec §7.9.3
                       const cards = dcCards[fi] || {};
                       let fnDecor = 0;
-                      Object.values(cards).forEach(c => {
+                      Object.entries(cards).forEach(([ck, c]) => {
                         if (!c?.imsId) return;
                         const item = dcInventoryCache.find(x => x.id === c.imsId);
                         if (!item) return;
-                        fnDecor += imsField.rentalCost(item) * (c.qty || 1);
+                        fnDecor += effKitRental(item, fi, ck) * (c.qty || 1);
                       });
                       const isActive = fi === activeFnIdx;
                       return (
@@ -870,7 +891,7 @@ export default function DealCheckOverlay({ ctx }) {
                         // Total rental of every matched item in this zone (kit rentals already equal the
                         // sum of their parts, so no double count) + any manual blocks.
                         let zoneRentalTotal = 0;
-                        zoneCards.forEach(c => { if (!c.imsId) return; const it = dcInventoryCache.find(x => x.id === c.imsId); if (it) zoneRentalTotal += imsField.rentalCost(it) * (Number(c.qty) || 1); });
+                        zoneCards.forEach(c => { if (!c.imsId) return; const it = dcInventoryCache.find(x => x.id === c.imsId); if (it) zoneRentalTotal += effKitRental(it, fnIdx, c._cardKey) * (Number(c.qty) || 1); });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (it) zoneRentalTotal += imsField.rentalCost(it) * (Number(mi.qty) || 1); });
                         zoneRentalTotal = Math.round(zoneRentalTotal);
                         return (
@@ -1062,7 +1083,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 {zoneCards.map(card => {
                                   const item = card.imsId ? dcInventoryCache.find(x => x.id === card.imsId) : null;
                                   const photo = item ? imsField.photos(item)[0] : null;
-                                  const rental = item ? imsField.rentalCost(item) : 0;
+                                  const rental = item ? effKitRental(item, fnIdx, card._cardKey) : 0;
                                   const dims = item ? imsField.sizeText(item) : "";
                                   const hold = card.imsId ? getActiveSoftHold(softHolds, card.imsId, authUser?.name, Date.now()) : null;
                                   const sourceMeta = {
