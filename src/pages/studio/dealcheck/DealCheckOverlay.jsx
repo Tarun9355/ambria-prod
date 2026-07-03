@@ -1138,12 +1138,13 @@ export default function DealCheckOverlay({ ctx }) {
                                                   return (
                                                     <div key={ci} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
                                                       <span style={{color:cItem?"#fff":"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
-                                                      <div style={{display:"flex",alignItems:"center",gap:2}}>
+                                                      <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:textS,fontSize:14,padding:"0 4px",userSelect:"none"}}>−</span>
                                                         <span style={{color:"#fff",minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:qtyEach+1}:x))} style={{cursor:"pointer",color:textS,fontSize:14,padding:"0 4px",userSelect:"none"}}>+</span>
                                                       </div>
-                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{color:textS,whiteSpace:"nowrap",opacity:0.85}}>₹{cr.toLocaleString("en-IN")}{qtyEach>1?` ×${qtyEach}`:""} = <b style={{color:"#A5B4FC"}}>₹{(cr*qtyEach).toLocaleString("en-IN")}</b></span>; })()}
+                                                      {cardQty>1 && <span style={{color:textS,fontSize:10,whiteSpace:"nowrap"}}>× {cardQty} kits = <b style={{color:"#fff"}}>{needed}</b></span>}
+                                                      {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{color:textS,whiteSpace:"nowrap",opacity:0.85}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#A5B4FC"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
                                                         ? <span style={{color:"#F59E0B",fontWeight:600,whiteSpace:"nowrap"}}>⚠ need {needed}, {owned} owned</span>
                                                         : <span style={{color:"#10B981",whiteSpace:"nowrap"}}>✓ {owned} owned</span>)}
