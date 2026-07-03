@@ -104,6 +104,14 @@ export default function DCManpowerTab({ ctx }) {
                     });
                   };
 
+                  // Usage-based labour floor — MUST match the project-total rollup (DealCheckOverlay):
+                  // Labours = max(venue-min+heavy, ceil(Σ sub-cat units ÷ per-unit)) across all functions.
+                  // Without this the tab under-showed Labours vs the actual quote (the ₹57,400 vs ₹68,001 gap).
+                  const _labBatches = {}; heavyElementRanges.forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
+                  const labourUsageMode = Object.keys(_labBatches).length > 0;
+                  let labourUsageTotal = 0;
+                  if (labourUsageMode) fns.forEach(fn => walkFnElements(fn, ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
+
                   // ── People count per ceremony per labour type ─────────────
                   // Mirror of IMS App.jsx calcTier1Flowerist (line 1701). DO NOT diverge without IMS commit.
                   const calcPeopleFlowerists = (fn) => {
@@ -197,7 +205,8 @@ export default function DCManpowerTab({ ctx }) {
                       const count = Math.max(0, (subCounts[her.subCat] || 0) - (reduction[her.subCat] || 0));
                       heavyExtra += heavyExtraLabour(her, count);
                     });
-                    return adjusted + heavyExtra;
+                    // Usage-based floor (matches the rollup / quote): never fewer than 1 labour per N units.
+                    return labourUsageMode ? Math.max(adjusted + heavyExtra, Math.ceil(labourUsageTotal)) : (adjusted + heavyExtra);
                   };
                   // §23 Phase 2.8 (26 May 2026) — Per-zone Fabric Bangali calculation
                   //   • Per-zone RFT ceil (each zone rounds independently, not summed)
