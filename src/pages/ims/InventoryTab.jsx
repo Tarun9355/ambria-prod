@@ -1324,15 +1324,15 @@ Rules:
               {/* Pricing */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs text-gray-500">Rental Price (₹){editForm.isKit && <span className="text-indigo-600 font-bold"> · auto (kit)</span>}</label>
+                  <label className="text-xs text-gray-500">Rental Price (₹){editForm.isKit && <span className="text-indigo-600 font-bold"> · total = own + add-ons</span>}</label>
                   <input type="number" min="0" value={editForm.isKit ? kitPrice : (editForm.price || "")} disabled={editForm.isKit} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))}
                     className={"mt-1 w-full border rounded-lg px-3 py-2 text-sm " + (editForm.isKit ? "bg-indigo-50 text-indigo-700 font-semibold" : (orig?._needsPricing ? "border-red-300 bg-red-50" : ""))} />
                   {editForm.isKit && (
                     <div className="mt-1.5">
-                      <label className="text-[10px] text-gray-500">+ Kit base rental (₹) <span className="text-gray-400">— the kit's own charge, added on top of parts</span></label>
+                      <label className="text-[10px] text-gray-500">This item's OWN rental (₹) <span className="text-gray-400">— e.g. the console table itself; add-on elements below are charged on top, and this stays fixed even if a salesperson swaps the add-ons</span></label>
                       <input type="number" min="0" value={editForm.kitBase || ""} onChange={(e) => setEditForm((f) => ({ ...f, kitBase: e.target.value }))} placeholder="0"
                         className="mt-0.5 w-full border rounded-lg px-3 py-1.5 text-sm" />
-                      <div className="text-[10px] text-indigo-600 mt-0.5">base {fmt(Number(editForm.kitBase) || 0)} + parts {fmt(kitPrice - (Number(editForm.kitBase) || 0))} = <b>{fmt(kitPrice)}</b>/unit</div>
+                      <div className="text-[10px] text-indigo-600 mt-0.5">own {fmt(Number(editForm.kitBase) || 0)} + add-ons {fmt(kitPrice - (Number(editForm.kitBase) || 0))} = <b>{fmt(kitPrice)}</b>/unit total</div>
                     </div>
                   )}
                 </div>

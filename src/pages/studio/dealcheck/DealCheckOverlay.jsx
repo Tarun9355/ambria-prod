@@ -1159,7 +1159,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 </datalist>
                                               </div>
                                               <div style={{marginTop:5,paddingTop:5,borderTop:"1px solid rgba(99,102,241,0.2)",display:"flex",justifyContent:"space-between",fontSize:10}}>
-                                                <span style={{color:textS}}>Kit rental = {kitBase>0?`base ₹${kitBase.toLocaleString("en-IN")} + `:""}parts ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}</span>
+                                                <span style={{color:textS}}>Kit rental = {kitBase>0?`console ₹${kitBase.toLocaleString("en-IN")} + `:""}add-ons ₹{partsTotal.toLocaleString("en-IN")} = ₹{kitTotal.toLocaleString("en-IN")}{cardQty>1?` × ${cardQty}`:""}</span>
                                                 <span style={{color:"#A5B4FC",fontWeight:700}}>₹{(kitTotal*cardQty).toLocaleString("en-IN")}</span>
                                               </div>
                                             </div>
