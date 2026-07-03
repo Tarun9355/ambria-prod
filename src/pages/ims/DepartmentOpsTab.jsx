@@ -333,13 +333,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const setDraft = (key, patch) => setRouteDraft(d => ({ ...d, [key]: { type: "return", ...(d[key] || {}), ...patch } }));
   const logRoute = (it) => {
     const key = "inv:" + it.id; const d = routeDraft[key] || {};
-    const q = Number(d.qty) || 0; if (q <= 0) return;
+    const q = Number(d.qty !== undefined && d.qty !== "" ? d.qty : unroutedQty(it)) || 0; if (q <= 0) return;
     const type = d.type || "return";
     let extra = {};
     if (type === "transfer") { const ev = (eventOrders || []).find(e => e.id === d.toEventId); if (!ev) return; extra = { toEventId: ev.id, toEventName: ev.clientName || "Event", vehicle: d.vehicle || "", driver: d.driver || "", phone: d.phone || "" }; }
     addMovement(it, type, q, extra);
     setDraft(key, { qty: "" });
   };
+  // Fast dismantle: route the FULL remaining qty of an item in one tap (no typing).
+  const unroutedQty = (it) => { const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
+  const routeRemaining = (it, type, extra = {}) => { const q = unroutedQty(it); if (q > 0) addMovement(it, type, q, extra); };
+  const routeAllToWarehouse = () => { const rest = blockedItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
   // Incoming transfers — items other events routed to THIS event for same-day reuse.
   const incomingTransfers = useMemo(() => {
     if (!sel) return [];
@@ -1135,8 +1139,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
 
             {/* Dismantle & return routing */}
             <div className="bg-white border rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 bg-gray-50">
-                <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— after teardown, route each item: warehouse, reuse, needs-repair, or broken</span></span>
+              <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— tap a chip to route the full remaining qty in one touch</span></span>
+                {blockedItems.some(it => unroutedQty(it) > 0) && <button onClick={routeAllToWarehouse} className="text-xs font-bold bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">🏬 Everything left → warehouse</button>}
               </div>
               {movements.some(m => m.type === "repair") && (
                 <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800">
@@ -1168,8 +1173,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {dmg > 0 && <span className="text-red-600 font-semibold">⚠️ broken {dmg}</span>}
                           </div>
                         )}
+                        {unrouted > 0 && (
+                          <div className="pl-11 flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] text-gray-400">Route all {unrouted}:</span>
+                            <button onClick={() => routeRemaining(it, "return")} className="text-[11px] px-2.5 py-1 rounded-full border border-gray-300 hover:bg-gray-100 font-medium">🏬 Warehouse</button>
+                            <button onClick={() => routeRemaining(it, "repair")} className="text-[11px] px-2.5 py-1 rounded-full border border-amber-300 text-amber-700 hover:bg-amber-50 font-medium">🔧 Repair</button>
+                            <button onClick={() => routeRemaining(it, "damage")} className="text-[11px] px-2.5 py-1 rounded-full border border-red-300 text-red-700 hover:bg-red-50 font-medium">❌ Broken</button>
+                          </div>
+                        )}
                         <div className="pl-11 flex items-center gap-1.5 flex-wrap">
-                          <input type="number" min="0" max={unrouted} value={d.qty || ""} onChange={e => setDraft(k, { qty: e.target.value })} placeholder="qty" className="w-16 border rounded px-2 py-1 text-xs text-center" />
+                          <span className="text-[10px] text-gray-400">or partial / transfer:</span>
+                          <input type="number" min="0" max={unrouted} value={d.qty ?? unrouted} onChange={e => setDraft(k, { qty: e.target.value })} placeholder="qty" className="w-16 border rounded px-2 py-1 text-xs text-center" />
                           <select value={d.type} onChange={e => setDraft(k, { type: e.target.value })} className="border rounded px-2 py-1 text-xs">
                             <option value="return">↩️ Back to warehouse</option>
                             <option value="transfer">↪️ Reuse at another site</option>
