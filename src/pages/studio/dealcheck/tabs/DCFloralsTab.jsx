@@ -7,9 +7,10 @@
 // buttons that open them work standalone. JSX/logic copied verbatim;
 // inline styles preserved.
 // ═══════════════════════════════════════════════════════════════
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
 export default function DCFloralsTab({ ctx }) {
+  const [artFlowerSearch, setArtFlowerSearch] = useState(""); // search-by-name for the artificial flower colour picker (long list)
   const {
     // chrome / theme
     border, textS, textP, isDark,
@@ -866,7 +867,7 @@ export default function DCFloralsTab({ ctx }) {
         };
         const removeItem = (idx) => updateDraft(draft.filter((_, i) => i !== idx));
         const usedIds = new Set(draft.map(a => a.itemId));
-        const available = artItems.filter(it => !usedIds.has(it.id));
+        const available = artItems.filter(it => !usedIds.has(it.id) && (!artFlowerSearch.trim() || (it.name || "").toLowerCase().includes(artFlowerSearch.toLowerCase())));
         return (
           <div onClick={() => setDcArtFlowerModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
             <div onClick={e => e.stopPropagation()} style={{width:"min(680px, 100%)",maxHeight:"85vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -896,10 +897,14 @@ export default function DCFloralsTab({ ctx }) {
                 {remaining > 0 && draft.length > 0 && <div style={{padding:"6px 12px",borderRadius:6,background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",fontSize:10,color:"#F59E0B",fontWeight:600,marginBottom:16,textAlign:"center"}}>{remaining} kg unassigned — add more colors or increase quantities</div>}
                 {/* Available colors from IMS */}
                 <div style={{fontSize:10,fontWeight:700,color:textS,letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Available Colors {available.length === 0 && artItems.length === 0 ? "(none in IMS yet)" : `(${available.length})`}</div>
+                {artItems.length > 6 && (
+                  <input value={artFlowerSearch} onChange={e => setArtFlowerSearch(e.target.value)} placeholder="🔍 Search flower colour by name…"
+                    style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:12,marginBottom:10}} />
+                )}
                 {artItems.length === 0 ? (
                   <div style={{padding:"30px 20px",textAlign:"center",color:textS,fontSize:11,borderRadius:10,border:`1px dashed ${border}`}}>No artificial flower items in IMS inventory yet. Add items with subcategory "Artificial Flowers" in IMS to see them here.</div>
                 ) : available.length === 0 ? (
-                  <div style={{padding:"16px 20px",textAlign:"center",color:textS,fontSize:11}}>All available colors are already added above.</div>
+                  <div style={{padding:"16px 20px",textAlign:"center",color:textS,fontSize:11}}>{artFlowerSearch.trim() ? `No colours match "${artFlowerSearch}".` : "All available colors are already added above."}</div>
                 ) : (
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:10}}>
                     {available.map(it => {
