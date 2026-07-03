@@ -221,7 +221,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const fpFlowers = Array.isArray(fp.flowers) ? fp.flowers : [];
   const artificialProj = fpFlowers.filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
-    .map(f => ({ name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round((Number(f.cost) || 0) / f.qty) : 0 }));
+    .map(f => ({ name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price: f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0 }));
   const mandiRows = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : seedMandi;
   const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
   const mandiActualTotal = mandiActualReal + artificialProj; // artificial carried over (not re-shopped at mandi)
