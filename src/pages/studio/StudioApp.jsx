@@ -4671,11 +4671,18 @@ Return ONLY JSON:
   // (Redis→Supabase rewires are the only adaptations).
   // ═══════════════════════════════════════════════════════════════
 
-  // ═══ DEAL CHECK REBUILD — saved-session migration (§7.9.8 Option A · Patch 7) — VERBATIM ═══
+  // ═══ DEAL CHECK REBUILD — saved-session migration (§7.9.8 Option A · Patch 7) ═══
+  // Restore the saved draft ONCE per open. This effect lists clientLedger as a dep so it can wait
+  // for the ledger to load, but it must NOT re-restore on every subsequent ledger change (realtime
+  // echo / the deal-check auto-save) — doing so clobbered in-progress kit/card edits ~1s after
+  // typing (the reported "number snaps back" bug). The ref makes it fire once per (client × open).
+  const dcRestoredRef = useRef(null);
   useEffect(() => {
-    if (!dcFullPageOpen) return;
+    if (!dcFullPageOpen) { dcRestoredRef.current = null; return; }
     const cli = clientLedger.find(c => c.id === activeClientId);
     if (!cli) return;
+    if (dcRestoredRef.current === activeClientId) return; // already restored this open — keep live edits
+    dcRestoredRef.current = activeClientId;
     const saved = cli.dcCards;
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
       let isNewShape = false;
