@@ -92,7 +92,7 @@ export default function DealCheckOverlay({ ctx }) {
         // ═══ Shared cost rollup — single computation used by GYV tab + bottom strip (§26.19) ═══
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-          let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0;
+          let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0;
           // ═══ §Department income (7 depts) — every rupee tagged to a department ═══
           const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
           const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
@@ -189,7 +189,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (deptInv[dD]) deptInv[dD].push({ name: item.name || "Item", photo: imsField.photos(item)[0] || "", qty: q, unit: baseR, total: Math.round(lineRental), sub: imsField.subcategory(item) || "", imsId: mi.imsId });
             });
             try { const fl = calcFnFloralSourcingCost(fn).grandTotal; florals += fl; addD("Floral", "florals", fl); } catch {}
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; if (bd && bd.transportTotal) { transport += bd.transportTotal; addD("Transport", "transport", bd.transportTotal); genset += Number(bd.transport?.gensetCost) || 0; } if (bd && bd.gensetTotal) { addD("Lighting", "rental", bd.gensetTotal); if (deptInv["Lighting"]) deptInv["Lighting"].push({ name: "Genset / power", photo: "", qty: 1, unit: 0, total: Math.round(bd.gensetTotal), sub: "genset" }); } } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -552,7 +552,7 @@ export default function DealCheckOverlay({ ctx }) {
           try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
-          return { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
+          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
         })();
@@ -1841,7 +1841,7 @@ export default function DealCheckOverlay({ ctx }) {
             {/* BOTTOM STRIP — Project total + 6 sub-cost chips + Save Draft (Patch 5: live numbers wired) */}
             {(() => {
               // ═══ Reads from shared dcCostRollup (§26.19) ═══
-              const { rental, transport, truss, buyTotal, produceTotal, base: total, gyvFixed, bufferCost, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj, mpDelta, effManpower } = dcCostRollup;
+              const { rental, transport, genset, truss, buyTotal, produceTotal, base: total, gyvFixed, bufferCost, clientRevenue: stripRevenue, profitPct: stripProfitPct, hasActuals, effFlorals, grandActual, grand: grandProj, mpDelta, effManpower } = dcCostRollup;
               const manpower = mpDelta ? effManpower : dcCostRollup.manpower;       // reflect dept-head crew overrides
               const florals = hasActuals ? effFlorals : dcCostRollup.florals;       // show actual mandi once logged
               const grandWithOverheads = hasActuals ? grandActual : grandProj;
@@ -1862,7 +1862,8 @@ export default function DealCheckOverlay({ ctx }) {
                 { id:"rental",   label:"Rental",   icon:"📦", value: fmt(rental),    live: true  },
                 { id:"truss",    label:"Truss",    icon:"🏗️", value: fmt(truss),     live: true  },
                 { id:"florals",  label:"Florals",  icon:"🌸", value: fmt(florals),   live: true  },
-                { id:"transport",label:"Transport",icon:"🚚", value: fmt(transport), live: true  },
+                { id:"transport",label:"Transport",icon:"🚚", value: fmt(Math.max(0, transport - genset)), live: true  },
+                { id:"genset",   label:"Genset",   icon:"⚡", value: fmt(genset),    live: true  },
                 { id:"manpower", label:"Manpower", icon:"👷", value: fmt(manpower),  live: true  },
                 { id:"buy",      label:"Buy",      icon:"🛒", value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
                 { id:"produce",  label:"Produce",  icon:"🏭", value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
