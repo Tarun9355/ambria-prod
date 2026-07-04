@@ -118,6 +118,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   const today = new Date().toISOString().slice(0, 10);
+  // A "live" event for ops = confirmed/finalised. Excludes pending (not yet auto-confirmed), cancelled,
+  // and review — so cancelled/dead deals never clutter the list or the transfer pickers.
+  const DEAD_STATUS = new Set(["pending", "cancelled", "review"]);
+  const isLiveEvent = (eo) => !!(eo?.status && !DEAD_STATUS.has(eo.status));
 
   // All events (date-tagged) — drives both the calendar and the list.
   const allEvents = useMemo(() => (eventOrders || []).map(eo => ({ eo, date: eventDate(eo) })), [eventOrders]);
@@ -138,8 +142,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const events = useMemo(() => {
     const q = search.toLowerCase().trim();
     return allEvents
-      // Ops plans only for SOLD/finalised events — hide un-finalised (pending) ones (matches Events tab).
-      .filter(({ eo }) => eo.status && eo.status !== "pending")
+      // Ops plans only for SOLD/finalised events — hide pending, cancelled and review deals.
+      .filter(({ eo }) => isLiveEvent(eo))
       .filter(({ eo, date }) => (!q || (eo.clientName || "").toLowerCase().includes(q) || (eo.functionsDetail?.[0]?.venue || eo.venue || "").toLowerCase().includes(q)) && (!dateFilter || date === dateFilter))
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
   }, [allEvents, search, dateFilter]);
@@ -574,7 +578,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // Sold events sorted by date-proximity to this event (for the transfer picker — nearby dates first).
   const nearbyTransferEvents = useMemo(() => {
     const base = selDateStr ? new Date(selDateStr + "T00:00:00").getTime() : 0;
-    return (eventOrders || []).filter(e => e.id !== selId && e.status && e.status !== "pending")
+    return (eventOrders || []).filter(e => e.id !== selId && isLiveEvent(e))
       .map(e => { const d = eventDate(e); const off = (d && base) ? Math.round((new Date(d + "T00:00:00").getTime() - base) / 864e5) : 999; return { e, d, off }; })
       .sort((a, b) => Math.abs(a.off) - Math.abs(b.off));
   }, [eventOrders, selId, selDateStr]);
