@@ -457,6 +457,9 @@ export default function DealCheckOverlay({ ctx }) {
                 dayList.forEach(d => {
                   if (d.phase === "minusOne") { labourTypes.forEach(t => { let mx = 0; fns.forEach((fn, fi) => { if ((peopleByFn[t][fi]||0) > mx) mx = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], mx); }); }
                   else if (d.phase === "event") { labourTypes.forEach(t => { let need = 0; d.fns.forEach(fn => { const fi = fns.indexOf(fn); if ((peopleByFn[t][fi]||0) > need) need = peopleByFn[t][fi]; }); running[t] = Math.max(running[t], need); }); }
+                  // Dismantle day: reduce each type by its dismantlingPct (MUST mirror the Manpower tab, else
+                  // the bottom-bar rollup carries full crew here and over-counts vs the tab). No pct → carry full.
+                  else if (d.phase === "dismantle") { labourTypes.forEach(t => { const pct = (labourTiers[t] || {}).dismantlingPct; if (typeof pct === "number") running[t] = pct > 0 ? Math.ceil(running[t] * pct / 100) : 0; }); }
                   // This day's labour usage fractions: event day = sum of its functions; else carry forward.
                   let dayFrac = _lastFrac;
                   if (labourUsageMode && labourUsageTotal > 0 && d.phase === "event") {
