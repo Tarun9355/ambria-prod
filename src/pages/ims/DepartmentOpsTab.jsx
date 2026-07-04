@@ -370,6 +370,35 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const logMovements = (rows) => { if (!rows.length) return; saveDept({ movements: [...movements, ...rows] }); rows.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, -m.qty)); };
   const confirmItemPlanned = (it) => logMovements(buildPlannedMovements([it]));
   const confirmAllPlanned = () => logMovements(buildPlannedMovements(blockedItems));
+  // Destination-grouped manifest: everything going to each place (warehouse / repair / broken / each
+  // transfer site) as its own list with item qtys — so ops loads per destination, not per item.
+  const destGroups = useMemo(() => {
+    const groups = {};
+    blockedItems.forEach(it => {
+      let left = unroutedQty(it); if (left <= 0) return;
+      planFor(it).forEach(row => {
+        let q = Math.min(Number(row.qty) || 0, left); if (q <= 0) return; left -= q;
+        const key = row.type === "transfer" ? "transfer:" + (row.toEventId || "?") : row.type;
+        const ev = row.type === "transfer" ? (eventOrders || []).find(e => e.id === row.toEventId) : null;
+        const label = row.type === "transfer" ? `↪️ ${ev?.clientName || row.toEventName || "Event"}${ev ? " · " + (eventDate(ev) || "") : ""}` : ROUTE_LABEL[row.type];
+        if (!groups[key]) groups[key] = { key, label, type: row.type, toEventId: row.toEventId, items: [] };
+        groups[key].items.push({ it, qty: q });
+      });
+    });
+    // Warehouse first, then repair/broken, then transfer sites.
+    const order = { return: 0, repair: 1, damage: 2 };
+    return Object.values(groups).sort((a, b) => (order[a.type] ?? 3) - (order[b.type] ?? 3));
+  }, [blockedItems, dismantlePlan, movements, eventOrders]);
+  const confirmGroup = (group) => {
+    const now = Date.now(); let seq = 0; const out = [];
+    group.items.forEach(({ it, qty }) => {
+      const q = Math.min(qty, unroutedQty(it)); if (q <= 0) return;
+      let extra = {};
+      if (group.type === "transfer") { if (!group.toEventId) return; const ev = (eventOrders || []).find(e => e.id === group.toEventId); extra = { toEventId: group.toEventId, toEventName: ev?.clientName || "Event" }; }
+      out.push({ id: "mv_" + now + "_" + (seq++), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: group.type, qty: q, at: now, by: authUser?.name || "—", ...extra });
+    });
+    logMovements(out);
+  };
   // Sold events sorted by date-proximity to this event (for the transfer picker — nearby dates first).
   const nearbyTransferEvents = useMemo(() => {
     const base = selDateStr ? new Date(selDateStr + "T00:00:00").getTime() : 0;
@@ -1222,6 +1251,29 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   </div>
                 )}
               </div>
+              {/* Loading manifest — grouped by destination (the dept head's plan). Each list = one place. */}
+              {destGroups.length > 0 && (
+                <div className="px-4 py-3 space-y-2 bg-sky-50/40 border-b">
+                  <div className="text-xs font-semibold text-gray-600">📦 Loading manifest — by destination · tap "Confirm this list" once the truck for that place is loaded</div>
+                  {destGroups.map(g => (
+                    <div key={g.key} className="bg-white border rounded-lg overflow-hidden">
+                      <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-gray-800">{g.label} <span className="text-[10px] text-gray-400">· {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}</span></span>
+                        <button onClick={() => confirmGroup(g)} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg whitespace-nowrap">✓ Confirm this list</button>
+                      </div>
+                      <div className="divide-y">
+                        {g.items.map(({ it, qty }, i) => (
+                          <div key={i} className="flex items-center gap-2 px-3 py-1.5">
+                            {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-7 h-7 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">📦</div>}
+                            <span className="flex-1 text-xs text-gray-700">{it.name}</span>
+                            <span className="text-xs font-semibold text-gray-900">×{qty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {movements.some(m => m.type === "repair") && (
                 <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800">
                   🔧 <b>Repairs needed</b> (kept in stock — fix before next use): {movements.filter(m => m.type === "repair").map((m, i) => <span key={m.id}>{i > 0 ? ", " : ""}{m.qty}× {m.name}</span>)}
