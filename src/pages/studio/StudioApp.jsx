@@ -2694,8 +2694,12 @@ export default function StudioApp() {
       if (type === "Flowerists") {
         let t = 0; const agg = {}; walk(fn, ({ rc, el, qty }) => {
           if (String(rc.cat || "").toLowerCase() !== "florals") return;
-          if (!recipeSubs.includes(String(rc.sub || "").toLowerCase().trim())) return;
-          const pat = fps.find(p => { const n = String(p?.name || "").toLowerCase().trim(); const rn = String(rc.name || "").toLowerCase().trim(); return n && rn && (n === rn || n.includes(rn) || rn.includes(n)); });
+          // Exact pattern-name match counts on its own (a recipe with productivity is included even if its
+          // sub-cat isn't in flowerRecipeSubcats); loose name matching stays gated to those subs.
+          const rn = String(rc.name || "").toLowerCase().trim();
+          const inRS = recipeSubs.includes(String(rc.sub || "").toLowerCase().trim());
+          let pat = fps.find(p => String(p?.name || "").toLowerCase().trim() === rn);
+          if (!pat && inRS) pat = fps.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && rn && (n.includes(rn) || rn.includes(n)); });
           if (!pat) return; const sk = sizeFromMode(rc.inhouseMode, el.size); let c = pat.sizes?.[sk] || pat.sizes?.medium; if (!c && sk === "big" && pat.sizes?.large) c = pat.sizes.large;
           const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
         });

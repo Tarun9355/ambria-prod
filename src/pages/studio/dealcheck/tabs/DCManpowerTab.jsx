@@ -120,10 +120,13 @@ export default function DCManpowerTab({ ctx }) {
                       const cat = String(rc.cat||"").toLowerCase();
                       const subLC = String(rc.sub||"").toLowerCase().trim();
                       if (cat !== "florals") return;
-                      if (!recipeSubsMP.includes(subLC)) return;
+                      // Count if the recipe has flowerist productivity: an EXACT pattern-name match counts on
+                      // its own (so a defined recipe like "Console Table Floral" is included without needing its
+                      // sub-cat toggled into flowerRecipeSubcats); loose name matching stays gated to those subs.
+                      const inRS = recipeSubsMP.includes(subLC);
                       const targetName = (rc.name||"").toLowerCase().trim();
                       let pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
-                      if (!pattern) {
+                      if (!pattern && inRS) {
                         pattern = flowerPatternsMP.find(p => {
                           const n = (p.name||"").toLowerCase().trim();
                           return n && (n.includes(targetName) || targetName.includes(n));
@@ -324,10 +327,13 @@ export default function DCManpowerTab({ ctx }) {
                       const cat = String(rc.cat||"").toLowerCase();
                       const subLC = String(rc.sub||"").toLowerCase().trim();
                       if (cat !== "florals") return;
-                      if (!recipeSubsMP.includes(subLC)) return;
+                      // Count if the recipe has flowerist productivity: an EXACT pattern-name match counts on
+                      // its own (so a defined recipe like "Console Table Floral" is included without needing its
+                      // sub-cat toggled into flowerRecipeSubcats); loose name matching stays gated to those subs.
+                      const inRS = recipeSubsMP.includes(subLC);
                       const targetName = (rc.name||"").toLowerCase().trim();
                       let pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
-                      if (!pattern) {
+                      if (!pattern && inRS) {
                         pattern = flowerPatternsMP.find(p => {
                           const n = (p.name||"").toLowerCase().trim();
                           return n && (n.includes(targetName) || targetName.includes(n));

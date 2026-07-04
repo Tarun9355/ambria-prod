@@ -309,8 +309,10 @@ export default function DealCheckOverlay({ ctx }) {
                   const agg = {};
                   walkFn(fn, ({rc, el, qty}) => {
                     if (String(rc.cat||"").toLowerCase() !== "florals") return;
-                    if (!recipeSubsMP.includes(String(rc.sub||"").toLowerCase().trim())) return;
-                    const pattern = flowerPatternsMP.find(p => { const n = String(p?.name||"").toLowerCase().trim(); const rn = String(rc.name||"").toLowerCase().trim(); return n && rn && (n === rn || n.includes(rn) || rn.includes(n)); });
+                    const rnF = String(rc.name||"").toLowerCase().trim();
+                    const inRSF = recipeSubsMP.includes(String(rc.sub||"").toLowerCase().trim());
+                    let pattern = flowerPatternsMP.find(p => String(p?.name||"").toLowerCase().trim() === rnF);
+                    if (!pattern && inRSF) pattern = flowerPatternsMP.find(p => { const n = String(p?.name||"").toLowerCase().trim(); return n && rnF && (n.includes(rnF) || rnF.includes(n)); });
                     if (!pattern) return;
                     const sz = pattern.sizes || {};
                     const sk = sizeFromMode(rc.inhouseMode, el.size);
@@ -374,8 +376,10 @@ export default function DealCheckOverlay({ ctx }) {
                 if (type === "Flowerists") {
                   const agg = {}; walkFn(fn, ({ rc, el, qty }) => {
                     if (String(rc.cat || "").toLowerCase() !== "florals") return;
-                    if (!recipeSubsMP.includes(String(rc.sub || "").toLowerCase().trim())) return;
-                    const pattern = flowerPatternsMP.find(p => { const n = String(p?.name || "").toLowerCase().trim(); const rn = String(rc.name || "").toLowerCase().trim(); return n && rn && (n === rn || n.includes(rn) || rn.includes(n)); });
+                    const rnF = String(rc.name || "").toLowerCase().trim();
+                    const inRSF = recipeSubsMP.includes(String(rc.sub || "").toLowerCase().trim());
+                    let pattern = flowerPatternsMP.find(p => String(p?.name || "").toLowerCase().trim() === rnF);
+                    if (!pattern && inRSF) pattern = flowerPatternsMP.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && rnF && (n.includes(rnF) || rnF.includes(n)); });
                     if (!pattern) return; const sz = pattern.sizes || {}; const sk = sizeFromMode(rc.inhouseMode, el.size);
                     let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
                     const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
