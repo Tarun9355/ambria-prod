@@ -387,6 +387,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const logMovements = (rows) => { if (!rows.length) return; saveDept({ movements: [...movements, ...rows] }); rows.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, -m.qty)); };
   const confirmItemPlanned = (it) => logMovements(buildPlannedMovements([it]));
   const confirmAllPlanned = () => logMovements(buildPlannedMovements(blockedItems));
+  // TESTING: wipe the dept-head plan + all on-site movements for this dept/event so the split flow can
+  // be re-tried without making a new client. Restores stock for any "broken" write-offs first.
+  const resetDismantle = () => {
+    if (!sel) return;
+    if (!window.confirm(`Reset the dismantle plan AND all on-site movements for ${sel.clientName || "this event"} · ${dept}? (for testing)`)) return;
+    movements.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, +(Number(m.qty) || 0)));
+    saveDept({ dismantlePlan: {}, movements: [] });
+    setManTruck({}); setManSel({}); setManCond({}); setRouteDraft({});
+  };
   // Destination-grouped manifest: everything going to each place (warehouse / repair / broken / each
   // transfer site) as its own list with item qtys — so ops loads per destination, not per item.
   const destGroups = useMemo(() => {
@@ -1197,7 +1206,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Dismantle plan — dept head pre-sets where each item goes; ops just confirms on-site */}
             {blockedItems.length > 0 && (
               <div className="bg-white border rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 bg-gray-50 text-sm font-semibold text-gray-800">🔁 Dismantle plan <span className="text-xs font-normal text-gray-400">— set where each item goes after teardown; the on-site team just confirms</span></div>
+                <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-gray-800">🔁 Dismantle plan <span className="text-xs font-normal text-gray-400">— set where each item goes after teardown; the on-site team just confirms</span></span>
+                  <button onClick={resetDismantle} className="text-[11px] font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset (testing)</button>
+                </div>
                 <div className="divide-y">
                   {blockedItems.map(it => {
                     const k = "inv:" + it.id; const rows = planFor(it);
@@ -1291,12 +1303,13 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             <div className="bg-white border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
                 <span className="text-sm font-semibold text-gray-800">🔁 Dismantle & return routing <span className="text-xs font-normal text-gray-400">— confirm the dept head's plan, or tap a chip to route the full remaining qty</span></span>
-                {blockedItems.some(it => unroutedQty(it) > 0) && (
-                  <div className="flex gap-1.5">
+                <div className="flex gap-1.5">
+                  {blockedItems.some(it => unroutedQty(it) > 0) && (<>
                     <button onClick={confirmAllPlanned} className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">✓ Confirm all as planned</button>
                     <button onClick={routeAllToWarehouse} className="text-xs font-bold bg-gray-800 hover:bg-gray-900 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">🏬 All → warehouse</button>
-                  </div>
-                )}
+                  </>)}
+                  <button onClick={resetDismantle} className="text-xs font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg whitespace-nowrap" title="Testing: clear the plan + all movements so you can re-test">↺ Reset (testing)</button>
+                </div>
               </div>
               {/* Loading manifest — grouped by destination (the dept head's plan). Each list = one place. */}
               {destGroups.length > 0 && (
