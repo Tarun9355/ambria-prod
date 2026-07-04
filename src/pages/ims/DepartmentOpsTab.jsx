@@ -68,6 +68,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [manSel, setManSel] = useState({}); // which items load on THIS truck (transfer groups): {[groupKey::itemKey]:false} (default selected)
   const [manCond, setManCond] = useState({}); // on-site condition per manifest item: {[groupKey::itemKey]:{repair,broken}}
   const [rcvOpen, setRcvOpen] = useState(false); // Receiving — sources per item: collapsed by default
+  const [manOpen, setManOpen] = useState({}); // Loading-manifest destination groups: collapsed by default
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
@@ -1330,12 +1331,16 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     const hasTruck = !!(truck.vehicle || truck.driver || truck.phone);
                     const selRows = g.items.filter(({ it }) => !isTransfer || isSel(gKey(g.key, it)));
                     const canConfirm = selRows.length > 0 && (!isTransfer || hasTruck);
+                    const open = !!manOpen[g.key];
                     return (
                     <div key={g.key} className="bg-white border rounded-lg overflow-hidden">
                       <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-gray-800">{g.label} <span className="text-[10px] text-gray-400">· {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}</span></span>
+                        <button onClick={() => setManOpen(o => ({ ...o, [g.key]: !o[g.key] }))} className="text-sm font-semibold text-gray-800 flex items-center gap-1.5 text-left">
+                          <span className="text-gray-400">{open ? "▾" : "▸"}</span>{g.label} <span className="text-[10px] text-gray-400">· {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}</span>{isTransfer && hasTruck ? <span className="text-[10px] text-emerald-600">· 🚛 {truck.vehicle || truck.driver || "truck set"}</span> : null}
+                        </button>
                         <button onClick={() => confirmGroup(g)} disabled={!canConfirm} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg whitespace-nowrap">{isTransfer ? `✓ Loaded on this truck${selRows.length < g.items.length ? ` (${selRows.length})` : ""}` : "✓ Confirm — back to production house"}</button>
                       </div>
+                      {open && (<>
                       {/* Truck details — only for transfers to another site (production house needs none) */}
                       {isTransfer && (
                         <div className="px-3 py-2 bg-sky-50/60 border-b space-y-1.5">
@@ -1373,6 +1378,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           </div>
                         ); })}
                       </div>
+                      </>)}
                     </div>
                   ); })}
                 </div>
