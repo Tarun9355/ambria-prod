@@ -426,7 +426,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       const key = itemKeyFor(m.invId, m.name);
       if (!map[key]) map[key] = { name: m.name, total: 0, sources: [] };
       map[key].total += Number(m.qty) || 0;
-      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0, vehicle: m.vehicle || "", driver: m.driver || "" });
+      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0, vehicle: m.vehicle || "", driver: m.driver || "", phone: m.phone || "" });
     });
     return map;
   }, [incomingTransfers]);
@@ -439,7 +439,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     blockedItems.forEach(it => {
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
-      const whTrucks = trucks.map((t, ti) => ({ n: ti + 1, vehicle: t.vehicle, driver: t.driver, qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
+      const whTrucks = trucks.map((t, ti) => ({ n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
       const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
       const totalIn = whQty + reused;
       if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, photo: it.photo || "", required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
@@ -1230,8 +1230,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         </span>
                       </div>
                       <div className="text-[10px] text-sky-600 mt-1 pl-1 space-y-0.5">
-                        {r.whTrucks.map((t, j) => <div key={"w" + j}>🚛 {t.qty}× from production house · Truck {t.n}{t.vehicle ? ` (${t.vehicle}${t.driver ? " · " + t.driver : ""})` : t.driver ? ` (${t.driver})` : ""}</div>)}
-                        {r.sources.map((s, j) => <div key={"r" + j} className="text-sky-700">↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</div>)}
+                        {r.whTrucks.map((t, j) => <div key={"w" + j} className="flex items-center gap-1.5"><span>🚛 {t.qty}× from production house · Truck {t.n}{t.vehicle ? ` (${t.vehicle}${t.driver ? " · " + t.driver : ""})` : t.driver ? ` (${t.driver})` : ""}</span>{t.phone && <a href={"tel:" + t.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call</a>}</div>)}
+                        {r.sources.map((s, j) => <div key={"r" + j} className="flex items-center gap-1.5 text-sky-700"><span>↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</span>{s.phone && <a href={"tel:" + s.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (s.driver || "driver") + " · " + s.phone}>📞 Call</a>}</div>)}
                         {r.whTrucks.length === 0 && r.sources.length === 0 && <div className="text-gray-400">No truck assigned yet.</div>}
                       </div>
                     </div>
