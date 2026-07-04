@@ -67,6 +67,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
   const [manSel, setManSel] = useState({}); // which items load on THIS truck (transfer groups): {[groupKey::itemKey]:false} (default selected)
   const [manCond, setManCond] = useState({}); // on-site condition per manifest item: {[groupKey::itemKey]:{repair,broken}}
+  const [rcvOpen, setRcvOpen] = useState(false); // Receiving — sources per item: collapsed by default
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
@@ -491,7 +492,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     blockedItems.forEach(it => {
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
-      const whTrucks = trucks.map((t, ti) => ({ n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
+      const whTrucks = trucks.map((t, ti) => ({ id: t.id, n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
       const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
       const totalIn = whQty + reused;
       if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, photo: it.photo || "", required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
@@ -1269,7 +1270,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Receiving — ops manager sees every item's sources (which truck + driver, from where) + shortfall */}
             {sourceRows.length > 0 && (
               <div className="bg-sky-50 border border-sky-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800">📥 Receiving — sources per item <span className="text-xs font-normal text-sky-600">— who's bringing what, on which truck</span></div>
+                <button onClick={() => setRcvOpen(o => !o)} className="w-full px-4 py-2.5 bg-sky-100/70 text-sm font-bold text-sky-800 flex items-center justify-between gap-2">
+                  <span>{rcvOpen ? "▾" : "▸"} 📥 Receiving — sources per item <span className="text-xs font-normal text-sky-600">— who's bringing what, on which truck</span></span>
+                  {(() => { const sc = sourceRows.filter(r => r.shortfall > 0).length; return <span className={"text-xs font-semibold px-2 py-0.5 rounded-full " + (sc > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>{sc > 0 ? `⚠️ ${sc} short` : "✓ all sourced"}</span>; })()}
+                </button>
+                {rcvOpen && (<>
                 {sourceRows.some(r => r.shortfall > 0) && (
                   <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 font-semibold">⚠️ Shortfall on {sourceRows.filter(r => r.shortfall > 0).length} item(s) — not enough assigned from any source. Check with the dept head / production house.</div>
                 )}
@@ -1289,13 +1294,17 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         </span>
                       </div>
                       <div className="text-[10px] text-sky-600 mt-1 pl-1 space-y-0.5">
-                        {r.whTrucks.map((t, j) => <div key={"w" + j} className="flex items-center gap-1.5"><span>🚛 {t.qty}× from production house · Truck {t.n}{t.vehicle ? ` (${t.vehicle}${t.driver ? " · " + t.driver : ""})` : t.driver ? ` (${t.driver})` : ""}</span>{t.phone && <a href={"tel:" + t.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call</a>}</div>)}
-                        {r.sources.map((s, j) => <div key={"r" + j} className="flex items-center gap-1.5 text-sky-700"><span>↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</span>{s.phone && <a href={"tel:" + s.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (s.driver || "driver") + " · " + s.phone}>📞 Call</a>}</div>)}
+                        {r.whTrucks.map((t, j) => <div key={"w" + j} className="flex items-center gap-1.5 flex-wrap"><span>🚛 {t.qty}× from production house · Truck {t.n}{t.vehicle ? ` (${t.vehicle}${t.driver ? " · " + t.driver : ""})` : t.driver ? ` (${t.driver})` : ""}</span>{t.phone
+                          ? <a href={"tel:" + t.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call {t.driver || ""}</a>
+                          : <input defaultValue="" onClick={e => e.stopPropagation()} onBlur={e => { const v = e.target.value.trim(); if (v && t.id) setTruck(t.id, { phone: v }); }} placeholder="📞 add driver phone" className="border border-sky-300 rounded-full px-2 py-0.5 text-[10px] w-32" title="Enter the driver's phone to enable Call" />
+                        }</div>)}
+                        {r.sources.map((s, j) => <div key={"r" + j} className="flex items-center gap-1.5 text-sky-700"><span>↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</span>{s.phone && <a href={"tel:" + s.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (s.driver || "driver") + " · " + s.phone}>📞 Call {s.driver || ""}</a>}</div>)}
                         {r.whTrucks.length === 0 && r.sources.length === 0 && <div className="text-gray-400">No truck assigned yet.</div>}
                       </div>
                     </div>
                   ))}
                 </div>
+                </>)}
               </div>
             )}
 
