@@ -1510,23 +1510,32 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     const planCost = Number(r.sysCost) || 0;
                     const actCost = Number(lineCost(r));
                     const edited = actCost !== planCost;
-                    const actPeak = daywise && sched.length ? Math.max(0, ...sched.map(d => Math.round(effDay(r, d)))) : (Number(r.count) || 0);
-                    const planPeak = daywise && sched.length ? Math.max(0, ...sched.map(d => Math.round(mpBaseDay(r, d)))) : (Number(r.sysCount) || 0);
                     const readOnly = r.shared && !daywise; // shared crew with no schedule = fixed split, can't tune
                     const expanded = !!osMp[i];
                     const rate = Number(r.rate) || 0;
+                    // Show the SAME metric the dept head's Manpower plan shows: dihari for day-wise crew
+                    // (auto = cost ÷ rate), plain qty for mapped crew — so by default both screens match.
+                    const actDihari = rate > 0 ? Math.round(actCost / rate) : 0;
+                    const planDihari = rate > 0 ? Math.round(planCost / rate) : 0;
+                    const planPeak = Number(r.sysCount) || 0;
                     return (
                       <div key={i} className="px-4 py-2.5">
                         <div className="flex items-center gap-3 flex-wrap">
                           <span className="flex-1 text-sm font-medium text-gray-800 min-w-[90px]">{r.type}{r.shared && <span className="ml-2 text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}</span>
-                          {readOnly ? <span className="text-[10px] text-gray-400">split allocation · {fmt(actCost)}</span> : (<>
-                            <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">people</span><input type="number" min="0" value={actPeak} onChange={e => setActualCrew(r, i, e.target.value)} className={"w-14 border rounded-lg px-2 py-1 text-sm text-center " + (actPeak !== planPeak ? "border-amber-400 bg-amber-50 font-bold" : "")} title="Actual crew held (applies to every day — open 'by day/shift' to fine-tune)" /></div>
-                            {daywise && sched.length > 0 && <button onClick={() => setOsMp(o => ({ ...o, [i]: !o[i] }))} className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-1" title="Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening)">{expanded ? "▾ by day/shift" : "▸ by day/shift"}</button>}
+                          {readOnly ? <span className="text-[10px] text-gray-400">split allocation · {fmt(actCost)}</span> : daywise ? (<>
+                            <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">dihari</span><span className={"w-14 rounded-lg px-2 py-1 text-sm text-center font-semibold " + (edited ? "bg-amber-50 text-amber-700 border border-amber-300" : "bg-gray-100 text-gray-700")} title="Total dihari held (crew × shifts across all days) — matches the plan until you edit below">{actDihari}</span></div>
+                            {sched.length > 0 && <button onClick={() => setOsMp(o => ({ ...o, [i]: !o[i] }))} className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-1" title="Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening)">{expanded ? "▾ by day/shift" : "▸ by day/shift"}</button>}
+                            <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
+                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-indigo-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
+                          </>) : (<>
+                            <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">people</span><input type="number" min="0" value={Number(r.count) || 0} onChange={e => setActualCrew(r, i, e.target.value)} className={"w-14 border rounded-lg px-2 py-1 text-sm text-center " + ((Number(r.count) || 0) !== planPeak ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
                             <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
                             {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-indigo-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
                           </>)}
                         </div>
-                        {!readOnly && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {actPeak} = {fmt(actCost)}</span> : ""}</div>}
+                        {!readOnly && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">{daywise
+                          ? <>Planned {planDihari} dihari · {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {actDihari} dihari = {fmt(actCost)}</span> : ""}</>
+                          : <>Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {Number(r.count) || 0} = {fmt(actCost)}</span> : ""}</>}</div>}
                         {expanded && daywise && sched.length > 0 && (
                           <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 space-y-1">
                             <div className="text-[10px] text-gray-400">Set the crew you actually held each day & shift — reduce a day, drop the evening (set 0), or split (e.g. 3 in day, 1 in evening).</div>
@@ -1541,7 +1550,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                                       <label key={w.id} className="flex items-center gap-1"><span className="text-gray-400">{w.label}</span><input type="number" min="0" value={effShift(r, d, w.id)} onChange={e => setShiftCount(r.type, d.date, w.id, e.target.value, ids)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>
                                     ))
                                     : <label className="flex items-center gap-1"><span className="text-gray-400">crew</span><input type="number" min="0" value={Math.round(effDay(r, d))} onChange={e => setMpDay(r.type, d.date, e.target.value)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>}
-                                  <span className="text-gray-400 ml-auto">= {fmt(dayCost)}</span>
+                                  <span className="text-gray-400 ml-auto">= {fmt(Math.round(dayCost))}</span>
                                 </div>
                               );
                             })}
