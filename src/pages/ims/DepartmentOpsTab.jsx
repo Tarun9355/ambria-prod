@@ -378,6 +378,21 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // Split rows for an item (back-compat: legacy single-object plan → one full-qty row; none → default warehouse).
   const planFor = (it) => { const raw = dismantlePlan["inv:" + it.id]; if (Array.isArray(raw) && raw.length) return raw; if (raw && raw.type) return [{ qty: Number(it.qty) || 0, type: raw.type, toEventId: raw.toEventId, toEventName: raw.toEventName }]; return [{ qty: Number(it.qty) || 0, type: "return" }]; };
   const setPlanRows = (key, rows) => saveDept({ dismantlePlan: { ...dismantlePlan, [key]: rows } });
+  // ── Matrix dismantle plan: dept head picks destination sites; every item gets a Production House
+  // column (auto-remainder) + one column per site. Typing a site qty reduces production house. Stored
+  // in the SAME {return/transfer} plan shape so planFor / destGroups / on-site confirm all still work. ──
+  const savedSites = Array.isArray(deptData.dismantleSites) ? deptData.dismantleSites : [];
+  const dismantleSites = (() => {
+    const out = savedSites.map(s => ({ ...s }));
+    Object.values(dismantlePlan).forEach(rows => (Array.isArray(rows) ? rows : []).forEach(r => { if (r.type === "transfer" && r.toEventId && !out.some(s => s.id === r.toEventId)) { const ev = (eventOrders || []).find(e => e.id === r.toEventId); out.push({ id: r.toEventId, name: ev?.clientName || r.toEventName || "Event", date: ev ? eventDate(ev) : "" }); } }));
+    return out;
+  })();
+  const planSiteQty = (it, eventId) => { const raw = dismantlePlan["inv:" + it.id]; if (!Array.isArray(raw)) return 0; const r = raw.find(x => x.type === "transfer" && x.toEventId === eventId); return r ? (Number(r.qty) || 0) : 0; };
+  const planProdQty = (it) => Math.max(0, (Number(it.qty) || 0) - dismantleSites.reduce((s, st) => s + planSiteQty(it, st.id), 0));
+  const buildSitePlan = (it, siteMap, sites) => { const rows = []; sites.forEach(st => { const q = Number(siteMap[st.id]) || 0; if (q > 0) rows.push({ type: "transfer", toEventId: st.id, toEventName: st.name, qty: q }); }); const rem = Math.max(0, (Number(it.qty) || 0) - rows.reduce((a, r) => a + r.qty, 0)); if (rem > 0) rows.unshift({ type: "return", qty: rem }); return rows.length ? rows : [{ type: "return", qty: 0 }]; };
+  const setSiteQty = (it, eventId, val) => { const key = "inv:" + it.id; const cur = {}; dismantleSites.forEach(st => { cur[st.id] = planSiteQty(it, st.id); }); const other = dismantleSites.reduce((a, st) => a + (st.id === eventId ? 0 : (Number(cur[st.id]) || 0)), 0); const cap = Math.max(0, (Number(it.qty) || 0) - other); cur[eventId] = Math.min(cap, Math.max(0, Number(val) || 0)); setPlanRows(key, buildSitePlan(it, cur, dismantleSites)); };
+  const addDismantleSite = (eventId) => { if (!eventId || dismantleSites.some(s => s.id === eventId)) return; const ev = (eventOrders || []).find(e => e.id === eventId); saveDept({ dismantleSites: [...dismantleSites, { id: eventId, name: ev?.clientName || "Event", date: ev ? eventDate(ev) : "" }] }); };
+  const removeDismantleSite = (eventId) => { const next = dismantleSites.filter(s => s.id !== eventId); const nextPlan = { ...dismantlePlan }; blockedItems.forEach(it => { const cur = {}; next.forEach(st => { cur[st.id] = planSiteQty(it, st.id); }); nextPlan["inv:" + it.id] = buildSitePlan(it, cur, next); }); saveDept({ dismantleSites: next, dismantlePlan: nextPlan }); };
   // Build movement objects from the plan splits, each capped to the item's remaining (so re-confirm is safe).
   const buildPlannedMovements = (items) => {
     const now = Date.now(); const out = []; let seq = 0;
@@ -402,7 +417,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     if (!sel) return;
     if (!window.confirm(`Reset the dismantle plan AND all on-site movements for ${sel.clientName || "this event"} · ${dept}? (for testing)`)) return;
     movements.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, +(Number(m.qty) || 0)));
-    saveDept({ dismantlePlan: {}, movements: [] });
+    saveDept({ dismantlePlan: {}, movements: [], dismantleSites: [] });
     setManTruck({}); setManSel({}); setManCond({}); setRouteDraft({});
   };
   // Destination-grouped manifest: everything going to each place (warehouse / repair / broken / each
@@ -1216,46 +1231,53 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {blockedItems.length > 0 && (
               <div className="bg-white border rounded-xl overflow-hidden">
                 <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-gray-800">🔁 Dismantle plan <span className="text-xs font-normal text-gray-400">— set where each item goes after teardown; the on-site team just confirms</span></span>
+                  <span className="text-sm font-semibold text-gray-800">🔁 Dismantle plan <span className="text-xs font-normal text-gray-400">— pick the transfer sites, then type how many of each item goes to each; the rest stay for production house</span></span>
                   <button onClick={resetDismantle} className="text-[11px] font-semibold text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg whitespace-nowrap" title="Testing: clear this plan + all on-site movements so you can re-test splits">↺ Reset (testing)</button>
                 </div>
-                <div className="divide-y">
-                  {blockedItems.map(it => {
-                    const k = "inv:" + it.id; const rows = planFor(it);
-                    const allocated = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
-                    const remaining = (Number(it.qty) || 0) - allocated;
-                    const upd = (i, patch) => setPlanRows(k, rows.map((r, j) => j === i ? { ...r, ...patch } : r));
-                    // Qty is clamped to what's still free (item total − the other splits) so the plan can
-                    // never over-allocate — the number auto-caps the moment you type or add a split.
-                    const setQty = (i, val) => { const others = rows.reduce((s, rr, j) => j === i ? s : s + (Number(rr.qty) || 0), 0); const cap = Math.max(0, (Number(it.qty) || 0) - others); upd(i, { qty: Math.min(cap, Math.max(0, Number(val) || 0)) }); };
-                    const addRow = () => { if (remaining <= 0) return; setPlanRows(k, [...rows, { qty: remaining, type: "return" }]); };
-                    const delRow = (i) => setPlanRows(k, rows.filter((_, j) => j !== i));
-                    return (
-                      <div key={k} className="px-4 py-2 space-y-1.5">
-                        <div className="flex items-center gap-3">
-                          {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
-                          <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">×{it.qty}</span></span>
-                          <span className={"text-[10px] font-medium " + (remaining === 0 ? "text-emerald-600" : remaining > 0 ? "text-amber-600" : "text-red-600")}>{remaining === 0 ? "✓ all allocated" : remaining > 0 ? `${remaining} unallocated` : `over by ${-remaining}`}</span>
-                        </div>
-                        {rows.map((r, i) => (
-                          <div key={i} className="pl-11 flex items-center gap-1.5 flex-wrap">
-                            <input type="number" min="0" max={it.qty} value={r.qty} onChange={e => setQty(i, e.target.value)} className="w-14 border rounded px-2 py-1 text-xs text-center" title="qty for this destination" />
-                            {["return", "transfer"].map(t => (
-                              <button key={t} onClick={() => upd(i, { type: t })} className={"text-[11px] px-2.5 py-1 rounded-full border font-medium " + (r.type === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-100")}>{ROUTE_LABEL[t]}</button>
+                {/* Site chooser — dept head names the destination sites; each becomes a column below */}
+                <div className="px-4 py-2.5 border-b bg-sky-50/40 flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-sky-800">Transfer sites:</span>
+                  {dismantleSites.map(s => (
+                    <span key={s.id} className="inline-flex items-center gap-1 text-[11px] font-medium bg-white border border-sky-200 text-sky-700 rounded-full px-2 py-1">↪️ {s.name}{s.date ? ` · ${s.date}` : ""}<button onClick={() => removeDismantleSite(s.id)} className="text-sky-300 hover:text-red-500 ml-0.5" title="remove this site">×</button></span>
+                  ))}
+                  <select value="" onChange={e => { addDismantleSite(e.target.value); e.target.value = ""; }} className="border border-sky-300 rounded-lg px-2 py-1 text-xs">
+                    <option value="">+ Add a site…</option>
+                    {nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id)).map(({ e, d, off }) => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {d || "no date"}{off === 0 ? " (same day)" : off > 0 ? ` (+${off}d)` : ` (${off}d)`}</option>)}
+                  </select>
+                  {dismantleSites.length === 0 && <span className="text-[10px] text-gray-400">No sites yet — everything goes back to production house. Add a site to route items there.</span>}
+                </div>
+                {/* Matrix — one row per item, a column for production house (auto) + each site */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500">
+                        <th className="text-left font-semibold px-4 py-2">Item</th>
+                        <th className="text-center font-semibold px-3 py-2 whitespace-nowrap">🏭 Production House</th>
+                        {dismantleSites.map(s => <th key={s.id} className="text-center font-semibold px-3 py-2 whitespace-nowrap" title={s.date}>↪️ {s.name}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {blockedItems.map(it => {
+                        const prod = planProdQty(it);
+                        return (
+                          <tr key={it.id}>
+                            <td className="px-4 py-2">
+                              <div className="flex items-center gap-2">
+                                {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
+                                <span className="text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">×{it.qty}</span></span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-center"><span className={"inline-block min-w-[2.5rem] px-2 py-1 rounded-lg text-sm font-semibold " + (prod > 0 ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-400")} title="auto — the remainder after the sites">{prod}</span></td>
+                            {dismantleSites.map(s => (
+                              <td key={s.id} className="px-3 py-2 text-center">
+                                <input type="number" min="0" max={it.qty} value={planSiteQty(it, s.id) || ""} onChange={e => setSiteQty(it, s.id, e.target.value)} placeholder="0" className="w-14 border rounded px-2 py-1 text-sm text-center" />
+                              </td>
                             ))}
-                            {r.type === "transfer" && (
-                              <select value={r.toEventId || ""} onChange={e => { const ev = (eventOrders || []).find(x => x.id === e.target.value); upd(i, { toEventId: e.target.value, toEventName: ev?.clientName || "" }); }} className="border rounded px-2 py-1 text-xs max-w-[220px]">
-                                <option value="">Pick destination event (nearby first)…</option>
-                                {nearbyTransferEvents.map(({ e, d, off }) => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {d || "no date"}{off === 0 ? " (same day)" : off > 0 ? ` (+${off}d)` : ` (${off}d)`}</option>)}
-                              </select>
-                            )}
-                            {rows.length > 1 && <button onClick={() => delRow(i)} className="text-red-300 hover:text-red-500 text-sm" title="remove this split">×</button>}
-                          </div>
-                        ))}
-                        <div className="pl-11"><button onClick={addRow} disabled={remaining <= 0} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium disabled:text-gray-300 disabled:cursor-not-allowed">+ Split to another place{remaining > 0 ? ` (${remaining} left)` : " — all allocated"}</button></div>
-                      </div>
-                    );
-                  })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
