@@ -1,6 +1,47 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost } from "../../lib/ims/helpers";
+import { uploadAudioToCloudinary } from "../../lib/cloudinary";
+
+// Small in-browser voice-note recorder → uploads to Cloudinary, hands the URL back via onSave.
+// Used on-site so the ops manager can attach a spoken note to a transferred/repair item; the receiving
+// site hears it before the item arrives (e.g. "front leg is loose — fix before use").
+function VoiceRecorder({ value, onSave, compact = false, label = "voice note" }) {
+  const [rec, setRec] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const mrRef = useRef(null), chunksRef = useRef([]), streamRef = useRef(null);
+  const start = async () => {
+    setErr("");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") { setErr("no mic"); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        (streamRef.current?.getTracks() || []).forEach(t => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        setBusy(true);
+        try { const url = await uploadAudioToCloudinary(blob); onSave(url); } catch { setErr("upload failed"); }
+        setBusy(false);
+      };
+      mr.start(); mrRef.current = mr; setRec(true);
+    } catch { setErr("mic blocked"); }
+  };
+  const stop = () => { try { mrRef.current?.stop(); } catch {} setRec(false); };
+  if (busy) return <span className="text-[10px] text-gray-400 whitespace-nowrap">⏳ saving…</span>;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {value && !rec && !compact && <audio src={value} controls className="h-6 max-w-[130px]" />}
+      {rec
+        ? <button onClick={stop} className="text-[10px] font-semibold text-white bg-red-600 rounded-full px-2 py-1 animate-pulse whitespace-nowrap">⏹ stop</button>
+        : <button onClick={start} className={"text-[10px] font-semibold rounded-full px-2 py-1 border whitespace-nowrap " + (value ? "text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100" : "text-indigo-600 border-indigo-200 hover:bg-indigo-50")} title={value ? "re-record " + label : "record " + label}>🎤 {value ? "✓" : (compact ? "" : label)}</button>}
+      {err && <span className="text-[9px] text-red-500">{err}</span>}
+    </span>
+  );
+}
 
 // ═══ DEPARTMENT OPERATIONS (Planning → Dept Ops) ═══
 // Per-department backend for department heads: see their department's requirements + income for any
@@ -67,6 +108,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
   const [manSel, setManSel] = useState({}); // which items load on THIS truck (transfer groups): {[groupKey::itemKey]:false} (default selected)
   const [manCond, setManCond] = useState({}); // on-site condition per manifest item: {[groupKey::itemKey]:{repair,broken}}
+  const [manNote, setManNote] = useState({}); // on-site voice note per manifest item: {[groupKey::itemKey]:url}
   const [rcvOpen, setRcvOpen] = useState(false); // Receiving — sources per item: collapsed by default
   const [manOpen, setManOpen] = useState({}); // Loading-manifest destination groups: collapsed by default
   const [osMp, setOsMp] = useState({}); // on-site crew rows expanded to the per-day / per-shift editor
@@ -471,7 +513,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       const rep = Math.min(Number(c.repair) || 0, cap);
       const brk = Math.min(Number(c.broken) || 0, cap - rep);
       const dest = Math.max(0, cap - rep - brk);
-      const base = { itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, at: now, by: authUser?.name || "—" };
+      const note = manNote[ck];
+      const base = { itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, at: now, by: authUser?.name || "—", ...(note ? { voiceNote: note } : {}) };
       if (dest > 0) out.push({ id: "mv_" + now + "_" + (seq++), ...base, type: group.type, qty: dest, ...(isTransfer ? { toEventId: group.toEventId, toEventName: ev?.clientName || "Event", vehicle: truck.vehicle || "", driver: truck.driver || "", phone: truck.phone || "" } : {}) });
       if (rep > 0) out.push({ id: "mv_" + now + "_" + (seq++), ...base, type: "repair", qty: rep });
       if (brk > 0) out.push({ id: "mv_" + now + "_" + (seq++), ...base, type: "damage", qty: brk });
@@ -480,6 +523,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     // Reset this group's transient inputs (confirmed items leave the list; remaining default back to selected).
     setManSel(m => { const n = { ...m }; group.items.forEach(({ it }) => delete n[gKey(gk, it)]); return n; });
     setManCond(m => { const n = { ...m }; group.items.forEach(({ it }) => delete n[gKey(gk, it)]); return n; });
+    setManNote(m => { const n = { ...m }; group.items.forEach(({ it }) => delete n[gKey(gk, it)]); return n; });
     setManTruck(m => { const n = { ...m }; delete n[gk]; return n; });
   };
   // Sold events sorted by date-proximity to this event (for the transfer picker — nearby dates first).
@@ -509,7 +553,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
       const key = itemKeyFor(m.invId, m.name);
       if (!map[key]) map[key] = { name: m.name, total: 0, sources: [] };
       map[key].total += Number(m.qty) || 0;
-      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0, vehicle: m.vehicle || "", driver: m.driver || "", phone: m.phone || "" });
+      map[key].sources.push({ from: m.fromEvent, dept: m.fromDept, qty: Number(m.qty) || 0, vehicle: m.vehicle || "", driver: m.driver || "", phone: m.phone || "", voiceNote: m.voiceNote || "" });
     });
     return map;
   }, [incomingTransfers]);
@@ -1335,7 +1379,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           ? <a href={"tel:" + t.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call {t.driver || ""}</a>
                           : <input defaultValue="" onClick={e => e.stopPropagation()} onBlur={e => { const v = e.target.value.trim(); if (v && t.id) setTruck(t.id, { phone: v }); }} placeholder="📞 add driver phone" className="border border-sky-300 rounded-full px-2 py-0.5 text-[10px] w-32" title="Enter the driver's phone to enable Call" />
                         }</div>)}
-                        {r.sources.map((s, j) => <div key={"r" + j} className="flex items-center gap-1.5 text-sky-700"><span>↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</span>{s.phone && <a href={"tel:" + s.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (s.driver || "driver") + " · " + s.phone}>📞 Call {s.driver || ""}</a>}</div>)}
+                        {r.sources.map((s, j) => <div key={"r" + j} className="flex items-center gap-1.5 text-sky-700 flex-wrap"><span>↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</span>{s.phone && <a href={"tel:" + s.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (s.driver || "driver") + " · " + s.phone}>📞 Call {s.driver || ""}</a>}{s.voiceNote && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700"><span title="voice note from the sending site — listen before it arrives">🎤 note:</span><audio src={s.voiceNote} controls className="h-6 max-w-[150px]" /></span>}</div>)}
                         {r.whTrucks.length === 0 && r.sources.length === 0 && <div className="text-gray-400">No truck assigned yet.</div>}
                       </div>
                     </div>
@@ -1403,14 +1447,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           const dest = Math.max(0, qty - rep - brk);
                           const sel = isSel(ck);
                           return (
-                          <div key={i} className={"flex items-center gap-2 px-3 py-1.5 " + (isTransfer && !sel ? "opacity-40" : "")}>
+                          <div key={i} className={"flex items-center gap-2 px-3 py-1.5 flex-wrap " + (isTransfer && !sel ? "opacity-40" : "")}>
                             {isTransfer && <input type="checkbox" checked={sel} onChange={() => toggleManSel(ck)} className="w-4 h-4" title="load this item on this truck" />}
                             {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-7 h-7 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">📦</div>}
-                            <span className="flex-1 text-xs text-gray-700">{it.name}</span>
+                            <span className="flex-1 text-xs text-gray-700 min-w-[80px]">{it.name}</span>
                             <span className={"text-[11px] font-bold w-14 text-right " + (dest > 0 ? "text-gray-900" : "text-gray-300")} title="going to this destination">→ {dest}</span>
                             <label className="flex items-center gap-0.5 text-[10px] text-amber-700" title="needs repair (kept in stock)">🔧<input type="number" min="0" max={qty} value={c.repair ?? ""} onChange={e => setManCondVal(ck, "repair", e.target.value, qty)} placeholder="0" className="w-10 border border-amber-200 rounded px-1 py-0.5 text-center" /></label>
                             <label className="flex items-center gap-0.5 text-[10px] text-red-600" title="broken — written off, removed from stock">❌<input type="number" min="0" max={qty} value={c.broken ?? ""} onChange={e => setManCondVal(ck, "broken", e.target.value, qty)} placeholder="0" className="w-10 border border-red-200 rounded px-1 py-0.5 text-center" /></label>
                             <span className="text-[10px] text-gray-400 w-10 text-right">of {qty}</span>
+                            <VoiceRecorder compact value={manNote[ck]} onSave={url => setManNote(m => ({ ...m, [ck]: url }))} label="note for site" />
                           </div>
                         ); })}
                       </div>
@@ -1436,11 +1481,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   <div className="px-4 py-1.5 text-[10px] uppercase text-gray-400 font-semibold">Movement log</div>
                   <div className="divide-y">
                     {movements.slice().reverse().map(m => (
-                      <div key={m.id} className="flex items-center justify-between px-4 py-1.5 text-xs">
+                      <div key={m.id} className="flex items-center justify-between gap-2 px-4 py-1.5 text-xs flex-wrap">
                         <span className={m.type === "damage" ? "text-red-600 font-semibold" : m.type === "repair" ? "text-amber-600 font-semibold" : m.type === "transfer" ? "text-sky-700" : "text-gray-600"}>
                           {m.type === "damage" ? "⚠️ Broken" : m.type === "repair" ? "🔧 Needs repair" : m.type === "transfer" ? `↪️ Reused → ${m.toEventName || "event"}` : "↩️ Returned"} · {m.qty}× {m.name}
                         </span>
-                        <span className="flex items-center gap-2 text-[10px] text-gray-400">{m.by}{m.type === "damage" && m.invId ? " · stock −" + m.qty : m.type === "repair" ? " · kept in stock" : ""}<button onClick={() => delMovement(m.id)} className="text-red-300 hover:text-red-500 text-sm">×</button></span>
+                        <span className="flex items-center gap-2 text-[10px] text-gray-400">{m.voiceNote && <audio src={m.voiceNote} controls className="h-6 max-w-[130px]" title="voice note" />}{m.by}{m.type === "damage" && m.invId ? " · stock −" + m.qty : m.type === "repair" ? " · kept in stock" : ""}<button onClick={() => delMovement(m.id)} className="text-red-300 hover:text-red-500 text-sm">×</button></span>
                       </div>
                     ))}
                   </div>

@@ -3,6 +3,19 @@
 export const IMS_CLD_CLOUD = "dy9wfqhry";
 export const IMS_CLD_PRESET = "z3nlj6cx";
 export const IMS_CLD_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${IMS_CLD_CLOUD}/image/upload`;
+// `auto` resource type — auto-detects audio/video (used for on-site voice notes).
+export const IMS_CLD_AUTO_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${IMS_CLD_CLOUD}/auto/upload`;
+
+// Upload a recorded audio blob (voice note) via the unsigned preset → returns the hosted URL.
+export async function uploadAudioToCloudinary(blob) {
+  const fd = new FormData();
+  fd.append("file", blob);
+  fd.append("upload_preset", IMS_CLD_PRESET);
+  const r = await fetch(IMS_CLD_AUTO_UPLOAD_URL, { method: "POST", body: fd });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || !data.secure_url) throw new Error(data?.error?.message || data?.error || `Upload failed (${r.status})`);
+  return data.secure_url;
+}
 
 // Downscale/compress large images client-side before upload (prevents huge payloads).
 // Faithful copy of reference `compressImageForCloudinary`.
