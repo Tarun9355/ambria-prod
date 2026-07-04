@@ -214,8 +214,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const setMpDay = (type, date, val) => saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } });
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
   const toggleWin = (type, date, winId, curIds) => { const next = curIds.includes(winId) ? curIds.filter(x => x !== winId) : [...curIds, winId]; saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: next } } }); };
+  const setWinAllDays = (type, schedule, ids) => { const m = { ...(mpWin[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = ids; }); saveDept({ mpWin: { ...mpWin, [type]: m } }); };
   const lineCost = (r) => mpLineCost(r, mpDay, mpOverrides, mpWin);
   const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
+  const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
+  const mpEdited = Object.keys(mpOverrides).length > 0 || Object.keys(mpDay).length > 0 || Object.keys(mpWin).length > 0 || (Array.isArray(mpExtra) && mpExtra.length > 0);
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
   const projectedIncome = Math.round(deptIncome ? (Number(deptIncome.total) || 0) : (rentalIncome + mpCost)); // full dept income from Deal Check, else local
@@ -233,6 +236,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     }
   };
   const addMp = () => saveDept({ mpExtra: [...(Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra), { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
+  // On-site actual crew: set the real head-count held (applies to every scheduled day for day-wise crew,
+  // else a straight count override) → flows to the P&L + Studio via the same mpDay/mpOverrides fields.
+  const setActualCrew = (r, i, val) => { const n = Math.max(0, Number(val) || 0); if (mpDayWise(r) && Array.isArray(r.schedule) && r.schedule.length) setMpAllDays(r.type, r.schedule, n); else setMp(i, "count", n); };
+  const resetMpLine = (r) => { const nd = { ...mpDay }; delete nd[r.type]; const nw = { ...mpWin }; delete nw[r.type]; const no = { ...mpOverrides }; delete no[r.type]; saveDept({ mpDay: nd, mpWin: nw, mpOverrides: no }); };
   const addExpense = () => saveDept({ expenses: [...expenses, { label: "", amount: "" }] });
   const setExpense = (i, key, val) => { const next = expenses.map((e, j) => j === i ? { ...e, [key]: val } : e); saveDept({ expenses: next }); };
   const delExpense = (i) => saveDept({ expenses: expenses.filter((_, j) => j !== i) });
@@ -311,7 +318,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // Actual spend logged by the head → exact P&L (mandi list + on-site expenses + edited crew).
   const mandiSpend = dept === "Floral" ? mandiActualTotal : 0;
   const actualCost = mandiSpend + expenseTotal + mpCost;
-  const hasActuals = mandiSpend > 0 || expenseTotal > 0;
+  const hasActuals = mandiSpend > 0 || expenseTotal > 0 || mpEdited;
 
   const printChallan = () => {
     const w = window.open("", "_blank");
@@ -1411,6 +1418,52 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 </div>
               )}
             </div>
+
+            {/* On-site crew — actual held. Ops logs the real crew kept on site (count + shifts); this
+                writes the same mpDay/mpWin/mpOverrides the plan uses, so it becomes the exact manpower
+                cost in this event's P&L and reflects back to the salesperson in Studio. */}
+            {mpRows.length > 0 && (
+              <div className="bg-white border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-gray-800">👷 On-site crew — actual held <span className="text-xs font-normal text-gray-400">— log the crew you actually kept; sets the real manpower cost</span></span>
+                  <span className="text-sm font-bold text-gray-900">{fmt(mpCost)}{mpEdited && <span className="ml-1 text-[10px] font-semibold text-amber-600">actual</span>}</span>
+                </div>
+                <div className="divide-y">
+                  {mpRows.map((r, i) => {
+                    const daywise = mpDayWise(r);
+                    const sched = Array.isArray(r.schedule) ? r.schedule : [];
+                    const winDefs = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : [];
+                    const planCost = Number(r.sysCost) || 0;
+                    const actCost = Number(lineCost(r));
+                    const edited = actCost !== planCost;
+                    const actPeak = daywise && sched.length ? Math.max(0, ...sched.map(d => Math.round(effDay(r, d)))) : (Number(r.count) || 0);
+                    const planPeak = daywise && sched.length ? Math.max(0, ...sched.map(d => Math.round(mpBaseDay(r, d)))) : (Number(r.sysCount) || 0);
+                    const curIds = sched.length ? effWinIds(r, sched[0]) : [];
+                    const readOnly = r.shared && !daywise; // shared crew with no schedule = fixed split, can't tune
+                    return (
+                      <div key={i} className="px-4 py-2.5">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="flex-1 text-sm font-medium text-gray-800 min-w-[90px]">{r.type}{r.shared && <span className="ml-2 text-[9px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-semibold">SHARED</span>}</span>
+                          {readOnly ? <span className="text-[10px] text-gray-400">split allocation · {fmt(actCost)}</span> : (<>
+                            <div className="flex items-center gap-1"><span className="text-[10px] text-gray-400">people</span><input type="number" min="0" value={actPeak} onChange={e => setActualCrew(r, i, e.target.value)} className={"w-14 border rounded-lg px-2 py-1 text-sm text-center " + (actPeak !== planPeak ? "border-amber-400 bg-amber-50 font-bold" : "")} /></div>
+                            {daywise && winDefs.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap"><span className="text-[10px] text-gray-400">shifts</span>{winDefs.map(w => { const on = curIds.includes(w.id); return <button key={w.id} onClick={() => setWinAllDays(r.type, sched, on ? curIds.filter(x => x !== w.id) : [...curIds, w.id])} className={"px-2 py-0.5 rounded-full border text-[10px] transition-colors " + (on ? "border-emerald-400 bg-emerald-50 text-emerald-700 font-semibold" : "border-gray-200 text-gray-400 hover:border-gray-300")}>{on ? "✓ " : ""}{w.label}</button>; })}</div>
+                            )}
+                            <span className="text-sm font-semibold text-gray-700 w-24 text-right">{fmt(actCost)}</span>
+                            {edited && <button onClick={() => resetMpLine(r)} className="text-[10px] text-indigo-500 hover:underline whitespace-nowrap" title="revert to the dept head's planned crew">↺ plan</button>}
+                          </>)}
+                        </div>
+                        {!readOnly && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {actPeak} = {fmt(actCost)}</span> : ""}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="px-4 py-2 bg-gray-50 border-t flex items-center justify-between text-xs gap-2 flex-wrap">
+                  <span className="text-gray-500">Planned manpower <b className="text-gray-700">{fmt(mpPlannedCost)}</b></span>
+                  <span className="text-gray-800 font-semibold">Actual held {fmt(mpCost)} {mpCost !== mpPlannedCost && <span className={mpCost < mpPlannedCost ? "text-emerald-600" : "text-red-600"}>({mpCost < mpPlannedCost ? "▼ saved " : "▲ over "}{fmt(Math.abs(mpCost - mpPlannedCost))})</span>}</span>
+                </div>
+              </div>
+            )}
 
             </>)}
 
