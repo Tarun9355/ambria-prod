@@ -109,7 +109,9 @@ export default function StudioBuild({ ctx }) {
     const tabTier = tier === "enhanced" ? "Enhanced" : tier === "premium" ? "Premium" : "Simple";
     if (areaNames.length) {
       const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
-      const {exact, similar, fallback} = getLibPhotosForZone(areaNames, vTag);
+      // Apply the active photo filters (event type, venue, palette…) to the pool BEFORE the 50-cap, so a
+      // matching photo (e.g. a Haldi one) isn't dropped by higher-scoring but filtered-out photos.
+      const {exact, similar, fallback} = getLibPhotosForZone(areaNames, vTag, zpHasFilters ? zpFilterPhoto : null);
       // getLibPhotosForZone merges non-zone "overflow" fillers into `fallback` (the Manage
       // zone-picker wants those). On Build we must show ONLY photos actually tagged for this
       // zone — otherwise a Stage panel surfaces photos tagged Entry Passage / Bar Counter, etc.

@@ -2867,8 +2867,11 @@ export default function StudioApp() {
   }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
   // ── Library photo scoring for a zone — VERBATIM ──
-  const getLibPhotosForZone = useCallback((zone, videoTag) => {
+  const getLibPhotosForZone = useCallback((zone, videoTag, filterFn) => {
     // `zone` may be a single tag name (Manage Library) or an array of synonym names (Build page).
+    // filterFn (optional): a predicate applied to the zone matches BEFORE scoring/capping — so active
+    // photo filters (event type, palette, etc.) constrain the pool first and matching photos aren't
+    // lost to the 50-cap by higher-scoring but filtered-out photos.
     const zoneList = (Array.isArray(zone) ? zone : [zone]).filter(Boolean);
     if (!zoneList.length || !libItems.length) return { exact: [], similar: [], fallback: [] };
     const tier = videoTag?.tier;
@@ -2891,7 +2894,7 @@ export default function StudioApp() {
     const io = videoTag?.io || "";
     const zoneMatches = libItems.filter(li => {
       const ae = li.tags?.areasElements || [];
-      return zoneList.some(z => ae.includes(z));
+      return zoneList.some(z => ae.includes(z)) && (!filterFn || filterFn(li));
     });
     const scorePhoto = (li) => {
       let score = 0;
@@ -2940,7 +2943,7 @@ export default function StudioApp() {
     if (total < 50) {
       const usedIds = new Set([...exact, ...similar, ...fallback].map(li => li.id));
       // "Rest" (non-zone fillers) still follow the settings priority + palette-first ordering.
-      overflow = libItems.filter(li => !usedIds.has(li.id))
+      overflow = libItems.filter(li => !usedIds.has(li.id) && (!filterFn || filterFn(li)))
         .map(li => ({ li, score: scorePhoto(li) }))
         .sort((a, b) => b.score - a.score)
         .map(s => s.li)
