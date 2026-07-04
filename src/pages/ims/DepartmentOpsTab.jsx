@@ -64,6 +64,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const [mpOpen, setMpOpen] = useState({}); // which manpower rows have their derivation expanded
   const [mpDayHow, setMpDayHow] = useState({}); // which per-day rows have their "how" derivation expanded
   const [routeDraft, setRouteDraft] = useState({}); // dismantle routing draft per item: {qty, type, toEventId}
+  const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
+  const [manSel, setManSel] = useState({}); // which items load on THIS truck (transfer groups): {[groupKey::itemKey]:false} (default selected)
+  const [manCond, setManCond] = useState({}); // on-site condition per manifest item: {[groupKey::itemKey]:{repair,broken}}
   const [showFleet, setShowFleet] = useState(false); // toggle the own-fleet manager
   const [newVeh, setNewVeh] = useState({ vehicle: "", driver: "", phone: "" }); // new fleet entry
   const mandiCatalogue = useMemo(() => (Array.isArray(settings?.mandiCatalogue) ? settings.mandiCatalogue : []), [settings]);
@@ -403,15 +406,41 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     const order = { return: 0, repair: 1, damage: 2 };
     return Object.values(groups).sort((a, b) => (order[a.type] ?? 3) - (order[b.type] ?? 3));
   }, [blockedItems, dismantlePlan, movements, eventOrders]);
+  // Confirm-time helpers: the ops manager loads the truck, records ONE set of truck details for the
+  // whole list, optionally selects a subset (rest goes on another truck), and marks anything broken /
+  // needing repair — those deduct from the qty reaching the destination.
+  const gKey = (gk, it) => gk + "::inv:" + it.id;
+  const isSel = (ck) => manSel[ck] !== false; // default selected
+  const toggleManSel = (ck) => setManSel(m => ({ ...m, [ck]: m[ck] === false }));
+  const setTruckField = (gk, key, val) => setManTruck(m => ({ ...m, [gk]: { ...(m[gk] || {}), [key]: val } }));
+  const pickTruckFleet = (gk, f) => setManTruck(m => ({ ...m, [gk]: { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" } }));
+  const condOf = (ck) => manCond[ck] || {};
+  // repair + broken can never exceed the item's available qty on this list — typing one caps the other.
+  const setManCondVal = (ck, key, val, cap) => setManCond(m => { const cur = { ...(m[ck] || {}) }; const other = key === "repair" ? (Number(cur.broken) || 0) : (Number(cur.repair) || 0); cur[key] = Math.min(Math.max(0, Number(val) || 0), Math.max(0, cap - other)); return { ...m, [ck]: cur }; });
   const confirmGroup = (group) => {
+    const gk = group.key; const isTransfer = group.type === "transfer";
+    const truck = manTruck[gk] || {};
+    let ev = null;
+    if (isTransfer) { if (!group.toEventId) return; ev = (eventOrders || []).find(e => e.id === group.toEventId); }
     const now = Date.now(); let seq = 0; const out = [];
     group.items.forEach(({ it, qty }) => {
-      const q = Math.min(qty, unroutedQty(it)); if (q <= 0) return;
-      let extra = {};
-      if (group.type === "transfer") { if (!group.toEventId) return; const ev = (eventOrders || []).find(e => e.id === group.toEventId); extra = { toEventId: group.toEventId, toEventName: ev?.clientName || "Event" }; }
-      out.push({ id: "mv_" + now + "_" + (seq++), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: group.type, qty: q, at: now, by: authUser?.name || "—", ...extra });
+      const ck = gKey(gk, it);
+      if (isTransfer && !isSel(ck)) return; // left for the next truck
+      const cap = Math.min(qty, unroutedQty(it)); if (cap <= 0) return;
+      const c = condOf(ck);
+      const rep = Math.min(Number(c.repair) || 0, cap);
+      const brk = Math.min(Number(c.broken) || 0, cap - rep);
+      const dest = Math.max(0, cap - rep - brk);
+      const base = { itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, at: now, by: authUser?.name || "—" };
+      if (dest > 0) out.push({ id: "mv_" + now + "_" + (seq++), ...base, type: group.type, qty: dest, ...(isTransfer ? { toEventId: group.toEventId, toEventName: ev?.clientName || "Event", vehicle: truck.vehicle || "", driver: truck.driver || "", phone: truck.phone || "" } : {}) });
+      if (rep > 0) out.push({ id: "mv_" + now + "_" + (seq++), ...base, type: "repair", qty: rep });
+      if (brk > 0) out.push({ id: "mv_" + now + "_" + (seq++), ...base, type: "damage", qty: brk });
     });
     logMovements(out);
+    // Reset this group's transient inputs (confirmed items leave the list; remaining default back to selected).
+    setManSel(m => { const n = { ...m }; group.items.forEach(({ it }) => delete n[gKey(gk, it)]); return n; });
+    setManCond(m => { const n = { ...m }; group.items.forEach(({ it }) => delete n[gKey(gk, it)]); return n; });
+    setManTruck(m => { const n = { ...m }; delete n[gk]; return n; });
   };
   // Sold events sorted by date-proximity to this event (for the transfer picker — nearby dates first).
   const nearbyTransferEvents = useMemo(() => {
@@ -1272,24 +1301,58 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               {/* Loading manifest — grouped by destination (the dept head's plan). Each list = one place. */}
               {destGroups.length > 0 && (
                 <div className="px-4 py-3 space-y-2 bg-sky-50/40 border-b">
-                  <div className="text-xs font-semibold text-gray-600">📦 Loading manifest — by destination · tap "Confirm this list" once the truck for that place is loaded</div>
-                  {destGroups.map(g => (
+                  <div className="text-xs font-semibold text-gray-600">📦 Loading manifest — by destination · put the truck details, mark anything broken/repair, then confirm</div>
+                  {destGroups.map(g => {
+                    const isTransfer = g.type === "transfer";
+                    const truck = manTruck[g.key] || {};
+                    const hasTruck = !!(truck.vehicle || truck.driver || truck.phone);
+                    const selRows = g.items.filter(({ it }) => !isTransfer || isSel(gKey(g.key, it)));
+                    const canConfirm = selRows.length > 0 && (!isTransfer || hasTruck);
+                    return (
                     <div key={g.key} className="bg-white border rounded-lg overflow-hidden">
-                      <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
+                      <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-sm font-semibold text-gray-800">{g.label} <span className="text-[10px] text-gray-400">· {g.items.reduce((s, x) => s + x.qty, 0)} pc · {g.items.length} item{g.items.length > 1 ? "s" : ""}</span></span>
-                        <button onClick={() => confirmGroup(g)} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg whitespace-nowrap">✓ Confirm this list</button>
+                        <button onClick={() => confirmGroup(g)} disabled={!canConfirm} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg whitespace-nowrap">{isTransfer ? `✓ Loaded on this truck${selRows.length < g.items.length ? ` (${selRows.length})` : ""}` : "✓ Confirm — back to production house"}</button>
                       </div>
+                      {/* Truck details — only for transfers to another site (production house needs none) */}
+                      {isTransfer && (
+                        <div className="px-3 py-2 bg-sky-50/60 border-b space-y-1.5">
+                          <div className="text-[10px] text-sky-700 font-semibold">🚛 Which truck is carrying this to {g.label.replace("↪️ ", "")}? — shown to the receiving site</div>
+                          {fleet.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {fleet.map(f => { const on = truck.vehicle === f.vehicle && truck.driver === f.driver; return (
+                                <button key={f.id} onClick={() => pickTruckFleet(g.key, f)} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle}{f.driver ? ` · ${f.driver}` : ""}</button>
+                              ); })}
+                            </div>
+                          )}
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <input value={truck.vehicle || ""} onChange={e => setTruckField(g.key, "vehicle", e.target.value)} placeholder="Vehicle no." className="border rounded px-2 py-1 text-xs" />
+                            <input value={truck.driver || ""} onChange={e => setTruckField(g.key, "driver", e.target.value)} placeholder="Driver" className="border rounded px-2 py-1 text-xs" />
+                            <input value={truck.phone || ""} onChange={e => setTruckField(g.key, "phone", e.target.value)} placeholder="Phone" className="border rounded px-2 py-1 text-xs" />
+                          </div>
+                          {g.items.length > 1 && <div className="text-[10px] text-gray-400">Tick only what fits on this truck — untick the rest and confirm them on a second truck.</div>}
+                        </div>
+                      )}
                       <div className="divide-y">
-                        {g.items.map(({ it, qty }, i) => (
-                          <div key={i} className="flex items-center gap-2 px-3 py-1.5">
+                        {g.items.map(({ it, qty }, i) => {
+                          const ck = gKey(g.key, it); const c = condOf(ck);
+                          const rep = Number(c.repair) || 0, brk = Number(c.broken) || 0;
+                          const dest = Math.max(0, qty - rep - brk);
+                          const sel = isSel(ck);
+                          return (
+                          <div key={i} className={"flex items-center gap-2 px-3 py-1.5 " + (isTransfer && !sel ? "opacity-40" : "")}>
+                            {isTransfer && <input type="checkbox" checked={sel} onChange={() => toggleManSel(ck)} className="w-4 h-4" title="load this item on this truck" />}
                             {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-7 h-7 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-7 h-7 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">📦</div>}
                             <span className="flex-1 text-xs text-gray-700">{it.name}</span>
-                            <span className="text-xs font-semibold text-gray-900">×{qty}</span>
+                            <span className={"text-[11px] font-bold w-14 text-right " + (dest > 0 ? "text-gray-900" : "text-gray-300")} title="going to this destination">→ {dest}</span>
+                            <label className="flex items-center gap-0.5 text-[10px] text-amber-700" title="needs repair (kept in stock)">🔧<input type="number" min="0" max={qty} value={c.repair ?? ""} onChange={e => setManCondVal(ck, "repair", e.target.value, qty)} placeholder="0" className="w-10 border border-amber-200 rounded px-1 py-0.5 text-center" /></label>
+                            <label className="flex items-center gap-0.5 text-[10px] text-red-600" title="broken — written off, removed from stock">❌<input type="number" min="0" max={qty} value={c.broken ?? ""} onChange={e => setManCondVal(ck, "broken", e.target.value, qty)} placeholder="0" className="w-10 border border-red-200 rounded px-1 py-0.5 text-center" /></label>
+                            <span className="text-[10px] text-gray-400 w-10 text-right">of {qty}</span>
                           </div>
-                        ))}
+                        ); })}
                       </div>
                     </div>
-                  ))}
+                  ); })}
                 </div>
               )}
               {movements.some(m => m.type === "repair") && (
