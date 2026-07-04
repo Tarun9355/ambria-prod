@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
@@ -66,6 +66,8 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [filterSubCat, setFilterSubCat] = useState("All");
   const [filterType, setFilterType] = useState("All");
   const [filterNeedsReview, setFilterNeedsReview] = useState(false); // Tier 1.2 — show only items flagged for cat-migration review
+  const [availDate, setAvailDate] = useState(""); // check availability AS OF a specific date (YYYY-MM-DD)
+  const [availOnly, setAvailOnly] = useState("all"); // when a date is set: "all" | "blocked" | "free" on that date
   const [invPage, setInvPage] = useState(0);
   const [justAddedId, setJustAddedId] = useState(null); // briefly highlight the row we just added so it's never "invisible"
   const INV_PAGE_SIZE = 30;
@@ -234,6 +236,27 @@ Rules:
   // The old code did i.name.toLowerCase() unguarded — a single imported row with a missing name
   // threw inside .filter() and broke typing-search entirely. String(v ?? "") makes it crash-proof.
   const searchTokens = search.toLowerCase().split(/\s+/).filter(Boolean);
+  // ── Date-specific availability ── The `blocked` column on an item is cumulative across ALL functions
+  // (date-agnostic), which over-states unavailability for any single day. When a date is picked we
+  // instead count only the qty committed to functions happening ON that date → true blocked / available
+  // for that day. Map: { [invId]: qtyBlockedOnDate }, plus which functions block it (for the tooltip).
+  const dateBlock = useMemo(() => {
+    if (!availDate) return null;
+    const m = {}, byItem = {};
+    (functions || []).forEach((f) => {
+      if (f.date !== availDate) return;
+      (f.items || []).forEach((it) => {
+        if (it.invId == null) return;
+        const q = Number(it.qty) || 0; if (q <= 0) return;
+        m[it.invId] = (m[it.invId] || 0) + q;
+        (byItem[it.invId] = byItem[it.invId] || []).push({ name: f.name || "Function", qty: q });
+      });
+    });
+    return { qty: m, fns: byItem };
+  }, [availDate, functions]);
+  const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
+  const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
+
   const filtered = inventory.filter((i) => {
     const haystack = [i.name, i.cat, i.subCat, i.subcategory, i.code, i.id, i.loc, i.location, i.notes, i.unit, i.type]
       .map((v) => String(v ?? "").toLowerCase()).join(" ");
@@ -242,7 +265,10 @@ Rules:
     const matchSubCat = filterSubCat === "All" || !filterSubCat || normSub(i.subCat) === normSub(filterSubCat);
     const matchType = filterType === "All" || i.type === filterType;
     const matchReview = !filterNeedsReview || i?._needsCatMigration;
-    return matchSearch && matchCat && matchType && matchSubCat && matchReview;
+    const matchAvail = !availDate || availOnly === "all"
+      || (availOnly === "blocked" && blockedOf(i) > 0)
+      || (availOnly === "free" && blockedOf(i) === 0);
+    return matchSearch && matchCat && matchType && matchSubCat && matchReview && matchAvail;
   });
   const totalPages = Math.ceil(filtered.length / INV_PAGE_SIZE);
   const safePage = Math.min(invPage, Math.max(0, totalPages - 1));
@@ -645,6 +671,24 @@ Rules:
           </div>
         </div>
 
+        {/* Row 1.5: Availability as of a date — see what's blocked / free for a specific day */}
+        <div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
+          <span className="text-xs font-semibold text-sky-800">📅 Availability on date</span>
+          <input type="date" value={availDate} onChange={(e) => { setAvailDate(e.target.value); setInvPage(0); }} className="border border-sky-300 rounded-lg px-2 py-1 text-sm" />
+          {availDate ? (<>
+            <div className="flex gap-1">
+              {[["all", "All"], ["blocked", "🔒 Blocked"], ["free", "✅ Fully free"]].map(([k, l]) => (
+                <button key={k} onClick={() => { setAvailOnly(k); setInvPage(0); }}
+                  className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (availOnly === k ? "bg-sky-600 text-white" : "bg-white text-sky-700 border border-sky-200 hover:bg-sky-100")}>{l}</button>
+              ))}
+            </div>
+            <span className="text-[11px] text-sky-700">Avail & Blkd columns now show <b>this date only</b> — {inventory.reduce((s, i) => s + (blockedOf(i) > 0 ? 1 : 0), 0)} item(s) blocked</span>
+            <button onClick={() => { setAvailDate(""); setAvailOnly("all"); setInvPage(0); }} className="text-xs text-sky-600 hover:underline ml-1">Clear date</button>
+          </>) : (
+            <span className="text-[11px] text-sky-600">Pick a date to see exactly what's committed that day (otherwise columns show all-time blocked).</span>
+          )}
+        </div>
+
         {/* Row 2: Category chips (replaces the dropdown) */}
         <div className="flex flex-wrap gap-1.5 items-center">
           <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setInvPage(0); }}
@@ -703,12 +747,12 @@ Rules:
       <div className="bg-white border rounded-2xl overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
-            <tr>{["Photo", "Item", "Type", "Category", "Sub-Cat", "Qty", "Avail", "Blkd", "Location", "Price", ""].map((h) => <th key={h} className="px-2.5 py-2 text-left font-medium align-bottom">{h}</th>)}</tr>
+            <tr>{["Photo", "Item", "Type", "Category", "Sub-Cat", "Qty", availDate ? "Avail ●" : "Avail", availDate ? "Blkd ●" : "Blkd", "Location", "Price", ""].map((h) => <th key={h} className="px-2.5 py-2 text-left font-medium align-bottom" title={availDate ? "● = for " + availDate : ""}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {paged.map((i) => {
-              const avail = i.qty - (i.blocked || 0);
-              const zero = avail === 0;
+              const avail = availOf(i);
+              const zero = avail <= 0;
               const low = avail > 0 && avail <= 2;
               return (
                 <React.Fragment key={i.id}>
@@ -743,7 +787,7 @@ Rules:
                           : <span className="font-medium text-green-700">{avail}</span>
                       }
                     </td>
-                    <td className="px-2.5 py-2 text-amber-700">{i.blocked || 0}</td>
+                    <td className="px-2.5 py-2 text-amber-700" title={availDate && dateBlock?.fns[i.id] ? dateBlock.fns[i.id].map((x) => `${x.qty}× → ${x.name}`).join("\n") : ""}>{blockedOf(i)}{availDate && blockedOf(i) > 0 ? <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-sky-500 align-middle" title={"blocked on " + availDate} /> : null}</td>
                     <td className="px-2.5 py-2 text-gray-500">{(() => { const b = locationBreakdown(settings, i); if (b.length <= 1) return b[0]?.loc || i.loc || "—"; return <div className="space-y-0.5">{b.map((x, k) => <div key={k} className="text-xs whitespace-nowrap">{x.fixed && <span title="Installed / standing at this venue">🏛️ </span>}{x.loc}: <b className="text-gray-700">{x.qty}</b></div>)}</div>; })()}</td>
                     <td className="px-2 py-2 align-top">
                       {i.price ? (() => {

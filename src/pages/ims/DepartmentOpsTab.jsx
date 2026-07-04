@@ -1093,8 +1093,9 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   {trucks.map((t, ti) => (
                     <div key={t.id} className="p-4 space-y-2">
                       <div className="flex items-center justify-between flex-wrap gap-2">
-                        <span className="text-sm font-semibold text-gray-700">🚛 Truck {ti + 1}</span>
+                        <span className="text-sm font-semibold text-gray-700">🚛 Truck {ti + 1}{t.driver ? <span className="font-normal text-gray-400"> · {t.driver}</span> : null}</span>
                         <div className="flex items-center gap-2">
+                          {t.phone && <a href={"tel:" + t.phone} className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call</a>}
                           <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="border rounded-lg px-2 py-1 text-xs capitalize">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
                           <button onClick={() => printTruckChallan(t, ti + 1)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg font-medium">🖨️ Challan</button>
                           <button onClick={() => delTruck(t.id)} className="text-red-400 hover:text-red-600 text-sm">×</button>
@@ -1174,7 +1175,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                     const allocated = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
                     const remaining = (Number(it.qty) || 0) - allocated;
                     const upd = (i, patch) => setPlanRows(k, rows.map((r, j) => j === i ? { ...r, ...patch } : r));
-                    const addRow = () => setPlanRows(k, [...rows, { qty: Math.max(1, remaining), type: "return" }]);
+                    // Qty is clamped to what's still free (item total − the other splits) so the plan can
+                    // never over-allocate — the number auto-caps the moment you type or add a split.
+                    const setQty = (i, val) => { const others = rows.reduce((s, rr, j) => j === i ? s : s + (Number(rr.qty) || 0), 0); const cap = Math.max(0, (Number(it.qty) || 0) - others); upd(i, { qty: Math.min(cap, Math.max(0, Number(val) || 0)) }); };
+                    const addRow = () => { if (remaining <= 0) return; setPlanRows(k, [...rows, { qty: remaining, type: "return" }]); };
                     const delRow = (i) => setPlanRows(k, rows.filter((_, j) => j !== i));
                     return (
                       <div key={k} className="px-4 py-2 space-y-1.5">
@@ -1185,8 +1189,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         </div>
                         {rows.map((r, i) => (
                           <div key={i} className="pl-11 flex items-center gap-1.5 flex-wrap">
-                            <input type="number" min="0" value={r.qty} onChange={e => upd(i, { qty: e.target.value })} className="w-14 border rounded px-2 py-1 text-xs text-center" title="qty for this destination" />
-                            {["return", "transfer", "repair", "damage"].map(t => (
+                            <input type="number" min="0" max={it.qty} value={r.qty} onChange={e => setQty(i, e.target.value)} className="w-14 border rounded px-2 py-1 text-xs text-center" title="qty for this destination" />
+                            {["return", "transfer"].map(t => (
                               <button key={t} onClick={() => upd(i, { type: t })} className={"text-[11px] px-2.5 py-1 rounded-full border font-medium " + (r.type === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-100")}>{ROUTE_LABEL[t]}</button>
                             ))}
                             {r.type === "transfer" && (
@@ -1198,7 +1202,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                             {rows.length > 1 && <button onClick={() => delRow(i)} className="text-red-300 hover:text-red-500 text-sm" title="remove this split">×</button>}
                           </div>
                         ))}
-                        <div className="pl-11"><button onClick={addRow} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">+ Split to another place</button></div>
+                        <div className="pl-11"><button onClick={addRow} disabled={remaining <= 0} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium disabled:text-gray-300 disabled:cursor-not-allowed">+ Split to another place{remaining > 0 ? ` (${remaining} left)` : " — all allocated"}</button></div>
                       </div>
                     );
                   })}
