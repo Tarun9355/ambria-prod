@@ -271,6 +271,33 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const lineCost = (r) => mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
   const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
   const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
+  // ── Event-wide Labours total. Ops runs the whole event, so he sets the TOTAL labour headcount and the
+  // system re-splits it across every department by their existing usage share (scale each dept's per-day
+  // labour by newTotal/currentTotal). Writes each dept's mpDay → flows via the normal reconciliation. ──
+  const labDetailFor = (d) => { const rows = sel?.manpowerDetail?.[d]; return Array.isArray(rows) ? rows.find(r => r.type === "Labours") : null; };
+  const labEffPerDay = (d, day) => { const md = sel?.deptOps?.[d]?.mpDay?.Labours || {}; if (md[day.date] != null) return Number(md[day.date]) || 0; return day.share != null ? (Number(day.count) || 0) * Number(day.share) : (Number(day.count) || 0); };
+  const labShiftsFor = (d, day) => { const mw = sel?.deptOps?.[d]?.mpWin?.Labours; const ids = mw && mw[day.date] != null ? mw[day.date] : (Array.isArray(day.windowIds) ? day.windowIds : null); return ids ? ids.length : (Number(day.windows) || 0); };
+  const labDihariFor = (d) => { const lab = labDetailFor(d); if (!lab || !Array.isArray(lab.schedule)) return 0; return lab.schedule.reduce((s, day) => s + labEffPerDay(d, day) * labShiftsFor(d, day), 0); };
+  const eventLabourDihari = Math.round(DEPTS.reduce((s, d) => s + labDihariFor(d), 0));
+  const anyLabours = DEPTS.some(d => labDetailFor(d));
+  const setEventLabourTotal = (val) => {
+    const target = Math.max(0, Number(val) || 0);
+    const cur = DEPTS.reduce((s, d) => s + labDihariFor(d), 0);
+    if (cur <= 0 || !sel) return;
+    const ratio = target / cur;
+    setEventOrders(prev => prev.map(e => {
+      if (e.id !== sel.id) return e;
+      const ops = { ...(e.deptOps || {}) };
+      DEPTS.forEach(d => {
+        const lab = labDetailFor(d); if (!lab || !Array.isArray(lab.schedule)) return;
+        const od = { ...(ops[d] || {}) }; const md = { ...(od.mpDay || {}) }; const labDay = { ...(md.Labours || {}) };
+        lab.schedule.forEach(day => { labDay[day.date] = Math.max(0, Math.round(labEffPerDay(d, day) * ratio)); });
+        md.Labours = labDay; od.mpDay = md; od.updatedAt = Date.now(); od.updatedBy = authUser?.name || "—";
+        ops[d] = od;
+      });
+      return { ...e, deptOps: ops };
+    }));
+  };
   const mpEdited = Object.keys(mpOverrides).length > 0 || Object.keys(mpDay).length > 0 || Object.keys(mpWin).length > 0 || Object.keys(mpWinCount).length > 0 || (Array.isArray(mpExtra) && mpExtra.length > 0);
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandiNum = Number(realMandi) || 0;
@@ -363,6 +390,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   };
   // Own fleet — vehicle + regular driver + phone, saved once in settings; one tap fills all three.
   const fleet = Array.isArray(settings?.fleet) ? settings.fleet : [];
+  // All trucks in play for THIS event — own fleet + any truck ANY department already entered (dispatch
+  // trucks, dismantle movements, saved dispatch). A vendor truck typed by one dept becomes a one-tap
+  // chip for every other dept, since the same truck often carries several departments' items together.
+  const eventTrucks = useMemo(() => {
+    const map = new Map();
+    const add = (v, dr, ph) => { const vehicle = String(v || "").trim(), driver = String(dr || "").trim(), phone = String(ph || "").trim(); if (!vehicle && !driver && !phone) return; const key = (vehicle + "|" + driver + "|" + phone).toLowerCase(); if (!map.has(key)) map.set(key, { id: "et_" + map.size, vehicle, driver, phone }); };
+    (Array.isArray(settings?.fleet) ? settings.fleet : []).forEach(f => add(f.vehicle, f.driver, f.phone));
+    if (sel) Object.values(sel.deptOps || {}).forEach(od => {
+      (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => add(t.vehicle, t.driver, t.phone));
+      (Array.isArray(od?.movements) ? od.movements : []).forEach(m => add(m.vehicle, m.driver, m.phone));
+      if (od?.dispatch) add(od.dispatch.vehicle, od.dispatch.driver, od.dispatch.phone);
+    });
+    return [...map.values()];
+  }, [settings, sel]);
   const saveFleet = (next) => setSettings && setSettings(s => ({ ...s, fleet: next }));
   const pickFleet = (f) => saveDept({ dispatch: { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" } });
   const addFleet = () => { const v = (newVeh.vehicle || "").trim(); if (!v) return; saveFleet([...fleet, { id: "veh_" + Date.now(), vehicle: v, driver: (newVeh.driver || "").trim(), phone: (newVeh.phone || "").trim() }]); setNewVeh({ vehicle: "", driver: "", phone: "" }); };
@@ -1218,10 +1259,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <button onClick={() => delTruck(t.id)} className="text-red-400 hover:text-red-600 text-sm">×</button>
                         </div>
                       </div>
-                      {fleet.length > 0 && (
+                      {eventTrucks.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
-                          {fleet.map(f => { const on = t.vehicle === f.vehicle && t.driver === f.driver; return (
-                            <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle}{f.driver ? ` · ${f.driver}` : ""}</button>
+                          {eventTrucks.map(f => { const on = t.vehicle === f.vehicle && t.driver === f.driver; return (
+                            <button key={f.id} onClick={() => setTruck(t.id, { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" })} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
                           ); })}
                         </div>
                       )}
@@ -1429,10 +1470,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                       {isTransfer && (
                         <div className="px-3 py-2 bg-sky-50/60 border-b space-y-1.5">
                           <div className="text-[10px] text-sky-700 font-semibold">🚛 Which truck is carrying this to {g.label.replace("↪️ ", "")}? — shown to the receiving site</div>
-                          {fleet.length > 0 && (
+                          {eventTrucks.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
-                              {fleet.map(f => { const on = truck.vehicle === f.vehicle && truck.driver === f.driver; return (
-                                <button key={f.id} onClick={() => pickTruckFleet(g.key, f)} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle}{f.driver ? ` · ${f.driver}` : ""}</button>
+                              {eventTrucks.map(f => { const on = truck.vehicle === f.vehicle && truck.driver === f.driver; return (
+                                <button key={f.id} onClick={() => pickTruckFleet(g.key, f)} className={"text-[11px] px-2 py-1 rounded-lg border " + (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-700 hover:bg-indigo-50")}>🚛 {f.vehicle || f.driver}{f.vehicle && f.driver ? ` · ${f.driver}` : ""}</button>
                               ); })}
                             </div>
                           )}
@@ -1508,6 +1549,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 </div>
                 <div className="divide-y">
                   {mpRows.map((r, i) => {
+                    if (r.type === "Supervisors") return null; // ops IS the supervisor — no separate line for him
                     const daywise = mpDayWise(r);
                     const sched = Array.isArray(r.schedule) ? r.schedule : [];
                     const winDefs = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : [];
@@ -1540,6 +1582,13 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                         {!readOnly && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">{daywise
                           ? <>Planned {planDihari} dihari · {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {actDihari} dihari = {fmt(actCost)}</span> : ""}</>
                           : <>Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {Number(r.count) || 0} = {fmt(actCost)}</span> : ""}</>}</div>}
+                        {r.type === "Labours" && anyLabours && (
+                          <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1.5 flex items-center gap-2 flex-wrap text-[11px]">
+                            <span className="font-semibold text-indigo-700">👥 All-dept labour total</span>
+                            <input type="number" min="0" value={eventLabourDihari} onChange={e => setEventLabourTotal(e.target.value)} className="w-16 border border-indigo-300 rounded px-2 py-0.5 text-center font-semibold" />
+                            <span className="text-indigo-600">dihari — set the whole event's labour; auto-splits across every department by usage</span>
+                          </div>
+                        )}
                         {expanded && daywise && sched.length > 0 && (
                           <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 space-y-1">
                             <div className="text-[10px] text-gray-400">Set the crew per day & per dihari (shift). Add a dihari to split a day — e.g. 2 in the day shift + 1 in the evening; each shift is billed. Set 0 or remove to drop one.</div>
