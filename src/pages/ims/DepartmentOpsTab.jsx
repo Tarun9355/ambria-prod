@@ -264,6 +264,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   // Set the crew for ONE shift on ONE day (per-shift split). Ensures that window is marked worked.
   const setShiftCount = (type, date, winId, val, curIds) => { const n = Math.max(0, Number(val) || 0); const t = { ...(mpWinCount[type] || {}) }; t[date] = { ...(t[date] || {}), [winId]: n }; const patch = { mpWinCount: { ...mpWinCount, [type]: t } }; if (Array.isArray(curIds) && !curIds.includes(winId)) patch.mpWin = { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: [...curIds, winId] } }; saveDept(patch); };
   const effShift = (r, d, winId) => { const wc = mpWinCount[r.type] && mpWinCount[r.type][d.date]; return (wc && wc[winId] != null) ? Number(wc[winId]) : Math.round(effDay(r, d)); };
+  // Add another dihari (shift) to a day — the next unused scheme window, else a synthetic slot — so ops
+  // can split a single day into e.g. 2 crew in the day shift + 1 in the evening (each shift billed).
+  const addDihari = (r, date, curIds) => { const wins = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : []; const unused = wins.find(w => !curIds.includes(w.id)); const id = unused ? unused.id : ("x" + Date.now()); const t = { ...(mpWinCount[r.type] || {}) }; t[date] = { ...(t[date] || {}), [id]: 1 }; saveDept({ mpWin: { ...mpWin, [r.type]: { ...(mpWin[r.type] || {}), [date]: [...curIds, id] } }, mpWinCount: { ...mpWinCount, [r.type]: t } }); };
+  const removeDihari = (type, date, slotId, curIds) => { const t = { ...(mpWinCount[type] || {}) }; if (t[date]) { const dd = { ...t[date] }; delete dd[slotId]; t[date] = dd; } saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...mpWinCount, [type]: t } }); };
   const lineCost = (r) => mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
   const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
   const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
@@ -1538,19 +1542,29 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           : <>Planned {planPeak} × {fmt(planCost)}{edited ? <span className="text-amber-600 font-semibold"> → actual {Number(r.count) || 0} = {fmt(actCost)}</span> : ""}</>}</div>}
                         {expanded && daywise && sched.length > 0 && (
                           <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 space-y-1">
-                            <div className="text-[10px] text-gray-400">Set the crew you actually held each day & shift — reduce a day, drop the evening (set 0), or split (e.g. 3 in day, 1 in evening).</div>
+                            <div className="text-[10px] text-gray-400">Set the crew per day & per dihari (shift). Add a dihari to split a day — e.g. 2 in the day shift + 1 in the evening; each shift is billed. Set 0 or remove to drop one.</div>
                             {sched.map((d, di) => {
                               const ids = effWinIds(r, d) || [];
                               const dayCost = mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate);
+                              const hasSlots = winDefs.length > 0 || ids.length > 0;
                               return (
-                                <div key={di} className="flex items-center gap-2 flex-wrap text-[11px] border-b last:border-b-0 py-1">
-                                  <span className="w-24 text-gray-600 font-medium">{phaseLbl(d)}</span>
-                                  {winDefs.length > 0 && ids.length > 0
-                                    ? winDefs.filter(w => ids.includes(w.id)).map(w => (
-                                      <label key={w.id} className="flex items-center gap-1"><span className="text-gray-400">{w.label}</span><input type="number" min="0" value={effShift(r, d, w.id)} onChange={e => setShiftCount(r.type, d.date, w.id, e.target.value, ids)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>
-                                    ))
-                                    : <label className="flex items-center gap-1"><span className="text-gray-400">crew</span><input type="number" min="0" value={Math.round(effDay(r, d))} onChange={e => setMpDay(r.type, d.date, e.target.value)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>}
-                                  <span className="text-gray-400 ml-auto">= {fmt(Math.round(dayCost))}</span>
+                                <div key={di} className="flex items-start gap-2 flex-wrap text-[11px] border-b last:border-b-0 py-1.5">
+                                  <span className="w-24 text-gray-600 font-medium pt-1">{phaseLbl(d)}</span>
+                                  {hasSlots ? (
+                                    <div className="flex items-center gap-1.5 flex-wrap flex-1">
+                                      {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
+                                        <span key={id} className="inline-flex items-center gap-1 border rounded-lg px-1.5 py-0.5 bg-white">
+                                          <span className="text-gray-400">{lbl}</span>
+                                          <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 border rounded px-1 py-0.5 text-center" />
+                                          {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500" title="remove this dihari">×</button>}
+                                        </span>
+                                      ); })}
+                                      <button onClick={() => addDihari(r, d.date, ids)} className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-full px-2 py-0.5" title="Add another dihari (shift) for this day">+ dihari</button>
+                                    </div>
+                                  ) : (
+                                    <label className="flex items-center gap-1 flex-1"><span className="text-gray-400">crew</span><input type="number" min="0" value={Math.round(effDay(r, d))} onChange={e => setMpDay(r.type, d.date, e.target.value)} className="w-12 border rounded px-1 py-0.5 text-center" /></label>
+                                  )}
+                                  <span className="text-gray-400 pt-1">= {fmt(Math.round(dayCost))}</span>
                                 </div>
                               );
                             })}
