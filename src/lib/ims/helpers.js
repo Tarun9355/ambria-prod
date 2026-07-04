@@ -68,16 +68,38 @@ export function mpEffWindows(r, d, mpWin) {
   return Array.isArray(ids) ? ids.length : (Number(d.windows) || 0);
 }
 
+// Effective shift-window IDs worked on a day (head's per-day override else the scheduled windows), or
+// null when this crew type has no window breakdown (cost then uses the plain shift count).
+export function mpEffWinIds(d, mpWin, type) {
+  const ov = mpWin && mpWin[type];
+  const ids = ov && ov[d.date] != null ? ov[d.date] : (Array.isArray(d.windowIds) ? d.windowIds : null);
+  return Array.isArray(ids) ? ids : null;
+}
+
+// Cost for one day, honoring optional PER-SHIFT crew counts (mpWinCount[type][date][winId] — set by
+// the ops manager on-site so a single day can be e.g. 3 in the day + 1 in the evening). Each worked
+// window uses its own count if given, else the day's crew count.
+export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
+  const dayCount = mpEffDay(r, d, mpDay);
+  const ids = mpEffWinIds(d, mpWin, r.type);
+  if (ids) {
+    const wc = mpWinCount && mpWinCount[r.type] && mpWinCount[r.type][d.date];
+    return ids.reduce((s, id) => s + ((wc && wc[id] != null) ? (Number(wc[id]) || 0) : dayCount), 0) * rate;
+  }
+  return dayCount * (Number(d.windows) || 0) * rate;
+}
+
 // Reconciled cost for one crew row. SHARED rows stay the fixed split allocation UNTIL the head tunes a
-// day, the rate, or the dihari timings, then become Sum(dayCount × shifts × rate); mapped rows scale.
-export function mpLineCost(r, mpDay, mpOverrides, mpWin) {
+// day, the rate, the dihari timings, or a per-shift count, then become Sum(per-day shift cost); mapped rows scale.
+export function mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount) {
   const dayEdited = !!(mpDay && mpDay[r.type] && Object.keys(mpDay[r.type]).length);
   const rateEdited = !!(mpOverrides && mpOverrides[r.type] && mpOverrides[r.type].rate != null);
   const winEdited = !!(mpWin && mpWin[r.type] && Object.keys(mpWin[r.type]).length);
+  const winCountEdited = !!(mpWinCount && mpWinCount[r.type] && Object.keys(mpWinCount[r.type]).length);
   if (mpDayWise(r)) {
-    if (r.shared && !dayEdited && !rateEdited && !winEdited) return Number(r.sysCost) || 0; // exact split until edited
+    if (r.shared && !dayEdited && !rateEdited && !winEdited && !winCountEdited) return Number(r.sysCost) || 0; // exact split until edited
     const rate = Number(r.rate) || 0;
-    return Math.round(r.schedule.reduce((s, d) => s + mpEffDay(r, d, mpDay) * mpEffWindows(r, d, mpWin) * rate, 0));
+    return Math.round(r.schedule.reduce((s, d) => s + mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate), 0));
   }
   if (r.shared) return Number(r.sysCost) || 0;
   const sc = Number(r.sysCount) || 0, sr = Number(r.sysRate) || 0, scost = Number(r.sysCost) || 0;
@@ -94,6 +116,7 @@ export function deptMpReconciled(detail, deptData) {
   const snapTypes = new Set(snap.map((s) => s.type));
   const mpDay = (data.mpDay && typeof data.mpDay === "object") ? data.mpDay : {};
   const mpWin = (data.mpWin && typeof data.mpWin === "object") ? data.mpWin : {};
+  const mpWinCount = (data.mpWinCount && typeof data.mpWinCount === "object") ? data.mpWinCount : {};
   // Edits live in mpOverrides/mpExtra; older events kept them in a flat `.mp` array — migrate that.
   const migrateOv = () => {
     if (!Array.isArray(data.mp)) return {};
@@ -113,5 +136,5 @@ export function deptMpReconciled(detail, deptData) {
     ...snap.map((s) => { const ov = mpOverrides[s.type] || {}; return { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, splitInfo: s.splitInfo || null, schedule: s.schedule || null }; }),
     ...mpExtra.filter((r) => !snapTypes.has(r.type)).map((r) => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, shared: false, sysCount: null, sysRate: 0, sysCost: 0, splitInfo: null, schedule: null })),
   ];
-  return rows.reduce((s, r) => s + mpLineCost(r, mpDay, mpOverrides, mpWin), 0);
+  return rows.reduce((s, r) => s + mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount), 0);
 }
