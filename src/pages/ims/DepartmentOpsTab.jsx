@@ -1373,74 +1373,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   🔧 <b>Repairs needed</b> (kept in stock — fix before next use): {movements.filter(m => m.type === "repair").map((m, i) => <span key={m.id}>{i > 0 ? ", " : ""}{m.qty}× {m.name}</span>)}
                 </div>
               )}
-              {blockedItems.length === 0 ? (
+              {blockedItems.length === 0 && (
                 <div className="px-4 py-5 text-center text-xs text-gray-400">No inventory to route for this department.</div>
-              ) : (
-                <div className="divide-y">
-                  {blockedItems.map(it => {
-                    const k = "inv:" + it.id;
-                    const ret = movedQty(k, "return"), tr = movedQty(k, "transfer"), dmg = movedQty(k, "damage"), rep = movedQty(k, "repair");
-                    const routed = ret + tr + dmg + rep;
-                    const unrouted = Math.max(0, it.qty - routed);
-                    const d = routeDraft[k] || { type: "return" };
-                    return (
-                      <div key={k} className="px-4 py-2.5 space-y-1.5">
-                        <div className="flex items-center gap-3">
-                          {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
-                          <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">out {it.qty}{it.invId ? "" : " · not stock-linked"}</span></span>
-                          <span className="text-[10px] text-gray-400">{unrouted > 0 ? `${unrouted} to route` : "✓ all routed"}</span>
-                        </div>
-                        {(() => { if (unrouted <= 0) return null; const rows = planFor(it).filter(r => (Number(r.qty) || 0) > 0); if (!rows.length) return null; const summary = rows.map(r => { const ev = r.type === "transfer" ? ((eventOrders || []).find(e => e.id === r.toEventId)?.clientName || r.toEventName || "event") : ""; return `${r.qty} ${ROUTE_SHORT[r.type] || r.type}${r.type === "transfer" ? " " + ev : ""}`; }).join(" · "); return (
-                          <div className="pl-11 flex items-center gap-2 flex-wrap">
-                            <span className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5 font-semibold">📋 Plan: {summary}</span>
-                            <button onClick={() => confirmItemPlanned(it)} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-full">✓ Confirm plan</button>
-                          </div>
-                        ); })()}
-                        {(ret > 0 || tr > 0 || dmg > 0 || rep > 0) && (
-                          <div className="text-[10px] pl-11 flex gap-3 flex-wrap">
-                            {ret > 0 && <span className="text-gray-500">↩️ returned {ret}</span>}
-                            {tr > 0 && <span className="text-sky-600">↪️ reused {tr}</span>}
-                            {rep > 0 && <span className="text-amber-600 font-semibold">🔧 to repair {rep}</span>}
-                            {dmg > 0 && <span className="text-red-600 font-semibold">⚠️ broken {dmg}</span>}
-                          </div>
-                        )}
-                        {unrouted > 0 && (
-                          <div className="pl-11 flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] text-gray-400">Route all {unrouted}:</span>
-                            <button onClick={() => routeRemaining(it, "return")} className="text-[11px] px-2.5 py-1 rounded-full border border-gray-300 hover:bg-gray-100 font-medium">🏬 Warehouse</button>
-                            <button onClick={() => routeRemaining(it, "repair")} className="text-[11px] px-2.5 py-1 rounded-full border border-amber-300 text-amber-700 hover:bg-amber-50 font-medium">🔧 Repair</button>
-                            <button onClick={() => routeRemaining(it, "damage")} className="text-[11px] px-2.5 py-1 rounded-full border border-red-300 text-red-700 hover:bg-red-50 font-medium">❌ Broken</button>
-                          </div>
-                        )}
-                        <div className="pl-11 flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] text-gray-400">or partial / transfer:</span>
-                          <input type="number" min="0" max={unrouted} value={d.qty ?? unrouted} onChange={e => setDraft(k, { qty: e.target.value })} placeholder="qty" className="w-16 border rounded px-2 py-1 text-xs text-center" />
-                          <select value={d.type} onChange={e => setDraft(k, { type: e.target.value })} className="border rounded px-2 py-1 text-xs">
-                            <option value="return">↩️ Back to warehouse</option>
-                            <option value="transfer">↪️ Reuse at another site</option>
-                            <option value="repair">🔧 Needs repair (keep in stock)</option>
-                            <option value="damage">⚠️ Broken — write off (remove from stock)</option>
-                          </select>
-                          {d.type === "transfer" && (<>
-                            <select value={d.toEventId || ""} onChange={e => setDraft(k, { toEventId: e.target.value })} className="border rounded px-2 py-1 text-xs max-w-[180px]">
-                              <option value="">Pick destination event…</option>
-                              {(eventOrders || []).filter(e => e.id !== sel.id).map(e => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {eventDate(e) || "no date"}</option>)}
-                            </select>
-                            {fleet.length > 0 && (
-                              <select value={(fleet.find(f => f.vehicle === d.vehicle && f.driver === d.driver) || {}).id || ""} onChange={e => { const f = fleet.find(x => x.id === e.target.value); setDraft(k, { vehicle: f?.vehicle || "", driver: f?.driver || "", phone: f?.phone || "" }); }} className="border rounded px-2 py-1 text-xs max-w-[150px]">
-                                <option value="">Truck…</option>
-                                {fleet.map(f => <option key={f.id} value={f.id}>🚛 {f.vehicle}{f.driver ? " · " + f.driver : ""}</option>)}
-                              </select>
-                            )}
-                            <input value={d.vehicle || ""} onChange={e => setDraft(k, { vehicle: e.target.value })} placeholder="vehicle" className="w-24 border rounded px-2 py-1 text-xs" />
-                            <input value={d.driver || ""} onChange={e => setDraft(k, { driver: e.target.value })} placeholder="driver" className="w-24 border rounded px-2 py-1 text-xs" />
-                          </>)}
-                          <button onClick={() => logRoute(it)} disabled={!(Number(d.qty) > 0) || (d.type === "transfer" && !d.toEventId)} className="text-xs bg-gray-800 hover:bg-gray-900 disabled:opacity-40 text-white px-3 py-1 rounded-lg font-medium">Log</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+              )}
+              {blockedItems.length > 0 && destGroups.length === 0 && (
+                <div className="px-4 py-4 text-center text-xs text-emerald-600 font-semibold">✓ Everything routed — see the movement log below.</div>
               )}
               {/* Movement log for this event */}
               {movements.length > 0 && (
