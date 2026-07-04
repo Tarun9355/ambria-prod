@@ -285,9 +285,11 @@ export default function DealCheckOverlay({ ctx }) {
             const recipeSubsMP = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase().trim());
             const labourTypes = Object.keys(dihariSchemes);
             if (labourTypes.length && fns.length) {
-              const vendorsMP = (dealCheckData?.vendors || []).filter(v => v && v.active && v.type);
+              // Rate per type MUST match the Manpower tab exactly (else the bottom bar diverges from the tab):
+              // fixed Manpower-Contractor vendors matched by labourType (storedRate), else the house rate.
+              const vendorsMP = (dealCheckData?.vendors || []).filter(v => v && v.active && v.type === "Manpower Contractor" && v.isFixed && v.labourType && Number(v?.storedRate?.amount) > 0);
               const rateByType = {};
-              labourTypes.forEach(t => { const vs = vendorsMP.filter(v => v.type === t); rateByType[t] = vs.length > 0 ? vs.reduce((s,v)=>s+(v.avgRate||v.dayRate||0),0)/vs.length : (dihariSchemes[t]?.rate || 0); });
+              labourTypes.forEach(t => { const matches = vendorsMP.filter(v => v.labourType === t); rateByType[t] = matches.length > 0 ? Math.round(matches.reduce((s, v) => s + Number(v.storedRate.amount || 0), 0) / matches.length) : Number(dihariSchemes[t]?.rate || 0); });
               mpRateByType = rateByType;
               const shiftToTiming = (s) => { const sl = String(s||"").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening")||sl.includes("night")) return "evening"; return "day"; };
               const sizeFromMode = (mode, sz) => { if (mode === "flat" || !sz) return "medium"; return String(sz).toLowerCase() || "medium"; };
