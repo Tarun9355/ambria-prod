@@ -110,7 +110,8 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const deptInvSnap = (sel?.deptInventory && Array.isArray(sel.deptInventory[dept])) ? sel.deptInventory[dept] : null;
 
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
-  const blockedItems = useMemo(() => {
+  // GROUPED view (kit as one line + its components) — used for the inventory/income display.
+  const blockedItemsGrouped = useMemo(() => {
     if (!sel) return [];
     if (deptInvSnap && deptInvSnap.length) return deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, components: Array.isArray(x.components) ? x.components : null }));
     const out = [];
@@ -126,7 +127,20 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     });
     return out.sort((a, b) => b.total - a.total);
   }, [sel, blocks, inventory, dept]);
-  const rentalIncome = blockedItems.reduce((s, x) => s + x.total, 0);
+  // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
+  // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
+  const blockedItems = useMemo(() => {
+    const out = [];
+    blockedItemsGrouped.forEach(it => {
+      if (it.isKit && Array.isArray(it.components) && it.components.length) {
+        const partsSum = it.components.reduce((s, c) => s + (Number(c.total) || 0), 0);
+        out.push({ ...it, isKit: false, components: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
+        it.components.forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
+      } else out.push(it);
+    });
+    return out;
+  }, [blockedItemsGrouped]);
+  const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
   const deptData = (sel?.deptOps && sel.deptOps[dept]) || {};
@@ -762,11 +776,11 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 <span className="text-sm font-semibold text-gray-800">📦 Inventory blocked for {dept}</span>
                 <span className="text-sm font-bold text-gray-900">{fmt(rentalIncome)}</span>
               </div>
-              {blockedItems.length === 0 ? (
+              {blockedItemsGrouped.length === 0 ? (
                 <div className="px-4 py-6 text-center text-xs text-gray-400">No inventory blocked for this department on this event.</div>
               ) : (
                 <div className="divide-y">
-                  {blockedItems.map(it => (
+                  {blockedItemsGrouped.map(it => (
                     <div key={it.id}>
                       <div className="flex items-center gap-3 px-4 py-2.5">
                         {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg">📦</div>}
