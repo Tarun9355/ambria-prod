@@ -344,24 +344,32 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const unroutedQty = (it) => { const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
   const routeRemaining = (it, type, extra = {}) => { const q = unroutedQty(it); if (q > 0) addMovement(it, type, q, extra); };
   const routeAllToWarehouse = () => { const rest = blockedItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
-  // Dept-head dismantle PLAN (set in Planning; ops confirms on-site). { [itemKey]: {type, toEventId, toEventName} }.
+  // Dept-head dismantle PLAN (set in Planning; ops confirms on-site). Per item = an ARRAY of splits
+  // so one item can go to several places: { [itemKey]: [{qty, type, toEventId, toEventName}, …] }.
   const dismantlePlan = (deptData.dismantlePlan && typeof deptData.dismantlePlan === "object") ? deptData.dismantlePlan : {};
-  const setPlan = (key, patch) => saveDept({ dismantlePlan: { ...dismantlePlan, [key]: { type: "return", ...(dismantlePlan[key] || {}), ...patch } } });
   const ROUTE_LABEL = { return: "🏬 Warehouse", transfer: "↪️ Reuse/Transfer", repair: "🔧 Repair", damage: "❌ Broken" };
-  // Confirm every item's REMAINING qty per the dept head's plan (default warehouse), in one tap.
-  const confirmAllPlanned = () => {
-    const now = Date.now(); const toLog = [];
-    blockedItems.forEach(it => {
-      const q = unroutedQty(it); if (q <= 0) return;
-      const p = dismantlePlan["inv:" + it.id] || { type: "return" };
-      let extra = {};
-      if (p.type === "transfer") { if (!p.toEventId) return; const ev = (eventOrders || []).find(e => e.id === p.toEventId); extra = { toEventId: p.toEventId, toEventName: ev?.clientName || p.toEventName || "Event" }; }
-      toLog.push({ id: "mv_" + now + "_" + Math.floor(Math.random() * 1000000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: p.type || "return", qty: q, at: now, by: authUser?.name || "—", ...extra });
+  const ROUTE_SHORT = { return: "🏬 Wh", transfer: "↪️", repair: "🔧", damage: "❌" };
+  // Split rows for an item (back-compat: legacy single-object plan → one full-qty row; none → default warehouse).
+  const planFor = (it) => { const raw = dismantlePlan["inv:" + it.id]; if (Array.isArray(raw) && raw.length) return raw; if (raw && raw.type) return [{ qty: Number(it.qty) || 0, type: raw.type, toEventId: raw.toEventId, toEventName: raw.toEventName }]; return [{ qty: Number(it.qty) || 0, type: "return" }]; };
+  const setPlanRows = (key, rows) => saveDept({ dismantlePlan: { ...dismantlePlan, [key]: rows } });
+  // Build movement objects from the plan splits, each capped to the item's remaining (so re-confirm is safe).
+  const buildPlannedMovements = (items) => {
+    const now = Date.now(); const out = []; let seq = 0;
+    items.forEach(it => {
+      let remaining = unroutedQty(it);
+      planFor(it).forEach(row => {
+        let q = Math.min(Number(row.qty) || 0, remaining); if (q <= 0) return;
+        let extra = {};
+        if (row.type === "transfer") { if (!row.toEventId) return; const ev = (eventOrders || []).find(e => e.id === row.toEventId); extra = { toEventId: row.toEventId, toEventName: ev?.clientName || row.toEventName || "Event" }; }
+        remaining -= q;
+        out.push({ id: "mv_" + now + "_" + (seq++), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: row.type || "return", qty: q, at: now, by: authUser?.name || "—", ...extra });
+      });
     });
-    if (!toLog.length) return;
-    saveDept({ movements: [...movements, ...toLog] });
-    toLog.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, -m.qty)); // broken leaves stock
+    return out;
   };
+  const logMovements = (rows) => { if (!rows.length) return; saveDept({ movements: [...movements, ...rows] }); rows.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, -m.qty)); };
+  const confirmItemPlanned = (it) => logMovements(buildPlannedMovements([it]));
+  const confirmAllPlanned = () => logMovements(buildPlannedMovements(blockedItems));
   // Sold events sorted by date-proximity to this event (for the transfer picker — nearby dates first).
   const nearbyTransferEvents = useMemo(() => {
     const base = selDateStr ? new Date(selDateStr + "T00:00:00").getTime() : 0;
@@ -1119,24 +1127,35 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                 <div className="px-4 py-2.5 bg-gray-50 text-sm font-semibold text-gray-800">🔁 Dismantle plan <span className="text-xs font-normal text-gray-400">— set where each item goes after teardown; the on-site team just confirms</span></div>
                 <div className="divide-y">
                   {blockedItems.map(it => {
-                    const k = "inv:" + it.id; const p = dismantlePlan[k] || { type: "return" };
+                    const k = "inv:" + it.id; const rows = planFor(it);
+                    const allocated = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+                    const remaining = (Number(it.qty) || 0) - allocated;
+                    const upd = (i, patch) => setPlanRows(k, rows.map((r, j) => j === i ? { ...r, ...patch } : r));
+                    const addRow = () => setPlanRows(k, [...rows, { qty: Math.max(1, remaining), type: "return" }]);
+                    const delRow = (i) => setPlanRows(k, rows.filter((_, j) => j !== i));
                     return (
                       <div key={k} className="px-4 py-2 space-y-1.5">
                         <div className="flex items-center gap-3">
                           {it.photo ? <img src={it.photo} alt="" onClick={() => setZoomImg(it.photo)} className="w-8 h-8 rounded object-cover border cursor-zoom-in" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-xs">📦</div>}
                           <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">×{it.qty}</span></span>
+                          <span className={"text-[10px] font-medium " + (remaining === 0 ? "text-emerald-600" : remaining > 0 ? "text-amber-600" : "text-red-600")}>{remaining === 0 ? "✓ all allocated" : remaining > 0 ? `${remaining} unallocated` : `over by ${-remaining}`}</span>
                         </div>
-                        <div className="pl-11 flex items-center gap-1.5 flex-wrap">
-                          {["return", "transfer", "repair", "damage"].map(t => (
-                            <button key={t} onClick={() => setPlan(k, { type: t })} className={"text-[11px] px-2.5 py-1 rounded-full border font-medium " + (p.type === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-100")}>{ROUTE_LABEL[t]}</button>
-                          ))}
-                          {p.type === "transfer" && (
-                            <select value={p.toEventId || ""} onChange={e => { const ev = (eventOrders || []).find(x => x.id === e.target.value); setPlan(k, { toEventId: e.target.value, toEventName: ev?.clientName || "" }); }} className="border rounded px-2 py-1 text-xs max-w-[240px]">
-                              <option value="">Pick destination event (nearby first)…</option>
-                              {nearbyTransferEvents.map(({ e, d, off }) => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {d || "no date"}{off === 0 ? " (same day)" : off > 0 ? ` (+${off}d)` : ` (${off}d)`}</option>)}
-                            </select>
-                          )}
-                        </div>
+                        {rows.map((r, i) => (
+                          <div key={i} className="pl-11 flex items-center gap-1.5 flex-wrap">
+                            <input type="number" min="0" value={r.qty} onChange={e => upd(i, { qty: e.target.value })} className="w-14 border rounded px-2 py-1 text-xs text-center" title="qty for this destination" />
+                            {["return", "transfer", "repair", "damage"].map(t => (
+                              <button key={t} onClick={() => upd(i, { type: t })} className={"text-[11px] px-2.5 py-1 rounded-full border font-medium " + (r.type === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-100")}>{ROUTE_LABEL[t]}</button>
+                            ))}
+                            {r.type === "transfer" && (
+                              <select value={r.toEventId || ""} onChange={e => { const ev = (eventOrders || []).find(x => x.id === e.target.value); upd(i, { toEventId: e.target.value, toEventName: ev?.clientName || "" }); }} className="border rounded px-2 py-1 text-xs max-w-[220px]">
+                                <option value="">Pick destination event (nearby first)…</option>
+                                {nearbyTransferEvents.map(({ e, d, off }) => <option key={e.id} value={e.id}>{e.clientName || "Event"} · {d || "no date"}{off === 0 ? " (same day)" : off > 0 ? ` (+${off}d)` : ` (${off}d)`}</option>)}
+                              </select>
+                            )}
+                            {rows.length > 1 && <button onClick={() => delRow(i)} className="text-red-300 hover:text-red-500 text-sm" title="remove this split">×</button>}
+                          </div>
+                        ))}
+                        <div className="pl-11"><button onClick={addRow} className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium">+ Split to another place</button></div>
                       </div>
                     );
                   })}
@@ -1225,10 +1244,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                           <span className="flex-1 text-sm text-gray-800">{it.name} <span className="text-[10px] text-gray-400">out {it.qty}{it.invId ? "" : " · not stock-linked"}</span></span>
                           <span className="text-[10px] text-gray-400">{unrouted > 0 ? `${unrouted} to route` : "✓ all routed"}</span>
                         </div>
-                        {(() => { const p = dismantlePlan[k]; if (!p || unrouted <= 0) return null; const evName = p.type === "transfer" ? ((eventOrders || []).find(e => e.id === p.toEventId)?.clientName || p.toEventName || "event") : ""; return (
+                        {(() => { if (unrouted <= 0) return null; const rows = planFor(it).filter(r => (Number(r.qty) || 0) > 0); if (!rows.length) return null; const summary = rows.map(r => { const ev = r.type === "transfer" ? ((eventOrders || []).find(e => e.id === r.toEventId)?.clientName || r.toEventName || "event") : ""; return `${r.qty} ${ROUTE_SHORT[r.type] || r.type}${r.type === "transfer" ? " " + ev : ""}`; }).join(" · "); return (
                           <div className="pl-11 flex items-center gap-2 flex-wrap">
-                            <span className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5 font-semibold">📋 Planned: {ROUTE_LABEL[p.type] || p.type}{p.type === "transfer" ? ` → ${evName}` : ""}</span>
-                            <button onClick={() => { let extra = {}; if (p.type === "transfer") { if (!p.toEventId) return; const ev = (eventOrders || []).find(e => e.id === p.toEventId); extra = { toEventId: p.toEventId, toEventName: ev?.clientName || p.toEventName || "Event" }; } routeRemaining(it, p.type || "return", extra); }} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-full">✓ Confirm {unrouted}</button>
+                            <span className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5 font-semibold">📋 Plan: {summary}</span>
+                            <button onClick={() => confirmItemPlanned(it)} className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-full">✓ Confirm plan</button>
                           </div>
                         ); })()}
                         {(ret > 0 || tr > 0 || dmg > 0 || rep > 0) && (
