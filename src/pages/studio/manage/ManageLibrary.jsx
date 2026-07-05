@@ -45,7 +45,7 @@ export default function ManageLibrary({ ctx }) {
     // rate card (element breakdown)
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder, skipNightlyRun, toggleSkipNightlyRun,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -130,7 +130,7 @@ export default function ManageLibrary({ ctx }) {
     const hasTag = t._aiTagged || t.venue || t.fn || t.tier || t.io || (t.styles || []).length || (t.colors || []).length || Object.keys(t.zonePhotos || {}).length;
     return hasTag ? "review" : "untagged";
   };
-  const [libStatus, setLibStatus] = useState("all"); // all | review | verified | untagged | nightly | manual
+  const [libStatus, setLibStatus] = useState("review"); // review | verified | untagged | nightly | manual — defaults to review so users don't land on Verified images and accidentally retag them
   const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
   useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
@@ -249,8 +249,7 @@ export default function ManageLibrary({ ctx }) {
   };
 
   // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
-  const libVisible = libStatus === "all" ? libFiltered
-    : libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
+  const libVisible = libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
     : libStatus === "manual" ? libFiltered.filter(i => i.tagSource === "manual")
     : libFiltered.filter(i => photoStatus(i) === libStatus);
 
@@ -310,7 +309,6 @@ export default function ManageLibrary({ ctx }) {
         {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
-            ["all", "📁", "All", "everything", libFiltered.length, accent],
             ["verified", "✅", "Verified", "reviewed by a person", libFiltered.filter(i => photoStatus(i) === "verified").length, "#059669"],
             ["review", "🤖", "Needs review", "AI-tagged — to check", libFiltered.filter(i => photoStatus(i) === "review").length, "#7C3AED"],
             ["untagged", "❓", "Untagged", "no tags yet", libFiltered.filter(i => photoStatus(i) === "untagged").length, "#9CA3AF"],
@@ -345,14 +343,6 @@ export default function ManageLibrary({ ctx }) {
                 </span>
               );
             })()}
-            {/* Skip tonight's nightly batch-tagger run */}
-            {toggleSkipNightlyRun && (
-              <span title={skipNightlyRun ? "Tonight's 2 AM nightly run is scheduled to be skipped. Click to cancel the skip." : "Schedule a one-time skip for tonight's 2 AM nightly batch-tagger run."} style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: 8, marginLeft: 2, borderLeft: `1px solid ${border}` }}>
-                <button onClick={toggleSkipNightlyRun} style={{ ...S.btn(skipNightlyRun), fontSize: 10, padding: "4px 10px", background: skipNightlyRun ? "#F59E0B" : undefined, color: skipNightlyRun ? "#fff" : undefined }}>
-                  {skipNightlyRun ? "⏭ Skip tonight ✓" : "🌙 Skip tonight"}
-                </button>
-              </span>
-            )}
           </div>
         </div>
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}

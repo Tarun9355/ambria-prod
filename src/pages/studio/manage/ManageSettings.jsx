@@ -22,6 +22,8 @@ export default function ManageSettings({ ctx }) {
     settingsView, setSettingsView,
     // auth
     authUser, isAdmin, hasPerm, studioSettingsAllowed,
+    // library / nightly tagger
+    skipNightlyRun, toggleSkipNightlyRun,
     // venues
     customInhouse, customOutdoor, saveVenues,
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
@@ -511,7 +513,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"]];
+          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"], ["tagger", "🌙 Library / Tagger"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
@@ -821,6 +823,23 @@ export default function ManageSettings({ ctx }) {
           <div style={{ fontSize: 10, color: textS, marginTop: 10, lineHeight: 1.5 }}>Tip: a sub-category inherits its category's department. Truss steel → Tenting · masking/drape fabric → Fabric · genset → Lighting · transport → Transport · manpower by worker type — all handled automatically.</div>
         </div>;
       })()}
+      {settingsView === "tagger" && (
+        <div style={{ maxWidth: 520 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: textP, marginBottom: 4 }}>🌙 Library / Tagger</div>
+          <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Controls for the nightly AI batch-tagger. Admin-only — this used to sit in the Library browse screen, where salespeople could tap it by accident and kill that night's run.</div>
+          <div style={{ borderRadius: 10, border: `1px solid ${border}`, padding: 14, background: cardBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: textP }}>Skip tonight's nightly run</div>
+              <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>{skipNightlyRun ? "Tonight's 2 AM nightly batch-tagger run is scheduled to be skipped." : "Schedule a one-time skip for tonight's 2 AM nightly batch-tagger run."}</div>
+            </div>
+            {toggleSkipNightlyRun && (
+              <button onClick={toggleSkipNightlyRun} style={{ ...S.btn(skipNightlyRun), fontSize: 11, padding: "6px 14px", whiteSpace: "nowrap", background: skipNightlyRun ? "#F59E0B" : undefined, color: skipNightlyRun ? "#fff" : undefined }}>
+                {skipNightlyRun ? "⏭ Skip tonight ✓" : "🌙 Skip tonight"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
