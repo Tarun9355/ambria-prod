@@ -1357,18 +1357,24 @@ export default function StudioApp() {
 
   // ═══ ZONE PHOTO FILTERS (Build canvas) — VERBATIM ═══
   const [zpFilterOpen, setZpFilterOpen] = useState(false);
-  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [] });
+  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], venue: "" });
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
   const zpHasFilters = Object.values(zpFilters).some(a => a.length > 0);
   const zpFilterPhoto = useCallback((li) => {
     if (!li) return true;
-    for (const [cat, vals] of Object.entries(zpFilters)) {
+    const tags = li.tags || {};
+    for (const cat of ["eventType", "venueType", "designStyle", "colorPalette"]) {
+      const vals = zpFilters[cat] || [];
       if (!vals.length) continue;
-      const it = li.tags?.[cat] || [];
+      const it = tags[cat] || [];
       if (!vals.some(v => it.includes(v))) return false;
     }
+    // Venue name search — matches the photo's venue tag OR its folder path (photos are often filed under
+    // "inhouse venues/<venue>/…" or "Outside Venues/<venue>/…"), so a salesperson can type e.g. "emerald".
+    const vq = String(zpFilters.venue || "").toLowerCase().trim();
+    if (vq) { let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); } const hay = (String(tags.venue || "") + " " + url).toLowerCase(); if (!hay.includes(vq)) return false; }
     return true;
   }, [zpFilters]);
 

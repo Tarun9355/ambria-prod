@@ -64,6 +64,7 @@ export default function StudioBuild({ ctx }) {
   // "Correct photo tags" modal target — { libId, zoneKey, name, tags } (Phase 1b: full-tag correction)
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
+  const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -414,8 +415,8 @@ export default function StudioBuild({ ctx }) {
       </div>
     </div>
 
-    {/* ═══ FLORAL RATIO CONTROL ═══ */}
-    {showCosts&&<div style={{borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12}}>
+    {/* ═══ FLORAL RATIO CONTROL — art/real split is a design control, show it even when costs are hidden ═══ */}
+    {<div style={{borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12}}>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
         <span style={{fontSize:13}}>{"🌸"}</span>
         <span style={{fontSize:11,fontWeight:600,color:textP}}>Artificial</span>
@@ -478,6 +479,7 @@ export default function StudioBuild({ ctx }) {
                     {zoneUploading===k?"⏳ Uploading...":"📷 Upload"}
                     <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                   </label>
+                  <button onClick={()=>setGridZones(g=>({...g,[k]:!g[k]}))} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>
                   <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>🔍{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
                 </div>
               </div>
@@ -506,22 +508,26 @@ export default function StudioBuild({ ctx }) {
                     {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={{padding:"2px 8px",borderRadius:8,fontSize:9,cursor:"pointer",background:zpFilters.colorPalette.includes(v)?accent:"transparent",color:zpFilters.colorPalette.includes(v)?(isDark?"#1a1a2e":"#fff"):textS,border:`1px solid ${zpFilters.colorPalette.includes(v)?accent:border}`,fontWeight:zpFilters.colorPalette.includes(v)?600:400}}>{v}</span>)}
                   </div>
                 </div>
-                {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
+                <div style={{gridColumn:"1/-1"}}>
+                  <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Venue (name / inhouse / outside)</div>
+                  <input value={zpFilters.venue||""} onChange={e=>setZpFilters(p=>({...p,venue:e.target.value}))} placeholder="e.g. Emerald Green, inhouse venues, Outside Venues…" style={{width:"100%",padding:"5px 9px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.03)":"#fff",color:textP,fontSize:10}}/>
+                </div>
+                {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],venue:""})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
-              <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
+              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
               {matchedPhotos.map((ph,i)=>{
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
                 const isSelected = elSelectedPhoto[k]?.src === ph.src;
                 // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
                 const photoFullCost = calcPhotoCost(k, ph);
                 return (
-                <div key={i} style={{flexShrink:0,width:160,borderRadius:10,overflow:"hidden",
+                <div key={i} style={{flexShrink:0,width:gridZones[k]?"auto":160,borderRadius:10,overflow:"hidden",
                   border:isSelected?`3px solid #059669`:isSource?`2px solid #C9A96E`:`2px solid ${border}`,
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
                   <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();setElGallery({elKey:k,photos:matchedPhotos,title:`${TIER_TO_CAT[tier]} ${el.label}`});setGalleryIdx(i);}}>
-                    <img src={ph.src} alt={ph.eventName} loading="lazy" style={{width:160,height:95,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
+                    <img src={ph.src} alt={ph.eventName} loading="lazy" style={{width:gridZones[k]?"100%":160,height:95,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"2px 6px",borderRadius:4,fontSize:8}}>🔍 Preview</div>
                     {showCosts&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:700}}>{fmt(photoFullCost)}</div>}
                     {ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"rgba(124,58,237,0.8)",color:"#fff",padding:"2px 6px",borderRadius:4,fontSize:8,fontWeight:600}}>Library</div>}
@@ -545,7 +551,7 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${TIER_TO_CAT[tier]} ${el.label} photos match your filters`:`No ${TIER_TO_CAT[tier]} ${el.label} photos yet`}</div>
               <div style={{fontSize:11,color:textS,marginBottom:8}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[]})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
+                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],venue:""})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
                 <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"8px 20px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:12,fontWeight:600,cursor:zoneUploading?"wait":"pointer"}}>
                   {zoneUploading===k?"⏳ Uploading...":"📷 Upload Client Photo"}
                   <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
