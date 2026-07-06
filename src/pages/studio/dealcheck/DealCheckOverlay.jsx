@@ -12,8 +12,8 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled } from "../../../lib/ims/helpers";
-import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, autoFillFabricAllocation } from "../../../lib/studio/pricing";
+import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
+import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 
 export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
@@ -366,17 +366,30 @@ export default function DealCheckOverlay({ ctx }) {
                   return labourUsageMode ? Math.max(adj + he, Math.ceil(labourUsageTotal)) : (adj + he);
                 }
                 if (type === "Fabric Bangali") {
-                  let sq = 0; walkFn(fn, ({rc, el}) => { const s = String(rc.sub||"").toLowerCase(); if (s.includes("wall masking")||s.includes("fabric")||s.includes("draping")) { const L = Number(el.L||el.l||rc.defaultDims?.L||0); const W = Number(el.W||el.w||el.H||el.h||rc.defaultDims?.W||0); if (L>0 && W>0) sq += L*W; } });
-                  if (sq <= 0 || fabricBangaliRanges.length === 0) return 0;
-                  for (const r of fabricBangaliRanges) { if (sq <= r.upTo) return r.labour || 0; }
-                  return fabricBangaliRanges[fabricBangaliRanges.length-1]?.labour || 0;
+                  // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone RFT from truss dims (not element L×W).
+                  let total = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                  const engBackDepth = Number(dealCheckData?.trussInv?.settings?.defaultBackDepthFt) || 4;
+                  const fabricRftPerWorker = Number(dealCheckData?.fabricRftPerWorker) || 100;
+                  Object.keys(zc).forEach(zk => {
+                    if (!en[zk] || !zc[zk]) return; const z = zc[zk]; if (!z.mkOn) return;
+                    const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
+                    const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
+                    const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
+                    let zoneTop = 0, zoneRft = 0;
+                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (mw.back && dL > 0) zoneRft += dL; if (mw.left && dW > 0) zoneRft += dW; if (mw.right && dW > 0) zoneRft += dW; }
+                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
+                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; }
+                    total += zoneTop + (zoneRft > 0 ? Math.ceil(zoneRft / fabricRftPerWorker) : 0);
+                  });
+                  return total;
                 }
                 if (type === "Truss Labour") {
-                  let p = 0; walkFn(fn, ({rc, qty}) => { const s = String(rc.sub||"").toLowerCase(); if (s.includes("pillar")||s.includes("column")||s.includes("truss")) p += qty; });
-                  // Also count pillars from the zone Truss tool (the structural truss config carries labour too).
-                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig||{}, en = fn.enabledEls||{}; Object.keys(zc).forEach(zk => { if (!en[zk]||!zc[zk]) return; const pv = calcZoneTrussPreview(zc[zk], tInv); p += (pv?.topology?.pillars||[]).length; }); } } catch {}
-                  if (p <= 0 || trussLabourRanges.length === 0) return 0;
-                  for (const r of trussLabourRanges) { if (p <= r.upTo) return r.labour || 0; }
+                  // MUST match DCManpowerTab.calcPeopleTrussLabour — zone-topology pillarCount minus the venue's standing pillars.
+                  let pillars = 0; const tInv = dealCheckData?.trussInv;
+                  if (tInv) { const zc = fn.zoneConfig||{}, en = fn.enabledEls||{}; Object.keys(zc).forEach(zk => { if (!en[zk]||!zc[zk]) return; try { const pv = calcZoneTrussPreview(zc[zk], tInv); if (pv?.topology?.pillarCount) pillars += pv.topology.pillarCount; } catch {} }); }
+                  pillars = Math.max(0, pillars - standingPillarCount({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || ""));
+                  if (pillars <= 0 || trussLabourRanges.length === 0) return 0;
+                  for (const r of trussLabourRanges) { if (pillars <= r.upTo) return r.labour || 0; }
                   return trussLabourRanges[trussLabourRanges.length-1]?.labour || 0;
                 }
                 const cfg = labourTiers[type];
