@@ -2424,7 +2424,9 @@ export default function StudioApp() {
     const vidMatch = vidUrl.match(/embed\/([a-zA-Z0-9_-]{11})/);
     const vidId = vidMatch ? vidMatch[1] : null;
     const tagTier = vidId ? ytVideoTags[vidId]?.tier : null;
-    if (tagTier === "Platinum") return true;
+    // An explicit tag tier is authoritative — a video tagged Gold/Silver is NOT Platinum even if its
+    // price crosses the Platinum band. Fall back to the price-based category only when untagged.
+    if (tagTier) return tagTier === "Platinum";
     return getCat(getFullCost(ev)).label === "Platinum";
   }, [ytVideoTags, getFullCost]);
 
