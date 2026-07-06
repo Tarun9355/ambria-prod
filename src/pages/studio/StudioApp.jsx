@@ -2424,11 +2424,10 @@ export default function StudioApp() {
     const vidMatch = vidUrl.match(/embed\/([a-zA-Z0-9_-]{11})/);
     const vidId = vidMatch ? vidMatch[1] : null;
     const tagTier = vidId ? ytVideoTags[vidId]?.tier : null;
-    // An explicit tag tier is authoritative — a video tagged Gold/Silver is NOT Platinum even if its
-    // price crosses the Platinum band. Fall back to the price-based category only when untagged.
-    if (tagTier) return tagTier === "Platinum";
-    return getCat(getFullCost(ev)).label === "Platinum";
-  }, [ytVideoTags, getFullCost]);
+    // Gate on TAGGING only — a design is Platinum (Sr. Designer only) purely because it's tagged
+    // Platinum. Price is never used to gate, so a pricey Gold video customizes normally.
+    return tagTier === "Platinum";
+  }, [ytVideoTags]);
 
   const filteredEvents = useMemo(() => events.filter(ev => {
     if (filterCat.length > 0 && !filterCat.includes(getCat(getFullCost(ev)).label)) return false;
