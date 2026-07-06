@@ -313,6 +313,19 @@ export default function DealCheckOverlay({ ctx }) {
                   if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1), zk });
                 }); });
               };
+              // Fixed-venue "Repeat" model: a repeat zone reuses the standing setup → no build labour, so we
+              // drop repeat zones from the computation, then FLOOR each crew type at the venue's fixed crew:
+              // count = max(fixedCrew[type], computed-over-fresh-zones). Non-fixed venues → computed, no floor.
+              const fvCfgMP = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+              const freshFnMP = (fn) => {
+                if (!fixedVenueFor(fvCfgMP, fn.fnVenue || "")) return fn;
+                const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                const repeatZk = Object.keys(zc).filter(zk => en[zk] && zc[zk]?.repeat);
+                if (!repeatZk.length) return fn;
+                const nen = { ...en }; repeatZk.forEach(zk => { nen[zk] = false; });
+                return { ...fn, enabledEls: nen };
+              };
+              const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
               const calcPpl = (fn, type) => {
                 if (type === "Flowerists") {
                   // Aggregate all arrangements of the same recipe (same name + units-per-flowerist)
@@ -348,9 +361,9 @@ export default function DealCheckOverlay({ ctx }) {
                   // MUST match DCManpowerTab.calcPeopleTier3Labours exactly (else bar ≠ tab).
                   const venueName = fn.fnVenue || "";
                   const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                  const fv = fixedVenueFor(fvCfg, venueName);
-                  // Venue minimum applies ONLY to fixed venues (its own minLabour); non-fixed → no floor (0), usage-driven.
-                  const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0;
+                  // No internal venue floor — the fixed-venue floor is applied uniformly for ALL types in
+                  // peopleByFn (max(fixedCrew, computed)). Here we only compute the usage/heavy build need.
+                  const vm = 0;
                   const dl = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                   const dm = ({nearby:1.0, medium:1.1, far:1.2})[dl] || 1.0;
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
@@ -470,7 +483,7 @@ export default function DealCheckOverlay({ ctx }) {
               const labourUsageByFn = {};
               fns.forEach((fn, fi) => {
                 const byDept = {}; let total = 0;
-                if (labourUsageMode) walkFn(fn, ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
+                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
                 labourUsageByFn[fi] = { byDept, total };
                 Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
                 labourUsageTotal += total;
@@ -485,7 +498,7 @@ export default function DealCheckOverlay({ ctx }) {
                 while (cur <= latest) { const fd = fns.filter(f => f.fnDate === cur); dayList.push({date:cur,phase:fd.length?"event":"gap",fns:fd}); cur = addDays(cur,1); }
                 if (dcMpIncludeDismantle) dayList.push({date:addDays(latest,1),phase:"dismantle",fns:[]});
                 dcMpPhases = { minusOne: dayList.some(d=>d.phase==="minusOne"), eventDays: dayList.filter(d=>d.phase==="event").length, gapDays: dayList.filter(d=>d.phase==="gap").length, dismantle: dayList.some(d=>d.phase==="dismantle") };
-                const peopleByFn = {}; labourTypes.forEach(t => { peopleByFn[t] = {}; fns.forEach((fn, fi) => { peopleByFn[t][fi] = calcPpl(fn, t) || 0; }); });
+                const peopleByFn = {}; labourTypes.forEach(t => { peopleByFn[t] = {}; fns.forEach((fn, fi) => { const fv = fixedVenueFor(fvCfgMP, fn.fnVenue || ""); const computed = calcPpl(freshFnMP(fn), t) || 0; peopleByFn[t][fi] = fv ? Math.max(fixedCrewFloor(fv, t), computed) : computed; }); });
                 // Default labour split fraction (used for leading / no-element days) = aggregate usage share.
                 const _aggFrac = {}; if (labourUsageMode && labourUsageTotal > 0) DEPTS.forEach(dp => { _aggFrac[dp] = (labourUsageByDept[dp] || 0) / labourUsageTotal; });
                 let _lastFrac = Object.keys(_aggFrac).length ? _aggFrac : null;

@@ -104,13 +104,24 @@ export default function DCManpowerTab({ ctx }) {
                     });
                   };
 
+                  // Fixed-venue "Repeat" model — MUST match DealCheckOverlay: drop repeat zones from the
+                  // computation (reused = no build labour), then floor each type at the venue's fixed crew.
+                  const _fvCfgAll = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                  const freshFnMP = (fn) => {
+                    if (!fixedVenueFor(_fvCfgAll, fn.fnVenue || "")) return fn;
+                    const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
+                    const repeatZk = Object.keys(zc).filter(zk => en[zk] && zc[zk]?.repeat);
+                    if (!repeatZk.length) return fn;
+                    const nen = { ...en }; repeatZk.forEach(zk => { nen[zk] = false; });
+                    return { ...fn, enabledEls: nen };
+                  };
+                  const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
                   // Usage-based labour floor — MUST match the project-total rollup (DealCheckOverlay):
-                  // Labours = max(venue-min+heavy, ceil(Σ sub-cat units ÷ per-unit)) across all functions.
-                  // Without this the tab under-showed Labours vs the actual quote (the ₹57,400 vs ₹68,001 gap).
+                  // Labours = ceil(Σ sub-cat units ÷ per-unit) over FRESH zones (repeat excluded).
                   const _labBatches = {}; heavyElementRanges.forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
                   const labourUsageMode = Object.keys(_labBatches).length > 0;
                   let labourUsageTotal = 0;
-                  if (labourUsageMode) fns.forEach(fn => walkFnElements(fn, ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
+                  if (labourUsageMode) fns.forEach(fn => walkFnElements(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
 
                   // ── People count per ceremony per labour type ─────────────
                   // Mirror of IMS App.jsx calcTier1Flowerist (line 1701). DO NOT diverge without IMS commit.
@@ -177,9 +188,9 @@ export default function DCManpowerTab({ ctx }) {
                   // Mirror of IMS calcTier3 (line 1756). Tier 3 = venue + event + situational + heavy.
                   const calcPeopleTier3Labours = (fn) => {
                     const venueName = fn.fnVenue || "";
-                    const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                    const _fv = fixedVenueFor(_fvCfg, venueName);
-                    const venueMin = _fv ? (_fv.minLabour ?? defaultMinLabour) : 0; // min applies ONLY to fixed venues; non-fixed → usage-driven
+                    // No internal venue floor — the fixed-venue floor is applied uniformly for ALL types in
+                    // peopleByFn (max(fixedCrew, computed)). Here we only compute the usage/heavy build need.
+                    const venueMin = 0;
                     const dumpingLevel = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const segment = "outdoor_budgeted"; // default (Studio has no segment field)
@@ -592,7 +603,9 @@ export default function DCManpowerTab({ ctx }) {
                   labourTypes.forEach(type => {
                     peopleByFn[type] = {};
                     fns.forEach((fn, fi) => {
-                      peopleByFn[type][fi] = calcPeopleForType(fn, type) || 0;
+                      const fv = fixedVenueFor(_fvCfgAll, fn.fnVenue || "");
+                      const computed = calcPeopleForType(freshFnMP(fn), type) || 0;
+                      peopleByFn[type][fi] = fv ? Math.max(fixedCrewFloor(fv, type), computed) : computed;
                     });
                   });
 
