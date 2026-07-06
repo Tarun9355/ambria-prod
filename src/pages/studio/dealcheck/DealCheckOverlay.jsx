@@ -143,6 +143,15 @@ export default function DealCheckOverlay({ ctx }) {
             if (s.includes("arch") || s.includes("prop") || s.includes("wrought") || s.includes("glass") || s.includes("struct") || s.includes("pillar") || s.includes("stage") || s.includes("platform")) return "Structure";
             return "Structure"; // catch-all
           };
+          // Fixed-venue "Repeat" rental: a Repeat zone's items bill at a discount (item → sub-cat → global %);
+          // Fresh zones bill full. This replaces the old standing-list split (one rule, salesperson-driven).
+          const fvCfgR = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+          const repeatDiscPct = (item, subcat) => {
+            const it = Number(item?.fixedVenueDiscountPct); if (Number.isFinite(it) && it > 0) return it;
+            const sc = Number((dealCheckData?.fixedVenueDiscountBySubcat || {})[String(subcat || "").toLowerCase()]); if (Number.isFinite(sc) && sc > 0) return sc;
+            return Number(dealCheckData?.fixedVenueRepeatDiscount ?? 70) || 0;
+          };
+          const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat && fixedVenueFor(fvCfgR, fn.fnVenue || fn.venue || "")); };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             Object.entries(cards).forEach(([ck, c]) => {
@@ -160,9 +169,8 @@ export default function DealCheckOverlay({ ctx }) {
                 baseR = _kb + _kitEdited.reduce((s, cp) => { const ci = dcInventoryCache.find(x => x.id === cp.itemId); return s + (ci ? imsField.rentalCost(ci) : 0) * (Number(cp.qty) || 0); }, 0);
               }
               const qty = c.qty || 1;
-              const venueName = fn.fnVenue || fn.venue || "";
-              const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, venueName, c.imsId, qty);
-              const lineRental = sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
+              const _rep = zoneIsRepeat(fn, ck);
+              const lineRental = _rep ? qty * baseR * (1 - repeatDiscPct(item, imsField.subcategory(item)) / 100) : qty * baseR;
               rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
               addD(dD, "rental", lineRental);
@@ -192,9 +200,8 @@ export default function DealCheckOverlay({ ctx }) {
               if (!item) return;
               const q = Number(mi.qty) || 1;
               const baseR = imsField.rentalCost(item);
-              const venueName = fn.fnVenue || fn.venue || "";
-              const sp = rentalSplit({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, venueName, mi.imsId, q);
-              const lineRental = sp.freshUnits * baseR + sp.standingUnits * baseR * (1 - (sp.discountPct || 0) / 100);
+              const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat && fixedVenueFor(fvCfgR, fn.fnVenue || fn.venue || "")) : false;
+              const lineRental = _rep ? q * baseR * (1 - repeatDiscPct(item, imsField.subcategory(item)) / 100) : q * baseR;
               rental += lineRental;
               const dD = catToDept(imsField.category(item));
               addD(dD, "rental", lineRental);
