@@ -5,8 +5,12 @@
 //   • Cost — standing items bill at a discount; extras/other venues bill full rate.
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
 import { useState } from "react";
+import { MANPOWER_TYPES } from "../../lib/ims/constants";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
+  // Global repeat-rental discount for ALL fixed venues (set once; sub-category / item overrides layer on top).
+  const globalRepeatDiscount = Number(settings.fixedVenueRepeatDiscount ?? 70);
+  const setGlobalDiscount = (val) => setSettings((s) => ({ ...s, fixedVenueRepeatDiscount: Math.max(0, Math.min(100, parseInt(val) || 0)) }));
   const pillarSizes = Object.keys(trussInv?.pillars || {}).sort((a, b) => Number(b) - Number(a));
   const beamSizes = Object.keys(trussInv?.beams || {}).sort((a, b) => Number(b) - Number(a));
   const fixedVenues = settings.fixedVenues || [];
@@ -35,6 +39,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     setActiveId(id); // jump to the new venue's tab
   };
   const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  const updCrew = (vid, type, val) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { fixedCrew: { ...(v.fixedCrew || {}), [type]: Math.max(0, parseInt(val) || 0) } }); };
   const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; if (activeId === id) setActiveId(null); save(fixedVenues.filter((x) => x.id !== id)); };
 
   const addItem = (vid, inv) => {
@@ -80,7 +85,14 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
             </select>
           : <span className="text-xs text-gray-400">Add venues in “Venue Min Labour” above first</span>}
       </div>
-      <p className="text-xs text-gray-500 mb-4">Inhouse venues that own permanently-installed structure. Reusing a standing item = no build labour + discounted rental. Swapping to a different item, or extras beyond the standing qty, bill full labour + full rental.</p>
+      <p className="text-xs text-gray-500 mb-3">Inhouse venues that own permanently-installed structure. Reusing a standing item = no build labour + discounted rental. Swapping to a different item, or extras beyond the standing qty, bill full labour + full rental.</p>
+
+      {/* Global repeat discount — set once for ALL fixed venues (sub-category / item overrides layer on top) */}
+      <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-bold text-emerald-800">♻️ Repeat rental discount (all fixed venues)</span>
+        <div className="flex items-center gap-1"><input type="number" min="0" max="100" value={globalRepeatDiscount} onChange={(e) => setGlobalDiscount(e.target.value)} className="w-16 border border-emerald-300 rounded px-2 py-1 text-sm text-center font-bold text-emerald-700" /><span className="text-sm text-emerald-700">%</span></div>
+        <span className="text-xs text-emerald-600">Charged on a repeated fixed-venue item's rental. Override per sub-category (rate card) or per item (inventory) where it differs.</span>
+      </div>
 
       {fixedVenues.length === 0 && <div className="text-center text-gray-400 text-sm py-8 border border-dashed rounded-xl">No fixed venues yet. Add one (e.g. Ambria Exotica) to define its standing inventory.</div>}
 
@@ -112,6 +124,18 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Min labour</span><input type="number" min="0" value={v.minLabour ?? 4} onChange={(e) => updVenue(v.id, { minLabour: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Default discount</span><input type="number" min="0" max="100" value={v.discountPct ?? 70} onChange={(e) => updVenue(v.id, { discountPct: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /><span className="text-xs text-gray-400">%</span></div>
               <button onClick={() => delVenue(v.id)} className="text-red-400 hover:text-red-600 text-sm ml-auto">🗑️</button>
+            </div>
+
+            {/* Fixed crew per type — the standing/repeat manpower for this venue. On a Repeat deal this is
+                the base crew; anything fresh/extra adds on top (same as the Labours floor+extra rule). */}
+            <div className="text-xs font-semibold text-gray-500 uppercase mb-1.5">Fixed crew (repeat setup) <span className="font-normal text-gray-400 normal-case">— base manpower when the setup is reused; extra fresh work adds on top</span></div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {MANPOWER_TYPES.map((t) => (
+                <div key={t} className="flex items-center gap-1 bg-white border rounded-lg px-2 py-1">
+                  <span className="text-xs text-gray-600">{t}</span>
+                  <input type="number" min="0" value={(v.fixedCrew || {})[t] ?? ""} onChange={(e) => updCrew(v.id, t, e.target.value)} placeholder="0" className="w-12 border rounded px-1.5 py-0.5 text-sm text-center" />
+                </div>
+              ))}
             </div>
 
             <div className="text-xs font-semibold text-gray-500 uppercase mb-1.5">Standing inventory <span className="font-normal text-gray-400 normal-case">— specific items installed here (location = {v.name})</span></div>
