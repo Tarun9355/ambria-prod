@@ -34,10 +34,27 @@ CREATE INDEX IF NOT EXISTS idx_lms_contracts_synced ON lms_contracts (synced_at)
 ALTER PUBLICATION supabase_realtime ADD TABLE lms_contracts;
 ```
 
+## 4. LMS decor lead cache (migration 009) — ⬜ pending
+Fixes Studio's Event Info guest search missing fresh decor LEADS (pre-contract enquiries).
+Decor leads live in a different LMS list (and numbering sequence) than decor contracts —
+this table is kept separate so leads never get counted into the Calendar's season/demand math.
+```sql
+CREATE TABLE IF NOT EXISTS lms_decor_leads (
+  id TEXT PRIMARY KEY,
+  entry_no TEXT,
+  guest_name TEXT,
+  data JSONB NOT NULL DEFAULT '{}',
+  synced_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lms_decor_leads_synced ON lms_decor_leads (synced_at);
+```
+Then redeploy the `lms` Edge Function (op=sync now also paginates decor leads into this table)
+and run a manual "🔄 Refresh" in Studio's Event Info (or wait for the 30-min auto pre-warm).
+
 ---
 
 ## Edge Functions (CLI)
-- `lms` — ✅ deployed (verified live)
+- `lms` — ✅ deployed (verified live) — ⬜ needs redeploy for migration 003 (decor lead sync)
 - `season` — ✅ deployed + `SEASON_EXPORT_KEY` set (verified live)
 - `anthropic` — ⬜ NOT deployed. Needed for ALL AI features: Inventory photo-scan, Production
   finished-vs-reference photo comparison, and **Events → AI Scan** (Claude Vision deck → decor

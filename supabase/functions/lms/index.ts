@@ -2,9 +2,10 @@
 //
 // Two modes:
 //   (1) POST { endpoint, body }  → generic pass-through to the LMS API (no auth token).
-//   (2) POST { op: "sync" }      → paginate venue+decor contracts SERVER-SIDE (parallel
-//        batches) and upsert them into the `lms_contracts` table via the service-role
-//        key, then prune contracts that disappeared. The browser never paginates LMS.
+//   (2) POST { op: "sync" }      → paginate venue+decor contracts AND decor leads
+//        SERVER-SIDE (parallel batches) and upsert into `lms_contracts` / `lms_decor_leads`
+//        via the service-role key, then prune rows that disappeared. The browser never
+//        paginates LMS.
 //
 // The LMS API (https://gyv.inqcrm.in) needs NO auth token.
 //
@@ -53,6 +54,13 @@ const REQ_BODY: Record<string, (p: number) => Record<string, string>> = {
   decor: (p) => ({ loggeduserid: "1", entertain_search: "", source_search: "", lead_type_search: "", entertain_venue_search: "", priority_search: "", fromdate: "", uptodated: "", entertain_assginee_search: "", entertain_status_search: "", search_date_type: "", visited_search: "", follow_dated: "", page_limit: String(p) }),
 };
 
+// Decor LEADS (pre-contract enquiries) — a separate LMS list from decor CONTRACTS above.
+// Entries here use a different numbering sequence and dh_ / dhd_ field prefixes (vs.
+// dhc_ / dhcd_ for contracts). A guest can show up here for a long time before (or without
+// ever) becoming a contract, so Studio's lead search needs this list, not the contract one.
+const LEAD_ENDPOINT = "/api/v1/processerp_api/get_decor_information_list";
+const LEAD_REQ_BODY = (p: number) => ({ loggeduserid: "1", entertain_search: "", source_search: "", lead_type_search: "", entertain_venue_search: "", priority_search: "", fromdate: "", uptodated: "", entertain_assginee_search: "", entertain_status_search: "", search_date_type: "", visited_search: "", follow_dated: "", page_limit: String(p) });
+
 async function lmsCall(endpoint: string, body: unknown) {
   const r = await fetch(LMS_BASE + endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`LMS ${r.status}`);
@@ -94,6 +102,63 @@ function normalizeRow(raw: any, dept: string) {
   return { header, fnDetail };
 }
 
+function normalizeLeadRow(raw: any) {
+  const entryNo = raw.dh_entry_no || "";
+  const fnTypeId = raw.dhd_function || "";
+  const venueId = raw.dhd_venue1 || "";
+  const vLook = LMS_VENUE_MAP[venueId];
+  const fnDetail = {
+    functionDate: raw.dhd_date || "", functionTime: raw.dhd_time || "",
+    functionType: LMS_FUNCTION_TYPES[fnTypeId] || (raw.functionname || ""),
+    session: raw.dhd_session || "",
+    leadType: raw.dhd_lead_type || "",
+    pax: 0,
+    internalVenueName: vLook?.internalName || "",
+    externalVenue: raw.dhd_venue2 || "",
+    locationName: raw.address1 || "",
+    decorLumpsum: parseFloat(raw.dhd_lumpsum || "0"),
+  };
+  const header = {
+    dept: "decor", entryNo,
+    contractDate: raw.dh_decor_entry_date || "",
+    guestName: raw.dh_guest_name || "",
+    contactNo: raw.dh_contact_no || "",
+    brideName: "", groomName: "",
+    totalAmt: raw.dh_total_amt || 0,
+    balance: raw.dh_balance || 0,
+    priority: raw.dh_priority || "",
+    status: raw.dh_status || "",
+    cancelled: false,
+  };
+  return { header, fnDetail };
+}
+
+async function fetchDecorLeads() {
+  const map = new Map<string, any>();
+  let page = 1;
+  while (page <= PAGE_CEILING) {
+    const pages = Array.from({ length: BATCH }, (_, i) => page + i);
+    const results = await Promise.all(pages.map((p) =>
+      lmsCall(LEAD_ENDPOINT, LEAD_REQ_BODY(p)).then((d) => ({ p, rows: d?.leadinfo || [] })).catch(() => ({ p, rows: [] }))
+    ));
+    let hitEnd = false;
+    for (const { rows } of results.sort((a, b) => a.p - b.p)) {
+      if (rows.length === 0) { hitEnd = true; continue; }
+      for (const raw of rows) {
+        const { header, fnDetail } = normalizeLeadRow(raw);
+        if (!header.entryNo) continue;
+        const key = header.entryNo;
+        if (!map.has(key)) map.set(key, { id: key, ...header, functions: [], matchedEoId: null, matchType: null });
+        if (fnDetail.functionDate || fnDetail.functionType) map.get(key).functions.push(fnDetail);
+      }
+      if (rows.length < PAGE_SIZE) hitEnd = true;
+    }
+    if (hitEnd) break;
+    page += BATCH;
+  }
+  return Array.from(map.values());
+}
+
 async function fetchDept(dept: string) {
   const map = new Map<string, any>();
   let page = 1;
@@ -131,7 +196,7 @@ Deno.serve(async (req) => {
   if (payload?.op === "sync") {
     const startedAt = new Date().toISOString();
     try {
-      const [venue, decor] = await Promise.all([fetchDept("venue"), fetchDept("decor")]);
+      const [venue, decor, decorLeads] = await Promise.all([fetchDept("venue"), fetchDept("decor"), fetchDecorLeads()]);
       const all = [...venue, ...decor];
       const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       const now = new Date().toISOString();
@@ -142,7 +207,17 @@ Deno.serve(async (req) => {
       }
       // Prune contracts that vanished from LMS (or were cancelled) since this sync started.
       await sb.from("lms_contracts").delete().lt("synced_at", startedAt);
-      return json({ synced: rows.length, syncedAt: now });
+
+      // Decor leads live in their own table — kept separate from lms_contracts so pre-contract
+      // enquiries never get counted as booked functions in the IMS Calendar's season/demand math.
+      const leadRows = decorLeads.map((c: any) => ({ id: c.id, entry_no: c.entryNo, guest_name: c.guestName, data: c, synced_at: now }));
+      for (let i = 0; i < leadRows.length; i += 500) {
+        const { error } = await sb.from("lms_decor_leads").upsert(leadRows.slice(i, i + 500), { onConflict: "id" });
+        if (error) throw new Error(error.message);
+      }
+      await sb.from("lms_decor_leads").delete().lt("synced_at", startedAt);
+
+      return json({ synced: rows.length, decorLeadsSynced: leadRows.length, syncedAt: now });
     } catch (e) {
       return json({ error: String((e as Error)?.message || e) }, 502);
     }

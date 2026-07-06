@@ -245,6 +245,7 @@ function lmsContractToLead(c) {
     dept: c.dept,
     entryNo: c.entryNo,
     priority: c.priority || "",
+    status: c.status || "",
     functions: (c.functions || [])
       .map((f) => ({
         fnDate: String(f.functionDate || "").slice(0, 10),
@@ -257,18 +258,27 @@ function lmsContractToLead(c) {
   };
 }
 
+// Venue results come from synced venue CONTRACTS (unchanged — that list is complete for venue).
+// Decor results come from synced decor LEADS (lms_decor_leads), not decor contracts — a decor
+// guest is a "lead" for a long time (sometimes forever) before ever becoming a contract, so
+// searching contracts alone misses fresh/unconverted decor enquiries entirely.
 export async function searchLmsLeads(query /*, signal */) {
   const q = (query || "").trim();
   if (q.length < 2) return { ok: true, leads: [], complete: true };
   try {
     const like = `%${q}%`;
-    const { data, error } = await supabase
-      .from("lms_contracts")
-      .select("data")
-      .or(`guest_name.ilike.${like},data->>contactNo.ilike.${like}`)
-      .limit(50);
-    if (error) throw error;
-    const leads = (data || []).map((r) => lmsContractToLead(r.data)).filter(Boolean);
+    const [venueRes, decorLeadRes] = await Promise.all([
+      supabase.from("lms_contracts").select("data").eq("dept", "venue")
+        .or(`guest_name.ilike.${like},data->>contactNo.ilike.${like}`).limit(50),
+      supabase.from("lms_decor_leads").select("data")
+        .or(`guest_name.ilike.${like},data->>contactNo.ilike.${like}`).limit(50),
+    ]);
+    if (venueRes.error) throw venueRes.error;
+    if (decorLeadRes.error) throw decorLeadRes.error;
+    const leads = [
+      ...(venueRes.data || []).map((r) => lmsContractToLead(r.data)),
+      ...(decorLeadRes.data || []).map((r) => lmsContractToLead(r.data)),
+    ].filter(Boolean);
     return { ok: true, leads, complete: true, cached: true };
   } catch (e) {
     return { ok: false, leads: [], error: e.message || "LMS unreachable" };
