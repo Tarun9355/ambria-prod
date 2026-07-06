@@ -249,9 +249,14 @@ export default function ManageLibrary({ ctx }) {
   };
 
   // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
-  const libVisible = libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
+  const libVisibleUnsorted = libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
     : libStatus === "manual" ? libFiltered.filter(i => i.tagSource === "manual")
     : libFiltered.filter(i => photoStatus(i) === libStatus);
+  // Nightly/Manual/Needs-review all surface AI-tagging activity — show most recently tagged first
+  // (using the _aiTaggedAt stamp written by the nightly cron, bulk/selected tagger, and single AI Tag button).
+  const libVisible = (libStatus === "nightly" || libStatus === "manual" || libStatus === "review")
+    ? [...libVisibleUnsorted].sort((a, b) => (b._aiTaggedAt || 0) - (a._aiTaggedAt || 0))
+    : libVisibleUnsorted;
 
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   const LibraryBrowse = () => (
@@ -439,6 +444,7 @@ export default function ManageLibrary({ ctx }) {
                           if(Array.isArray(result.unrecognized))updated.unrecognized=result.unrecognized;
                           if(result.tags&&typeof result.tags==="object")updated._aiTags=result.tags; // snapshot AI suggestion for the corrections diff
                           updated._aiTagged=true;
+                          updated._aiTaggedAt=Date.now(); // so Needs-review sorts by most-recently-tagged
                           // Handle dims
                           const d=result.dims||{};
                           const hasDims=(d.trussL||d.trussW||d.trussH||d.floorL||d.floorW);
