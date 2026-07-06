@@ -178,7 +178,8 @@ export default function DCManpowerTab({ ctx }) {
                   const calcPeopleTier3Labours = (fn) => {
                     const venueName = fn.fnVenue || "";
                     const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                    const venueMin = fixedVenueFor(_fvCfg, venueName)?.minLabour ?? defaultMinLabour; // fixed venue's own min, else default
+                    const _fv = fixedVenueFor(_fvCfg, venueName);
+                    const venueMin = _fv ? (_fv.minLabour ?? defaultMinLabour) : 0; // min applies ONLY to fixed venues; non-fixed → usage-driven
                     const dumpingLevel = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const segment = "outdoor_budgeted"; // default (Studio has no segment field)
@@ -389,7 +390,8 @@ export default function DCManpowerTab({ ctx }) {
                   const traceTier3Labours = (fn) => {
                     const venueName = fn.fnVenue || "—";
                     const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-                    const venueMin = fixedVenueFor(_fvCfg, venueName)?.minLabour ?? defaultMinLabour;
+                    const _fv = fixedVenueFor(_fvCfg, venueName);
+                    const venueMin = _fv ? (_fv.minLabour ?? defaultMinLabour) : 0; // min only for fixed venues
                     const dumpingLevel = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const segment = "outdoor_budgeted";

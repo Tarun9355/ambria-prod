@@ -12,7 +12,7 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled } from "../../../lib/ims/helpers";
-import { rentalSplit, availableAtVenue, isStandingAt } from "../../../lib/ims/fixedVenues";
+import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../../lib/studio/pricing";
 
 export default function DealCheckOverlay({ ctx }) {
@@ -345,18 +345,23 @@ export default function DealCheckOverlay({ ctx }) {
                   }); return t;
                 }
                 if (type === "Labours") {
-                  const venueName = fn.fnVenue || ""; const vc = venueMinLabour[venueName];
-                  const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
-                  const dl = (vc && typeof vc === "object" ? vc.dumpingLevel : null) || "nearby";
+                  // MUST match DCManpowerTab.calcPeopleTier3Labours exactly (else bar ≠ tab).
+                  const venueName = fn.fnVenue || "";
+                  const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                  const fv = fixedVenueFor(fvCfg, venueName);
+                  // Venue minimum applies ONLY to fixed venues (its own minLabour); non-fixed → no floor (0), usage-driven.
+                  const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0;
+                  const dl = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                   const dm = ({nearby:1.0, medium:1.1, far:1.2})[dl] || 1.0;
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1;
                   const base = Math.ceil(vm * em);
-                  const dp = dcMpIncludeMinusOne;
                   let sm = 1.0;
-                  if (!dp) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  if (!dcMpIncludeMinusOne) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
                   const adj = Math.ceil(base * sm);
-                  let he = 0; const sc = {}; walkFn(fn, ({rc, qty}) => { sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
-                  heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat]||0); });
+                  const sc = {}; walkFn(fn, ({rc, qty}) => { sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
+                  // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
+                  const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat]||0) - (reduction[her.subCat]||0)); he += heavyExtraLabour(her, count); });
                   // Usage-based labour (Σ qty÷per-unit) with the venue-min (adj+he) as a floor.
                   return labourUsageMode ? Math.max(adj + he, Math.ceil(labourUsageTotal)) : (adj + he);
                 }
@@ -406,12 +411,16 @@ export default function DealCheckOverlay({ ctx }) {
                   return t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null;
                 }
                 if (type === "Labours") {
-                  const venueName = fn.fnVenue || ""; const vc = venueMinLabour[venueName];
-                  const vm = (vc && typeof vc === "object" ? vc.min : (typeof vc === "number" ? vc : null)) || defaultMinLabour;
+                  const venueName = fn.fnVenue || "";
+                  const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                  const fv = fixedVenueFor(fvCfg, venueName);
+                  const vm = fv ? (fv.minLabour ?? defaultMinLabour) : 0; // min only for fixed venues
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
                   let sm = 1.0;
-                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(vc && typeof vc === "object" ? vc.dumpingLevel : null) || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
-                  const adj = Math.ceil(base * sm); let he = 0; const sc = {}; walkFn(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; }); heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat] || 0); });
+                  if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
+                  const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+                  const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat] || 0) - (reduction[her.subCat] || 0)); he += heavyExtraLabour(her, count); });
                   return { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he };
                 }
                 if (type === "Fabric Bangali") {
