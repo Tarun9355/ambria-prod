@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useState, useRef, useEffect } from "react";
 import {
   TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   MASK_OPTS, PLAT_OPTS, CARP_OPTS,
@@ -56,12 +56,57 @@ export default function StudioBuild({ ctx }) {
     setVideoModal, setVideoPlaying,
     // misc
     showMsg, saveLib, authUser, logCorrection,
+    // point-lookup safety net (lazy library cache — see StudioApp.jsx)
+    ensureLibItems,
   } = ctx;
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // "Correct photo tags" modal target — { libId, zoneKey, name, tags } (Phase 1b: full-tag correction)
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
+
+  // The currently-selected photo per zone can be restored from a saved session and its id may not
+  // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
+  // prefetch on the off chance it's missing, so `libItems.find` doesn't silently come up empty.
+  useEffect(() => {
+    const ids = Object.values(elSelectedPhoto || {}).map(p => p?.eventId).filter(Boolean);
+    if (ids.length) ensureLibItems?.(ids);
+  }, [elSelectedPhoto, ensureLibItems]);
+
+  // getLibPhotosForZone is async (server-queried zone match) now. Bridge it back to the synchronous
+  // shape getMatchedPhotos renders inline: cache results per zone-area-set (bumped whenever the
+  // scoring context — source video or active photo filters — changes), fetch on first read, return
+  // empty until it resolves. Zone key is tier-agnostic (tier filtering happens after, below).
+  const [zoneMatchCache, setZoneMatchCache] = useState({});
+  const zoneFetchInFlight = useRef(new Set());
+  const [matchGen, setMatchGen] = useState(0);
+  useEffect(() => { setMatchGen(g => g + 1); }, [sourceVideo?.id, zpHasFilters, JSON.stringify(zpFilters)]);
+  const ensureZoneMatches = (areaNames) => {
+    if (!areaNames.length) return;
+    const cacheKey = `${matchGen}::${areaNames.join("|")}`;
+    if (zoneFetchInFlight.current.has(cacheKey) || zoneMatchCache[cacheKey]) return;
+    zoneFetchInFlight.current.add(cacheKey);
+    const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
+    getLibPhotosForZone(areaNames, vTag, zpHasFilters ? zpFilterPhoto : null)
+      .then((result) => setZoneMatchCache((prev) => ({ ...prev, [cacheKey]: result })))
+      .finally(() => zoneFetchInFlight.current.delete(cacheKey));
+  };
+  // Kick off the fetch for every currently-rendered zone (cheap no-op for already-cached/in-flight keys).
+  useEffect(() => {
+    const keys = [...zoneKeys, ...customZones.filter(cz => cz.sourceType).map(cz => cz.id)];
+    keys.forEach((k) => {
+      const czSrc = customZones.find(cz => cz.id === k);
+      const srcType = czSrc?.sourceType || k;
+      const areaNamesRaw = ZONE_TYPE_TO_AREA[srcType];
+      let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
+      if (!areaNames.length) {
+        const label = (zoneLabelsD[srcType]?.label) || srcType || "";
+        if (label) { const hit = Object.values(ZONE_TYPE_TO_AREA).find(arr => (arr || []).includes(label)); areaNames = hit ? [...hit] : [label]; }
+      }
+      ensureZoneMatches(areaNames);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoneKeys, customZones, matchGen]);
 
   // Strict category filter: Simple=Silver ONLY, Enhanced=Gold ONLY
   // No mixing — each tab shows ONLY its category's photos
@@ -108,10 +153,9 @@ export default function StudioBuild({ ctx }) {
     // Photos tagged the OPPOSITE tier are excluded; untagged photos appear under either tab.
     const tabTier = tier === "enhanced" ? "Enhanced" : tier === "premium" ? "Premium" : "Simple";
     if (areaNames.length) {
-      const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
-      // Apply the active photo filters (event type, venue, palette…) to the pool BEFORE the 50-cap, so a
-      // matching photo (e.g. a Haldi one) isn't dropped by higher-scoring but filtered-out photos.
-      const {exact, similar, fallback} = getLibPhotosForZone(areaNames, vTag, zpHasFilters ? zpFilterPhoto : null);
+      // Async zone match (getLibPhotosForZone) — read from the cache populated by the effect above
+      // (empty arrays until it resolves, same render cost as before once warm).
+      const {exact, similar, fallback} = zoneMatchCache[`${matchGen}::${areaNames.join("|")}`] || { exact: [], similar: [], fallback: [] };
       // getLibPhotosForZone merges non-zone "overflow" fillers into `fallback` (the Manage
       // zone-picker wants those). On Build we must show ONLY photos actually tagged for this
       // zone — otherwise a Stage panel surfaces photos tagged Entry Passage / Bar Counter, etc.
@@ -165,6 +209,10 @@ export default function StudioBuild({ ctx }) {
 
     // 4. NEVER EMPTY — only for unmapped zones. A mapped zone with no tagged photos shows
     // its empty state (prompting the team to tag/upload) rather than random library photos.
+    // NOTE: `libItems` is a lazy cache (not the whole library) now, so this rare last-resort
+    // filler draws from whatever's already been loaded this session rather than a true random
+    // sample of the whole table — acceptable for an edge case (an unmapped custom zone with zero
+    // zone-tagged matches at all).
     if (!areaNames.length && photos.length === 0) {
       for (const img of libItems.slice(0, 50)) {
         if (!img.url || seen.has(img.url)) continue;

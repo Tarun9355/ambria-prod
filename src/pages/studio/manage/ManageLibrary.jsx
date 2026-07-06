@@ -1,13 +1,112 @@
-import { Fragment, useMemo, useState, useRef, useEffect } from "react";
+import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
+import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls } from "../../../lib/studio/libraryQueries";
+
+// Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
+// any sidebar filter, venue selection, or (debounced) search term changes; loadMore() appends.
+// Chip counts are scoped to the same filters/search but NOT the status chip itself, per spec.
+function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhouseVenueNames, search, mergeLibItems }) {
+  const [items, setItems] = useState([]);
+  const [cursor, setCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, nightly: 0, manual: 0 });
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  const reqIdRef = useRef(0);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const status = (libStatus === "nightly" || libStatus === "manual") ? undefined : libStatus;
+  const tagSource = libStatus === "nightly" ? "nightly" : libStatus === "manual" ? "manual" : undefined;
+  const filterKey = JSON.stringify(filters);
+  const venueKey = `${venueGroup}|${venueNames.join(",")}`;
+
+  useEffect(() => {
+    const id = ++reqIdRef.current;
+    setLoading(true); setItems([]); setCursor(null); setHasMore(true);
+    fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
+      .then(({ items: page, nextCursor, hasMore: more }) => {
+        if (id !== reqIdRef.current) return;
+        setItems(page); mergeLibItems(page); setCursor(nextCursor); setHasMore(more);
+      })
+      .catch(() => { if (id === reqIdRef.current) setHasMore(false); })
+      .finally(() => { if (id === reqIdRef.current) setLoading(false); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch]);
+
+  useEffect(() => {
+    fetchLibraryCounts({ filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
+      .then(setCounts).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKey, venueGroup, venueKey, debouncedSearch]);
+
+  const loadMore = useCallback(() => {
+    if (loading || !hasMore || !cursor) return;
+    setLoading(true);
+    fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch, cursor })
+      .then(({ items: page, nextCursor, hasMore: more }) => {
+        setItems((prev) => [...prev, ...page]); mergeLibItems(page); setCursor(nextCursor); setHasMore(more);
+      })
+      .catch(() => setHasMore(false))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, cursor, hasMore, loading]);
+
+  const updateItem = useCallback((id, patch) => setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it))), []);
+  const removeItem = useCallback((id) => setItems((prev) => prev.filter((it) => it.id !== id)), []);
+  const prependItems = useCallback((newItems) => setItems((prev) => [...newItems, ...prev]), []);
+
+  return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems };
+}
+
+// Real component (not a plain helper function) so its hooks are safe even though the grid that
+// renders it is itself toggled on/off by a parent condition — a genuine mount/unmount, not a
+// conditional hook call.
+// getLibPhotosForZone is async (server-queried) now — this bridges it back to the synchronous
+// "just read {exact,similar,fallback}" shape the video zone-photo pickers render inline, by caching
+// results keyed on (zone list + the bits of videoTag that affect scoring) and kicking off a fetch
+// on first read. Returns empty arrays (never null) while a key's fetch is in flight.
+function useZoneMatchCache(getLibPhotosForZone) {
+  const [cache, setCache] = useState({});
+  const inFlight = useRef(new Set());
+  const get = useCallback((zone, videoTag) => {
+    const key = JSON.stringify([Array.isArray(zone) ? zone : [zone], videoTag?.tier, videoTag?.colors, videoTag?.styles, videoTag?.fn, videoTag?.io]);
+    const hit = cache[key];
+    if (hit) return hit;
+    if (!inFlight.current.has(key)) {
+      inFlight.current.add(key);
+      getLibPhotosForZone(zone, videoTag).then((result) => {
+        setCache((prev) => ({ ...prev, [key]: result }));
+      }).finally(() => inFlight.current.delete(key));
+    }
+    return { exact: [], similar: [], fallback: [] };
+  }, [cache, getLibPhotosForZone]);
+  return get;
+}
+
+function LoadMoreSentinel({ onIntersect }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onIntersect(); }, { rootMargin: "300px" });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [onIntersect]);
+  return <div ref={ref} style={{ height: 1 }} />;
+}
 
 // ═══ MANAGE: LIBRARY & CONTENT ═══
 // Faithful rebuild of the reference AmbriStudioInner library view.
 // Reference: App_latest.jsx — ManageLibrary() render block (~11684), LibraryBrowse()
 // (~11042), LibraryAdd() (~11426), LibraryBulk() (~11505), plus the inline helpers
-// libFiltered/toggleLibFilter/toggleLibVenueName/clearLibFilters (~10964–10995).
+// toggleLibFilter/toggleLibVenueName/clearLibFilters (~10964–10995) — filtering/status/search/sort
+// itself is now server-side (usePaginatedLibrary), not the client-side libFiltered memo this once was.
 //
 // Cloudinary photo browser (cld* block, reference ~11706–11817) and the Videos
 // subsystem (libView==="videos" + zone-picker modal, reference ~11846–12319) are
@@ -31,7 +130,7 @@ export default function ManageLibrary({ ctx }) {
     // permissions
     studioLibraryAllowed,
     // library state + persistence
-    libItems, saveLib, libView, setLibView,
+    libItems, saveLib, mergeLibItems, libView, setLibView,
     libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames,
     libEditImg, setLibEditImg, libElSearch, setLibElSearch,
@@ -78,28 +177,8 @@ export default function ManageLibrary({ ctx }) {
   const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
 
   // ── inline helpers (reference ~10964–10995) ──
-  const libFiltered = useMemo(() => {
-    return libItems.filter(img => {
-      if (libSearch.trim()) {
-        const q = libSearch.toLowerCase();
-        if (!(img.name || "").toLowerCase().includes(q)) return false;
-      }
-      for (const k of Object.keys(taxonomy)) {
-        const fv = libFilters[k];
-        if (fv && fv.length > 0) {
-          const it = img.tags?.[k] || [];
-          if (!fv.some(f => it.includes(f))) return false;
-        }
-      }
-      // Venue filter (Inhouse/Outside + specific venue name)
-      const imgVenue = img.tags?.venue || "";
-      if (libVenueGroup === "inhouse" && (!imgVenue || !allInhouseVenues.includes(imgVenue))) return false;
-      if (libVenueGroup === "outside" && (!imgVenue || allInhouseVenues.includes(imgVenue))) return false;
-      if (libVenueNames.length > 0 && !libVenueNames.includes(imgVenue)) return false;
-      return true;
-    });
-  }, [libItems, libSearch, libFilters, libVenueGroup, libVenueNames, allInhouseVenues]);
-
+  // Filtering/status/search/sort now happen server-side (see usePaginatedLibrary below) —
+  // libFilters/libVenueGroup/libVenueNames/libSearch are just the query params.
   const toggleLibFilter = (cat, val) => {
     setLibFilters(prev => {
       const cur = prev[cat] || [];
@@ -131,6 +210,11 @@ export default function ManageLibrary({ ctx }) {
     return hasTag ? "review" : "untagged";
   };
   const [libStatus, setLibStatus] = useState("review"); // review | verified | untagged | nightly | manual — defaults to review so users don't land on Verified images and accidentally retag them
+  const libPage = usePaginatedLibrary({
+    libStatus, filters: libFilters, venueGroup: libVenueGroup, venueNames: libVenueNames,
+    inhouseVenueNames: allInhouseVenues, search: libSearch, mergeLibItems,
+  });
+  const getZoneMatches = useZoneMatchCache(getLibPhotosForZone);
   const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
   useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
@@ -151,7 +235,7 @@ export default function ManageLibrary({ ctx }) {
   const [importingFolder, setImportingFolder] = useState(false); // recursive folder import in progress
   const [rebuildRunning, setRebuildRunning] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState("");
-  const untaggedCount = useMemo(() => libItems.filter(i => i.url && photoStatus(i) === "untagged").length, [libItems]);
+  const untaggedCount = libPage.counts.untagged; // server count (migration 008 `status` column) — not a full-array scan
 
   // Bulk "Tag all untagged" now runs APP-WIDE (in StudioApp) so it keeps going while you move
   // between Studio screens, with a global progress pill + completion toast. This just confirms
@@ -179,8 +263,7 @@ export default function ManageLibrary({ ctx }) {
     setRebuildRunning(true);
     setRebuildMsg("Starting…");
 
-    const existUrls = new Set(libItems.map(l => l.url));
-    const existIds  = new Set(libItems.map(l => l.id));
+    const seen = new Set(); // secure_urls/public_ids collected THIS scan (dedupe within this run)
     const fresh = [];
     let totalScanned = 0;
 
@@ -201,9 +284,9 @@ export default function ManageLibrary({ ctx }) {
             if (!r.secure_url) continue;
             folderScanned++;
             totalScanned++;
-            if (existUrls.has(r.secure_url) || existIds.has(r.public_id)) continue;
-            existUrls.add(r.secure_url);
-            existIds.add(r.public_id);
+            if (seen.has(r.secure_url) || seen.has(r.public_id)) continue;
+            seen.add(r.secure_url);
+            seen.add(r.public_id);
             const name = (r.public_id ?? "").split("/").pop().replace(/[-_]/g, " ");
             fresh.push({
               id: r.public_id,
@@ -225,17 +308,21 @@ export default function ManageLibrary({ ctx }) {
         console.log(`Rebuild: "${topFolder}" — ${folderScanned} scanned`);
       }
 
-      const skipped = totalScanned - fresh.length;
-      if (fresh.length === 0) {
+      // Batched server existence check (not a full-table scan) drops anything already in the Library.
+      setRebuildMsg(`Checking ${fresh.length} candidates against the Library…`);
+      const existing = await checkExistingLibraryUrls(fresh.map(r => r.url));
+      const newImgs = fresh.filter(r => !existing.has(r.url));
+      const skipped = totalScanned - newImgs.length;
+      if (newImgs.length === 0) {
         showMsg(`Library up to date — all ${totalScanned} Cloudinary images already in Library.`, "green");
         return;
       }
 
-      setRebuildMsg(`Saving ${fresh.length} new images…`);
-      const merged = [...libItems, ...fresh];
-      await saveLib(merged);
+      setRebuildMsg(`Saving ${newImgs.length} new images…`);
+      await saveLib(newImgs);
+      libPage.prependItems(newImgs.filter(i => libStatus === "untagged"));
       showMsg(
-        `✅ Library rebuilt: ${fresh.length} added (${skipped} already existed, ${merged.length} total). ` +
+        `✅ Library rebuilt: ${newImgs.length} added (${skipped} already existed). ` +
         `Run "🤖 Tag all untagged" next.`,
         "green"
       );
@@ -248,15 +335,9 @@ export default function ManageLibrary({ ctx }) {
     }
   };
 
-  // Apply the status filter on top of libFiltered (kept out of the memo to not disturb its deps).
-  const libVisibleUnsorted = libStatus === "nightly" ? libFiltered.filter(i => i.tagSource === "nightly")
-    : libStatus === "manual" ? libFiltered.filter(i => i.tagSource === "manual")
-    : libFiltered.filter(i => photoStatus(i) === libStatus);
-  // Nightly/Manual/Needs-review all surface AI-tagging activity — show most recently tagged first
-  // (using the _aiTaggedAt stamp written by the nightly cron, bulk/selected tagger, and single AI Tag button).
-  const libVisible = (libStatus === "nightly" || libStatus === "manual" || libStatus === "review")
-    ? [...libVisibleUnsorted].sort((a, b) => (b._aiTaggedAt || 0) - (a._aiTaggedAt || 0))
-    : libVisibleUnsorted;
+  // Status filter, search, sidebar filters, and sort (most-recently-tagged first for
+  // review/nightly/manual) all happen server-side now — see usePaginatedLibrary above.
+  const libVisible = libPage.items;
 
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   const LibraryBrowse = () => (
@@ -314,11 +395,11 @@ export default function ManageLibrary({ ctx }) {
         {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
-            ["verified", "✅", "Verified", "reviewed by a person", libFiltered.filter(i => photoStatus(i) === "verified").length, "#059669"],
-            ["review", "🤖", "Needs review", "AI-tagged — to check", libFiltered.filter(i => photoStatus(i) === "review").length, "#7C3AED"],
-            ["untagged", "❓", "Untagged", "no tags yet", libFiltered.filter(i => photoStatus(i) === "untagged").length, "#9CA3AF"],
-            ["nightly", "🌙", "Nightly Tagged", "tagged by nightly cron", libFiltered.filter(i => i.tagSource === "nightly").length, "#0EA5E9"],
-            ["manual", "✋", "Manual Tagged", "tagged via manual selection", libFiltered.filter(i => i.tagSource === "manual").length, "#F59E0B"],
+            ["verified", "✅", "Verified", "reviewed by a person", libPage.counts.verified, "#059669"],
+            ["review", "🤖", "Needs review", "AI-tagged — to check", libPage.counts.review, "#7C3AED"],
+            ["untagged", "❓", "Untagged", "no tags yet", libPage.counts.untagged, "#9CA3AF"],
+            ["nightly", "🌙", "Nightly Tagged", "tagged by nightly cron", libPage.counts.nightly, "#0EA5E9"],
+            ["manual", "✋", "Manual Tagged", "tagged via manual selection", libPage.counts.manual, "#F59E0B"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
             return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
@@ -343,7 +424,7 @@ export default function ManageLibrary({ ctx }) {
               return (
                 <span style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 8, marginLeft: 2, borderLeft: `1px solid ${border}` }} title={tagKB?.fromCount ? `Knowledge base learned from ${tagKB.fromCount} verified photos. Fed to the AI tagger so it follows your conventions.` : "No knowledge base yet — verify some photos, then rebuild."}>
                   <span style={{ fontSize: 10, color: textS }}>🧠 KB: {tagKB?.fromCount ? `${tagKB.fromCount} verified · ${rel}` : "not built"}</span>
-                  <button onClick={() => { const kb = rebuildTagKB(); showMsg(kb ? `🧠 Knowledge base rebuilt from ${kb.fromCount} verified photos` : "No verified photos yet to learn from", kb ? "green" : "orange"); }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>↻ Rebuild</button>
+                  <button onClick={async () => { const kb = await rebuildTagKB(); showMsg(kb ? `🧠 Knowledge base rebuilt from ${kb.fromCount} verified photos` : "No verified photos yet to learn from", kb ? "green" : "orange"); }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>↻ Rebuild</button>
                   {saveTax && <button onClick={() => setTagRules(String(taxonomy.taggingStandards || ""))} title="House tagging rules the AI must follow (e.g. 'always count every light')" style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>📋 Rules</button>}
                 </span>
               );
@@ -352,7 +433,7 @@ export default function ManageLibrary({ ctx }) {
         </div>
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libItems.length} images</span>
+          <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libPage.counts[libStatus] ?? libVisible.length}{libPage.loading ? "…" : ""}</span>
           {libStatus === "untagged" && libVisible.length > 0 && (
             <>
               <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>
@@ -372,11 +453,11 @@ export default function ManageLibrary({ ctx }) {
             </>
           )}
         </div>
-        {libFiltered.length === 0 && libItems.length === 0 && (
+        {!libPage.loading && libVisible.length === 0 && (
           <div style={{ textAlign: "center", padding: 60, color: textS }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📸</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Library is empty</div>
-            <div style={{ fontSize: 12 }}>Switch to "Add images" or "Bulk import" to start building your library</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>No images here</div>
+            <div style={{ fontSize: 12 }}>Try a different status tab or clear filters — or switch to "Add images"/"Bulk import" to add photos.</div>
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
@@ -384,7 +465,7 @@ export default function ManageLibrary({ ctx }) {
             const isSel = libSelected.has(img.id);
             return (
             <div key={img.id} onClick={() => libStatus === "untagged" && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
-              <img src={img.url} alt="" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
+              <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
               {(() => { const st = photoStatus(img); const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" }; return <div title={st === "verified" ? "Verified by a person" : st === "review" ? "AI-tagged — needs review" : "Untagged"} style={{ position: "absolute", top: 6, left: 6, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>; })()}
               {/* Checkbox — shown in untagged view; clicking it toggles selection without opening detail */}
               {libStatus === "untagged" && (
@@ -405,6 +486,15 @@ export default function ManageLibrary({ ctx }) {
           );
           })}
         </div>
+        {libPage.loading && <div style={{ textAlign: "center", padding: 16, fontSize: 11, color: textS }}>Loading…</div>}
+        {!libPage.loading && libPage.hasMore && libVisible.length > 0 && (
+          <>
+            <LoadMoreSentinel onIntersect={libPage.loadMore} />
+            <div style={{ textAlign: "center", marginTop: 12 }}>
+              <button onClick={libPage.loadMore} style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px" }}>Load more</button>
+            </div>
+          </>
+        )}
         {/* House tagging-rules editor — saved to taxonomy.taggingStandards, injected into the tagger */}
         {tagRules !== null && (
           <div onClick={() => setTagRules(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 20 }}>
@@ -465,8 +555,12 @@ export default function ManageLibrary({ ctx }) {
                         return;
                       }
                       // A human save = Verified: stamps who/when so it leaves the "needs review" pile.
+                      const wasVerified = !!libEditImg._verified;
                       const verified = { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
-                      saveLib(libItems.map(i => i.id === libEditImg.id ? verified : i));
+                      saveLib([verified]);
+                      // Already-verified photo re-saved → update in place; newly-verified → it just
+                      // left this tab (review/untagged/nightly/manual), drop it from the visible page.
+                      if (wasVerified) libPage.updateItem(verified.id, verified); else libPage.removeItem(verified.id);
                       setLibEditImg(verified);
                       logCorrection?.({ photoId: libEditImg.id, photoName: libEditImg.name, source: "library" });
                       // Capture per-field corrections (AI suggestion → what the human saved) so future
@@ -477,7 +571,7 @@ export default function ManageLibrary({ ctx }) {
                       // Dim the Save button when Full Box + no density to give visual cue
                       opacity: (libEditImg.dims?.trussL && libEditImg.dims?.trussW && libEditImg.dims?.trussH && !libEditImg.dims?.drapeDensity) ? 0.45 : 1
                     }}>{libEditImg._verified ? "✅ Save" : "✅ Save & Verify"}</button>
-                    <button onClick={() => { saveLib(libItems.filter(i => i.id !== libEditImg.id), [libEditImg.id]); setLibEditImg(null); }} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px", color: "#E11D48" }}>Delete</button>
+                    <button onClick={() => { saveLib([], [libEditImg.id]); libPage.removeItem(libEditImg.id); setLibEditImg(null); }} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px", color: "#E11D48" }}>Delete</button>
                     <button onClick={() => setLibEditImg(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Close</button>
                   </div>
                 </div>
@@ -799,7 +893,8 @@ export default function ManageLibrary({ ctx }) {
     const doSave = () => {
       if (!libAddPreview) return;
       const newImg = { id: "LIB" + Date.now().toString(36), url: libAddPreview.url, name: libAddPreview.name, tags: libAddPreview.tags, elements: libAddPreview.elements || [], addedAt: Date.now(), source: "internal" };
-      saveLib([...libItems, newImg]);
+      saveLib([newImg]);
+      if (photoStatus(newImg) === libStatus) libPage.prependItems([newImg]);
       setLibAddUrl(""); setLibAddPreview(null);
     };
     const toggleTag = (cat, val) => {
@@ -960,7 +1055,9 @@ export default function ManageLibrary({ ctx }) {
         id: "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
         url: q.url, name: q.name, tags: q.tags, elements: q.elements || [], addedAt: Date.now(), source: "internal"
       }));
-      saveLib([...libItems, ...newImgs]);
+      saveLib(newImgs);
+      const matching = newImgs.filter(i => photoStatus(i) === libStatus);
+      if (matching.length) libPage.prependItems(matching);
       setLibBulkQueue([]); setLibBulkText(""); setLibBulkProgress(0);
     };
     const toggleBulkTag = (idx, cat, val) => {
@@ -1117,12 +1214,12 @@ export default function ManageLibrary({ ctx }) {
             <div style={{fontSize:10,color:textS}}>{cldImages.length} images{cldPath.length>0?` · folder "${cldPath[cldPath.length-1]}"`:""}</div>
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
               {/* Phase 3 — import a whole event folder: stamp the event name + auto-sort by zone from filename */}
-              <button onClick={()=>{
+              <button onClick={async ()=>{
                 const eventName=(cldPath[cldPath.length-1]||"Event").toString();
                 const zones=taxonomy.areasElements||[];
                 const KW={stage:"Stage",entry:"Entry Passage",passage:"Entry Passage",vedi:"Vedi",mandap:"Vedi",lounge:"Centre Lounge","side lounge":"Side Lounge",photobooth:"Photobooth","photo booth":"Photobooth",centrepiece:"Centre Pieces","centre piece":"Centre Pieces","center piece":"Centre Pieces",prop:"Props",install:"Installations"};
                 const detectZone=(f)=>{ const s=f.toLowerCase(); let z=zones.find(zn=>s.includes(zn.toLowerCase())); if(z)return z; for(const [k,zn] of Object.entries(KW)){ if(s.includes(k)&&zones.includes(zn))return zn; } return ""; };
-                const existUrls=new Set(libItems.map(l=>l.url));
+                const existUrls=await checkExistingLibraryUrls(cldImages.map(img=>img.secure_url));
                 const stamp=Date.now().toString(36);
                 const newImgs=cldImages.filter(img=>!existUrls.has(img.secure_url)).map((img,ix)=>{
                   const fname=(img.public_id||"").split("/").pop().replace(/[-_]/g," ");
@@ -1130,12 +1227,14 @@ export default function ManageLibrary({ ctx }) {
                   return { id:"LIB"+stamp+ix.toString(36)+Math.random().toString(36).slice(2,4), url:img.secure_url, name:fname, tags:{eventType:[],venueType:[],venue:"",areasElements:zone?[zone]:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]}, elements:[], addedAt:Date.now(), source:"folder-import", _event:eventName };
                 });
                 if(!newImgs.length){showMsg("All photos in this folder are already in the Library","orange");return;}
-                saveLib([...libItems,...newImgs]);
+                saveLib(newImgs);
+                const matching=newImgs.filter(i=>photoStatus(i)===libStatus);
+                if(matching.length) libPage.prependItems(matching);
                 const zoned=newImgs.filter(i=>(i.tags.areasElements||[]).length).length;
                 showMsg(`✓ Imported ${newImgs.length} photos as event "${eventName}"${zoned?` · ${zoned} auto-sorted by zone`:""}. Now run "🤖 Tag all untagged".`,"green");
               }} disabled={cldPath.length===0} style={{...S.btn(true),fontSize:10,padding:"6px 12px",opacity:cldPath.length===0?0.4:1}}>📁 Import as event folder</button>
-              <button onClick={()=>{
-                const existUrls=new Set(libItems.map(l=>l.url));
+              <button onClick={async ()=>{
+                const existUrls=await checkExistingLibraryUrls(cldImages.map(img=>img.secure_url));
                 const stamp=Date.now().toString(36);
                 const newImgs=cldImages.filter(img=>!existUrls.has(img.secure_url)).map((img,ix)=>({
                   id:"LIB"+stamp+ix.toString(36)+Math.random().toString(36).slice(2,4),
@@ -1145,7 +1244,9 @@ export default function ManageLibrary({ ctx }) {
                   elements:[],addedAt:Date.now(),source:"cloudinary"
                 }));
                 if(!newImgs.length){showMsg("All already in Library","orange");return;}
-                saveLib([...libItems,...newImgs]);
+                saveLib(newImgs);
+                const matching=newImgs.filter(i=>photoStatus(i)===libStatus);
+                if(matching.length) libPage.prependItems(matching);
                 showMsg(`✓ ${newImgs.length} photos added to Library — tag them now`,"green");
               }} style={{...S.btn(false),fontSize:10,padding:"6px 12px"}}>Add All ({cldImages.length})</button>
             </div>
@@ -1156,15 +1257,18 @@ export default function ManageLibrary({ ctx }) {
               const alreadyAdded=libItems.some(l=>l.url===imgUrl);
               const isSelected=cldSelected.has(img.public_id);
               return <div key={img.public_id} style={{position:"relative",borderRadius:6,overflow:"hidden",border:isSelected?`2px solid #E11D48`:`1px solid ${border}`}}>
-                <div onClick={()=>{
+                <div onClick={async ()=>{
                   if(cldSelectMode){
                     const ns=new Set(cldSelected);
                     if(ns.has(img.public_id))ns.delete(img.public_id);else ns.add(img.public_id);
                     setCldSelected(ns);return;
                   }
-                  if(alreadyAdded){showMsg("Already in Library","orange");return;}
+                  // Authoritative check at click time — `alreadyAdded` (below) only reflects the lazy
+                  // local cache and is a visual hint, not a guarantee, now that libItems isn't the whole table.
+                  if((await checkExistingLibraryUrls([imgUrl])).has(imgUrl)){showMsg("Already in Library","orange");return;}
                   const libImg={id:"LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),url:imgUrl,name:(img.public_id||"").split("/").pop().replace(/[-_]/g," "),tags:{eventType:[],venueType:[],venue:"",areasElements:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]},elements:[],addedAt:Date.now(),source:"cloudinary"};
-                  saveLib([...libItems,libImg]);
+                  saveLib([libImg]);
+                  if (photoStatus(libImg) === libStatus) libPage.prependItems([libImg]);
                   showMsg("✓ Added to Library — tap to tag it","green");
                 }} style={{cursor:"pointer",opacity:alreadyAdded&&!cldSelectMode?0.5:1}}>
                   <img src={imgUrl} alt="" style={{width:"100%",height:70,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.display="none"}}/>
@@ -1200,7 +1304,7 @@ export default function ManageLibrary({ ctx }) {
                 {Object.keys(taxonomy).map(k => (libAddPreview.tags?.[k] || []).map(v => <span key={`${k}-${v}`} style={{ padding: "2px 6px", fontSize: 9, borderRadius: 6, background: `${accent}12`, color: accent }}>{v}</span>))}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => { const ni = { id: "LIB" + Date.now().toString(36), url: libAddPreview.url, name: libAddPreview.name, tags: libAddPreview.tags, elements: libAddPreview.elements || [], addedAt: Date.now(), source: "internal" }; saveLib([...libItems, ni]); setLibAddUrl(""); setLibAddPreview(null); }} style={{ ...S.btn(true), fontSize: 11 }}>✓ Save to library</button>
+                <button onClick={() => { const ni = { id: "LIB" + Date.now().toString(36), url: libAddPreview.url, name: libAddPreview.name, tags: libAddPreview.tags, elements: libAddPreview.elements || [], addedAt: Date.now(), source: "internal" }; saveLib([ni]); if (photoStatus(ni) === libStatus) libPage.prependItems([ni]); setLibAddUrl(""); setLibAddPreview(null); }} style={{ ...S.btn(true), fontSize: 11 }}>✓ Save to library</button>
                 <button onClick={() => setLibAddPreview(null)} style={{ ...S.btn(false), fontSize: 11 }}>Cancel</button>
               </div>
             </div>
@@ -1211,7 +1315,7 @@ export default function ManageLibrary({ ctx }) {
       {libShowBulk && LibraryBulk()}
       {/* Images / Videos toggle */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-        {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libItems.length})</button>}
+        {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes ({imsPaletteCatalogue.length})</button>
@@ -1635,7 +1739,7 @@ export default function ManageLibrary({ ctx }) {
                       const zp=tag.zonePhotos||{};
                       const libId=zp[zone];
                       const chosen=libId?libItems.find(li=>li.id===libId):null;
-                      const {exact,similar}=getLibPhotosForZone(zone,tag);
+                      const {exact,similar}=getZoneMatches(zone,tag);
                       const cands=[...exact,...similar];
                       // keep the chosen photo visible even if it isn't in the top matches
                       const stripList=[...(chosen&&!cands.find(c=>c.id===chosen.id)?[chosen]:[]),...cands].slice(0,14);
@@ -1681,7 +1785,7 @@ export default function ManageLibrary({ ctx }) {
       {/* ═══ FULL-SCREEN LIBRARY PICKER MODAL ═══ */}
       {zonePickerVid&&zonePickerZone&&(()=>{
         const vTag=ytVideoTags[zonePickerVid]||{};
-        const {exact:rawExact,similar:rawSimilar,fallback:rawFallback}=getLibPhotosForZone(zonePickerZone,vTag);
+        const {exact:rawExact,similar:rawSimilar,fallback:rawFallback}=getZoneMatches(zonePickerZone,vTag);
         const exact=zpHasFilters?rawExact.filter(zpFilterPhoto):rawExact;
         const similar=zpHasFilters?rawSimilar.filter(zpFilterPhoto):rawSimilar;
         const fallback=zpHasFilters?rawFallback.filter(zpFilterPhoto):rawFallback;
@@ -1843,7 +1947,7 @@ export default function ManageLibrary({ ctx }) {
               {zones.map(zone => {
                 const zp = vTag.zonePhotos || {};
                 const chosenId = zp[zone];
-                const { exact, similar, fallback } = getLibPhotosForZone(zone, vTag);
+                const { exact, similar, fallback } = getZoneMatches(zone, vTag);
                 const cands = [...exact, ...similar, ...fallback];
                 const chosen = chosenId ? libItems.find(l => l.id === chosenId) : null;
                 const strip = [...(chosen && !cands.find(c => c.id === chosen.id) ? [chosen] : []), ...cands].slice(0, 40);

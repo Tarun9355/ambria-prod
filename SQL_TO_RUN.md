@@ -83,5 +83,27 @@ deploy the app, (3) redeploy the tagger: `supabase functions deploy batch-tagger
 
 ---
 
+## Library status/tag-source/tagged-at columns (migration 008) — ⬜ RUN THEN TELL CLAUDE TO BACKFILL
+Server-side pagination for the Library browse page needs to filter/sort by verified status,
+nightly-vs-manual tag source, and tagging timestamp WITHOUT unpacking the `data` JSONB blob on
+every query. Adds three typed mirror columns + indexes. Run this ONCE in the SQL editor, then
+tell Claude to backfill existing rows from `data`.
+```sql
+ALTER TABLE public.library
+  ADD COLUMN IF NOT EXISTS status TEXT,       -- 'verified' | 'review' | 'untagged'
+  ADD COLUMN IF NOT EXISTS tag_source TEXT,   -- 'nightly' | 'manual' | NULL
+  ADD COLUMN IF NOT EXISTS tagged_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_library_status_tagged ON public.library (status, tagged_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_library_tag_source ON public.library (tag_source);
+CREATE INDEX IF NOT EXISTS idx_library_created ON public.library (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_library_tags_gin ON public.library USING GIN (tags);
+```
+After running: (1) Claude backfills `status`/`tag_source`/`tagged_at` for existing rows from
+`data`, (2) redeploy the tagger so nightly runs keep the columns in sync:
+`supabase functions deploy batch-tagger`.
+
+---
+
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)

@@ -51,31 +51,21 @@ Deno.serve(async (req) => {
   const [taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
     [TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
 
-  // Library is now the `library` TABLE (row-per-photo), not the settings blob. The full item lives
-  // in the `data` JSONB column; typed columns are mirrors. Read all rows (paginated — 1000 cap).
+  // Library is the `library` TABLE (row-per-photo); the full item lives in the `data` JSONB
+  // column, typed columns (incl. status/tag_source/tagged_at — migration 008) are mirrors.
+  // "untagged" is now a straight indexed column filter instead of a full-table scan + heuristic.
   const rowToItem = (row: any) => (row?.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length)
     ? { ...row.data, id: row.id }
     : { id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [], dims: row.dims || {} };
-  const fetchLibraryRows = async () => {
-    const all: any[] = []; const SIZE = 1000;
-    for (let from = 0; ; from += SIZE) {
-      const { data, error } = await db.from("library").select("*").order("id").range(from, from + SIZE - 1);
-      if (error) throw new Error(error.message);
-      all.push(...(data || []));
-      if (!data || data.length < SIZE) break;
-    }
-    return all;
-  };
-  const library = (await fetchLibraryRows()).map(rowToItem);
   const tax = taxonomy || {};
   const rc = Array.isArray(rateCard) ? rateCard : [];
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
   const colorVals = paletteVals.length ? paletteVals : (tax.colorPalette || []);
 
-  // Untagged = has an image, not human-verified, not already AI-tagged, and no tags yet.
-  const isUntagged = (i: any) => i && i.url && !i._verified && !i._aiTagged &&
-    !(i.tags && Object.values(i.tags).some((v: any) => Array.isArray(v) && v.length));
-  const targets = library.filter(isUntagged).slice(0, MAX_PER_RUN);
+  const { data: untaggedRows, error: untErr } = await db.from("library")
+    .select("*").eq("status", "untagged").order("created_at", { ascending: true }).limit(MAX_PER_RUN);
+  if (untErr) return json({ error: untErr.message }, 500);
+  const targets = (untaggedRows || []).map(rowToItem).filter((i: any) => i && i.url);
   if (!targets.length) return json({ ok: true, tagged: 0, message: "nothing untagged" });
 
   // Recent corrections → "learn from these".
@@ -178,7 +168,13 @@ Return ONLY JSON matching the provided schema.`;
   if (ok > 0) {
     const rows = targets.filter((img: any) => patches[img.id]).map((img: any) => {
       const item = { ...img, ...patches[img.id] };
-      return { id: item.id, name: item.name ?? null, url: item.url ?? null, tags: item.tags || {}, elements: item.elements || [], dims: item.dims || {}, data: item, updated_at: new Date().toISOString() };
+      // All rows here just got real tags from a target that was status='untagged' and never
+      // verified (isUntagged/status filter excludes _verified rows) — always lands on 'review'.
+      return {
+        id: item.id, name: item.name ?? null, url: item.url ?? null, tags: item.tags || {}, elements: item.elements || [], dims: item.dims || {}, data: item,
+        status: "review", tag_source: "nightly", tagged_at: new Date(item._aiTaggedAt).toISOString(),
+        updated_at: new Date().toISOString(),
+      };
     });
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await db.from("library").upsert(rows.slice(i, i + 500), { onConflict: "id" });

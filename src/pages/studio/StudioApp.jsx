@@ -32,7 +32,7 @@ import { ytApi, ytDuration } from "../../lib/youtube";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
-  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, libPhotoIsTagged, ZONE_TYPE_TO_AREA,
+  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
 } from "../../lib/studio/taxonomy";
 
 // Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
@@ -55,6 +55,11 @@ import {
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
+import {
+  rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
+  fetchZoneLibraryPhotos, fetchRecentLibraryPhotos, fetchUntaggedLibraryTargets,
+  fetchVerifiedLibraryPhotos, checkExistingLibraryUrls,
+} from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
@@ -900,35 +905,11 @@ async function fetchIMSData(date) {
   }
 }
 
-// ═══ Studio library ↔ `library` TABLE mappers (migrated off the settings blob) ═══
-// The full item lives in the `data` JSONB column (all fields, incl. _verified/_aiTagged/lightCount/
-// unrecognized); typed columns (name/url/tags/elements/dims/linked_templates) are mirrored for
-// queries. Reading prefers `data` (full fidelity) and falls back to typed columns.
-function rowToLibItem(row) {
-  if (!row) return null;
-  const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
-  if (d) return { ...d, id: row.id };
-  return { id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [], dims: row.dims || {}, linkedTemplates: row.linked_templates || [] };
-}
-function libItemToRow(it) {
-  return {
-    id: it.id, name: it.name ?? null, url: it.url ?? null,
-    tags: it.tags || {}, elements: it.elements || [], dims: it.dims || {},
-    linked_templates: it.linkedTemplates || it.linked_templates || [],
-    data: it,
-  };
-}
-// Paginated load — fetchAll caps at 1000 rows; the library can be 2000+.
-async function loadLibraryRows() {
-  const all = []; const SIZE = 1000;
-  for (let from = 0; ; from += SIZE) {
-    const { data, error } = await supabase.from("library").select("*").order("id").range(from, from + SIZE - 1);
-    if (error) throw error;
-    all.push(...(data || []));
-    if (!data || data.length < SIZE) break;
-  }
-  return all;
-}
+// ═══ Studio library ═══
+// The `library` table is no longer loaded whole into memory — `rowToLibItem`/`libItemToRow`
+// (server-side pagination query layer) live in ../../lib/studio/libraryQueries.js. `libItems`
+// below is a lazily-populated cache of whatever's been fetched this session (browse page, zone
+// match, point lookup, KB, bulk tag) — see `mergeLibItems`, not "the whole table".
 
 // truss_allocations row → in-memory entry (mirrors IMS rowToAlloc): pool spread + date + events.
 function rowToAlloc(row) { return { ...(row.pool || {}), date: row.date, events: row.events || [] }; }
@@ -1077,6 +1058,31 @@ export default function StudioApp() {
   const [bulkVid, setBulkVid] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk VIDEO AI tagging progress
   const bulkVidStop = useRef(false);
   useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
+  // Merge freshly-fetched rows into the shared lazy library cache (by id) — every targeted query
+  // (browse page, zone match, point lookup, KB, bulk tag) funnels its results through this instead
+  // of replacing state, so the cache accumulates/dedupes rather than being "the whole table".
+  const mergeLibItems = useCallback((items) => {
+    if (!items || !items.length) return;
+    setLibItems((prev) => {
+      const byId = new Map(prev.map((it) => [it.id, it]));
+      items.forEach((it) => { if (it && it.id) byId.set(it.id, it); });
+      const next = [...byId.values()];
+      libItemsRef.current = next;
+      return next;
+    });
+  }, []);
+  // Given ids/urls a screen is ABOUT to look up synchronously (libItems.find(...)), make sure
+  // they're cached first — a small targeted fetch instead of ever loading the whole table.
+  const ensureLibItems = useCallback(async (ids) => {
+    const missing = [...new Set((ids || []).filter(Boolean))].filter((id) => !libItemsRef.current.some((it) => it.id === id));
+    if (!missing.length) return;
+    try { mergeLibItems(await fetchLibraryItemsByIds(missing)); } catch { /* ignore */ }
+  }, [mergeLibItems]);
+  const ensureLibItemsByUrl = useCallback(async (urls) => {
+    const missing = [...new Set((urls || []).filter(Boolean))].filter((u) => !libItemsRef.current.some((it) => it.url === u));
+    if (!missing.length) return;
+    try { mergeLibItems(await fetchLibraryItemsByUrls(missing)); } catch { /* ignore */ }
+  }, [mergeLibItems]);
   const [libSearch, setLibSearch] = useState("");
   const [libFilters, setLibFilters] = useState({});
   const [libVenueGroup, setLibVenueGroup] = useState("all");
@@ -1619,6 +1625,15 @@ export default function StudioApp() {
   const [ytPicker, setYtPicker] = useState(null);
   const [ytLastFetch, setYtLastFetch] = useState(0);
   const [ytVideoTags, setYtVideoTags] = useState({});
+  // Video tags reference library photos by id for their per-zone "default photo" (zonePhotos).
+  // Those ids came from a possibly-past session and aren't necessarily in the lazy library cache
+  // yet (Build/cost-calc do a plain `libItems.find(id)`), so prefetch all of them once whenever
+  // the video tags load/change — bounded by however many videos are tagged, nowhere near the whole
+  // library. ensureLibItems no-ops for ids already cached, so this is cheap on repeat calls.
+  useEffect(() => {
+    const ids = Object.values(ytVideoTags || {}).flatMap((t) => Object.values(t?.zonePhotos || {}));
+    if (ids.length) ensureLibItems(ids);
+  }, [ytVideoTags, ensureLibItems]);
   const [ytTagEdit, setYtTagEdit] = useState(null);
   const [tagVenueGroup, setTagVenueGroup] = useState("inhouse");
   const [tagOutsideSub, setTagOutsideSub] = useState("all");
@@ -1784,9 +1799,8 @@ export default function StudioApp() {
       // zone→area) ran unconditionally on every load and silently restored deleted zones/areas
       // from hardcoded defaults — same class of bug as the category orphan-recovery. Zones and
       // taxonomy are now fully user-managed; create/delete via the Zone editor.
-      // Library — now row-per-photo in the `library` TABLE (migrated off the settings blob so a
-      // single stale whole-array save can't wipe everyone's tags). Paginated: fetchAll caps at 1000.
-      try { const rows = await loadLibraryRows(); if (Array.isArray(rows) && !cancelled) { const items = rows.map(rowToLibItem); libItemsRef.current = items; setLibItems(items); } } catch { /* ignore */ }
+      // Library — row-per-photo in the `library` TABLE, server-side paginated (no whole-table
+      // fetch on mount — see `libraryQueries.js` + `mergeLibItems`). Nothing to eagerly load here.
       // Correction log (contribution tracking)
       try { const v = await kvGet(CORR_SK); if (v != null) { const cp = parse(v); if (Array.isArray(cp) && !cancelled) { setCorrLog(cp); corrLogRef.current = cp; } } } catch {}
       try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
@@ -1924,8 +1938,12 @@ export default function StudioApp() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
-  // ── Realtime: library is now a TABLE — apply row-level INSERT/UPDATE/DELETE live (replaces the
-  // old whole-blob LIB_SK reload). Echoes of our own writes are idempotent (same row back). ──
+  // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
+  // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
+  // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
+  // otherwise the nightly cron tagging thousands of rows overnight would silently balloon every
+  // open tab's cache. Screens that need a specific row fetch it themselves (ensureLibItems / the
+  // paginated browse query / zone match query), which is what populates the cache in the first place.
   useEffect(() => {
     const ch = subscribeTable("library", (payload) => {
       try {
@@ -1936,8 +1954,8 @@ export default function StudioApp() {
         } else if (payload.new) {
           const item = rowToLibItem(payload.new); if (!item?.id) return;
           const prev = libItemsRef.current || [];
-          const idx = prev.findIndex((it) => it.id === item.id);
-          const next = idx >= 0 ? prev.map((it) => (it.id === item.id ? item : it)) : [...prev, item];
+          if (!prev.some((it) => it.id === item.id)) return;
+          const next = prev.map((it) => (it.id === item.id ? item : it));
           libItemsRef.current = next; setLibItems(next);
         }
       } catch { /* ignore */ }
@@ -2022,19 +2040,22 @@ export default function StudioApp() {
   }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
   const saveZD = useCallback(async (nd) => { setZoneDefs(nd); await reliableSave(ZONE_DEF_SK, JSON.stringify(nd), "Zone config"); }, []);
-  // Sync libItemsRef SYNCHRONOUSLY (not just via the [libItems] effect) so the background bulk-tagger's
-  // next flush merges into the just-saved array — otherwise it can flush a pre-save snapshot and wipe a
-  // manual _verified stamp. (Root cause of "verified images sliding back to needs-review".)
-  // Row-level library persistence (migrated off the whole-blob save that caused mass data loss).
-  // Callers still pass the full next array (+ optional deletedIds); we UPSERT only the rows that
-  // actually changed and DELETE only ids explicitly passed. Crucially we NEVER delete a row just
-  // because it's absent from `nl` — so a stale client holding a partial library can't wipe the rest.
+  // Row-level library persistence. `nl` is the set of items to upsert (NOT the whole library —
+  // now that `libItems` is a lazy cache rather than the full table, callers pass just the item(s)
+  // they changed/added, or a locally-known slice with edits applied — either way). We UPSERT only
+  // the rows that actually changed vs. what was cached, DELETE only ids explicitly passed in
+  // `deletedIds`, and MERGE `nl` into the existing cache (never replace it wholesale) — so saving
+  // one edited photo can't wipe out everything else a screen has already loaded.
   const saveLib = useCallback(async (nl, deletedIds) => {
     const prev = libItemsRef.current || [];
     const prevById = {}; prev.forEach((it) => { if (it && it.id) prevById[it.id] = it; });
-    libItemsRef.current = nl; setLibItems(nl);
     const changed = (nl || []).filter((it) => it && it.id && JSON.stringify(prevById[it.id]) !== JSON.stringify(it));
     const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    const byId = new Map(prev.map((it) => [it.id, it]));
+    (nl || []).forEach((it) => { if (it && it.id) byId.set(it.id, it); });
+    dels.forEach((id) => byId.delete(id));
+    const merged = [...byId.values()];
+    libItemsRef.current = merged; setLibItems(merged);
     try {
       if (changed.length) {
         const rows = changed.map((it) => ({ ...libItemToRow(it), updated_at: new Date().toISOString() }));
@@ -2056,8 +2077,11 @@ export default function StudioApp() {
   // ── AI-tagging knowledge base (distilled from VERIFIED photos) ──────────────────────────────────
   // Rebuilt from the current verified library; injected into the tagger's cached prompt. Lighting
   // rate-card names let it total "lights" per photo. Returns the new KB (or null if nothing verified).
-  const rebuildTagKB = useCallback(() => {
-    const verified = (libItemsRef.current || []).filter((i) => i && i._verified && i.tags);
+  // Fetches verified photos directly (server-side `status='verified'` query) rather than relying
+  // on the lazy libItems cache — the KB needs the WHOLE verified set, which the cache can't promise.
+  const rebuildTagKB = useCallback(async () => {
+    const verified = (await fetchVerifiedLibraryPhotos()).filter((i) => i && i.tags);
+    mergeLibItems(verified);
     if (!verified.length) return null;
     const lightNames = new Set((rcItems || []).filter((i) => String(i.cat || "").toLowerCase() === "lighting").map((i) => String(i.name).toLowerCase().trim()));
     const kb = buildTagKB(verified, lightNames);
@@ -2065,18 +2089,17 @@ export default function StudioApp() {
     setTagKB(kb);
     reliableSave(TAG_KB_SK, JSON.stringify(kb), "Tag knowledge base").catch(() => {});
     return kb;
-  }, [rcItems]);
-  // Auto-refresh: once the library has loaded, rebuild the KB if it's missing or older than 24h.
-  // Runs at most once per app load (the ref guard); the manual "Rebuild now" button bypasses it.
+  }, [rcItems, mergeLibItems]);
+  // Auto-refresh: rebuild the KB if it's missing or older than 24h. Runs at most once per app load
+  // (the ref guard); the manual "Rebuild now" button bypasses it. rebuildTagKB itself no-ops (returns
+  // null) when there's nothing verified yet, so no separate "is there anything to learn from" gate is needed here.
   useEffect(() => {
     if (tagKBRebuildRef.current) return;
-    const verifiedCount = (libItems || []).filter((i) => i && i._verified).length;
-    if (verifiedCount === 0) return; // nothing to learn from yet
     const stale = !tagKB || !tagKB.builtAt || (Date.now() - tagKB.builtAt > 24 * 3600 * 1000);
     if (!stale) { tagKBRebuildRef.current = true; return; }
     tagKBRebuildRef.current = true;
     rebuildTagKB();
-  }, [libItems, tagKB, rebuildTagKB]);
+  }, [tagKB, rebuildTagKB]);
   const saveTax = useCallback(async (nt) => { setTaxonomy(nt); await reliableSave(TAX_SK, JSON.stringify(nt), "Taxonomy"); }, []);
   const saveTeam = useCallback(async (nt) => { setTeamData(nt); await reliableSave(TEAM_SK, JSON.stringify(nt), "Team"); }, []);
   // Row-level client-ledger persistence (off the whole-blob save). Upserts only changed rows and
@@ -2867,14 +2890,18 @@ export default function StudioApp() {
     await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
   }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
-  // ── Library photo scoring for a zone — VERBATIM ──
-  const getLibPhotosForZone = useCallback((zone, videoTag, filterFn) => {
+  // ── Library photo scoring for a zone ──
+  // Async: fetches its zone-tagged candidate pool from the server (`tags->areasElements` overlap)
+  // instead of scanning the whole in-memory library — callers must await/`.then()` this now.
+  const getLibPhotosForZone = useCallback(async (zone, videoTag, filterFn) => {
     // `zone` may be a single tag name (Manage Library) or an array of synonym names (Build page).
     // filterFn (optional): a predicate applied to the zone matches BEFORE scoring/capping — so active
     // photo filters (event type, palette, etc.) constrain the pool first and matching photos aren't
     // lost to the 50-cap by higher-scoring but filtered-out photos.
     const zoneList = (Array.isArray(zone) ? zone : [zone]).filter(Boolean);
-    if (!zoneList.length || !libItems.length) return { exact: [], similar: [], fallback: [] };
+    if (!zoneList.length) return { exact: [], similar: [], fallback: [] };
+    const zoneCandidates = await fetchZoneLibraryPhotos(zoneList);
+    mergeLibItems(zoneCandidates);
     const tier = videoTag?.tier;
     const libTier = tier === "Silver" ? "Simple" : tier === "Gold" ? "Enhanced" : null;
     // Resolve the active palette (per function) → its anchor colours + the ★ primary.
@@ -2893,7 +2920,7 @@ export default function StudioApp() {
     const styles = videoTag?.styles || [];
     const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
     const io = videoTag?.io || "";
-    const zoneMatches = libItems.filter(li => {
+    const zoneMatches = zoneCandidates.filter(li => {
       const ae = li.tags?.areasElements || [];
       return zoneList.some(z => ae.includes(z)) && (!filterFn || filterFn(li));
     });
@@ -2943,15 +2970,18 @@ export default function StudioApp() {
     let overflow = [];
     if (total < 50) {
       const usedIds = new Set([...exact, ...similar, ...fallback].map(li => li.id));
-      // "Rest" (non-zone fillers) still follow the settings priority + palette-first ordering.
-      overflow = libItems.filter(li => !usedIds.has(li.id) && (!filterFn || filterFn(li)))
+      // "Rest" (non-zone fillers) — a bounded recently-tagged pool instead of the whole library,
+      // still following the settings priority + palette-first ordering.
+      const recentPool = await fetchRecentLibraryPhotos(200);
+      mergeLibItems(recentPool);
+      overflow = recentPool.filter(li => !usedIds.has(li.id) && (!filterFn || filterFn(li)))
         .map(li => ({ li, score: scorePhoto(li) }))
         .sort((a, b) => b.score - a.score)
         .map(s => s.li)
         .slice(0, 50 - total);
     }
     return { exact, similar, fallback: [...fallback, ...overflow] };
-  }, [libItems, filterPriority, clientPalette, activeFnIdx, extraFunctions, imsPaletteCatalogue]);
+  }, [filterPriority, clientPalette, activeFnIdx, extraFunctions, imsPaletteCatalogue, mergeLibItems]);
 
   // ── All videos (youtube + manual), newest first — VERBATIM ──
   const allVideos = useMemo(() => {
@@ -3300,12 +3330,12 @@ Return ONLY JSON:
       // Auto-assign the best-matching library photo to each zone (kept if the admin already picked
       // one). Gives the video a build cost so it shows priced on Browse once saved.
       const autoZonePhotos = { ...(existingTag.zonePhotos || {}) };
-      (taxonomy.areasElements || []).forEach(area => {
-        if (autoZonePhotos[area]) return;
-        const { exact, similar } = getLibPhotosForZone(area, newTag);
+      for (const area of (taxonomy.areasElements || [])) {
+        if (autoZonePhotos[area]) continue;
+        const { exact, similar } = await getLibPhotosForZone(area, newTag);
         const top = exact[0] || similar[0];
         if (top) autoZonePhotos[area] = top.id;
-      });
+      }
       newTag.zonePhotos = autoZonePhotos;
       newTag._aiTagged = true;
       return newTag;
@@ -4296,13 +4326,14 @@ Return ONLY JSON:
     if (!ids || !ids.length) return null;
     if (bulkTag.running) { showMsg("Tagging already running — stop it first.", "orange"); return null; }
     const idSet = new Set(ids);
+    await ensureLibItems(ids); // selections come from the visible page, but fetch on the off chance one isn't cached
     const targets = (libItemsRef.current || []).filter(i => idSet.has(i.id));
     if (!targets.length) { showMsg("No matching images found.", "orange"); return null; }
     bulkTagStop.current = false;
     setBulkTag({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
     const patch = {};
     let ok = 0, fail = 0;
-    const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); saveLib(merged); };
+    const flush = () => { const rows = targets.filter(t => patch[t.id]).map(t => ({ ...t, ...patch[t.id] })); if (rows.length) saveLib(rows); };
     for (let n = 0; n < targets.length; n++) {
       if (bulkTagStop.current) break;
       const img = targets[n];
@@ -4333,7 +4364,7 @@ Return ONLY JSON:
     setBulkTag({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
     showMsg(`🤖 Done — ${ok} tagged, ${fail} failed. See Manual Tagged chip.`, "green");
     return { ok, fail };
-  }, [bulkTag.running, aiTagImage, saveLib, showMsg, taxonomy]);
+  }, [bulkTag.running, aiTagImage, saveLib, showMsg, taxonomy, ensureLibItems]);
 
   // ── Soft-hold expiry sweeper ─────────────────────────────────────────────────
   // Runs every 5 minutes while the app is open. Expired soft holds are removed from
@@ -4366,16 +4397,16 @@ Return ONLY JSON:
   // Checkpoints every 8 photos; stoppable; resumable (skips already-tagged on the next run).
   const stopBulkTag = useCallback(() => { bulkTagStop.current = true; }, []);
   const runBulkTag = useCallback(async () => {
-    const isUntagged = (i) => i.url && !i._verified && !libPhotoIsTagged(i);
-    const targets = (libItemsRef.current || []).filter(isUntagged);
+    // Server-side status='untagged' query (indexed column, migration 008) instead of scanning the
+    // whole in-memory library — bounded per run; resumable (skips already-tagged on the next run).
+    const targets = await fetchUntaggedLibraryTargets();
+    mergeLibItems(targets);
     if (!targets.length) { showMsg("Nothing to tag — every photo is already AI-tagged or verified.", "green"); return null; }
     bulkTagStop.current = false;
     setBulkTag({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
     const patch = {}; // id -> changed fields only
     let ok = 0, fail = 0;
-    // NOTE: don't pre-set libItemsRef here — saveLib diffs the new array against the current ref to
-    // decide which rows to upsert, so it must still see the pre-flush state as "previous".
-    const flush = () => { const latest = libItemsRef.current || []; const merged = latest.map(i => patch[i.id] ? { ...i, ...patch[i.id] } : i); saveLib(merged); };
+    const flush = () => { const rows = targets.filter(t => patch[t.id]).map(t => ({ ...t, ...patch[t.id] })); if (rows.length) saveLib(rows); };
     for (let n = 0; n < targets.length; n++) {
       if (bulkTagStop.current) break;
       if (aiTagCountToday() >= AI_TAG_DAILY_LIMIT) { showMsg(`Daily AI-tagging limit reached (${AI_TAG_DAILY_LIMIT}/day during testing) — stopped.`, "orange"); break; }
@@ -4409,7 +4440,7 @@ Return ONLY JSON:
     setBulkTag({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
     showMsg(`🤖 AI tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed/empty. Review them in Library → Needs review.`, "green");
     return { ok, fail };
-  }, [aiTagImage, saveLib, showMsg, taxonomy]);
+  }, [aiTagImage, saveLib, showMsg, taxonomy, mergeLibItems]);
 
   // ── Recursive Cloudinary folder import ──────────────────────────────────────
   // Pulls EVERY image under a folder prefix (all subfolders, paginated) into the library,
@@ -4420,14 +4451,13 @@ Return ONLY JSON:
     const zones = taxonomy.areasElements || [];
     const KW = { stage: "Stage", entry: "Entry Passage", passage: "Entry Passage", vedi: "Vedi", mandap: "Vedi", lounge: "Centre Lounge", "side lounge": "Side Lounge", photobooth: "Photobooth", "photo booth": "Photobooth", centrepiece: "Centre Pieces", "centre piece": "Centre Pieces", "center piece": "Centre Pieces", prop: "Props", install: "Installations" };
     const detectZone = (f) => { const s = f.toLowerCase(); let z = zones.find(zn => s.includes(zn.toLowerCase())); if (z) return z; for (const [k, zn] of Object.entries(KW)) { if (s.includes(k) && zones.includes(zn)) return zn; } return ""; };
-    const existUrls = new Set((libItemsRef.current || []).map(l => l.url));
-    const seen = new Set();           // secure_urls collected this run (dedupe)
-    const fresh = [];
+    const seen = new Set();           // secure_urls collected this run (dedupe within this scan)
     let scanned = 0;
+    let fresh = [];
     const take = (res) => { (res || []).forEach(r => {
       if (!r.secure_url || r.resource_type === "video") return;
       scanned++;
-      if (existUrls.has(r.secure_url) || seen.has(r.secure_url)) return;
+      if (seen.has(r.secure_url)) return;
       seen.add(r.secure_url); fresh.push(r);
     }); };
     try {
@@ -4463,6 +4493,8 @@ Return ONLY JSON:
         pc = d.next_cursor;
       }
     } catch (e) { showMsg("Folder import failed: " + (e.message || "Cloudinary error"), "red"); return null; }
+    // Batched server existence check (not a full-table scan) drops URLs already in the Library.
+    try { const existing = await checkExistingLibraryUrls(fresh.map(r => r.secure_url)); fresh = fresh.filter(r => !existing.has(r.secure_url)); } catch { /* best-effort; worst case a dupe slips through */ }
     const skipped = scanned - fresh.length;
     if (!fresh.length) { showMsg(`Nothing new — all photo(s) under "${eventName}" are already in the Library.`, "orange"); return { added: 0, skipped, scanned, eventName }; }
     const stamp = Date.now().toString(36);
@@ -4471,8 +4503,7 @@ Return ONLY JSON:
       const zone = detectZone(fname);
       return { id: "LIB" + stamp + ix.toString(36) + Math.random().toString(36).slice(2, 4), url: r.secure_url, name: fname, tags: { eventType: [], venueType: [], venue: "", areasElements: zone ? [zone] : [], colorPalette: [], categoryTier: [], designStyle: [], timeSetting: [] }, elements: [], addedAt: Date.now(), source: "folder-import", _event: eventName };
     });
-    const merged = [...(libItemsRef.current || []), ...newImgs];
-    saveLib(merged); // saveLib sets libItemsRef + upserts only the new rows
+    saveLib(newImgs);
     showMsg(`✓ Imported ${newImgs.length} new photo(s) from "${eventName}" (whole folder tree)${skipped ? ` · skipped ${skipped} already in library` : ""}. Run "Tag all untagged" to AI-tag them.`, "green");
     return { added: newImgs.length, skipped, scanned, eventName };
   }, [cldAdmin, saveLib, showMsg, taxonomy]);
@@ -5246,7 +5277,7 @@ Return ONLY JSON:
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, addedAt: Date.now(), source: "client-upload" };
-    const newLib = [...libItems, libImg]; saveLib(newLib);
+    mergeLibItems([libImg]); saveLib([libImg]);
     logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
     selectElPhoto(r.elKey, photo);
@@ -5293,7 +5324,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, skipNightlyRun, toggleSkipNightlyRun, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, skipNightlyRun, toggleSkipNightlyRun, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,

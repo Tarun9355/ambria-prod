@@ -39,7 +39,7 @@ export default function DealCheckOverlay({ ctx }) {
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
-    libItems, rcItems, normalizePaintAllocation,
+    libItems, rcItems, normalizePaintAllocation, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // orchestration + persistence
@@ -64,6 +64,18 @@ export default function DealCheckOverlay({ ctx }) {
 
   // Pull the latest dept-head actuals (IMS) whenever Deal Check opens for this client.
   useEffect(() => { refreshDcEoActuals && refreshDcEoActuals(); }, [activeClientId]);
+
+  // Truss/masking calcs across every function look up a zone's selected photo by URL to read its
+  // drapeDensity tag (libItems.find(l => l.url === photoUrl), in DCTrussTab and the rollup below).
+  // `libItems` is a lazy cache now — prefetch every function's selected-photo URLs once per client
+  // so those lookups aren't silently missing a photo that just hasn't been touched this session.
+  useEffect(() => {
+    if (!ensureLibItemsByUrl || !collectAllFunctionData) return;
+    const fns = collectAllFunctionData();
+    const urls = [...new Set(fns.flatMap(f => Object.values(f.elSelectedPhoto || {}))
+      .map(p => (typeof p === "string" ? p : p?.src)).filter(Boolean))];
+    if (urls.length) ensureLibItemsByUrl(urls);
+  }, [activeClientId, collectAllFunctionData, ensureLibItemsByUrl]);
 
   if (!(authUser && true)) return null;
 
