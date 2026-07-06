@@ -4,6 +4,7 @@ import {
   MASK_OPTS, PLAT_OPTS, CARP_OPTS,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 
 // Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
@@ -65,6 +66,13 @@ export default function StudioBuild({ ctx }) {
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
   const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
+  // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
+  // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
+  // covers it) vs ✨ Fresh (default). Stored in zoneConfig[k].repeat so it flows to Deal Check.
+  const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+  const fixedVenueHere = fixedVenueFor(_fvCfg, venue);
+  const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
+  const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -464,6 +472,7 @@ export default function StudioBuild({ ctx }) {
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>🛒</span>
             {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",fontSize:16,opacity:0.5}}>📋</span>}
             {isDuplicate&&<span onClick={e=>{e.stopPropagation();if(confirm("Remove "+el.label+"?")){setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});}}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
+            {isOn&&fixedVenueHere&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing the standing setup — discounted rental, covered by the venue's fixed crew":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}>{isRepeat(k)?"♻️ Repeat":"✨ Fresh"}</span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
           </div>
         </div>
