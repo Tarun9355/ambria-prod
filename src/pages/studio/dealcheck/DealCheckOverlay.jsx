@@ -408,7 +408,7 @@ export default function DealCheckOverlay({ ctx }) {
                     const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
                     const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
                     let zoneTop = 0, zoneRft = 0;
-                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (mw.back && dL > 0) zoneRft += dL; if (mw.left && dW > 0) zoneRft += dW; if (mw.right && dW > 0) zoneRft += dW; }
+                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; }
                     else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
                     else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (mw.back && spanL > 0) zoneRft += spanL; }
                     total += zoneTop + (zoneRft > 0 ? Math.ceil(zoneRft / fabricRftPerWorker) : 0);

@@ -261,10 +261,10 @@ export default function DCManpowerTab({ ctx }) {
                             if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; }
                           }
                         }
-                        // Side walls — back/left/right toggleable, never front (always open)
-                        if (mw.back  && dL > 0) zoneRft += dL;
-                        if (mw.left  && dW > 0) zoneRft += dW;
-                        if (mw.right && dW > 0) zoneRft += dW;
+                        // Side walls — back spans the WIDTH (dW), left/right span the DEPTH (dL). Never front.
+                        if (mw.back  && dW > 0) zoneRft += dW;
+                        if (mw.left  && dL > 0) zoneRft += dL;
+                        if (mw.right && dL > 0) zoneRft += dL;
                       } else if (config === "half_box") {
                         // Half Box — back (L-span) + left/right (backDepth) per-toggle
                         const spanL = cfg.spanFt || dL || dW;
@@ -482,9 +482,9 @@ export default function DCManpowerTab({ ctx }) {
                           }
                         }
                         parts.push({ kind: "top", label: `Top ${dL}×${dW} = ${topSqft} sqft → ${zoneTop} ppl`, workers: zoneTop });
-                        if (mw.back  && dL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
-                        if (mw.left  && dW > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
-                        if (mw.right && dW > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dW}`, rft: dW }); zoneRft += dW; }
+                        if (mw.back  && dW > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
+                        if (mw.left  && dL > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
+                        if (mw.right && dL > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dL}`, rft: dL }); zoneRft += dL; }
                       } else if (config === "half_box") {
                         const spanL = cfg.spanFt || dL || dW;
                         if (mw.back  && spanL > 0)     { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`,  rft: spanL }); zoneRft += spanL; }

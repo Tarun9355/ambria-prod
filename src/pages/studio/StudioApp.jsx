@@ -237,9 +237,9 @@ function calcStructCost(zk, zc) {
       const _spanL = _trCfg?.spanFt || dL || dW;
       const _backDepth = zc.trussBackDepth || 4;
       if (_cfg === "full_box") {
-        if (zc.mkWalls.back) w += dL * h;
-        if (zc.mkWalls.left) w += dW * h;
-        if (zc.mkWalls.right) w += dW * h;
+        if (zc.mkWalls.back) w += dW * h;   // back wall spans the WIDTH
+        if (zc.mkWalls.left) w += dL * h;   // side walls span the DEPTH
+        if (zc.mkWalls.right) w += dL * h;
       } else if (_cfg === "half_box") {
         if (zc.mkWalls.back) w += _spanL * h;
         if (zc.mkWalls.left) w += _backDepth * h;

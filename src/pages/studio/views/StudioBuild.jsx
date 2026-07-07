@@ -850,9 +850,9 @@ export default function StudioBuild({ ctx }) {
                     setTimeout(() => sZ({mkWalls: _resetMw, _lastMkCfg: _cfg}), 0);
                   }
                   const walls = _cfg === "full_box" ? [
-                    {id:"back",label:"Back",dim:`${dL}×${dH}`,sqft:dL*dH},
-                    {id:"left",label:"Left",dim:`${dW}×${dH}`,sqft:dW*dH},
-                    {id:"right",label:"Right",dim:`${dW}×${dH}`,sqft:dW*dH}
+                    {id:"back",label:"Back",dim:`${dW}×${dH}`,sqft:dW*dH},
+                    {id:"left",label:"Left",dim:`${dL}×${dH}`,sqft:dL*dH},
+                    {id:"right",label:"Right",dim:`${dL}×${dH}`,sqft:dL*dH}
                   ] : _cfg === "half_box" ? [
                     {id:"back",label:"Back",dim:`${_spanL}×${dH}`,sqft:_spanL*dH},
                     {id:"left",label:"Left",dim:`${_backDepth}×${dH}`,sqft:_backDepth*dH},
