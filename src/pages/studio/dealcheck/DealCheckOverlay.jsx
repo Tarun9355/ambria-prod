@@ -1215,10 +1215,17 @@ export default function DealCheckOverlay({ ctx }) {
                                                   const needed = qtyEach * cardQty;
                                                   const owned = cItem ? imsField.qtyOwned(cItem) : 0;
                                                   const short = cItem && needed > owned;
+                                                  const unavailable = !cItem || short;
+                                                  // Same-subcategory alternatives with enough stock (for a short/missing component → one-tap swap).
+                                                  const cSub = cItem ? String(imsField.subcategory(cItem)||"") : "";
+                                                  const compAlts = unavailable && cSub ? dcInventoryCache.filter(x => x.id !== c.itemId && String(imsField.subcategory(x)||"").toLowerCase().trim() === cSub.toLowerCase().trim()).sort((a,b)=>imsField.qtyOwned(b)-imsField.qtyOwned(a)) : [];
+                                                  const compAltsFit = compAlts.filter(x => imsField.qtyOwned(x) >= needed);
+                                                  const swapComp = (id)=> setComps(comps.map((x,i)=>i===ci?{...x,itemId:id}:x));
                                                   return (
-                                                    <div key={ci} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
+                                                    <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
+                                                    <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
                                                       {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img src={cp} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>🌸</span>; })()}
-                                                      <span style={{color:cItem?"#fff":"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
+                                                      <span style={{color:cItem?(short?"#EF4444":"#fff"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
                                                       <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:textS,fontSize:14,padding:"0 4px",userSelect:"none"}}>−</span>
                                                         <span style={{color:"#fff",minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
@@ -1227,9 +1234,18 @@ export default function DealCheckOverlay({ ctx }) {
                                                       {cardQty>1 && <span style={{color:textS,fontSize:10,whiteSpace:"nowrap"}}>× {cardQty} kits = <b style={{color:"#fff"}}>{needed}</b></span>}
                                                       {cItem && (()=>{ const cr=imsField.rentalCost(cItem); return <span style={{color:textS,whiteSpace:"nowrap",opacity:0.85}}>₹{cr.toLocaleString("en-IN")} × {needed} = <b style={{color:"#A5B4FC"}}>₹{(cr*needed).toLocaleString("en-IN")}</b></span>; })()}
                                                       {cItem && (short
-                                                        ? <span style={{color:"#F59E0B",fontWeight:600,whiteSpace:"nowrap"}}>⚠ need {needed}, {owned} owned</span>
-                                                        : <span style={{color:"#10B981",whiteSpace:"nowrap"}}>✓ {owned} owned</span>)}
+                                                        ? <span style={{color:"#EF4444",fontWeight:700,whiteSpace:"nowrap"}}>⚠ need {needed}, only {owned} avail</span>
+                                                        : <span style={{color:"#10B981",whiteSpace:"nowrap"}}>✓ {owned} avail</span>)}
                                                       <span onClick={()=>setComps(comps.filter((_,i)=>i!==ci))} style={{color:"#EF4444",cursor:"pointer",fontSize:14,padding:"0 2px"}} title="Remove component">×</span>
+                                                    </div>
+                                                    {unavailable && compAlts.length>0 && (
+                                                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginTop:4,paddingLeft:28}}>
+                                                        <span style={{fontSize:9,color:"#EF4444",fontWeight:600,whiteSpace:"nowrap"}}>↔ swap to:</span>
+                                                        {(compAltsFit.length?compAltsFit:compAlts).slice(0,5).map(a=>{ const ao=imsField.qtyOwned(a); const fit=ao>=needed; return (
+                                                          <span key={a.id} onClick={()=>swapComp(a.id)} title={`${a.name} · ${ao} available · ₹${imsField.rentalCost(a).toLocaleString("en-IN")}`} style={{cursor:"pointer",fontSize:9,padding:"2px 7px",borderRadius:8,border:`1px solid ${fit?"#10B981":border}`,background:fit?"rgba(16,185,129,0.12)":"transparent",color:fit?"#10B981":textS,whiteSpace:"nowrap"}}>{a.name} ({ao})</span>
+                                                        ); })}
+                                                      </div>
+                                                    )}
                                                     </div>
                                                   );
                                                 })}
