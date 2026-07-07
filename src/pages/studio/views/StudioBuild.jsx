@@ -70,7 +70,7 @@ export default function StudioBuild({ ctx }) {
   // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
   // covers it) vs ✨ Fresh (default). Stored in zoneConfig[k].repeat so it flows to Deal Check.
   const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-  const fixedVenueHere = fixedVenueFor(_fvCfg, venue);
+  const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
   const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
   const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));
 

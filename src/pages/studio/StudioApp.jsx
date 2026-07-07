@@ -2354,7 +2354,7 @@ export default function StudioApp() {
       realPct = (typeof el.realPct === "number") ? Math.max(0, Math.min(100, el.realPct)) : modeDefault;
       // Recipe elements → auto-derive the artificial rate (so it's never ₹0); props with no recipe use the flat rate.
       const autoArt = floralArtUnitRate(rc, el.size);
-      const effArt = artRate > 0 ? artRate : (autoArt != null ? autoArt : 0); // manual artificial rate wins; auto-derive only fills a blank
+      const effArt = (autoArt != null) ? autoArt : artRate; // recipe-derived elements ALWAYS auto-derive from the recipe; only non-recipe props use the flat rate-card artificial rate
       up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * effArt);
       if (rc.unit !== "truss_sqft") up += patternExtra(rc, el.size); // pot/base extra (per pc), added after markup
     } else {
@@ -2408,7 +2408,7 @@ export default function StudioApp() {
       else modeDefault = Math.max(0, Math.min(100, 100 - (typeof fnRatio === "number" ? fnRatio : 70)));
       const realPct = (typeof el.realPct === "number") ? Math.max(0, Math.min(100, el.realPct)) : modeDefault;
       const autoArt = floralArtUnitRate(rc, el.size);
-      const effArt = artRate > 0 ? artRate : (autoArt != null ? autoArt : 0); // manual artificial rate wins; auto-derive only fills a blank
+      const effArt = (autoArt != null) ? autoArt : artRate; // recipe-derived elements ALWAYS auto-derive from the recipe; only non-recipe props use the flat rate-card artificial rate
       up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * effArt);
       if (rc.unit !== "truss_sqft") up += patternExtra(rc, el.size);
     } else {
