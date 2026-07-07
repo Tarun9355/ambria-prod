@@ -1344,7 +1344,7 @@ export default function DealCheckOverlay({ ctx }) {
                                               const altPhoto = altItem ? imsField.photos(altItem)[0] : null;
                                               const altRental = altItem ? imsField.rentalCost(altItem) : 0;
                                               const altOwned = altItem ? imsField.qtyOwned(altItem) : 0;
-                                              const altEnough = altOwned >= cardQty;
+                                              const altEnough = altOwned >= (Number(card.qty) || 1);
                                               const altDims = altItem ? imsField.sizeText(altItem) : "";
                                               const altHold = getActiveSoftHold(softHolds, alt.imsId, authUser?.name, Date.now());
                                               const isCurrent = alt.imsId === card.imsId;
