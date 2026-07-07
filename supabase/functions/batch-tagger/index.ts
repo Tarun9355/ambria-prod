@@ -1,9 +1,10 @@
-// Supabase Edge Function — nightly batch tagger.
+// Supabase Edge Function — continuous batch tagger, cron-triggered every 15 minutes.
 //
 // Tags untagged Studio library photos using the SAME knowledge the in-app tagger uses (taxonomy,
 // rate card, the verified-photo knowledge base, and recent human corrections — all read live from
-// the DB), so the server path and the client path stay aligned. Designed to run on a cron at 2 AM IST
-// when nobody is editing, so writing the library blob back can't clobber a live edit.
+// the DB), so the server path and the client path stay aligned. An admin can pause/resume it from
+// Studio → Settings → Manage → Library / Tagger (settings key 'batch-tagger-paused') — the cron
+// keeps firing every 15 min regardless; a paused invocation just no-ops before any Anthropic calls.
 //
 // Storage note: the Studio library lives as a JSON blob in settings (key 'ambria-library-v2'), not a
 // row-per-photo table — so this function reads/merges/writes that blob.
@@ -20,6 +21,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2", RC_SK = "ambria-ratecard-v4";
 const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1";
 const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // "cat::sub" keys flagged not-taggable in Pricing
+const PAUSED_SK = "batch-tagger-paused", LAST_RUN_SK = "batch-tagger-last-run";
 const MAX_PER_RUN = 100;
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 // Only these Cloudinary top-level folders are salesperson-facing library photos — asset/prop/
@@ -50,11 +52,12 @@ Deno.serve(async (req) => {
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const getKv = async (key: string) => { const { data } = await db.from("settings").select("value").eq("key", key).maybeSingle(); return parse(data?.value); };
 
-  // One-time skip flag — Studio UI can set this to skip a single nightly run.
-  const skipFlag = await getKv("batch-tagger-skip-next");
-  if (skipFlag === true || skipFlag === "true") {
-    await db.from("settings").upsert({ key: "batch-tagger-skip-next", value: JSON.stringify(false) }, { onConflict: "key" });
-    return json({ ok: true, tagged: 0, message: "skipped — one-time skip was scheduled via Studio UI" });
+  // Admin pause flag — Studio UI can pause/resume the 15-min batch tagger. The cron keeps
+  // firing every 15 min regardless; a paused run just no-ops here before any Anthropic calls.
+  const pauseFlag = await getKv(PAUSED_SK);
+  if (pauseFlag && typeof pauseFlag === "object" && pauseFlag.paused) {
+    console.log(`Batch tagger paused by ${pauseFlag.pausedBy || "unknown"} at ${pauseFlag.pausedAt || "unknown"}, skipping run`);
+    return json({ ok: true, tagged: 0, message: "paused via Studio UI" });
   }
 
   const [taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
@@ -92,7 +95,10 @@ Deno.serve(async (req) => {
     rows = untaggedRows;
   }
   const targets = (rows || []).map(rowToItem).filter((i: any) => i && i.url);
-  if (!targets.length) return json({ ok: true, tagged: 0, message: "nothing untagged" });
+  if (!targets.length) {
+    await db.from("settings").upsert({ key: LAST_RUN_SK, value: { at: new Date().toISOString(), tagged: 0, failed: 0, scanned: 0 } }, { onConflict: "key" });
+    return json({ ok: true, tagged: 0, message: "nothing untagged" });
+  }
 
   // Recent corrections → "learn from these".
   const { data: corr } = await db.from("tag_corrections").select("field, ai_value, corrected_value").order("created_at", { ascending: false }).limit(20);
@@ -208,5 +214,6 @@ Return ONLY JSON matching the provided schema.`;
     }
   }
 
+  await db.from("settings").upsert({ key: LAST_RUN_SK, value: { at: new Date().toISOString(), tagged: ok, failed: fail, scanned: targets.length } }, { onConflict: "key" });
   return json({ ok: true, tagged: ok, failed: fail, scanned: targets.length, skipped_out_of_time: skipped });
 });

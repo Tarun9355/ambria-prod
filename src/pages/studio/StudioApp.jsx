@@ -70,7 +70,7 @@ import {
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK, AITAG_QUOTA_SK,
-  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, SKIP_NIGHTLY_SK,
+  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, BATCH_TAGGER_PAUSED_SK,
 } from "../../lib/studio/keys.js";
 
 // Temporary daily cap on AI image-tagging calls while testing. Raise (or set to Infinity) to lift.
@@ -1331,7 +1331,8 @@ export default function StudioApp() {
   const [dcCollapsedZones, setDcCollapsedZones] = useState({});
   const [floralHardPropMap, setFloralHardPropMap] = useState(FLORAL_HARDPROP_DEFAULT);
   const [softHolds, setSoftHolds] = useState({});
-  const [skipNightlyRun, setSkipNightlyRun] = useState(false);
+  const [batchTaggerPaused, setBatchTaggerPaused] = useState(false);
+  const [batchTaggerMeta, setBatchTaggerMeta] = useState(null);
   const [trussAlloc, setTrussAlloc] = useState({});
   const [dcAmendDiff, setDcAmendDiff] = useState(null);
   const [amendRequests, setAmendRequests] = useState([]);
@@ -1871,7 +1872,7 @@ export default function StudioApp() {
           for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
         }
       } catch {}
-      try { const v = await kvGet(SKIP_NIGHTLY_SK); if (!cancelled) setSkipNightlyRun(v === true || v === "true"); } catch {}
+      try { const v = await kvGet(BATCH_TAGGER_PAUSED_SK); const meta = v && typeof v === "object" ? v : null; if (!cancelled) { setBatchTaggerPaused(!!meta?.paused); setBatchTaggerMeta(meta); } } catch {}
       try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
       try {
         const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
@@ -4419,12 +4420,16 @@ Return ONLY JSON:
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
   };
 
-  // ── Skip tonight's nightly batch-tagger run ──────────────────────────────────
-  const toggleSkipNightlyRun = useCallback(async () => {
-    const next = !skipNightlyRun;
-    setSkipNightlyRun(next);
-    try { await reliableSave(SKIP_NIGHTLY_SK, JSON.stringify(next), "nightly skip flag"); } catch {}
-  }, [skipNightlyRun]);
+  // ── Pause / resume the 15-min batch tagger ────────────────────────────────────
+  const toggleBatchTaggerPaused = useCallback(async () => {
+    const next = !batchTaggerPaused;
+    const meta = { paused: next, pausedBy: authUser?.name || "—", pausedAt: new Date().toISOString() };
+    setBatchTaggerPaused(next);
+    setBatchTaggerMeta(meta);
+    const res = await kvSet(BATCH_TAGGER_PAUSED_SK, meta);
+    if (res?.ok) showMsg(next ? "Batch tagger paused" : "Batch tagger resumed", "green");
+    else showMsg("Failed to save batch tagger state: " + (res?.error || "unknown error"), "red");
+  }, [batchTaggerPaused, authUser]);
 
   // ── Tag a specific selection of images (manual select in Library UI) ──────────
   // Same AI flow as runBulkTag but operates only on the caller-provided IDs.
@@ -5432,7 +5437,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, skipNightlyRun, toggleSkipNightlyRun, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,
