@@ -347,12 +347,11 @@ export default function DealCheckOverlay({ ctx }) {
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
               const calcPpl = (fn, type) => {
                 if (type === "Flowerists") {
-                  // Aggregate all arrangements of the same recipe (same name + units-per-flowerist)
-                  // BEFORE rounding, then ceil once per recipe — flowerists are fungible, so 396 Reet
-                  // ÷ 50 = 8, NOT a rounded-up count per zone/element. This MUST match traceOf()'s
-                  // "HOW N DERIVED" box (which aggregates the same way); ceiling per element here was
-                  // over-counting (e.g. showing 11 when the recipe derivation says 8).
-                  const agg = {};
+                  // Flowerists are fungible across ALL arrangements → sum every element's fractional need
+                  // (qty ÷ units-per-flowerist) and ceil ONCE. MUST match DCManpowerTab.calcPeopleFlowerists
+                  // (and its "how" trace). Ceiling per-recipe (or per-element) over-counted vs the tab — each
+                  // distinct recipe with a <1 need rounded up to a whole flowerist → bottom bar ≠ tab.
+                  let total = 0;
                   walkFn(fn, ({rc, el, qty}) => {
                     if (String(rc.cat||"").toLowerCase() !== "florals") return;
                     const rnF = String(rc.name||"").toLowerCase().trim();
@@ -363,18 +362,20 @@ export default function DealCheckOverlay({ ctx }) {
                     const sz = pattern.sizes || {};
                     const sk = sizeFromMode(rc.inhouseMode, el.size);
                     let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
-                    const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name||"flower")+"|"+upf; agg[k] = (agg[k]||0) + qty/upf; }
+                    const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) total += qty/upf;
                   });
-                  let t = 0; Object.values(agg).forEach(need => { t += Math.ceil(need); }); return t;
+                  return Math.ceil(total);
                 }
                 if (type === "Electricians") {
-                  let t = 0; walkFn(fn, ({rc, el, qty}) => {
+                  // Sum fractional need across ALL lighting elements, ceil ONCE (fungible) — matches
+                  // DCManpowerTab.calcPeopleElectricians; per-element ceiling over-counted vs the tab.
+                  let total = 0; walkFn(fn, ({rc, el, qty}) => {
                     if (String(rc.cat||"").toLowerCase() !== "lighting") return;
                     const pr = electricianProdMP[rc.sub||""]; if (!pr) return;
                     const sk = sizeFromMode(rc.inhouseMode, el.size);
                     const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0;
-                    if (upe > 0) t += Math.ceil(qty / upe);
-                  }); return t;
+                    if (upe > 0) total += qty / upe;
+                  }); return Math.ceil(total);
                 }
                 if (type === "Labours") {
                   // MUST match DCManpowerTab.calcPeopleTier3Labours exactly (else bar ≠ tab).
@@ -448,11 +449,11 @@ export default function DealCheckOverlay({ ctx }) {
                     let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
                     const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
                   });
-                  const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch })); let t = 0; rows.forEach(r => { t += Math.ceil(r.need); });
+                  const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch })); const t = Math.ceil(rows.reduce((s, r) => s + r.need, 0)); // ceil ONCE over the total (matches calcPpl + the tab)
                   return rows.length ? { kind: "tier2", perRow: true, rows, need: rows.reduce((s, r) => s + r.need, 0), min: 0, result: t, countLabel: "arrangements", batchLabel: "÷per flowerist" } : null;
                 }
                 if (type === "Electricians") {
-                  let t = 0, n = 0; walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { t += Math.ceil(qty / upe); n += qty; } });
+                  let frac = 0, n = 0; walkFn(fn, ({ rc, el, qty }) => { if (String(rc.cat || "").toLowerCase() !== "lighting") return; const pr = electricianProdMP[rc.sub || ""]; if (!pr) return; const sk = sizeFromMode(rc.inhouseMode, el.size); const upe = Number(pr.sizes?.[sk]) || Number(pr.sizes?.medium) || 0; if (upe > 0) { frac += qty / upe; n += qty; } }); const t = Math.ceil(frac); // ceil ONCE (matches calcPpl + the tab)
                   return t > 0 ? { kind: "ratio", num: n, numLabel: "lighting units", denomLabel: "productivity per electrician", result: t } : null;
                 }
                 if (type === "Labours") {
