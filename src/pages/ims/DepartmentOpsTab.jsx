@@ -737,14 +737,24 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
                   crew × {shifts} shift{shifts === 1 ? "" : "s"}
                 </span>
               </div>
-              {winDefs.length > 0 && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null)) && (
+              {/* Per-dihari (per-shift) crew — dept head can hold different crew per shift (e.g. 6 in the day
+                  shift, 3 in the evening). Same mpWinCount data + cost model as the on-site editor → synced. */}
+              {winDefs.length > 0 && editable && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null)) && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                  <span className="text-[9px] text-gray-400">per shift:</span>
+                  {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
+                    <span key={id} className="inline-flex items-center gap-1 border rounded px-1 py-0.5 bg-white">
+                      <span className="text-[9px] text-gray-400">{lbl}</span>
+                      <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-9 border rounded px-1 py-0.5 text-[10px] text-center" />
+                      {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500 text-[10px]" title="remove this dihari">×</button>}
+                    </span>
+                  ); })}
+                  <button onClick={() => addDihari(r, d.date, ids)} className="text-[9px] font-semibold text-indigo-600 border border-indigo-200 rounded-full px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
+                </div>
+              )}
+              {winDefs.length > 0 && !editable && (Array.isArray(d.windowIds) || (mpWin[r.type] && mpWin[r.type][d.date] != null)) && (
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {winDefs.map(w => {
-                    const on = ids.includes(w.id);
-                    return editable
-                      ? <button key={w.id} onClick={() => toggleWin(r.type, d.date, w.id, ids)} className={"px-1.5 py-0.5 rounded-full border text-[9px] transition-colors " + (on ? "border-emerald-400 bg-emerald-50 text-emerald-700 font-semibold" : "border-gray-200 text-gray-400 hover:border-gray-300")}>{on ? "✓ " : ""}{w.label}</button>
-                      : <span key={w.id} className={"px-1.5 py-0.5 rounded-full border text-[9px] " + (on ? "border-emerald-300 bg-emerald-50 text-emerald-600" : "border-gray-100 text-gray-300")}>{on ? "✓ " : ""}{w.label}</span>;
-                  })}
+                  {winDefs.map(w => { const on = ids.includes(w.id); return <span key={w.id} className={"px-1.5 py-0.5 rounded-full border text-[9px] " + (on ? "border-emerald-300 bg-emerald-50 text-emerald-600" : "border-gray-100 text-gray-300")}>{on ? "✓ " : ""}{w.label}{on ? ` ${effShift(r, d, w.id)}` : ""}</span>; })}
                 </div>
               )}
               {howOpen && (
