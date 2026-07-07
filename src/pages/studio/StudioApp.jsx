@@ -2314,6 +2314,22 @@ export default function StudioApp() {
     return Math.round(cost * markup);
   }, [dealCheckData]);
 
+  // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).
+  const patternExtra = useCallback((rc, size) => {
+    const fp = dealCheckData?.flowerPatterns || [];
+    if (!fp.length) return 0;
+    const tn = String(rc?.name || "").toLowerCase().trim();
+    let pat = fp.find(p => String(p?.name || "").toLowerCase().trim() === tn);
+    if (!pat) pat = fp.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
+    if (!pat) return 0;
+    const sz = String(size || "").toUpperCase();
+    const sk = rcIsSMB(rc) ? (sz === "S" || sz === "SMALL" ? "small" : (sz === "B" || sz === "BIG" || sz === "LARGE" || sz === "PREMIUM" || sz === "HEAVY" ? "big" : "medium")) : "medium";
+    const sizes = pat.sizes || {};
+    let comp = sizes[sk] || sizes.medium; if (!comp && sk === "big" && sizes.large) comp = sizes.large;
+    if (!comp && Object.keys(sizes).length) comp = sizes[Object.keys(sizes)[0]];
+    return Number(comp?.extraCost) || 0;
+  }, [dealCheckData]);
+
   const getElPrice = useCallback((el, zc) => {
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -2340,6 +2356,7 @@ export default function StudioApp() {
       const autoArt = floralArtUnitRate(rc, el.size);
       const effArt = (autoArt != null) ? autoArt : artRate;
       up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * effArt);
+      if (rc.unit !== "truss_sqft") up += patternExtra(rc, el.size); // pot/base extra (per pc), added after markup
     } else {
       up = realRate;
     }
@@ -2357,7 +2374,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate]);
+  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra]);
 
   const calcElsCost = useCallback((elements, withFloral, zc) => {
     return (elements || []).reduce((s, el) => {
@@ -2393,6 +2410,7 @@ export default function StudioApp() {
       const autoArt = floralArtUnitRate(rc, el.size);
       const effArt = (autoArt != null) ? autoArt : artRate;
       up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * effArt);
+      if (rc.unit !== "truss_sqft") up += patternExtra(rc, el.size);
     } else {
       up = realRate;
     }
@@ -2405,7 +2423,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, floralArtUnitRate]);
+  }, [rcItems, getFloralMode, floralArtUnitRate, patternExtra]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
@@ -2710,6 +2728,8 @@ export default function StudioApp() {
         if (!comp && sk === "big" && sizes.large) comp = sizes.large;
         if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
         if (!comp || !Array.isArray(comp.flowers)) return;
+        // Fixed extra cost (pot/base) per unit — a real cost regardless of real/artificial split.
+        { const ex = (Number(comp.extraCost) || 0) * q; if (ex > 0) { tReal += ex; realIncome += ex; } }
         const season = sMap[fn.fnDate] || "non_saya";
         const sMult = mults[season] || 1;
         comp.flowers.forEach(fl => {

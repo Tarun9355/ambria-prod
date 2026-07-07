@@ -901,18 +901,29 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   <span className="text-[9px] text-gray-400 w-12 truncate">{studioUnitLabel(studioItem.unit) || "/unit"}</span>
                 </div>
               </div>
+              {/* Fixed extra cost (e.g. the pot/base/frame) added ON TOP of the flower cost, AFTER markup:
+                  studio rate = flower cost × markup + extra. So a "Flower Pot Big" charges pot + flowers. */}
+              <div className="mt-2">
+                <label className="text-[10px] text-gray-500" title="Fixed extra cost for this size (pot / base / frame), added after markup: studio rate = flower cost × markup + extra.">➕ Extra cost (pot / base)</label>
+                <div className="mt-1 flex items-center gap-1">
+                  <span className="text-[9px] text-gray-400">₹</span>
+                  <input type="number" min="0" value={sizeData.extraCost ?? ""} onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, extraCost: v } } })); }} placeholder="0" className="flex-1 border rounded px-2 py-1 text-xs font-semibold text-amber-700 text-center" />
+                </div>
+              </div>
               {(() => {
                 const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue);
                 if (cost === null) return <div className="mt-2 border-t border-dashed pt-2 text-[10px] text-gray-400 italic text-center">Empty — no cost</div>;
                 const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                 const markup = effectiveMarkup(pat, settings);
-                const studioRate = Math.round(cost * markup);
+                const extra = Number(sizeData.extraCost) || 0;
+                const studioRate = Math.round(cost * markup) + extra;
                 const unitLbl = studioUnitLabel(studioItem.unit);
                 return (
                   <div className="mt-2 border-t pt-2 space-y-0.5">
                     <div className="flex items-center justify-between text-[10px]"><span className="text-gray-500">💰 Mandi cost</span><span className="font-semibold text-gray-800">₹{cost.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
+                    {extra > 0 && <div className="flex items-center justify-between text-[10px]"><span className="text-amber-700">➕ Extra (pot/base)</span><span className="font-semibold text-amber-700">₹{extra.toLocaleString("en-IN")}</span></div>}
                     <div className="flex items-center justify-between text-[10px]"><span className="text-emerald-700">→ Studio rate</span><span className="font-bold text-emerald-700">₹{studioRate.toLocaleString("en-IN")}<span className="text-[9px] text-emerald-600 font-normal ml-0.5">{unitLbl}</span></span></div>
-                    <div className="text-[9px] text-gray-400 text-right italic">{markup}× markup</div>
+                    <div className="text-[9px] text-gray-400 text-right italic">{markup}× markup{extra > 0 ? " + ₹" + extra : ""}</div>
                   </div>
                 );
               })()}
