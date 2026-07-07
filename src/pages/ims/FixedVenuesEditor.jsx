@@ -4,13 +4,28 @@
 //   • Labour — reused standing items need no build crew (only what's built extra counts).
 //   • Cost — standing items bill at a discount; extras/other venues bill full rate.
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
-  // Global repeat-rental discount for ALL fixed venues (set once; sub-category / item overrides layer on top).
-  const globalRepeatDiscount = Number(settings.fixedVenueRepeatDiscount ?? 70);
-  const setGlobalDiscount = (val) => setSettings((s) => ({ ...s, fixedVenueRepeatDiscount: Math.max(0, Math.min(100, parseInt(val) || 0)) }));
+  // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
+  // item bills at its sub-category %; a sub-category with no % → full rental. No other fixed-venue formula.
+  const subDisc = (settings.fixedVenueSubcatDiscount && typeof settings.fixedVenueSubcatDiscount === "object") ? settings.fixedVenueSubcatDiscount : {};
+  const setSubDisc = (sub, val) => {
+    const key = String(sub || "").toLowerCase().trim(); if (!key) return;
+    const pct = Math.max(0, Math.min(100, parseInt(val) || 0));
+    setSettings((s) => { const m = { ...(s.fixedVenueSubcatDiscount || {}) }; if (pct > 0) m[key] = pct; else delete m[key]; return { ...s, fixedVenueSubcatDiscount: m }; });
+  };
+  const [openDept, setOpenDept] = useState(null); // which department's sub-category list is expanded
+  const _catDeptCfg = (settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
+  const _kwDept = (cat) => { const s = String(cat || "").toLowerCase(); if (s.includes("floral") || s.includes("flower")) return "Floral"; if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting"; if (s.includes("truss")) return "Tenting"; if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric"; if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting"; if (s.includes("transport") || s.includes("truck")) return "Transport"; if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture"; return "Structure"; };
+  const _catToDept = (cat) => { const k = String(cat || "").toLowerCase().trim(); return _catDeptCfg[k] || _kwDept(cat); };
+  // Distinct sub-categories grouped by their department (from inventory categories).
+  const subcatsByDept = useMemo(() => {
+    const m = {};
+    (inventory || []).forEach((i) => { const sub = String(i.subCat || i.subcategory || "").trim(); if (!sub) return; const dept = _catToDept(i.cat || i.category); (m[dept] = m[dept] || new Set()).add(sub); });
+    const out = {}; Object.keys(m).sort().forEach((d) => { out[d] = [...m[d]].sort((a, b) => a.localeCompare(b)); }); return out;
+  }, [inventory, settings.categoryDepartments]);
   const pillarSizes = Object.keys(trussInv?.pillars || {}).sort((a, b) => Number(b) - Number(a));
   const beamSizes = Object.keys(trussInv?.beams || {}).sort((a, b) => Number(b) - Number(a));
   const fixedVenues = settings.fixedVenues || [];
@@ -87,11 +102,40 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
       </div>
       <p className="text-xs text-gray-500 mb-3">Inhouse venues that own permanently-installed structure. Reusing a standing item = no build labour + discounted rental. Swapping to a different item, or extras beyond the standing qty, bill full labour + full rental.</p>
 
-      {/* Global repeat discount — set once for ALL fixed venues (sub-category / item overrides layer on top) */}
-      <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-3 flex-wrap">
-        <span className="text-sm font-bold text-emerald-800">♻️ Repeat rental discount (all fixed venues)</span>
-        <div className="flex items-center gap-1"><input type="number" min="0" max="100" value={globalRepeatDiscount} onChange={(e) => setGlobalDiscount(e.target.value)} className="w-16 border border-emerald-300 rounded px-2 py-1 text-sm text-center font-bold text-emerald-700" /><span className="text-sm text-emerald-700">%</span></div>
-        <span className="text-xs text-emerald-600">Charged on a repeated fixed-venue item's rental. Override per sub-category (rate card) or per item (inventory) where it differs.</span>
+      {/* Sub-category repeat discounts — set ONCE per sub-category, applied to all fixed venues. A repeat
+          item bills at its sub-category %; no % → full rental. This is the ONLY fixed-venue discount. */}
+      <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+          <span className="text-sm font-bold text-emerald-800">♻️ Repeat discounts by sub-category</span>
+          <span className="text-xs text-emerald-600">{Object.keys(subDisc).length} set · applies to every fixed venue</span>
+        </div>
+        <p className="text-xs text-emerald-600 mb-2">Each department sets a discount % per sub-category. A repeat/reused item bills at its sub-category's %; anything without a % bills at full rental.</p>
+        <div className="space-y-1.5">
+          {Object.entries(subcatsByDept).map(([dept, subs]) => {
+            const open = openDept === dept;
+            const setCount = subs.filter((sub) => subDisc[sub.toLowerCase().trim()] != null).length;
+            return (
+              <div key={dept} className="bg-white border border-emerald-100 rounded-lg overflow-hidden">
+                <button onClick={() => setOpenDept(open ? null : dept)} className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left">
+                  <span className="text-sm font-semibold text-gray-800">{open ? "▾" : "▸"} {dept} <span className="text-xs font-normal text-gray-400">· {subs.length} sub-cat{subs.length > 1 ? "s" : ""}</span></span>
+                  {setCount > 0 && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">{setCount} discounted</span>}
+                </button>
+                {open && (
+                  <div className="px-3 pb-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {subs.map((sub) => { const key = sub.toLowerCase().trim(); return (
+                      <div key={sub} className="flex items-center gap-2 border rounded-lg px-2 py-1">
+                        <span className="text-xs text-gray-700 flex-1 truncate" title={sub}>{sub}</span>
+                        <input type="number" min="0" max="100" value={subDisc[key] ?? ""} onChange={(e) => setSubDisc(sub, e.target.value)} placeholder="0" className="w-14 border rounded px-1.5 py-0.5 text-sm text-center" />
+                        <span className="text-xs text-gray-400">%</span>
+                      </div>
+                    ); })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {Object.keys(subcatsByDept).length === 0 && <div className="text-xs text-gray-400 text-center py-3">No inventory sub-categories found.</div>}
+        </div>
       </div>
 
       {fixedVenues.length === 0 && <div className="text-center text-gray-400 text-sm py-8 border border-dashed rounded-xl">No fixed venues yet. Add one (e.g. Ambria Exotica) to define its standing inventory.</div>}
