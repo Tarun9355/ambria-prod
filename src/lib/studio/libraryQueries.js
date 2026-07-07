@@ -110,6 +110,8 @@ function applyKeyset(q, sortCol, cursor) {
  * `tagSource` — 'nightly' | 'manual' — matches the chip's current semantics (tag source
  * alone, independent of verified status, so a since-verified nightly-tagged photo still
  * shows here — same as the old client-side `i.tagSource === "nightly"` filter).
+ * Note: the 'review' status excludes tag_source='nightly' rows — those already surface
+ * under the Nightly Tagged chip, so Needs Review only counts non-nightly review items.
  */
 export async function fetchLibraryPage({
   status, tagSource, filters = {}, venueGroup, venueNames = [], inhouseVenueNames = [],
@@ -117,7 +119,10 @@ export async function fetchLibraryPage({
 } = {}) {
   let q = supabase.from("library").select(LIST_COLUMNS);
   if (tagSource) q = q.eq("tag_source", tagSource);
-  else if (status) q = q.eq("status", status);
+  else if (status) {
+    q = q.eq("status", status);
+    if (status === "review") q = q.or("tag_source.is.null,tag_source.neq.nightly");
+  }
   q = applyCommonFilters(q, { filters, venueGroup, venueNames, inhouseVenueNames, search });
   const sortCol = status === "untagged" && !tagSource ? "created_at" : "tagged_at";
   q = applyKeyset(q, sortCol, cursor);
@@ -139,7 +144,7 @@ export async function fetchLibraryCounts({ filters = {}, venueGroup, venueNames 
   );
   const [verified, review, untagged, nightly, manual] = await Promise.all([
     base().eq("status", "verified"),
-    base().eq("status", "review"),
+    base().eq("status", "review").or("tag_source.is.null,tag_source.neq.nightly"),
     base().eq("status", "untagged"),
     base().eq("tag_source", "nightly"),
     base().eq("tag_source", "manual"),

@@ -68,10 +68,25 @@ Deno.serve(async (req) => {
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
   const colorVals = paletteVals.length ? paletteVals : (tax.colorPalette || []);
 
-  const { data: untaggedRows, error: untErr } = await db.from("library")
-    .select("*").eq("status", "untagged").order("created_at", { ascending: true }).limit(MAX_PER_RUN);
-  if (untErr) return json({ error: untErr.message }, 500);
-  const targets = (untaggedRows || []).map(rowToItem).filter((i: any) => i && i.url);
+  // One-off backfill: the existing Needs Review pile was tagged under the old rules, so drain
+  // it before touching brand-new untagged photos. RETAG_REVIEW_BEFORE is fixed at the moment this
+  // backfill went live — retagging sets tagged_at to "now" (after the cutoff), so each photo
+  // falls out of this query as soon as it's redone. Once none are left before the cutoff, this
+  // branch permanently returns zero rows and the function goes back to untagged-only tagging.
+  const RETAG_REVIEW_BEFORE = "2026-07-07T12:16:00.000Z";
+  const { data: reviewBacklogRows, error: reviewErr } = await db.from("library")
+    .select("*").eq("status", "review").lt("tagged_at", RETAG_REVIEW_BEFORE)
+    .order("tagged_at", { ascending: true }).limit(MAX_PER_RUN);
+  if (reviewErr) return json({ error: reviewErr.message }, 500);
+
+  let rows = reviewBacklogRows;
+  if (!rows || !rows.length) {
+    const { data: untaggedRows, error: untErr } = await db.from("library")
+      .select("*").eq("status", "untagged").order("created_at", { ascending: true }).limit(MAX_PER_RUN);
+    if (untErr) return json({ error: untErr.message }, 500);
+    rows = untaggedRows;
+  }
+  const targets = (rows || []).map(rowToItem).filter((i: any) => i && i.url);
   if (!targets.length) return json({ ok: true, tagged: 0, message: "nothing untagged" });
 
   // Recent corrections → "learn from these".
@@ -171,7 +186,8 @@ Return ONLY JSON matching the provided schema.`;
       const r = await tagOne(img);
       const patch = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
-      // This target was status='untagged' and never verified, so it always lands on 'review'.
+      // Target was either status='untagged' or an unverified 'review' backlog photo being
+      // retagged under the current rules — either way it lands on 'review', never verified.
       const row = {
         id: item.id, name: item.name ?? null, url: item.url ?? null, tags: item.tags || {}, elements: item.elements || [], dims: item.dims || {}, data: item,
         status: "review", tag_source: "nightly", tagged_at: new Date(item._aiTaggedAt).toISOString(),

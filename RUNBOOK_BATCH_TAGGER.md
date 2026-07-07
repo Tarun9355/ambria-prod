@@ -35,10 +35,10 @@ Expect a JSON reply like `{"ok":true,"tagged":N,"failed":0,"scanned":N}`. Then c
 > It tags at most 100 photos per run (rate-limit safety). Re-run to clear a big backlog, or let the
 > nightly schedule chip away at it.
 
-### 4. Schedule it (2:00 AM IST = 20:30 UTC)
+### 4. Schedule it
 Supabase → Database → Extensions → enable **pg_cron** and **pg_net**. Then SQL editor:
 ```sql
-select cron.schedule('nightly-tagger', '30 20 * * *', $$
+select cron.schedule('nightly-batch-tagger', '*/15 * * * *', $$
   select net.http_post(
     url := 'https://taalribntdkowoqltvqw.supabase.co/functions/v1/batch-tagger',
     headers := '{"X-Cron-Secret": "<CRON_SECRET value>", "Content-Type": "application/json"}'::jsonb,
@@ -46,12 +46,15 @@ select cron.schedule('nightly-tagger', '30 20 * * *', $$
   );
 $$);
 ```
-Keep that SQL private — it contains the cron secret. To change/stop:
-`select cron.unschedule('nightly-tagger');`
+Currently runs every 15 minutes (job `nightly-batch-tagger`), not just once nightly — intentional, to
+chew through the Needs Review backlog quickly (see Notes below). Keep that SQL private — it contains
+the cron secret. To change/stop: `select cron.unschedule('nightly-batch-tagger');`
 
 ### Notes
-- Runs at 2 AM when nobody's editing; it re-reads the library right before writing so a stray late-night
-  edit isn't clobbered.
-- It only touches photos with **no tags, not verified, not already AI-tagged** — it never re-tags or
-  overwrites a verified photo.
-- The in-app "🤖 Tag all untagged" button does the same thing on demand if you don't want to wait.
+- Runs every 15 min; it re-reads the library right before writing so a stray edit isn't clobbered.
+- **Temporary backfill (as of 2026-07-07):** the function first drains any Needs Review photo tagged
+  before `RETAG_REVIEW_BEFORE` in `index.ts` — those predate the current tagging rules and get
+  retagged once. Once none are left before that cutoff, it permanently falls back to only tagging
+  `status='untagged'` photos, same as before. It never re-tags or overwrites a **verified** photo.
+- The in-app "🤖 Tag all untagged" button does the same untagged-only pass on demand if you don't want
+  to wait.
