@@ -85,7 +85,7 @@ function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inho
   return q;
 }
 
-const LIST_COLUMNS = "id,name,url,tags,elements,linked_templates,status,tag_source,tagged_at,created_at";
+const LIST_COLUMNS = "id,name,url,tags,elements,dims,linked_templates,status,tag_source,tagged_at,created_at";
 
 // Cursor-based (keyset) pagination — NOT OFFSET, so page N stays fast at 10k+ rows.
 // `sortCol` is "tagged_at" for verified/review/nightly/manual (most-recently-tagged first)

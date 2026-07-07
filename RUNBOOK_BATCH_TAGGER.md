@@ -18,17 +18,21 @@ supabase functions deploy batch-tagger
 It reuses the `ANTHROPIC_API_KEY` secret already set for the `anthropic` function; `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.
 
-### 3. Test it manually first (before scheduling)
-Run once with your service-role key (Supabase → Settings → API):
+### 3. Set the cron secret and test manually first (before scheduling)
+Set a dedicated secret (not the service-role key) that only the cron will send:
+```
+supabase secrets set CRON_SECRET=<a long random value>
+```
+Then run once with that same value:
 ```
 curl -X POST 'https://taalribntdkowoqltvqw.supabase.co/functions/v1/batch-tagger' \
-  -H 'Authorization: Bearer <SERVICE_ROLE_KEY>' -H 'Content-Type: application/json' -d '{}'
+  -H 'X-Cron-Secret: <CRON_SECRET value>' -H 'Content-Type: application/json' -d '{}'
 ```
 Expect a JSON reply like `{"ok":true,"tagged":N,"failed":0,"scanned":N}`. Then check:
 - Supabase → `batch_tag_log` has rows.
 - In the app, those photos now show **🤖 AI suggested — review**.
 
-> It tags at most 50 photos per run (rate-limit safety). Re-run to clear a big backlog, or let the
+> It tags at most 100 photos per run (rate-limit safety). Re-run to clear a big backlog, or let the
 > nightly schedule chip away at it.
 
 ### 4. Schedule it (2:00 AM IST = 20:30 UTC)
@@ -37,12 +41,12 @@ Supabase → Database → Extensions → enable **pg_cron** and **pg_net**. Then
 select cron.schedule('nightly-tagger', '30 20 * * *', $$
   select net.http_post(
     url := 'https://taalribntdkowoqltvqw.supabase.co/functions/v1/batch-tagger',
-    headers := '{"Authorization": "Bearer <SERVICE_ROLE_KEY>", "Content-Type": "application/json"}'::jsonb,
+    headers := '{"X-Cron-Secret": "<CRON_SECRET value>", "Content-Type": "application/json"}'::jsonb,
     body := '{}'::jsonb
   );
 $$);
 ```
-Keep that SQL private — it contains the service-role key. To change/stop:
+Keep that SQL private — it contains the cron secret. To change/stop:
 `select cron.unschedule('nightly-tagger');`
 
 ### Notes

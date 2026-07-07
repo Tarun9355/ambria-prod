@@ -1,0 +1,9 @@
+# Only pins per-function gateway settings that must survive `supabase functions deploy` —
+# not a full `supabase init` config (no local dev stack config here).
+#
+# batch-tagger is triggered by pg_cron with a shared secret (X-Cron-Secret / CRON_SECRET) checked
+# inside the function itself, not a Supabase user JWT — so gateway JWT verification must stay off.
+# Without this, a plain `supabase functions deploy batch-tagger` resets verify_jwt to its default
+# (true), which makes the gateway reject the cron's request before the function code even runs.
+[functions.batch-tagger]
+verify_jwt = false

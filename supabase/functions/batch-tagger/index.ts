@@ -8,7 +8,8 @@
 // Storage note: the Studio library lives as a JSON blob in settings (key 'ambria-library-v2'), not a
 // row-per-photo table — so this function reads/merges/writes that blob.
 //
-// Auth: trigger with the service-role key as the Bearer token (the cron does this). Secrets:
+// Auth: trigger with header `X-Cron-Secret: <CRON_SECRET>` (the cron does this). CRON_SECRET is a
+// dedicated secret (not the service-role key) set via `supabase secrets set CRON_SECRET=...`.
 // SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are auto-injected; ANTHROPIC_API_KEY is a project secret
 // (already set for the `anthropic` function — shared across all functions).
 //
@@ -34,9 +35,14 @@ Deno.serve(async (req) => {
   const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
   if (!SUPABASE_URL || !SERVICE_KEY || !ANTHROPIC_KEY) return json({ error: "not configured" }, 500);
 
-  // Only the cron / an admin holding the service key may trigger this.
-  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  if (bearer !== SERVICE_KEY) return json({ error: "unauthorized" }, 401);
+  // Only the cron (holding CRON_SECRET, a dedicated secret separate from the service-role
+  // key) may trigger this. Needed because Dashboard-level JWT verification is off for this
+  // function, so without this check the endpoint would be public — and it calls Claude Opus
+  // per image, so an open endpoint is a direct cost-abuse vector.
+  const CRON_SECRET = Deno.env.get("CRON_SECRET");
+  if (!CRON_SECRET) return json({ error: "not configured" }, 500);
+  const provided = req.headers.get("X-Cron-Secret") || "";
+  if (provided !== CRON_SECRET) return json({ error: "unauthorized" }, 401);
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const getKv = async (key: string) => { const { data } = await db.from("settings").select("value").eq("key", key).maybeSingle(); return parse(data?.value); };
@@ -151,37 +157,35 @@ Return ONLY JSON matching the provided schema.`;
     return JSON.parse(text);
   };
 
-  const patches: Record<string, any> = {};
-  const logs: any[] = [];
-  let ok = 0, fail = 0;
+  // Supabase's edge runtime kills a request that runs past its idle timeout (~150s). Each image is
+  // a full Opus vision call and can take a while, so instead of tagging everything then writing once
+  // at the end (all-or-nothing — a timeout mid-run used to throw away every already-paid-for tag),
+  // each result is written the moment it's ready and a time budget stops the loop before the
+  // platform would kill it. Whatever's left over just waits for the next run.
+  const RUN_TIME_BUDGET_MS = 120_000;
+  const runStart = Date.now();
+  let ok = 0, fail = 0, skipped = 0;
   for (const img of targets) {
+    if (Date.now() - runStart > RUN_TIME_BUDGET_MS) { skipped = targets.length - ok - fail; break; }
     try {
       const r = await tagOne(img);
-      patches[img.id] = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
-      logs.push({ photo_id: img.id, success: true }); ok++;
-    } catch (e) {
-      logs.push({ photo_id: img.id, success: false, error: String((e as Error)?.message || e) }); fail++;
-    }
-  }
-
-  // Write back row-level to the `library` TABLE — only the tagged rows, so nothing else is touched.
-  if (ok > 0) {
-    const rows = targets.filter((img: any) => patches[img.id]).map((img: any) => {
-      const item = { ...img, ...patches[img.id] };
-      // All rows here just got real tags from a target that was status='untagged' and never
-      // verified (isUntagged/status filter excludes _verified rows) — always lands on 'review'.
-      return {
+      const patch = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      const item = { ...img, ...patch };
+      // This target was status='untagged' and never verified, so it always lands on 'review'.
+      const row = {
         id: item.id, name: item.name ?? null, url: item.url ?? null, tags: item.tags || {}, elements: item.elements || [], dims: item.dims || {}, data: item,
         status: "review", tag_source: "nightly", tagged_at: new Date(item._aiTaggedAt).toISOString(),
         updated_at: new Date().toISOString(),
       };
-    });
-    for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await db.from("library").upsert(rows.slice(i, i + 500), { onConflict: "id" });
-      if (error) return json({ error: error.message, tagged: ok }, 500);
+      const { error: upErr } = await db.from("library").upsert(row, { onConflict: "id" });
+      if (upErr) throw new Error(upErr.message);
+      await db.from("batch_tag_log").insert({ photo_id: img.id, success: true });
+      ok++;
+    } catch (e) {
+      await db.from("batch_tag_log").insert({ photo_id: img.id, success: false, error: String((e as Error)?.message || e) });
+      fail++;
     }
   }
-  if (logs.length) await db.from("batch_tag_log").insert(logs);
 
-  return json({ ok: true, tagged: ok, failed: fail, scanned: targets.length });
+  return json({ ok: true, tagged: ok, failed: fail, scanned: targets.length, skipped_out_of_time: skipped });
 });
