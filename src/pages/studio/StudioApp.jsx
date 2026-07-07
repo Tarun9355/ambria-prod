@@ -1320,6 +1320,10 @@ export default function StudioApp() {
   const [dcGenStatus, setDcGenStatus] = useState("");
   const [dcActiveTab, setDcActiveTab] = useState("inventory");
   const [dcMpOverrides, setDcMpOverrides] = useState({});
+  // Per-shift (per-dihari) crew counts set in Deal Check: { [type]: { [date]: { [winId]: count } } }.
+  // Same shape as IMS Dept Ops mpWinCount → flows into the snapshot schedule so Deal Check, Dept Ops
+  // and On-Site all show/edit the same per-shift numbers.
+  const [dcMpWinCount, setDcMpWinCount] = useState({});
   const [dcMpIncludeMinusOne, setDcMpIncludeMinusOne] = useState(false);
   const [dcMpIncludeDismantle, setDcMpIncludeDismantle] = useState(true);
   const [dcMpCalcOpen, setDcMpCalcOpen] = useState({});
@@ -4846,6 +4850,7 @@ Return ONLY JSON:
       setDcCarpetPick(cli.dcCarpetPick);
     }
     if (cli.dcMpOverrides && typeof cli.dcMpOverrides === "object") setDcMpOverrides(cli.dcMpOverrides);
+    if (cli.dcMpWinCount && typeof cli.dcMpWinCount === "object") setDcMpWinCount(cli.dcMpWinCount);
     if (typeof cli.dcMpIncludeMinusOne === "boolean") setDcMpIncludeMinusOne(cli.dcMpIncludeMinusOne);
     if (typeof cli.dcMpIncludeDismantle === "boolean") setDcMpIncludeDismantle(cli.dcMpIncludeDismantle);
   }, [dcFullPageOpen, activeClientId, clientLedger]);
@@ -5099,13 +5104,13 @@ Return ONLY JSON:
       const cur = clientLedgerRef.current || [];
       if (cur.some(c => c.id === activeClientId)) {
         saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
-          dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides,
+          dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
           dcMpIncludeMinusOne, dcMpIncludeDismantle,
           dcDraft: snapshot, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" } : c));
       }
     }, 2500);
     return () => clearTimeout(t);
-  }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+  }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   const runDealCheckGenerate = useCallback(async (fnIdxFilter = null) => {
@@ -5518,7 +5523,7 @@ Return ONLY JSON:
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
     dcFullPageOpen, setDcFullPageOpen, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
-    dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcMpOverrides, setDcMpOverrides, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
+    dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
     amendRequests, submitAmendRequest, isLastMinute, makeAmendRequest,

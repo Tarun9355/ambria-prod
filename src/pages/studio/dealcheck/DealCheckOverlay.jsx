@@ -31,7 +31,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
-    dcZoneState, dcMpOverrides, dcMpIncludeMinusOne, dcMpIncludeDismantle,
+    dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds,
     // build / fn state
@@ -542,7 +542,19 @@ export default function DealCheckOverlay({ ctx }) {
                   labourTypes.forEach(t => {
                     const ppl = running[t] || 0; if (ppl <= 0) return;
                     const wins = dcMpOverrides[`${d.date}|${t}`] || (defaultWindowsByPhase[t]||{})[d.phase] || [];
-                    const mpCost = ppl * wins.length * (rateByType[t] || 0);
+                    // Per-shift crew: a worked window uses its own dcMpWinCount ONLY if the ops manager set one,
+                    // else the day's crew count. Cost = Σ(perWindowCount) × rate (MUST match the Manpower tab).
+                    // Only EXPLICIT per-shift edits go into winCountMap → schedule, so a dept-head day-count edit
+                    // in Dept Ops still applies to the untouched shifts (effShift/mpDayCost fall through).
+                    const _wc = dcMpWinCount?.[t]?.[d.date] || null;
+                    let winCountMap = null, daySlots = 0;
+                    wins.forEach(id => {
+                      const explicit = _wc && _wc[id] != null && _wc[id] !== "";
+                      const c = explicit ? (Number(_wc[id]) || 0) : ppl;
+                      daySlots += c;
+                      if (explicit) { if (!winCountMap) winCountMap = {}; winCountMap[id] = c; }
+                    });
+                    const mpCost = daySlots * (rateByType[t] || 0);
                     manpower += mpCost;
                     mpByType[t] = (mpByType[t] || 0) + mpCost;
                     // Per-day labour cost → departments by THIS day's usage fractions.
@@ -553,7 +565,9 @@ export default function DealCheckOverlay({ ctx }) {
                       let trace = null, drivenBy = null;
                       if (d.phase === "event" && d.fns.length) { let bf = d.fns[0], bc = -1; d.fns.forEach(fn => { const c = peopleByFn[t][fns.indexOf(fn)] || 0; if (c > bc) { bc = c; bf = fn; } }); trace = traceOf(bf, t); drivenBy = bf?.fnType || null; }
                       else if (d.phase === "minusOne") { let bf = fns[0], bc = -1; fns.forEach((fn, fi) => { const c = peopleByFn[t][fi] || 0; if (c > bc) { bc = c; bf = fn; } }); trace = traceOf(bf, t); drivenBy = bf?.fnType || null; }
-                      mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length, windowIds: wins, trace, drivenBy });
+                      // winCount → snapshot so Dept Ops + On-Site inherit the same per-shift crew (they fall
+                      // back to schedule.winCount until a head overrides it).
+                      mpSchedule[t].push({ date: d.date, phase: d.phase, count: ppl, windows: wins.length, windowIds: wins, winCount: winCountMap, trace, drivenBy });
                     }
                   });
                 });
@@ -2002,7 +2016,7 @@ export default function DealCheckOverlay({ ctx }) {
                 setDcSavingDraft(true);
                 try {
                   // Persist dcCards + dcZoneState + manpower overrides onto active client record · saved via existing client ledger flow
-                  const ledger = clientLedger.map(c => c.id !== activeClientId ? c : ({ ...c, dcCards: dcCards, dcZoneState: dcZoneState, dcKitEdits: dcKitEdits, dcCarpetPick: dcCarpetPick, dcMpOverrides: dcMpOverrides, dcMpIncludeMinusOne: dcMpIncludeMinusOne, dcMpIncludeDismantle: dcMpIncludeDismantle, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" }));
+                  const ledger = clientLedger.map(c => c.id !== activeClientId ? c : ({ ...c, dcCards: dcCards, dcZoneState: dcZoneState, dcKitEdits: dcKitEdits, dcCarpetPick: dcCarpetPick, dcMpOverrides: dcMpOverrides, dcMpWinCount: dcMpWinCount, dcMpIncludeMinusOne: dcMpIncludeMinusOne, dcMpIncludeDismantle: dcMpIncludeDismantle, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" }));
                   await saveClientLedger(ledger);
                   showMsg("✓ Deal Check draft saved", "green");
                 } catch (e) { showMsg("⚠ Save failed — try again", "red"); }

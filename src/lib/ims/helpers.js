@@ -83,8 +83,11 @@ export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
   const dayCount = mpEffDay(r, d, mpDay);
   const ids = mpEffWinIds(d, mpWin, r.type);
   if (ids) {
+    // Head's per-shift override (mpWinCount) wins; else the per-shift crew set in Deal Check (schedule
+    // day .winCount) so all three views stay in sync; else the plain day crew count.
     const wc = mpWinCount && mpWinCount[r.type] && mpWinCount[r.type][d.date];
-    return ids.reduce((s, id) => s + ((wc && wc[id] != null) ? (Number(wc[id]) || 0) : dayCount), 0) * rate;
+    const sc = d && d.winCount;
+    return ids.reduce((s, id) => s + ((wc && wc[id] != null) ? (Number(wc[id]) || 0) : ((sc && sc[id] != null) ? (Number(sc[id]) || 0) : dayCount)), 0) * rate;
   }
   return dayCount * (Number(d.windows) || 0) * rate;
 }

@@ -20,6 +20,7 @@ export default function DCManpowerTab({ ctx }) {
     calcZoneTrussPreview,
     // manpower state
     dcMpOverrides, setDcMpOverrides,
+    dcMpWinCount, setDcMpWinCount,
     dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle,
     dcMpCalcOpen, setDcMpCalcOpen,
@@ -665,9 +666,23 @@ export default function DCManpowerTab({ ctx }) {
                     const cur = getWindowsForDayType(dateISO, type, phase);
                     const next = cur.includes(winId) ? cur.filter(x=>x!==winId) : [...cur, winId];
                     setWindowsForDayType(dateISO, type, next);
+                    // Turning a window OFF clears any per-shift count so it doesn't linger; ON leaves it to default.
+                    if (cur.includes(winId)) setWinCount(dateISO, type, winId, null);
                   };
+                  // Per-shift (per-dihari) crew count: the ops manager can keep e.g. 2 flowerists in shift 1 but
+                  // only 1 in shift 2. Default = the day's computed crew count. Stored in dcMpWinCount.
+                  const winCountFor = (dateISO, type, winId, defPpl) => { const v = dcMpWinCount?.[type]?.[dateISO]?.[winId]; return (v != null && v !== "") ? (Number(v) || 0) : defPpl; };
+                  const setWinCount = (dateISO, type, winId, val) => setDcMpWinCount(prev => {
+                    const n = { ...(prev || {}) };
+                    const byType = { ...(n[type] || {}) };
+                    const byDate = { ...(byType[dateISO] || {}) };
+                    if (val == null) delete byDate[winId]; else byDate[winId] = Math.max(0, Number(val) || 0);
+                    if (Object.keys(byDate).length) byType[dateISO] = byDate; else delete byType[dateISO];
+                    if (Object.keys(byType).length) n[type] = byType; else delete n[type];
+                    return n;
+                  });
 
-                  // ── Compute booking-total cost ────────────────────────────
+                  // ── Compute booking-total cost (per-shift crew aware) ─────────
                   let bookingTotalCost = 0, bookingTotalDihari = 0;
                   const dayCosts = {}; // { [date]: { total, byType: { [type]: { ppl, dihari, cost } } } }
                   dayList.forEach(d => {
@@ -679,10 +694,11 @@ export default function DCManpowerTab({ ctx }) {
                       const wins = getWindowsForDayType(d.date, t, d.phase);
                       const dihari = wins.length;
                       const effRate = rateByType[t] || 0;
-                      const cost = ppl * dihari * effRate;
+                      const slots = wins.reduce((s, id) => s + winCountFor(d.date, t, id, ppl), 0); // Σ per-shift crew
+                      const cost = slots * effRate;
                       dayBreakdown.byType[t] = { ppl, dihari, cost, windowsTicked: wins };
                       dayBreakdown.total += cost;
-                      bookingTotalDihari += ppl * dihari;
+                      bookingTotalDihari += slots;
                     });
                     dayCosts[d.date] = dayBreakdown;
                     bookingTotalCost += dayBreakdown.total;
@@ -767,7 +783,9 @@ export default function DCManpowerTab({ ctx }) {
                                 const dihari = ticked.length;
                                 const effRate = rateByType[t] || 0;
                                 const src = rateSourceByType[t] || { kind:"house_default", count:0 };
-                                const cost = ppl * dihari * effRate;
+                                const slots = ticked.reduce((s, id) => s + winCountFor(d.date, t, id, ppl), 0); // Σ per-shift crew
+                                const uniform = ticked.every(id => winCountFor(d.date, t, id, ppl) === ppl);
+                                const cost = slots * effRate;
                                 return (
                                   <div key={t} style={{padding:"8px 10px",borderRadius:7,background:"rgba(148,163,184,0.04)",border:`1px solid ${border}55`}}>
                                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:6}}>
@@ -780,22 +798,27 @@ export default function DCManpowerTab({ ctx }) {
                                         )}
                                       </div>
                                       <div style={{fontSize:11,color:cost>0?"#10B981":textS,fontWeight:700,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
-                                        {cost > 0 ? `${dihari} dihari × ${ppl} = ₹${Math.round(cost).toLocaleString("en-IN")}` : "0 dihari"}
+                                        {cost > 0 ? (uniform ? `${dihari} dihari × ${ppl} = ₹${Math.round(cost).toLocaleString("en-IN")}` : `${slots} crew-shifts = ₹${Math.round(cost).toLocaleString("en-IN")}`) : "0 dihari"}
                                       </div>
                                     </div>
                                     <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                                       {wins.map(w => {
                                         const on = ticked.includes(w.id);
-                                        return (
+                                        if (!on) return (
                                           <button key={w.id} onClick={()=>toggleWindow(d.date, t, w.id, d.phase)}
-                                            style={{
-                                              fontSize:10,padding:"3px 8px",borderRadius:11,cursor:"pointer",
-                                              border:on?`1px solid #10B981`:`1px solid ${border}`,
-                                              background:on?"rgba(16,185,129,0.15)":"transparent",
-                                              color:on?"#10B981":textS,fontWeight:on?600:400
-                                            }}>
-                                            {on ? "✓ " : ""}{w.label}
+                                            style={{ fontSize:10,padding:"3px 8px",borderRadius:11,cursor:"pointer",border:`1px solid ${border}`,background:"transparent",color:textS,fontWeight:400 }}>
+                                            {w.label}
                                           </button>
+                                        );
+                                        // ON window → label toggle + per-shift crew stepper (− N +). Default = day count.
+                                        const wc = winCountFor(d.date, t, w.id, ppl);
+                                        return (
+                                          <span key={w.id} style={{display:"inline-flex",alignItems:"center",border:`1px solid #10B981`,borderRadius:11,overflow:"hidden",background:"rgba(16,185,129,0.15)"}}>
+                                            <button onClick={()=>toggleWindow(d.date, t, w.id, d.phase)} title="Remove this shift" style={{fontSize:10,padding:"3px 6px 3px 9px",cursor:"pointer",border:"none",background:"transparent",color:"#10B981",fontWeight:600}}>✓ {w.label}</button>
+                                            <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>−</button>
+                                            <span title="Crew in this shift" style={{fontSize:10,minWidth:16,textAlign:"center",color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{wc}</span>
+                                            <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderRight:`1px solid rgba(16,185,129,0.4)`,borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>+</button>
+                                          </span>
                                         );
                                       })}
                                       {wins.length === 0 && <span style={{fontSize:10,color:textS,fontStyle:"italic"}}>No windows defined for this type</span>}
