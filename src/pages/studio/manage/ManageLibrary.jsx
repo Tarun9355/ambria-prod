@@ -170,6 +170,13 @@ export default function ManageLibrary({ ctx }) {
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
 
+  // `tagVenueGroup` defaults to "inhouse" (StudioApp.jsx) and is shared/sticky across whichever
+  // photo is open, so without this it wins over the derived inhouse/outside group every time a
+  // photo is (re)opened — e.g. opening a photo tagged with an Outside venue like "Canvas" would
+  // show the "Inhouse" pill highlighted even though Canvas is correctly selected below it. Reset
+  // it to "" whenever a different photo opens so the group re-derives from that photo's own venue.
+  useEffect(() => { setTagVenueGroup(""); setTagOutsideSub("all"); }, [libEditImg?.id, setTagVenueGroup, setTagOutsideSub]);
+
   // reference module-scope theme bg (~7081)
   const bg = isDark ? "#0F0F1A" : "#FAF9F6";
 
