@@ -2279,6 +2279,41 @@ export default function StudioApp() {
 
   const applyFloralRatio = useCallback((unitPrice, rc) => unitPrice, []);
 
+  // Auto-derived artificial rate PER UNIT for a floral recipe element = Σ(recipe flowers × artificial
+  // bunches-per-unit) × ₹/bunch × studio markup. Mirrors calcFnFloralSourcingCost's artificial cost so
+  // the client charge for the artificial portion is never ₹0 just because a flat rate wasn't typed in.
+  // Returns null when the element has NO recipe (caller then falls back to the flat rate-card artificial rate).
+  const floralArtUnitRate = useCallback((rc, size) => {
+    const fp = dealCheckData?.flowerPatterns || [];
+    if (!fp.length) return null;
+    const mc = dealCheckData?.mandiCatalogue || [];
+    const afRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
+    const afBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
+    const agRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
+    const agBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
+    const markup = Number(dealCheckData?.defaultStudioMarkup ?? 3) || 3;
+    const tn = String(rc?.name || "").toLowerCase().trim();
+    let pat = fp.find(p => String(p?.name || "").toLowerCase().trim() === tn);
+    if (!pat) pat = fp.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
+    if (!pat) return null;
+    const sz = String(size || "").toUpperCase();
+    const sk = rcIsSMB(rc) ? (sz === "S" || sz === "SMALL" ? "small" : (sz === "B" || sz === "BIG" || sz === "LARGE" || sz === "PREMIUM" || sz === "HEAVY" ? "big" : "medium")) : "medium";
+    const sizes = pat.sizes || {};
+    let comp = sizes[sk] || sizes.medium; if (!comp && sk === "big" && sizes.large) comp = sizes.large;
+    if (!comp && Object.keys(sizes).length) comp = sizes[Object.keys(sizes)[0]];
+    if (!comp || !Array.isArray(comp.flowers)) return null;
+    let cost = 0;
+    comp.flowers.forEach(fl => {
+      const parent = resolveMandiFlower(fl.flowerId, mc)?.parent || null;
+      const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
+      if (ft === "real_only") return; // this flower has no artificial substitute
+      const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
+      const bunches = (Number(fl.qty) || 0) * bpu;
+      cost += bunches * (ft === "green" ? agRate / agBPK : afRate / afBPK);
+    });
+    return Math.round(cost * markup);
+  }, [dealCheckData]);
+
   const getElPrice = useCallback((el, zc) => {
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -2301,7 +2336,10 @@ export default function StudioApp() {
       else if (mode === "artificial") modeDefault = 0;
       else modeDefault = Math.max(0, Math.min(100, 100 - floralRatio));
       realPct = (typeof el.realPct === "number") ? Math.max(0, Math.min(100, el.realPct)) : modeDefault;
-      up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * artRate);
+      // Recipe elements → auto-derive the artificial rate (so it's never ₹0); props with no recipe use the flat rate.
+      const autoArt = floralArtUnitRate(rc, el.size);
+      const effArt = (autoArt != null) ? autoArt : artRate;
+      up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * effArt);
     } else {
       up = realRate;
     }
@@ -2319,7 +2357,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, floralRatio]);
+  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate]);
 
   const calcElsCost = useCallback((elements, withFloral, zc) => {
     return (elements || []).reduce((s, el) => {
@@ -2352,7 +2390,9 @@ export default function StudioApp() {
       else if (mode === "artificial") modeDefault = 0;
       else modeDefault = Math.max(0, Math.min(100, 100 - (typeof fnRatio === "number" ? fnRatio : 70)));
       const realPct = (typeof el.realPct === "number") ? Math.max(0, Math.min(100, el.realPct)) : modeDefault;
-      up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * artRate);
+      const autoArt = floralArtUnitRate(rc, el.size);
+      const effArt = (autoArt != null) ? autoArt : artRate;
+      up = Math.round(realPct / 100 * realRate + (100 - realPct) / 100 * effArt);
     } else {
       up = realRate;
     }
@@ -2365,7 +2405,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode]);
+  }, [rcItems, getFloralMode, floralArtUnitRate]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
@@ -4891,7 +4931,7 @@ Return ONLY JSON:
       for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch {} } }
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);
