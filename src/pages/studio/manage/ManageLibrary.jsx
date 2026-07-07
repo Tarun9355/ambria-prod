@@ -478,7 +478,21 @@ export default function ManageLibrary({ ctx }) {
             return (
             <div key={img.id} onClick={() => libStatus === "untagged" && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
               <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
-              {(() => { const st = photoStatus(img); const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" }; return <div title={st === "verified" ? "Verified by a person" : st === "review" ? "AI-tagged — needs review" : "Untagged"} style={{ position: "absolute", top: 6, left: 6, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>; })()}
+              {(() => {
+                const st = photoStatus(img);
+                const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
+                const verifier = st === "verified" ? (img._verifiedBy || null) : null;
+                const dateStr = st === "verified" && img._verifiedAt ? new Date(img._verifiedAt).toLocaleDateString() : null;
+                const tip = st === "verified"
+                  ? `Verified by ${verifier || "unknown"}${dateStr ? ` on ${dateStr}` : ""}`
+                  : st === "review" ? "AI-tagged — needs review" : "Untagged";
+                return (
+                  <div style={{ position: "absolute", top: 6, left: 6, right: 30, display: "flex", alignItems: "center", gap: 3 }}>
+                    <div title={tip} style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>
+                    {verifier && <div title={tip} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: 6 }}>{verifier}</div>}
+                  </div>
+                );
+              })()}
               {/* Checkbox — shown in untagged view; clicking it toggles selection without opening detail */}
               {libStatus === "untagged" && (
                 <div onClick={e => { e.stopPropagation(); setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }); }} style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSel ? "#7C3AED" : "rgba(255,255,255,0.8)"}`, background: isSel ? "#7C3AED" : "rgba(0,0,0,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", fontWeight: 700 }}>
@@ -598,7 +612,7 @@ export default function ManageLibrary({ ctx }) {
                   if (lc == null && attention.length === 0 && !reviewed && !aiSuggested) return null;
                   return (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "2px 0 8px" }}>
-                      {reviewed && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#05966922", color: "#059669" }}>✓ Reviewed</span>}
+                      {reviewed && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#05966922", color: "#059669" }}>✓ Verified by {libEditImg._verifiedBy || "—"}{libEditImg._verifiedAt ? ` on ${new Date(libEditImg._verifiedAt).toLocaleDateString()}` : ""}</span>}
                       {aiSuggested && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#7C3AED22", color: "#7C3AED" }}>🤖 AI suggested — review</span>}
                       {lc != null && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#F59E0B22", color: "#F59E0B" }}>💡 {lc} light{lc === 1 ? "" : "s"}</span>}
                       {attention.length > 0 && <span style={{ fontSize: 10, color: "#EF4444", display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>⚠ Needs attention: {attention.map((a, i) => <span key={i} style={{ padding: "1px 6px", borderRadius: 6, background: "#EF444418" }}>{a}</span>)}</span>}

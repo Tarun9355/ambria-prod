@@ -39,6 +39,8 @@ export function rowToLibItem(row) {
     _verified: row.status === "verified",
     tagSource: row.tag_source || undefined,
     _aiTaggedAt: row.tagged_at ? new Date(row.tagged_at).getTime() : undefined,
+    _verifiedBy: row.verified_by || undefined,
+    _verifiedAt: row.verified_at ? new Date(row.verified_at).getTime() : undefined,
   };
 }
 
@@ -62,6 +64,8 @@ export function libItemToRow(it) {
     status, tag_source: it.tagSource || null,
     tagged_at: taggedAtMs ? new Date(taggedAtMs).toISOString() : null,
     source_folder: deriveSourceFolder(it.url),
+    verified_by: status === "verified" ? (it._verifiedBy || null) : null,
+    verified_at: status === "verified" && typeof it._verifiedAt === "number" ? new Date(it._verifiedAt).toISOString() : null,
   };
 }
 
@@ -103,7 +107,7 @@ function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inho
   return q;
 }
 
-const LIST_COLUMNS = "id,name,url,tags,elements,dims,linked_templates,status,tag_source,tagged_at,created_at";
+const LIST_COLUMNS = "id,name,url,tags,elements,dims,linked_templates,status,tag_source,tagged_at,created_at,verified_by,verified_at";
 
 // Cursor-based (keyset) pagination — NOT OFFSET, so page N stays fast at 10k+ rows.
 // `sortCol` is "tagged_at" for verified/review/nightly/manual (most-recently-tagged first)
