@@ -408,51 +408,46 @@ export default function DCManpowerTab({ ctx }) {
                     return { kind: "subcat_table", header: ["Sub-category","Count","Batch","Need"], rows, sum, frac: Math.round(frac * 100) / 100, minimum: cfg.minimum || 1, total, formula: "max(min, ⌈Σ(count ÷ batch)⌉) (Tier 2)" };
                   };
                   const traceTier3Labours = (fn) => {
+                    // Labours are fungible: EVERY element's sub-category contributes (count ÷ its "1-per-N")
+                    // — summed across ALL elements and rounded up ONCE (mirrors calcPeopleTier3Labours'
+                    // labourUsageTotal). The venue-min (+ situational) acts as a FLOOR. The old trace only
+                    // showed per-sub-category FLOORED heavy add-ons, so tiny quantities (e.g. 6 console tables
+                    // at 1-per-20) vanished and it looked like only Stage counted — but the count already
+                    // summed them. This table now shows the real derivation.
                     const venueName = fn.fnVenue || "—";
                     const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
                     const _fv = fixedVenueFor(_fvCfg, venueName);
                     const venueMin = _fv ? (_fv.minLabour ?? defaultMinLabour) : 0; // min only for fixed venues
                     const dumpingLevel = (dealCheckData?.venueDumping || {})[venueName] || "nearby";
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
-                    const segment = "outdoor_budgeted";
-                    const eventMult = eventTypeMultipliers[segment] || 1;
+                    const eventMult = eventTypeMultipliers["outdoor_budgeted"] || 1;
                     const base = Math.ceil(venueMin * eventMult);
-                    const dayPrior = dcMpIncludeMinusOne;
-                    const steps = [
-                      { label: `Venue min · ${venueName}`, value: venueMin },
-                      { label: `× Event mult · ${segment} (${eventMult}×)`, value: base }
-                    ];
-                    let situationalMult = 1.0, winningMult = null;
-                    if (!dayPrior) {
-                      const candidates = [{ name:`Dumping · ${dumpingLevel}`, mult: dumpingMult }];
+                    let situationalMult = 1.0;
+                    if (!dcMpIncludeMinusOne) {
+                      const cands = [dumpingMult];
                       const season = seasonMapMP[fn.fnDate||""];
-                      if (season === "kings") candidates.push({ name:`Heavy Saya`, mult: sayaMultiplier });
-                      const timingId = shiftToTiming(fn.fnShift);
-                      candidates.push({ name:`Timing · ${timingId}`, mult: eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0) });
-                      winningMult = candidates.reduce((m, c) => c.mult > m.mult ? c : m, { name:"none", mult: 1.0 });
-                      situationalMult = winningMult.mult;
+                      if (season === "kings") cands.push(sayaMultiplier);
+                      cands.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0));
+                      situationalMult = Math.max(...cands, 1.0);
                     }
-                    const adjusted = Math.ceil(base * situationalMult);
-                    if (winningMult && winningMult.mult > 1.0) {
-                      steps.push({ label: `× Situational · ${winningMult.name} (${winningMult.mult}×)`, value: `⌈${(base * situationalMult).toFixed(2)}⌉ = ${adjusted}` });
-                    } else if (dayPrior) {
-                      steps.push({ label: `Day-prior on (-1 day setup)`, value: "no situational" });
-                    }
-                    let heavyExtra = 0;
+                    const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => { const s = rc.sub || ""; subCounts[s] = (subCounts[s] || 0) + qty; });
-                    const heavyHits = [];
                     const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                    const rows = []; let usageSum = 0, heavyFloor = 0;
                     heavyElementRanges.forEach(her => {
+                      const per = Number(her.perCount) || 0; if (per <= 0) return;
                       const count = Math.max(0, (subCounts[her.subCat] || 0) - (reductionB[her.subCat] || 0));
-                      const ex = heavyExtraLabour(her, count);
-                      if (ex > 0) { heavyHits.push({ sub: her.subCat, count, extra: ex }); heavyExtra += ex; }
+                      if (count <= 0) return;
+                      usageSum += count / per;
+                      heavyFloor += heavyExtraLabour(her, count);
+                      rows.push({ sub: her.subCat, count, batch: per, need: Math.round((count / per) * 100) / 100 });
                     });
-                    heavyHits.forEach(h => {
-                      steps.push({ label: `+ Heavy add-on · ${h.sub} (${h.count})`, value: `+${h.extra}` });
-                    });
-                    const total = adjusted + heavyExtra;
-                    return { kind: "formula_chain", steps, total, formula: "⌈venueMin × eventMult × maxSituational⌉ + heavy extras (Tier 3)" };
+                    rows.sort((a, b) => b.need - a.need);
+                    const usageCeil = Math.ceil(usageSum);
+                    const floorSide = adjusted + heavyFloor; // venue-min (situational) + per-sub-cat heavy floors
+                    const total = Math.max(floorSide, usageCeil);
+                    return { kind: "subcat_table", header: ["Sub-category","Count","1 per","Need"], rows, sum: usageCeil, frac: Math.round(usageSum * 100) / 100, minimum: floorSide, total, formula: "max(venue-min floor, ⌈Σ(count ÷ 1-per-N)⌉) — summed across ALL elements (Tier 3)" };
                   };
                   // §23 Phase 2.6 — trace mirrors new top+RFT logic
                   const traceFabricBangali = (fn) => {
