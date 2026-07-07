@@ -151,6 +151,22 @@ export default function DealCheckOverlay({ ctx }) {
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             Object.entries(cards).forEach(([ck, c]) => {
+              // Split fulfilment: the card's qty is spread across several simple items ({imsId,qty}) — each
+              // bills + reserves as its own line (repeat discount per its own sub-category). Overrides the single item.
+              const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
+              if (splitArr.length) {
+                const _rep = zoneIsRepeat(fn, ck);
+                splitArr.forEach(s => {
+                  const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
+                  const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
+                  const line = _rep ? q * br * (1 - repeatDiscPct(imsField.subcategory(it)) / 100) : q * br;
+                  rental += line;
+                  const dd = catToDept(imsField.category(it));
+                  addD(dd, "rental", line);
+                  if (line > 0 && deptInv[dd]) deptInv[dd].push({ name: it.name, photo: imsField.photos(it)[0] || "", qty: q, unit: br, total: Math.round(line), sub: imsField.subcategory(it) || "", imsId: it.id });
+                });
+                return;
+              }
               if (!c.imsId) return;
               const item = dcInventoryCache.find(x => x.id === c.imsId);
               if (!item) return;
@@ -1354,14 +1370,68 @@ export default function DealCheckOverlay({ ctx }) {
                                           </div>
                                           );
                                         })()}
+                                        {/* ═══ SPLIT across multiple items (8 = 6+2) ═══ */}
+                                        {card.imsId && (()=>{
+                                          const cQty = Number(card.qty)||1;
+                                          const split = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId) : [];
+                                          const setSplit = (next)=> setDcCards(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...(prev[fnIdx]?.[card._cardKey]||{}),split:(Array.isArray(next)&&next.length)?next:undefined}}}));
+                                          const rcS = rcItems.find(r=>String(r?.name||"").toLowerCase().trim()===String(card.rcName||"").toLowerCase().trim());
+                                          const subS = (rcS&&rcS.sub)?rcS.sub:(item?imsField.subcategory(item):"");
+                                          const subItems = subS ? dcInventoryCache.filter(x=>String(imsField.subcategory(x)||"").toLowerCase().trim()===String(subS).toLowerCase().trim()) : [];
+                                          if (!split.length) {
+                                            if (cQty < 2) return null;
+                                            return <div style={{marginTop:5}}><span onClick={()=>setSplit([{imsId:card.imsId,qty:cQty}])} style={{fontSize:9.5,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline",textUnderlineOffset:2}}>✂️ Split ×{cQty} across items</span></div>;
+                                          }
+                                          const allocated = split.reduce((s,x)=>s+(Number(x.qty)||0),0);
+                                          const rem = cQty - allocated;
+                                          return (
+                                            <div style={{marginTop:6,padding:"8px 10px",borderRadius:8,background:"rgba(16,185,129,0.05)",border:"1px solid rgba(16,185,129,0.25)"}}>
+                                              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                                                <span style={{fontSize:10,fontWeight:700,color:"#34D399"}}>✂️ Split ×{cQty} across items</span>
+                                                <span onClick={()=>setSplit(undefined)} style={{fontSize:9,color:textS,cursor:"pointer",textDecoration:"underline"}}>use single item</span>
+                                              </div>
+                                              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                                {split.map((s,si)=>{
+                                                  const it2 = dcInventoryCache.find(x=>x.id===s.imsId);
+                                                  const owned = it2?imsField.qtyOwned(it2):0;
+                                                  const q = Number(s.qty)||0; const over = q>owned;
+                                                  const upd=(patch)=>setSplit(split.map((x,i)=>i===si?{...x,...patch}:x));
+                                                  return (
+                                                    <div key={si} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
+                                                      {(()=>{const p=it2?imsField.photos(it2)[0]:null; return p?<img src={p} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",flexShrink:0}}/>:<span style={{width:20,height:20,borderRadius:4,background:"rgba(255,255,255,0.06)",flexShrink:0,display:"inline-block"}}/>;})()}
+                                                      <select value={s.imsId} onChange={e=>upd({imsId:e.target.value})} style={{flex:1,minWidth:0,fontSize:10,padding:"3px 6px",borderRadius:5,border:`1px solid ${border}`,background:"#0F0F1A",color:"#fff"}}>
+                                                        {subItems.map(x=><option key={x.id} value={x.id}>{x.name} ({imsField.qtyOwned(x)})</option>)}
+                                                        {!subItems.some(x=>x.id===s.imsId) && it2 && <option value={s.imsId}>{it2.name}</option>}
+                                                      </select>
+                                                      <input type="number" min="0" value={q} onChange={e=>upd({qty:Math.max(0,parseInt(e.target.value)||0)})} style={{width:46,fontSize:11,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#fff",textAlign:"center"}}/>
+                                                      <span style={{color:over?"#EF4444":"#10B981",fontSize:9,whiteSpace:"nowrap"}}>{owned} avail</span>
+                                                      {split.length>1 && <span onClick={()=>setSplit(split.filter((_,i)=>i!==si))} style={{color:"#EF4444",cursor:"pointer",fontSize:13,padding:"0 2px"}}>×</span>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                              <div style={{marginTop:5,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                                <span onClick={()=>{ const avail=subItems.find(x=>!split.some(s=>s.imsId===x.id)); setSplit([...split,{imsId:avail?avail.id:(subItems[0]?.id||card.imsId),qty:Math.max(0,rem)}]); }} style={{fontSize:9.5,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>+ add item</span>
+                                                <span style={{fontSize:9.5,fontWeight:600,color:rem===0?"#10B981":(rem>0?"#F59E0B":"#EF4444")}}>{rem===0?`✓ allocated ${cQty}`:rem>0?`${rem} unallocated`:`over by ${-rem}`}</span>
+                                              </div>
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
-                                      {/* Right-aligned line total (matches the Platform rental presentation). */}
-                                      {card.imsId && item && rental * (Number(card.qty) || 1) > 0 && (
-                                        <div style={{flexShrink:0,alignSelf:"center",textAlign:"right",minWidth:74}}>
-                                          <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>₹{(rental * (Number(card.qty) || 1)).toLocaleString("en-IN")}</div>
-                                          <div style={{fontSize:9,color:textS,marginTop:1,letterSpacing:0.3}}>rental</div>
-                                        </div>
-                                      )}
+                                      {/* Right-aligned line total (split-aware: sum of split lines, else single item × qty). */}
+                                      {card.imsId && (()=>{
+                                        const splitArr = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId&&(Number(s.qty)||0)>0) : [];
+                                        const tot = splitArr.length
+                                          ? splitArr.reduce((s,x)=>{ const it3=dcInventoryCache.find(y=>y.id===x.imsId); return s+(it3?imsField.rentalCost(it3):0)*(Number(x.qty)||0); },0)
+                                          : (item ? rental * (Number(card.qty) || 1) : 0);
+                                        if (tot <= 0) return null;
+                                        return (
+                                          <div style={{flexShrink:0,alignSelf:"center",textAlign:"right",minWidth:74}}>
+                                            <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>₹{tot.toLocaleString("en-IN")}</div>
+                                            <div style={{fontSize:9,color:textS,marginTop:1,letterSpacing:0.3}}>rental{splitArr.length?" · split":""}</div>
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
                                   );
                                 })}
