@@ -344,7 +344,12 @@ export default function ManageLibrary({ ctx }) {
 
   // Status filter, search, sidebar filters, and sort (most-recently-tagged first for
   // review/nightly/manual) all happen server-side now — see usePaginatedLibrary above.
-  const libVisible = libPage.items;
+  // Some rows point at a Cloudinary asset that no longer resolves (e.g. a failed/partial import) —
+  // rather than the <img> silently going blank and leaving a name-only card, drop the whole card
+  // once its image 404s. brokenImgIds is session-local (not persisted) and reset per page load.
+  const [brokenImgIds, setBrokenImgIds] = useState(() => new Set());
+  const markImgBroken = useCallback((id) => setBrokenImgIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id))), []);
+  const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
 
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   const LibraryBrowse = () => (
@@ -472,7 +477,7 @@ export default function ManageLibrary({ ctx }) {
             const isSel = libSelected.has(img.id);
             return (
             <div key={img.id} onClick={() => libStatus === "untagged" && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
-              <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
+              <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => { const st = photoStatus(img); const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" }; return <div title={st === "verified" ? "Verified by a person" : st === "review" ? "AI-tagged — needs review" : "Untagged"} style={{ position: "absolute", top: 6, left: 6, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>; })()}
               {/* Checkbox — shown in untagged view; clicking it toggles selection without opening detail */}
               {libStatus === "untagged" && (
