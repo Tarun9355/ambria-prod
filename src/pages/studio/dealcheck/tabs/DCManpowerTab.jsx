@@ -107,8 +107,9 @@ export default function DCManpowerTab({ ctx }) {
                   // Fixed-venue "Repeat" model — MUST match DealCheckOverlay: drop repeat zones from the
                   // computation (reused = no build labour), then floor each type at the venue's fixed crew.
                   const _fvCfgAll = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                  // Repeat zones (ANY venue) drop out of the build-labour computation. The fixed-crew FLOOR
+                  // below still only applies at configured fixed venues (fv truthy); non-fixed → computed only.
                   const freshFnMP = (fn) => {
-                    if (!fixedVenueFor(_fvCfgAll, fn.fnVenue || "")) return fn;
                     const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
                     const repeatZk = Object.keys(zc).filter(zk => en[zk] && zc[zk]?.repeat);
                     if (!repeatZk.length) return fn;

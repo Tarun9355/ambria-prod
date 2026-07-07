@@ -147,7 +147,9 @@ export default function DealCheckOverlay({ ctx }) {
           // per sub-category, applies to all fixed venues). No sub-cat discount → full rental. Fresh zones bill full.
           const fvCfgR = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
           const repeatDiscPct = (subcat) => { const sc = Number((dealCheckData?.fixedVenueSubcatDiscount || {})[String(subcat || "").toLowerCase().trim()]); return (Number.isFinite(sc) && sc > 0) ? sc : 0; };
-          const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat && fixedVenueFor(fvCfgR, fn.fnVenue || fn.venue || "")); };
+          // Repeat applies at ANY venue (a repeated setup can happen at outdoor/hotel venues too, for the
+          // same or a different client) — not just configured fixed venues. Discount = sub-category %.
+          const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
             Object.entries(cards).forEach(([ck, c]) => {
@@ -212,7 +214,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (!item) return;
               const q = Number(mi.qty) || 1;
               const baseR = imsField.rentalCost(item);
-              const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat && fixedVenueFor(fvCfgR, fn.fnVenue || fn.venue || "")) : false;
+              const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
               const lineRental = _rep ? q * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : q * baseR;
               rental += lineRental;
               const dD = catToDept(imsField.category(item));
@@ -332,12 +334,12 @@ export default function DealCheckOverlay({ ctx }) {
                   if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1), zk });
                 }); });
               };
-              // Fixed-venue "Repeat" model: a repeat zone reuses the standing setup → no build labour, so we
-              // drop repeat zones from the computation, then FLOOR each crew type at the venue's fixed crew:
-              // count = max(fixedCrew[type], computed-over-fresh-zones). Non-fixed venues → computed, no floor.
+              // "Repeat" model (ANY venue): a repeat zone reuses an existing setup → no build labour, so we
+              // drop repeat zones from the computation. Then, ONLY at configured fixed venues, FLOOR each crew
+              // type at the venue's fixed crew (max(fixedCrew[type], computed-over-fresh-zones)). Non-fixed
+              // venues have no configured floor → just the computed crew over the fresh (non-repeat) zones.
               const fvCfgMP = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
               const freshFnMP = (fn) => {
-                if (!fixedVenueFor(fvCfgMP, fn.fnVenue || "")) return fn;
                 const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
                 const repeatZk = Object.keys(zc).filter(zk => en[zk] && zc[zk]?.repeat);
                 if (!repeatZk.length) return fn;
