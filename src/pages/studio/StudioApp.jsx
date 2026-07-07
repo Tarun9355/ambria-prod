@@ -1270,6 +1270,10 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK — Session B ═══
   const [dealCheckData, setDealCheckData] = useState(null);
+  // Lightweight floral recipe data loaded on mount so Build-view floral auto-derive works
+  // WITHOUT opening Deal Check (which is what populates the full dealCheckData). floralArtUnitRate /
+  // patternExtra fall back to this when dealCheckData is null.
+  const [studioFloralData, setStudioFloralData] = useState(null);
   const [imsColourCatalogue, setImsColourCatalogue] = useState([]);
   const [imsPaletteCatalogue, setImsPaletteCatalogue] = useState([]);
   const [imsPaintableCategories, setImsPaintableCategories] = useState(["Props", "Arches", "Panels", "Pillars", "Glass", "Structural", "Furniture", "Stage", "Consumable", "Arches & Props", "Wall Masking"]);
@@ -2279,19 +2283,49 @@ export default function StudioApp() {
 
   const applyFloralRatio = useCallback((unitPrice, rc) => unitPrice, []);
 
+  // Load a lightweight floral recipe dataset ONCE on mount so the Build view can auto-derive floral
+  // artificial rates without the user first opening Deal Check (which is what fetches the full
+  // dealCheckData). floralArtUnitRate/patternExtra prefer dealCheckData (date-aware, fresher) and fall
+  // back to this.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.from("settings").select("key,value").in("key", [
+          "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
+          "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
+        ]);
+        const s = {};
+        (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
+        if (cancelled) return;
+        setStudioFloralData({
+          flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
+          mandiCatalogue: Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [],
+          artificialFlowerRatePerKg: typeof s.artificialFlowerRatePerKg === "number" ? s.artificialFlowerRatePerKg : 50,
+          artificialFlowerBunchesPerKg: (typeof s.artificialFlowerBunchesPerKg === "number" && s.artificialFlowerBunchesPerKg > 0) ? s.artificialFlowerBunchesPerKg : 16,
+          artificialGreenRatePerKg: typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40,
+          artificialGreenBunchesPerKg: (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23,
+          defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
+        });
+      } catch { /* ignore — floral auto-derive falls back to flat rate */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Auto-derived artificial rate PER UNIT for a floral recipe element = Σ(recipe flowers × artificial
   // bunches-per-unit) × ₹/bunch × studio markup. Mirrors calcFnFloralSourcingCost's artificial cost so
   // the client charge for the artificial portion is never ₹0 just because a flat rate wasn't typed in.
   // Returns null when the element has NO recipe (caller then falls back to the flat rate-card artificial rate).
   const floralArtUnitRate = useCallback((rc, size) => {
-    const fp = dealCheckData?.flowerPatterns || [];
+    const src = dealCheckData || studioFloralData || {};
+    const fp = src.flowerPatterns || [];
     if (!fp.length) return null;
-    const mc = dealCheckData?.mandiCatalogue || [];
-    const afRate = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
-    const afBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
-    const agRate = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
-    const agBPK = Number(dealCheckData?.artificialGreenBunchesPerKg ?? 23) || 23;
-    const markup = Number(dealCheckData?.defaultStudioMarkup ?? 3) || 3;
+    const mc = src.mandiCatalogue || [];
+    const afRate = Number(src.artificialFlowerRatePerKg ?? 50);
+    const afBPK = Number(src.artificialFlowerBunchesPerKg ?? 16) || 16;
+    const agRate = Number(src.artificialGreenRatePerKg ?? 40);
+    const agBPK = Number(src.artificialGreenBunchesPerKg ?? 23) || 23;
+    const markup = Number(src.defaultStudioMarkup ?? 3) || 3;
     const tn = String(rc?.name || "").toLowerCase().trim();
     let pat = fp.find(p => String(p?.name || "").toLowerCase().trim() === tn);
     if (!pat) pat = fp.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
@@ -2312,11 +2346,11 @@ export default function StudioApp() {
       cost += bunches * (ft === "green" ? agRate / agBPK : afRate / afBPK);
     });
     return Math.round(cost * markup);
-  }, [dealCheckData]);
+  }, [dealCheckData, studioFloralData]);
 
   // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).
   const patternExtra = useCallback((rc, size) => {
-    const fp = dealCheckData?.flowerPatterns || [];
+    const fp = (dealCheckData || studioFloralData)?.flowerPatterns || [];
     if (!fp.length) return 0;
     const tn = String(rc?.name || "").toLowerCase().trim();
     let pat = fp.find(p => String(p?.name || "").toLowerCase().trim() === tn);
@@ -2328,7 +2362,7 @@ export default function StudioApp() {
     let comp = sizes[sk] || sizes.medium; if (!comp && sk === "big" && sizes.large) comp = sizes.large;
     if (!comp && Object.keys(sizes).length) comp = sizes[Object.keys(sizes)[0]];
     return Number(comp?.extraCost) || 0;
-  }, [dealCheckData]);
+  }, [dealCheckData, studioFloralData]);
 
   const getElPrice = useCallback((el, zc) => {
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
