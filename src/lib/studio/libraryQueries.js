@@ -107,22 +107,19 @@ function applyKeyset(q, sortCol, cursor) {
 /**
  * Fetch one page of the library browse grid.
  * `status` — 'verified' | 'review' | 'untagged' (ignored when tagSource is given).
- * `tagSource` — 'nightly' | 'manual' — matches the chip's current semantics (tag source
- * alone, independent of verified status, so a since-verified nightly-tagged photo still
- * shows here — same as the old client-side `i.tagSource === "nightly"` filter).
- * Note: the 'review' status excludes tag_source='nightly' rows — those already surface
- * under the Nightly Tagged chip, so Needs Review only counts non-nightly review items.
+ * `tagSource` — 'nightly' | 'manual' — Nightly/Manual Tagged are informational subsets of
+ * Needs Review (the "how did it get tagged" breakdown), so they exclude verified photos —
+ * once a human verifies a photo it belongs to Verified only, not its original tag source.
+ * Verified/Needs-Review/Untagged (the `status` values) are mutually exclusive and cover the
+ * whole library; Nightly/Manual Tagged cut across Needs Review rather than sitting outside it.
  */
 export async function fetchLibraryPage({
   status, tagSource, filters = {}, venueGroup, venueNames = [], inhouseVenueNames = [],
   search = "", cursor = null, pageSize = LIBRARY_PAGE_SIZE,
 } = {}) {
   let q = supabase.from("library").select(LIST_COLUMNS);
-  if (tagSource) q = q.eq("tag_source", tagSource);
-  else if (status) {
-    q = q.eq("status", status);
-    if (status === "review") q = q.or("tag_source.is.null,tag_source.neq.nightly");
-  }
+  if (tagSource) q = q.eq("tag_source", tagSource).neq("status", "verified");
+  else if (status) q = q.eq("status", status);
   q = applyCommonFilters(q, { filters, venueGroup, venueNames, inhouseVenueNames, search });
   const sortCol = status === "untagged" && !tagSource ? "created_at" : "tagged_at";
   q = applyKeyset(q, sortCol, cursor);
@@ -144,10 +141,10 @@ export async function fetchLibraryCounts({ filters = {}, venueGroup, venueNames 
   );
   const [verified, review, untagged, nightly, manual] = await Promise.all([
     base().eq("status", "verified"),
-    base().eq("status", "review").or("tag_source.is.null,tag_source.neq.nightly"),
+    base().eq("status", "review"),
     base().eq("status", "untagged"),
-    base().eq("tag_source", "nightly"),
-    base().eq("tag_source", "manual"),
+    base().eq("tag_source", "nightly").neq("status", "verified"),
+    base().eq("tag_source", "manual").neq("status", "verified"),
   ]);
   for (const r of [verified, review, untagged, nightly, manual]) if (r.error) throw r.error;
   return { verified: verified.count || 0, review: review.count || 0, untagged: untagged.count || 0, nightly: nightly.count || 0, manual: manual.count || 0 };
