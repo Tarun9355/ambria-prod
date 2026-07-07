@@ -334,8 +334,12 @@ export default function DCManpowerTab({ ctx }) {
                   // ── Trace helpers (22 May 2026 · breakdown UI) ─────────────
                   // Return calculation breakdown structures for the "how" toggle panel.
                   // Each returns { type:"element_table"|"formula_chain"|"subcat_table"|"range_lookup"|"default", ... }
+                  // Aggregate identical elements (same name + size + productivity) ACROSS zones into one row —
+                  // flowerists/electricians are fungible & the count is just Σ(qty÷productivity), so showing the
+                  // same element once (with its combined qty) reads cleaner and doesn't change the total.
+                  // (Fabric Bangali stays per-zone — its RFT ceils per zone, so it MUST NOT be combined.)
                   const traceFlowerists = (fn) => {
-                    const items = []; let total = 0;
+                    const agg = {};
                     walkFnElements(fn, ({ rc, qty, el }) => {
                       const cat = String(rc.cat||"").toLowerCase();
                       const subLC = String(rc.sub||"").toLowerCase().trim();
@@ -352,32 +356,36 @@ export default function DCManpowerTab({ ctx }) {
                           return n && (n.includes(targetName) || targetName.includes(n));
                         });
                       }
-                      if (!pattern) { items.push({ name: rc.name, qty, productivity: null, need: 0, missing: "no pattern" }); return; }
+                      if (!pattern) { const k = `${targetName}||nopattern`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no pattern" }; agg[k].qty += qty; return; }
                       const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
                       const sizes = pattern.sizes || {};
                       let comp = sizes[sizeKey] || sizes.medium;
                       if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
                       const upf = Number(comp?.unitsPerFlowerist || 0);
-                      const need = upf > 0 ? qty / upf : 0;
-                      total += need;
-                      items.push({ name: rc.name, size: sizeKey, qty, productivity: upf, need: Math.round(need * 100) / 100, missing: upf <= 0 ? "no productivity" : null });
+                      const k = `${targetName}|${sizeKey}|${upf}`;
+                      if (!agg[k]) agg[k] = { name: rc.name, size: sizeKey, qty: 0, productivity: upf, missing: upf <= 0 ? "no productivity" : null };
+                      agg[k].qty += qty;
                     });
+                    let total = 0;
+                    const items = Object.values(agg).map(r => { const need = r.productivity > 0 ? r.qty / r.productivity : 0; total += need; return { ...r, need: Math.round(need * 100) / 100 }; });
                     return { kind: "element_table", header: ["Floral element","Qty","Per flwr","Need"], items, total: Math.ceil(total), formula: "⌈Σ(qty ÷ productivity)⌉ — sum then round up (Tier 1)" };
                   };
                   const traceElectricians = (fn) => {
-                    const items = []; let total = 0;
+                    const agg = {};
                     walkFnElements(fn, ({ rc, qty, el }) => {
                       const cat = String(rc.cat||"").toLowerCase();
                       if (cat !== "lighting") return;
                       const sub = rc.sub || "";
                       const prod = electricianProdMP[sub];
-                      if (!prod) { items.push({ name: rc.name, qty, productivity: null, need: 0, missing: "no productivity" }); return; }
+                      if (!prod) { const k = `${(rc.name||"").toLowerCase().trim()}||noprod`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no productivity" }; agg[k].qty += qty; return; }
                       const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
                       const upe = Number(prod.sizes?.[sizeKey]) || Number(prod.sizes?.medium) || 0;
-                      const need = upe > 0 ? qty / upe : 0;
-                      total += need;
-                      items.push({ name: rc.name, size: sizeKey, qty, productivity: upe, need: Math.round(need * 100) / 100, missing: upe <= 0 ? "no productivity" : null });
+                      const k = `${(rc.name||"").toLowerCase().trim()}|${sizeKey}|${upe}`;
+                      if (!agg[k]) agg[k] = { name: rc.name, size: sizeKey, qty: 0, productivity: upe, missing: upe <= 0 ? "no productivity" : null };
+                      agg[k].qty += qty;
                     });
+                    let total = 0;
+                    const items = Object.values(agg).map(r => { const need = r.productivity > 0 ? r.qty / r.productivity : 0; total += need; return { ...r, need: Math.round(need * 100) / 100 }; });
                     return { kind: "element_table", header: ["Lighting element","Qty","Per electr","Need"], items, total: Math.ceil(total), formula: "⌈Σ(qty ÷ productivity)⌉ — sum then round up (Tier 1)" };
                   };
                   const traceTier2 = (fn, type) => {
