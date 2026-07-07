@@ -1327,6 +1327,8 @@ export default function DealCheckOverlay({ ctx }) {
                                               const altItem = dcInventoryCache.find(x => x.id === alt.imsId);
                                               const altPhoto = altItem ? imsField.photos(altItem)[0] : null;
                                               const altRental = altItem ? imsField.rentalCost(altItem) : 0;
+                                              const altOwned = altItem ? imsField.qtyOwned(altItem) : 0;
+                                              const altEnough = altOwned >= cardQty;
                                               const altDims = altItem ? imsField.sizeText(altItem) : "";
                                               const altHold = getActiveSoftHold(softHolds, alt.imsId, authUser?.name, Date.now());
                                               const isCurrent = alt.imsId === card.imsId;
@@ -1340,7 +1342,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 }} title={`${alt.name || altItem?.name || alt.imsId}${altDims?" · "+altDims:""} · ₹${altRental.toLocaleString("en-IN")}${altHold?" · ⏳ "+altHold.salesperson:""}`}
                                                 style={{position:"relative",width:56,height:56,borderRadius:6,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":"pointer",flexShrink:0,opacity:altHold?0.55:1}}>
                                                   {altPhoto ? <img src={altPhoto} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:"100%",background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:textS}}>?</div>}
-                                                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"2px 4px",background:"rgba(0,0,0,0.65)",fontSize:8,color:"#fff",fontWeight:700,letterSpacing:0.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>₹{altRental >= 1000 ? Math.round(altRental/100)/10+"k" : altRental}</div>
+                                                  <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"2px 4px",background:"rgba(0,0,0,0.65)",fontSize:8,color:"#fff",fontWeight:700,letterSpacing:0.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>₹{altRental >= 1000 ? Math.round(altRental/100)/10+"k" : altRental} · <span style={{color:altEnough?"#34D399":"#F87171"}}>{altOwned}</span></div>
                                                   {altHold && <div style={{position:"absolute",top:2,right:2,fontSize:9,background:"rgba(245,158,11,0.85)",borderRadius:3,padding:"1px 3px",color:"#0F0F1A",fontWeight:700}}>⏳</div>}
                                                   {isCurrent && <div style={{position:"absolute",top:2,left:2,fontSize:9,background:`${accent}cc`,borderRadius:3,padding:"1px 3px",color:"#0F0F1A",fontWeight:700}}>✓</div>}
                                                 </div>
