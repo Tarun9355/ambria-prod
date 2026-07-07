@@ -22,6 +22,9 @@ const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1
 const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // "cat::sub" keys flagged not-taggable in Pricing
 const MAX_PER_RUN = 100;
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+// Only these Cloudinary top-level folders are salesperson-facing library photos — asset/prop/
+// texture folders (e.g. "inventory") are excluded so the tagger never spends an Opus call on them.
+const ALLOWED_SOURCE_FOLDERS = ["ambria", "client-uploads", "inhouse venues", "Outside Venues"];
 
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 const parse = (v: unknown) => { if (v == null) return null; if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } } return v; };
@@ -76,13 +79,15 @@ Deno.serve(async (req) => {
   const RETAG_REVIEW_BEFORE = "2026-07-07T12:16:00.000Z";
   const { data: reviewBacklogRows, error: reviewErr } = await db.from("library")
     .select("*").eq("status", "review").lt("tagged_at", RETAG_REVIEW_BEFORE)
+    .in("source_folder", ALLOWED_SOURCE_FOLDERS)
     .order("tagged_at", { ascending: true }).limit(MAX_PER_RUN);
   if (reviewErr) return json({ error: reviewErr.message }, 500);
 
   let rows = reviewBacklogRows;
   if (!rows || !rows.length) {
     const { data: untaggedRows, error: untErr } = await db.from("library")
-      .select("*").eq("status", "untagged").order("created_at", { ascending: true }).limit(MAX_PER_RUN);
+      .select("*").eq("status", "untagged").in("source_folder", ALLOWED_SOURCE_FOLDERS)
+      .order("created_at", { ascending: true }).limit(MAX_PER_RUN);
     if (untErr) return json({ error: untErr.message }, 500);
     rows = untaggedRows;
   }

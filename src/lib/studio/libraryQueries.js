@@ -9,6 +9,22 @@ import { libPhotoIsTagged } from "./taxonomy";
 
 export const LIBRARY_PAGE_SIZE = 50;
 
+// Only these Cloudinary top-level folders are salesperson-facing library photos — everything
+// else (inventory/prop/texture assets, production reference shots, etc.) is excluded from the
+// Studio Library UI and from anything the nightly/manual AI tagger targets, even though the
+// rows stay in the table untouched (non-destructive, query-time filter only).
+const ALLOWED_SOURCE_FOLDERS = ["ambria", "client-uploads", "inhouse venues", "Outside Venues"];
+
+// Cloudinary secure_url is ".../upload/v<version>/<public_id>.<ext>" — the public_id's first
+// path segment is the top-level folder the image lives in.
+function deriveSourceFolder(url) {
+  if (!url) return null;
+  const afterUpload = String(url).replace(/^.*\/upload\/(v\d+\/)?/, "");
+  const first = afterUpload.split("/")[0] || "";
+  if (!first) return null;
+  try { return decodeURIComponent(first); } catch { return first; }
+}
+
 // ── row <-> item mapping (moved from StudioApp.jsx so the query layer owns the shape) ──
 export function rowToLibItem(row) {
   if (!row) return null;
@@ -45,6 +61,7 @@ export function libItemToRow(it) {
     data: it,
     status, tag_source: it.tagSource || null,
     tagged_at: taggedAtMs ? new Date(taggedAtMs).toISOString() : null,
+    source_folder: deriveSourceFolder(it.url),
   };
 }
 
@@ -69,6 +86,7 @@ function pgArrayLit(v) { return JSON.stringify([v]); }
 // everything except the status/tagSource filter, which callers apply themselves (the
 // count query needs the SAME base filters applied once per status bucket).
 function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inhouseVenueNames = [], search = "" }) {
+  q = q.in("source_folder", ALLOWED_SOURCE_FOLDERS);
   const categoryGroups = Object.entries(filters)
     .filter(([, values]) => Array.isArray(values) && values.length)
     .map(([key, values]) => `or(${values.map((v) => `tags->${key}.cs.${pgArrayLit(v)}`).join(",")})`);
@@ -212,6 +230,7 @@ export async function fetchUntaggedLibraryTargets(limit = 2000) {
   const { data, error } = await supabase.from("library")
     .select("id,name,url,tags,dims")
     .eq("status", "untagged")
+    .in("source_folder", ALLOWED_SOURCE_FOLDERS)
     .order("created_at", { ascending: true })
     .limit(limit);
   if (error) throw error;
