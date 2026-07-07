@@ -21,6 +21,7 @@ export default function StudioBuild({ ctx }) {
     getFullCost, findTemplate, templates,
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
+    studioFloralData, venueParents,
     clientPalette, setClientPalette, activeFnIdx,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
@@ -69,7 +70,12 @@ export default function StudioBuild({ ctx }) {
   // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
   // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
   // covers it) vs ✨ Fresh (default). Stored in zoneConfig[k].repeat so it flows to Deal Check.
-  const _fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+  // Prefer dealCheckData (populated once Deal Check opens); fall back to the mount-loaded config so the
+  // Repeat/Fresh chip shows in Build without needing to open Deal Check first.
+  const _fvCfg = {
+    fixedVenues: (dealCheckData?.fixedVenues && dealCheckData.fixedVenues.length) ? dealCheckData.fixedVenues : (studioFloralData?.fixedVenues || []),
+    venueParents: dealCheckData?.venueParents || venueParents || {},
+  };
   const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
   const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
   const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));

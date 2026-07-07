@@ -1270,9 +1270,9 @@ export default function StudioApp() {
 
   // ═══ DEAL CHECK — Session B ═══
   const [dealCheckData, setDealCheckData] = useState(null);
-  // Lightweight floral recipe data loaded on mount so Build-view floral auto-derive works
-  // WITHOUT opening Deal Check (which is what populates the full dealCheckData). floralArtUnitRate /
-  // patternExtra fall back to this when dealCheckData is null.
+  // Lightweight settings loaded on mount so Build-view features work WITHOUT opening Deal Check
+  // (which is what populates the full dealCheckData). Carries floral recipe data (floralArtUnitRate /
+  // patternExtra fall back to this) AND fixed-venue config (drives the zone Repeat/Fresh chip).
   const [studioFloralData, setStudioFloralData] = useState(null);
   const [imsColourCatalogue, setImsColourCatalogue] = useState([]);
   const [imsPaletteCatalogue, setImsPaletteCatalogue] = useState([]);
@@ -2294,6 +2294,7 @@ export default function StudioApp() {
         const { data } = await supabase.from("settings").select("key,value").in("key", [
           "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
           "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
+          "fixedVenues", "fixedVenueSubcatDiscount",
         ]);
         const s = {};
         (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
@@ -2306,6 +2307,8 @@ export default function StudioApp() {
           artificialGreenRatePerKg: typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40,
           artificialGreenBunchesPerKg: (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23,
           defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
+          fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
+          fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
         });
       } catch { /* ignore — floral auto-derive falls back to flat rate */ }
     })();
@@ -5506,6 +5509,8 @@ Return ONLY JSON:
     tagHiddenSubs, isSubTagHidden, toggleTagHiddenSub,
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
+    // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
+    studioFloralData, venueParents,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
