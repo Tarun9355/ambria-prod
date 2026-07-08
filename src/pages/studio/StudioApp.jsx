@@ -548,7 +548,9 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems)
     if (qty <= 0) return;  // skip elements with 0 qty (toggled off but still in array)
     const rc = rcArr.find(i => String(i?.name || "").toLowerCase() === String(rcName).toLowerCase());
     const rcCode = rc?.id || "";
-    const subcategory = rc?.sub || "";
+    // IMS sub-category alias: a Studio placeholder ("Centre Piece") auto-matches against its aliased IMS
+    // sub-category ("Flower Pot Large") so cards resolve to the real shared stock. Blank alias = own sub.
+    const subcategory = (rc?.imsAlias ? String(rc.imsAlias).trim() : "") || rc?.sub || "";
     const cat = String(rc?.cat || "").toLowerCase();
     const isFloral = cat === "florals" || /^F\d+$/.test(rcCode);
     if (isFloral) {
