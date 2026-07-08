@@ -11,7 +11,7 @@ import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
-import { deptMpReconciled } from "../../../lib/ims/helpers";
+import { deptMpReconciled, itemImsSubcat } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 
@@ -393,7 +393,7 @@ export default function DealCheckOverlay({ ctx }) {
                   let sm = 1.0;
                   if (!dcMpIncludeMinusOne) { const c = [dm]; const ss = seasonMapMP[fn.fnDate||""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
                   const adj = Math.ceil(base * sm);
-                  const sc = {}; walkFn(fn, ({rc, qty}) => { sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
+                  const sc = {}; walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s]||0) + qty; });
                   // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat]||0) - (reduction[her.subCat]||0)); he += heavyExtraLabour(her, count); });
@@ -430,7 +430,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const cfg = labourTiers[type];
                 if (cfg && cfg.tier === 2) {
                   const batches = cfg.subCatBatches || {}; const sc = {};
-                  walkFn(fn, ({rc, qty}) => { if (batches[rc.sub||""]) sc[rc.sub||""] = (sc[rc.sub||""]||0) + qty; });
+                  walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); if (batches[_s]) sc[_s] = (sc[_s]||0) + qty; });
                   let need = 0; Object.entries(sc).forEach(([k,v]) => { need += v / (batches[k] || 3); }); // ⌈Σ(count÷batch)⌉ — matches the Deal Check derivation
                   return Math.max(cfg.minimum || 1, Math.ceil(need));
                 }
@@ -466,7 +466,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
                   let sm = 1.0;
                   if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
-                  const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+                  const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                   let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat] || 0) - (reduction[her.subCat] || 0)); he += heavyExtraLabour(her, count); });
                   return { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he };
@@ -487,7 +487,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const cfg = labourTiers[type];
                 if (cfg && cfg.tier === 2) {
                   const batches = cfg.subCatBatches || {}; const sc = {};
-                  walkFn(fn, ({ rc, qty }) => { if (batches[rc.sub || ""]) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+                  walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); if (batches[_s]) sc[_s] = (sc[_s] || 0) + qty; });
                   const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: batches[k] || 3, need: v / (batches[k] || 3) }));
                   const need = rows.reduce((s, r) => s + r.need, 0); const count = Math.max(cfg.minimum || 1, Math.ceil(need));
                   return { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count };
@@ -505,7 +505,7 @@ export default function DealCheckOverlay({ ctx }) {
               const labourUsageByFn = {};
               fns.forEach((fn, fi) => {
                 const byDept = {}; let total = 0;
-                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
+                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[itemImsSubcat(rc)]; if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
                 labourUsageByFn[fi] = { byDept, total };
                 Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
                 labourUsageTotal += total;
@@ -1342,7 +1342,9 @@ export default function DealCheckOverlay({ ctx }) {
                                           // the sub-category has items. The card's true sub-category comes from its rate-card item.
                                           const cardAlts = Array.isArray(card.alternatives) ? card.alternatives : [];
                                           const rcForCard = rcItems.find(r => String(r?.name||"").toLowerCase().trim() === String(card.rcName||"").toLowerCase().trim());
-                                          const inferredSub = (rcForCard && rcForCard.sub) ? rcForCard.sub
+                                          // IMS alias: a Studio placeholder sub-cat (e.g. "Centre Piece") searches its aliased IMS
+                                          // sub-cat (e.g. "Flower Pot Large") so the right stock/alternatives show up.
+                                          const inferredSub = (rcForCard && itemImsSubcat(rcForCard)) ? itemImsSubcat(rcForCard)
                                             : item ? imsField.subcategory(item)
                                             : (cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean) ? imsField.subcategory(cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean)) : "");
                                           const subToUse = inferredSub || (zoneCards[0]?.subcategory || "");

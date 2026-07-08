@@ -193,6 +193,13 @@ export default function RateCard({ ctx }) {
                     <div><div style={S.label}>Sub-Category</div><input defaultValue={item.sub || ""} onBlur={(e) => rcUpd(item.id, "sub", e.target.value)} key={item.id + "-sub"} list="rc-sub-list" style={S.input} /></div>
                     <div><div style={S.label}>Unit</div><select value={item.unit} onChange={(e) => rcUpd(item.id, "unit", e.target.value)} style={S.select}>{RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select></div>
                   </div>
+                  {/* IMS sub-category alias — Studio placeholder → real IMS sub-category. When set, Deal Check
+                      searches IMS inventory, alternatives and heavy-element labour under THIS sub-category
+                      instead of the one above (e.g. "Centre Piece" → "Flower Pot Large"). Pricing is untouched. */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={S.label}>IMS sub-category alias <span style={{ fontWeight: 400, opacity: 0.6, fontSize: 10 }}>· optional — Deal Check searches IMS as this sub-category. Blank = use Sub-Category above.</span></div>
+                    <input defaultValue={item.imsAlias || ""} onBlur={(e) => rcUpd(item.id, "imsAlias", e.target.value.trim())} key={item.id + "-imsalias"} list="rc-sub-list" placeholder={item.sub ? `same as “${item.sub}”` : "same as sub-category"} style={S.input} />
+                  </div>
                   {/* Inhouse */}
                   <div style={{ background: isDark ? "#0F0F1A" : "#fff", borderRadius: 10, padding: 12, marginBottom: 10, border: `1px solid ${item._imsDriven ? "#10B98180" : border}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>

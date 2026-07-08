@@ -7,6 +7,7 @@
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
+import { itemImsSubcat } from "../../../../lib/ims/helpers";
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -123,7 +124,7 @@ export default function DCManpowerTab({ ctx }) {
                   const _labBatches = {}; heavyElementRanges.forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
                   const labourUsageMode = Object.keys(_labBatches).length > 0;
                   let labourUsageTotal = 0;
-                  if (labourUsageMode) fns.forEach(fn => walkFnElements(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[rc.sub || ""]; if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
+                  if (labourUsageMode) fns.forEach(fn => walkFnElements(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[itemImsSubcat(rc)]; if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
 
                   // ── People count per ceremony per labour type ─────────────
                   // Mirror of IMS App.jsx calcTier1Flowerist (line 1701). DO NOT diverge without IMS commit.
@@ -176,7 +177,7 @@ export default function DCManpowerTab({ ctx }) {
                     const batches = cfg.subCatBatches || {};
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => {
-                      const sub = rc.sub || "";
+                      const sub = itemImsSubcat(rc);
                       if (batches[sub]) subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
                     // Sum fractional need across sub-categories, THEN round up once.
@@ -213,7 +214,7 @@ export default function DCManpowerTab({ ctx }) {
                     let heavyExtra = 0;
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => {
-                      const sub = rc.sub || "";
+                      const sub = itemImsSubcat(rc);
                       subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
                     // Net fixed-venue standing inventory (by matched item id) — mirrors IMS.
@@ -394,7 +395,7 @@ export default function DCManpowerTab({ ctx }) {
                     const batches = cfg.subCatBatches || {};
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => {
-                      const sub = rc.sub || "";
+                      const sub = itemImsSubcat(rc);
                       if (batches[sub]) subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
                     const rows = []; let frac = 0;
@@ -433,7 +434,7 @@ export default function DCManpowerTab({ ctx }) {
                     }
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
-                    walkFnElements(fn, ({ rc, qty }) => { const s = rc.sub || ""; subCounts[s] = (subCounts[s] || 0) + qty; });
+                    walkFnElements(fn, ({ rc, qty }) => { const s = itemImsSubcat(rc); subCounts[s] = (subCounts[s] || 0) + qty; });
                     const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     const rows = []; let usageSum = 0, heavyFloor = 0;
                     heavyElementRanges.forEach(her => {

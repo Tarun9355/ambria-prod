@@ -79,6 +79,12 @@ export function mpEffWinIds(d, mpWin, type) {
 // Cost for one day, honoring optional PER-SHIFT crew counts (mpWinCount[type][date][winId] — set by
 // the ops manager on-site so a single day can be e.g. 3 in the day + 1 in the evening). Each worked
 // window uses its own count if given, else the day's crew count.
+// Studio rate-card item → the sub-category to use when matching/searching IMS in Deal Check (inventory
+// availability, alternatives/browse, heavy-element labour, labour batches). A blank alias falls back to the
+// item's own sub-category. Lets a Studio "Centre Piece"/"Coffee Table Floral" visual placeholder resolve to
+// the real IMS "Flower Pot" sub-category WITHOUT changing the item's name or its per-item floral pricing.
+export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? String(rc.imsAlias).trim() : ""; return a || (rc && rc.sub) || ""; };
+
 export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
   const dayCount = mpEffDay(r, d, mpDay);
   const ids = mpEffWinIds(d, mpWin, r.type);
