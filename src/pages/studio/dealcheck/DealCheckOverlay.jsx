@@ -1484,6 +1484,26 @@ export default function DealCheckOverlay({ ctx }) {
                                           <span style={{opacity:0.7}}>of {_avail} avail · ₹{rental.toLocaleString("en-IN")} × {mi.qty} = ₹{(rental*mi.qty).toLocaleString("en-IN")}</span>
                                           {dims && <span style={{opacity:0.7}}>· {dims}</span>}
                                         </div>
+                                        {/* Same-subcategory alternatives + Browse (with per-item availability) — swap a manual block to another item */}
+                                        {sub && (()=>{
+                                          const mAlts = dcInventoryCache.filter(x => x.id !== mi.imsId && String(imsField.subcategory(x)||"").toLowerCase().trim() === sub.toLowerCase().trim());
+                                          if (!mAlts.length) return null;
+                                          const _fvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+                                          const altAvail = (a) => Math.max(0, Math.min(getStudioAvailable(a, fnBlocksForChip), availableAtVenue(_fvC, _vName, a)));
+                                          return (
+                                            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:6}}>
+                                              <span style={{fontSize:9,color:textS,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
+                                              {mAlts.slice(0,5).map(a=>{ const ao=altAvail(a); const ap=imsField.photos(a)[0]; return (
+                                                <span key={a.id} onClick={()=>setDcManualItems(prev=>prev.map(x=>x.manualId===mi.manualId?{...x,imsId:a.id}:x))} title={`${a.name} · ${ao} free`} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",padding:"2px 7px 2px 3px",borderRadius:12,border:`1px solid ${border}`,background:"rgba(255,255,255,0.03)",fontSize:9}}>
+                                                  {ap?<img src={ap} alt="" style={{width:16,height:16,borderRadius:4,objectFit:"cover"}}/>:<span style={{width:16,height:16,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9}}>?</span>}
+                                                  <span style={{color:"#fff",maxWidth:82,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span>
+                                                  <span style={{color:ao>0?"#10B981":"#EF4444",fontWeight:800}}>{ao}</span>
+                                                </span>
+                                              );})}
+                                              <button onClick={()=>setDcBrowseAllOpen({fnIdx, manualId: mi.manualId, subcategory: sub})} style={{padding:"3px 8px",borderRadius:6,border:`1px dashed ${border}`,background:"transparent",color:accent,fontSize:9,fontWeight:600,cursor:"pointer",letterSpacing:0.3,whiteSpace:"nowrap"}}>Browse all {mAlts.length+1} in {sub} ↗</button>
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                       <button onClick={()=>setDcManualItems(prev => prev.filter(x => x.manualId !== mi.manualId))} title="Remove manual block" style={{background:"transparent",border:"none",color:"#EF4444",cursor:"pointer",fontSize:18,padding:"0 4px",lineHeight:1}}>×</button>
                                     </div>
@@ -2054,16 +2074,23 @@ export default function DealCheckOverlay({ ctx }) {
             })()}
             {/* ═══ Browse-all-in-subcategory modal (§7.9.4 #5 escape hatch) ═══ */}
             {dcBrowseAllOpen && (() => {
-              const { fnIdx, cardKey, subcategory } = dcBrowseAllOpen;
+              const { fnIdx, cardKey, subcategory, manualId } = dcBrowseAllOpen;
               const items = dcInventoryCache.filter(x => String(imsField.subcategory(x)).toLowerCase().trim() === String(subcategory).toLowerCase().trim());
               const card = dcCards[fnIdx]?.[cardKey];
+              // Availability (free on the event date, netted with fixed-venue locks) per item.
+              const _mFns = collectAllFunctionData ? collectAllFunctionData() : [];
+              const _mBlocks = (dealCheckData?.blocksByDate || {})[(_mFns[fnIdx] || {}).fnDate || clientDate] || {};
+              const _mVenue = (_mFns[fnIdx] || {}).fnVenue || "";
+              const _mFvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+              const _mCurId = manualId ? (dcManualItems.find(x => x.manualId === manualId)?.imsId) : card?.imsId;
+              const _mCurLabel = manualId ? (dcInventoryCache.find(i => i.id === _mCurId)?.name || "item") : (card?.rcName || "card");
               return (
                 <div onClick={()=>setDcBrowseAllOpen(null)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
                   <div onClick={e=>e.stopPropagation()} style={{width:"min(820px, 100%)",maxHeight:"82vh",background:"#0F0F1A",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
                     <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                       <div>
                         <div style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:0.2}}>Browse {subcategory}</div>
-                        <div style={{fontSize:10,color:textS,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{items.length} items · pick one to swap into {card?.rcName || "card"}</div>
+                        <div style={{fontSize:10,color:textS,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{items.length} items · pick one to swap into {_mCurLabel}</div>
                       </div>
                       <button onClick={()=>setDcBrowseAllOpen(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:13,cursor:"pointer",lineHeight:1}}>✕</button>
                     </div>
@@ -2075,14 +2102,19 @@ export default function DealCheckOverlay({ ctx }) {
                         const rental = imsField.rentalCost(it);
                         const dims = imsField.sizeText(it);
                         const hold = getActiveSoftHold(softHolds, it.id, authUser?.name, Date.now());
-                        const isCurrent = it.id === card?.imsId;
+                        const isCurrent = it.id === _mCurId;
+                        const avail = Math.max(0, Math.min(getStudioAvailable(it, _mBlocks), availableAtVenue(_mFvC, _mVenue, it)));
                         return (
                           <div key={it.id} onClick={()=>{
                             if (isCurrent) { setDcBrowseAllOpen(null); return; }
-                            setDcCards(prev => ({
-                              ...prev,
-                              [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...(prev[fnIdx]?.[cardKey] || {}), imsId: it.id, imsName: it.name, source: "manual-swap" } }
-                            }));
+                            if (manualId) {
+                              setDcManualItems(prev => prev.map(x => x.manualId === manualId ? { ...x, imsId: it.id } : x));
+                            } else {
+                              setDcCards(prev => ({
+                                ...prev,
+                                [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...(prev[fnIdx]?.[cardKey] || {}), imsId: it.id, imsName: it.name, source: "manual-swap" } }
+                              }));
+                            }
                             setDcBrowseAllOpen(null);
                           }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":"pointer",background:"rgba(255,255,255,0.02)",opacity:hold?0.6:1}}>
                             {photo ? <img src={photo} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#0A0A14"}}/> : <div style={{width:"100%",height:110,background:"#0A0A14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>?</div>}
@@ -2090,6 +2122,8 @@ export default function DealCheckOverlay({ ctx }) {
                               <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                               <div style={{fontSize:10,color:textS,marginTop:2}}>₹{rental.toLocaleString("en-IN")}{dims&&" · "+dims}</div>
                             </div>
+                            {/* Free-on-date availability badge */}
+                            <div title="Free on the event date" style={{position:"absolute",bottom:38,right:5,fontSize:10,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#fff"}}>{avail}</div>
                             {hold && <div style={{position:"absolute",top:5,right:5,fontSize:9,background:"rgba(245,158,11,0.92)",borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>⏳ {hold.salesperson}</div>}
                             {isCurrent && <div style={{position:"absolute",top:5,left:5,fontSize:9,background:`${accent}ee`,borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>✓ current</div>}
                           </div>
