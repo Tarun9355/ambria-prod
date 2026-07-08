@@ -564,6 +564,9 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems)
           subcategory,  // from rc.sub — single source of truth (21 May 2026)
           propType: spec.propType,
           photoUrl,
+          // Build-view manual stock pick (deal-local) — forces this exact IMS item. Only for a single-prop
+          // floral element (unambiguous); multi-prop mappings keep auto-match.
+          pinnedImsId: (mapping.length === 1 && el?.imsId) ? el.imsId : null,
           dualCardIdx: mapping.length > 1 ? mIdx : null,
         });
       });
@@ -575,6 +578,7 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems)
         subcategory,
         propType: null,
         photoUrl,
+        pinnedImsId: el?.imsId || null, // Build-view manual stock pick (deal-local) — forces this IMS item
       });
     }
   });
@@ -4885,6 +4889,19 @@ Return ONLY JSON:
     }
   }, []);
 
+  // On-demand IMS availability for the Build-view per-element stock browser: fetch inventory + one date's
+  // blocks, cached per date. free = owned − blocked (getStudioAvailable). Lets the Build modal show live
+  // availability without opening Deal Check.
+  const availCacheRef = useRef({});
+  const loadAvailability = useCallback(async (date) => {
+    if (!date) return { inventory: [], blocksForDate: {} };
+    if (availCacheRef.current[date]) return availCacheRef.current[date];
+    const res = await fetchIMSData(date);
+    const val = (res && Array.isArray(res.inventory)) ? res : { inventory: [], blocksForDate: {} };
+    availCacheRef.current[date] = val;
+    return val;
+  }, []);
+
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
     setDealCheckLoading(true);
@@ -5216,10 +5233,16 @@ Return ONLY JSON:
           //    availability-independent: take the item straight from the full sub-category list (per-deal
           //    availability is shown via `alternatives`, and the salesperson can swap deal-local). Verify
           //    it still exists; else fall through and re-derive. Hit = we skip the AI entirely.
+          // 0) PINNED first — a deal-local manual stock pick from the Build availability modal forces this
+          //    exact item (honored regardless of availability; salesperson chose it knowingly).
+          const pinnedItem = spec.pinnedImsId ? (inventory.find(i => i.id === spec.pinnedImsId) || null) : null;
           const kKey = dcKnowledgeKey(spec.photoUrl, spec.rcName, spec.propType);
           const known = kKey ? photoKnowledgeRef.current[kKey] : null;
           const knownItem = known?.imsId ? subcatList.find(i => i.id === known.imsId) : null;
-          if (knownItem) {
+          if (pinnedItem) {
+            primary = { imsId: pinnedItem.id, name: pinnedItem.name };
+            source = "pinned";
+          } else if (knownItem) {
             primary = { imsId: knownItem.id, name: knownItem.name };
             source = "knowledge"; cardsKnown += 1;
           } else {
@@ -5544,7 +5567,7 @@ Return ONLY JSON:
     calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
-    openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,
     writeStudioTrussSoftHolds,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
