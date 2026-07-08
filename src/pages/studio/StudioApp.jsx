@@ -1147,6 +1147,12 @@ export default function StudioApp() {
   const [clientLedger, setClientLedger] = useState([]);
   const [activeClientId, setActiveClientId] = useState(null);
   const [clientSearch, setClientSearch] = useState("");
+  // Remember the active deal pointer + screen across a refresh / Studio↔IMS route switch (per-tab). The
+  // build data itself lives in the client's rolling auto-session; these just say WHICH deal + WHERE to
+  // restore on mount (see the restore effect after loadClientSession).
+  useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
+  useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
+  useEffect(() => { try { sessionStorage.setItem("ambria-active-fn", String(activeFnIdx)); } catch { /* */ } }, [activeFnIdx]);
 
   // ═══ §25 LMS LEAD INTEGRATION ═══
   const [lmsLeads, setLmsLeads] = useState([]);
@@ -3869,7 +3875,10 @@ Return ONLY JSON:
   useEffect(() => { saveSessionRef.current = saveSession; });
   const buildHasDataRef = useRef(false);
   useEffect(() => {
-    buildHasDataRef.current = !!(activeClientId && clientName.trim() && (
+    // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
+    // activeClientId yet (saveSession creates the client + sets the id). Without this a new build was
+    // never persisted, so a refresh/route-switch lost everything.
+    buildHasDataRef.current = !!(clientName.trim() && (
       Object.keys(zoneElements || {}).length > 0
       || Object.keys(elSelectedPhoto || {}).length > 0
       || Object.values(enabledEls || {}).some(Boolean)
@@ -3888,7 +3897,7 @@ Return ONLY JSON:
     const onVis = () => { if (document.visibilityState === "hidden") autoSaveBuild(); };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("pagehide", autoSaveBuild);
-    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); };
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); autoSaveBuild(); /* save on unmount → covers Studio↔IMS route switch (no pagehide fires) */ };
   }, [autoSaveBuild]);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
@@ -4094,6 +4103,27 @@ Return ONLY JSON:
     setStep(landingStep);
     showMsg("Loaded session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
   }, [events, allVideos, ytVideoTags]);
+
+  // ── Restore the active deal on mount (refresh / Studio↔IMS switch) ──
+  // The build lives in the client's rolling auto-session; sessionStorage remembers which deal + screen.
+  // Runs once, only when nothing is loaded yet, so it never clobbers a deal already being edited.
+  const buildRestoredRef = useRef(false);
+  useEffect(() => {
+    if (buildRestoredRef.current) return;
+    if (activeClientId) { buildRestoredRef.current = true; return; }   // a live deal is already open
+    if (!Array.isArray(clientLedger) || clientLedger.length === 0) return; // ledger not loaded yet
+    let savedId = null; try { savedId = sessionStorage.getItem("ambria-active-client"); } catch { /* */ }
+    if (!savedId) { buildRestoredRef.current = true; return; }
+    const client = clientLedger.find(c => c.id === savedId);
+    const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
+    buildRestoredRef.current = true;
+    if (!client || !session) return;
+    let savedStep = 3, savedFn = 0;
+    try { const s = parseInt(sessionStorage.getItem("ambria-studio-step"), 10); if (!isNaN(s)) savedStep = s; } catch { /* */ }
+    try { savedFn = parseInt(sessionStorage.getItem("ambria-active-fn"), 10) || 0; } catch { /* */ }
+    loadClientSession(client, session, savedStep >= 1 ? savedStep : 3);
+    if (savedFn > 0) setActiveFnIdx(savedFn);
+  }, [clientLedger, activeClientId, loadClientSession]);
 
   // ── Load LMS lead — VERBATIM ──
   const loadLmsLead = useCallback((lead) => {
