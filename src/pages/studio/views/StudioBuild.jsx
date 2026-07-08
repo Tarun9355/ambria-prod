@@ -81,6 +81,26 @@ export default function StudioBuild({ ctx }) {
   const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
   const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));
 
+  // ── Scale By (Centre Pieces) ─────────────────────────────────────────────────────────────────
+  // A single "set of N" multiplier for a zone: instead of hand-bumping each element (1 table, 6 chairs…),
+  // the salesperson sets Scale By = N and every element count is rescaled proportionally. Because it
+  // rewrites the actual element qtys, pricing, Deal Check and manpower all follow automatically. Stored
+  // in zoneConfig[k].scale for the field value + proportional math.
+  const zoneScaleVal = (k) => Math.max(1, Math.round(Number(zoneConfig[k]?.scale) || 1));
+  const setZoneScale = (k, raw) => {
+    const newS = Math.max(1, Math.round(Number(raw) || 1));
+    const oldS = zoneScaleVal(k);
+    setZoneElements(p => ({ ...p, [k]: (p[k] || []).map(e => {
+      // Per-unit base: use the stored baseQty, else derive it from the current (possibly already-scaled)
+      // qty. Effective qty = base × scale — always from a fixed base, so it never drifts across changes.
+      const base = (e.baseQty != null && Number.isFinite(Number(e.baseQty)))
+        ? Number(e.baseQty)
+        : (oldS > 1 ? Math.round((Number(e.qty) || 0) / oldS) : (Number(e.qty) || 0));
+      return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * newS)) };
+    }) }));
+    setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), scale: newS } }));
+  };
+
   // ── Per-element stock availability browser (Build) ───────────────────────────────────────────
   // A discreet 📦 on each element opens a modal listing that element's IMS sub-category items (alias-aware)
   // with the FREE count on the event date (owned − blocked). Picking one + Save pins it on the element
@@ -485,6 +505,7 @@ export default function StudioBuild({ ctx }) {
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||"📦"}:zoneLabelsD[k];
+      const isCentrepieceZone=/centre\s*piece|center\s*piece|centrepiece/i.test(el?.label||k||"");
       const isOn=enabledEls[k];const tier=elTiers[k]||"simple";const isCust=customMode[k];
       let matchedPhotos = getMatchedPhotos(srcType, tier).filter(ph => {
         if (!zpHasFilters) return true;
@@ -626,6 +647,10 @@ export default function StudioBuild({ ctx }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:11,fontWeight:600,color:"#666"}}>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  {isCentrepieceZone && <div title="Scale the whole set — multiplies every element count below (e.g. 10 tables → 10× tables, chairs, centre pieces…)" style={{display:"flex",alignItems:"center",gap:5,padding:"3px 8px",borderRadius:8,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
+                    <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale By</span>
+                    <input type="number" min="1" step="1" value={zoneScaleVal(k)} onChange={e=>setZoneScale(k, e.target.value)} onFocus={e=>e.target.select()} style={{width:44,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
+                  </div>}
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
                       master library photo so the fix sticks for everyone. Shows only for a selected
                       library photo while CORRECTION_MODE is on. Past quotes keep their own numbers. */}
