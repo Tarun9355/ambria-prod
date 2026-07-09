@@ -691,7 +691,7 @@ export default function StudioBuild({ ctx }) {
                       const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&!(isSubTagHidden&&isSubTagHidden(rc.cat,rc.sub))&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
                       return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:200,overflowY:"auto"}}>
                         {matches.map(rc=><div key={rc.id} onClick={()=>{
-                          if(!(zoneElements[k]||[]).find(el=>el.name===rc.name)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:rc.name,qty:0,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
+                          if(!(zoneElements[k]||[]).find(el=>el.name===rc.name)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:rc.name,qty:1,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
                           setZoneElSearch(p=>({...p,[k]:""}));
                         }} style={{padding:"6px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                           <span style={{fontWeight:500,color:textP}}>{rc.name}</span>
