@@ -21,9 +21,18 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [] }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
+  const [subcatSearch, setSubcatSearch] = useState("");
+  const [subcatFactorEdits, setSubcatFactorEdits] = useState({});
+  // Sub-category pairs that look like the same real-world category under different names on
+  // either side of the Studio/IMS split — flagged for manual review, never auto-merged.
+  const SUBCAT_NEAR_DUPES = {
+    "glass panel 2d": ["3d glass panel"], "3d glass panel": ["glass panel 2d"],
+    "3d candle walls": ["candle walls", "candle walls 2d"], "candle walls": ["3d candle walls"], "candle walls 2d": ["3d candle walls"],
+    "takhat": ["table takhat"], "table takhat": ["takhat"],
+  };
   // All venues (for the Venue Dumping tab) — from the Studio venue catalogue (synced as
   // venueParents) + any legacy venueMinLabour / venueDumping keys.
   const venueParentsObj = (() => { let p = settings?.venueParents; if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = {}; } } return p || {}; })();
@@ -68,6 +77,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     setSupervisors([...supervisors, { id, name: "New Supervisor", phone: "", active: true }]);
   }
   function updateSupervisor(id, field, val) { setSupervisors((prev) => prev.map((s) => s.id === id ? { ...s, [field]: val } : s)); }
+  function commitSubcatFactor(id) {
+    const raw = subcatFactorEdits[id];
+    if (raw === undefined) return;
+    const val = Math.max(0, parseFloat(raw) || 1.0);
+    onUpdateSubcatFactor?.(id, val);
+    setSubcatFactorEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
   function removeSupervisor(id) {
     const sup = supervisors.find((s) => s.id === id);
     if (!window.confirm(`Delete supervisor "${sup?.name || "this supervisor"}"?\n\nThis cannot be undone.`)) return;
@@ -1293,61 +1309,61 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         </div>
       )}
 
-      {/* ── Sub-Categories Viewer (read-only mirror of Studio Rate Card) ── */}
-      {activePanel === "subcats" && (
-        <div className="space-y-4">
-          <div className="bg-white border rounded-2xl p-5">
-            <p className="font-bold text-gray-900 mb-1">📂 Inventory Sub-Categories</p>
-            <p className="text-xs text-gray-500 mb-4">Read-only mirror of the Studio Rate Card. Used for inventory filtering, Add / Edit dropdowns, AI matching, and labour-tier batches.</p>
-            <div className="mb-4 bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-start gap-2">
-              <span className="text-lg leading-none mt-0.5">🔗</span>
-              <div className="flex-1">
-                <p className="text-sm font-bold text-indigo-800">Source: Studio Rate Card</p>
-                <p className="text-xs text-indigo-700 mt-0.5">
-                  Sub-categories are managed in the Studio app's Rate Card. Changes there flow here automatically on next refresh.
-                  {studio?.error && <span className="block mt-1 text-amber-700">⚠ {studio.error}</span>}
-                </p>
+      {/* ── Sub-Categories & Scaling Factors (IMS-owned — Rate Card → IMS migration Phase 1) ── */}
+      {activePanel === "subcats" && (() => {
+        const filtered = rateCardCategories
+          .filter((r) => !subcatSearch.trim() || r.label.toLowerCase().includes(subcatSearch.trim().toLowerCase()))
+          .sort((a, b) => a.label.localeCompare(b.label));
+        const invCount = rateCardCategories.filter((r) => r.source === "inventory").length;
+        const rcOnlyCount = rateCardCategories.filter((r) => r.source === "rate_card_only").length;
+        return (
+          <div className="space-y-4">
+            <div className="bg-white border rounded-2xl p-5">
+              <p className="font-bold text-gray-900 mb-1">📂 Sub-Categories & Scaling Factors</p>
+              <p className="text-xs text-gray-500 mb-4">IMS is now the source of truth for sub-category pricing. Each sub-category's scaling factor multiplies the base rate of every item inside it.</p>
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <input value={subcatSearch} onChange={(e) => setSubcatSearch(e.target.value)}
+                  placeholder="Search sub-categories…" className="flex-1 min-w-[200px] border rounded-lg px-3 py-2 text-sm" />
+                <span className="text-xs text-gray-400">{invCount} from inventory · {rcOnlyCount} rate-card-only · {rateCardCategories.length} total</span>
               </div>
-            </div>
-            {studioLoading && studioSubcats.length === 0 && (
-              <div className="text-center py-8 text-sm text-gray-400">Loading sub-categories from Studio…</div>
-            )}
-            {studioSubcats.length > 0 && (
-              <div className="space-y-3">
-                {(studio?.catLabels || []).map((catLabel) => {
-                  const subs = (studio?.subcatsByCat || {})[catLabel] || [];
-                  if (subs.length === 0) return null;
-                  return (
-                    <div key={catLabel} className="border rounded-xl overflow-hidden">
-                      <div className="bg-indigo-50 px-4 py-2 border-b border-indigo-100 flex items-center justify-between">
-                        <p className="text-sm font-bold text-indigo-800">{catLabel}</p>
-                        <span className="text-xs text-indigo-600">{subs.length}</span>
+              {rateCardCategories.length === 0 && (
+                <div className="text-center py-8 text-sm text-gray-400 border border-dashed rounded-xl">
+                  No sub-categories loaded yet. Run the Phase 1 migration (012_rate_card_subcategory_scaling.sql) if this is a fresh environment.
+                </div>
+              )}
+              {rateCardCategories.length > 0 && (
+                <div className="divide-y border rounded-xl overflow-hidden">
+                  {filtered.map((r) => {
+                    const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
+                    const editVal = subcatFactorEdits[r.id];
+                    return (
+                      <div key={r.id} className="flex items-center gap-3 bg-white px-4 py-2.5">
+                        <span className={"text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 " + (r.source === "inventory" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
+                          {r.source === "inventory" ? "📦 stock" : "🏷️ rate-card only"}
+                        </span>
+                        <span className="flex-1 text-sm text-gray-800 truncate" title={r.label}>{r.label}</span>
+                        {dupes.length > 0 && (
+                          <span className="text-amber-500 text-xs flex-shrink-0" title={`May be the same category as: ${dupes.join(", ")} — review before setting factors`}>⚠ possible dup</span>
+                        )}
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <input type="number" step="0.05" min="0"
+                            value={editVal !== undefined ? editVal : r.scaling_factor}
+                            onChange={(e) => setSubcatFactorEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                            onBlur={() => commitSubcatFactor(r.id)}
+                            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                            className="w-20 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
+                          <span className="text-xs text-gray-400">×</span>
+                        </div>
                       </div>
-                      <div className="p-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1">
-                        {subs.map((sc) => (
-                          <div key={sc} className="flex items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 text-sm text-gray-700">
-                            <span className="text-gray-300 text-xs">▪</span>
-                            <span className="flex-1 truncate" title={sc}>{sc}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-                <p className="text-xs text-gray-400 text-right">{studioSubcats.length} sub-categories across {(studio?.catLabels || []).filter((l) => (studio?.subcatsByCat || {})[l]?.length > 0).length} categories</p>
-              </div>
-            )}
-            {!studioLoading && studioSubcats.length === 0 && (
-              <div className="text-center py-8 text-sm text-gray-400 border border-dashed rounded-xl">
-                No sub-categories returned from Studio. Check Studio Rate Card has items configured.
-              </div>
-            )}
-            <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800">
-              💡 Need a new sub-category? Add the relevant item in the Studio Rate Card. It will appear here automatically.
+                    );
+                  })}
+                  {filtered.length === 0 && <p className="text-sm text-gray-400 italic text-center py-6">No sub-categories match "{subcatSearch}".</p>}
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Synonym Dictionary ── */}
       {activePanel === "synonyms" && (

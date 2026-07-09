@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
 import { Tabs } from "../../components/ui";
-import { supabase, fetchAll } from "../../lib/supabase";
+import { supabase, fetchAll, updateRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup } from "../../lib/ims/flowerHelpers";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV } from "../../lib/ims/constants";
@@ -117,6 +117,8 @@ export default function IMS() {
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   const [studioRcItems, setStudioRcItems] = useState([]);
   const [studioRcCats, setStudioRcCats] = useState(RC_CATS_DEFAULT); // Studio's LIVE categories (RC_SK_CATS) — falls back to defaults until loaded
+  // Rate Card → IMS migration Phase 1: per-sub-category scaling factor, IMS-owned (rate_card_categories table).
+  const [rateCardCategories, setRateCardCategories] = useState([]);
   const [tier15LastSync, setTier15LastSync] = useState(null); // last recipe→Studio rate sync timestamp
   const [tier15Syncing, setTier15Syncing] = useState(false);
   const [lmsContracts, setLmsContracts] = useState([]);
@@ -289,6 +291,18 @@ export default function IMS() {
     }
   }, []);
 
+  // Rate Card → IMS migration Phase 1: update one sub-category's scaling factor. Optimistic local
+  // update + row-level write to `rate_card_categories` (id = lower(trim(label)), the same join key
+  // Studio/Deal Check sub-category matching already uses).
+  const updateSubcatFactor = useCallback(async (id, factor) => {
+    setRateCardCategories((prev) => prev.map((r) => (r.id === id ? { ...r, scaling_factor: factor } : r)));
+    try {
+      await updateRow("rate_card_categories", id, { scaling_factor: factor });
+    } catch (e) {
+      setError(`Failed to save scaling factor: ${e.message}`);
+    }
+  }, []);
+
   // Auto-sync: reconcile Studio prices to the recipe whenever recipes / mandi / markup / driven-subs
   // change (debounced), and once after load — so Studio matches the recipe even with no button press.
   useEffect(() => {
@@ -305,7 +319,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -323,6 +337,7 @@ export default function IMS() {
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
           fetchAll("blocks").catch(() => []),
+          fetchAll("rate_card_categories").catch(() => []),
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
@@ -348,6 +363,7 @@ export default function IMS() {
         applySettingsRows(setRows);
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
         setStudioRcItems(rcRows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id })));
+        setRateCardCategories(rcCatRows);
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
@@ -390,6 +406,7 @@ export default function IMS() {
     };
     liveTable("settings", (rows) => applySettingsRows(rows));
     liveTable("rate_card", (rows) => setStudioRcItems(rows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id }))));
+    liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
     liveTable("blocks", (rows) => { const bm = blocksRowsToMap(rows); blocksRef.current = bm; setBlocksState(bm); });
     liveTable("event_orders", (rows) => setEventOrdersState(rows.map(rowToEO)));
     liveTable("functions", (rows) => setFns(rows.map(rowToFn)));
@@ -964,6 +981,7 @@ export default function IMS() {
             settings={settings} setSettings={setSettings}
             supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
             users={users} setUsers={setUsers} addUser={addUser} inventory={items} trussInv={trussInv}
+            rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
           />
         ) : tab === "supply" ? (
           <SupplyTab

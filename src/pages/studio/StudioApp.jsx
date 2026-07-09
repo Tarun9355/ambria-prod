@@ -1441,6 +1441,7 @@ export default function StudioApp() {
   const [activeZones, setActiveZones] = useState([]);
   const [rcItems, setRcItems] = useState(RC_D);
   const [rcCats, setRcCats] = useState(RC_CATS_DEFAULT);
+  const [rcSubcatFactors, setRcSubcatFactors] = useState([]); // IMS-owned; read-only here until Phase 2
   const [rcCatEditMode, setRcCatEditMode] = useState(false);
   const [rcCat, setRcCat] = useState("truss");
   const [rcSearch, setRcSearch] = useState("");
@@ -1772,6 +1773,12 @@ export default function StudioApp() {
           loadedRcItems = RC_D; if (!cancelled) setRcItems(RC_D);
         }
       } catch { /* ignore */ }
+      // Sub-category scaling factors — Rate Card → IMS migration Phase 1. IMS-owned table
+      // (rate_card_categories); Studio just reads it live, no write path here yet (that's Phase 2).
+      try {
+        const rows = await fetchAll("rate_card_categories");
+        if (Array.isArray(rows) && !cancelled) setRcSubcatFactors(rows);
+      } catch { /* ignore — table may not exist yet in this environment */ }
       // Rate Card Categories — on first boot (v == null), seed defaults and recover orphaned
       // category IDs so items still have a group to render under. When a saved blob exists,
       // skip recovery entirely: the team intentionally manages categories via the editor and
@@ -2000,6 +2007,22 @@ export default function StudioApp() {
         } else if (payload.new) {
           const it = rowToRcItem(payload.new); if (!it?.id) return;
           setRcItems((prev) => { const i = prev.findIndex((x) => x.id === it.id); const next = i >= 0 ? prev.map((x) => (x.id === it.id ? it : x)) : [...prev, it]; rcItemsRef.current = next; return next; });
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: sub-category scaling factors (IMS-owned, rate_card_categories) — Rate Card → IMS
+  // migration Phase 1. Studio just mirrors row-level changes live; nothing consumes this yet (Phase 2). ──
+  useEffect(() => {
+    const ch = subscribeTable("rate_card_categories", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setRcSubcatFactors((prev) => prev.filter((r) => r.id !== id));
+        } else if (payload.new) {
+          const row = payload.new; if (!row?.id) return;
+          setRcSubcatFactors((prev) => { const i = prev.findIndex((r) => r.id === row.id); return i >= 0 ? prev.map((r) => (r.id === row.id ? row : r)) : [...prev, row]; });
         }
       } catch { /* ignore */ }
     });
