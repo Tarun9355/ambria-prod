@@ -21,11 +21,12 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onAddSubcat, onRenameSubcat }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [subcatFactorEdits, setSubcatFactorEdits] = useState({});
+  const [subcatLabelEdits, setSubcatLabelEdits] = useState({});
   // Sub-category pairs that look like the same real-world category under different names on
   // either side of the Studio/IMS split — flagged for manual review, never auto-merged.
   const SUBCAT_NEAR_DUPES = {
@@ -83,6 +84,20 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     const val = Math.max(0, parseFloat(raw) || 1.0);
     onUpdateSubcatFactor?.(id, val);
     setSubcatFactorEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+  function commitSubcatLabel(id, currentLabel) {
+    const raw = subcatLabelEdits[id];
+    setSubcatLabelEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === currentLabel) return;
+    onRenameSubcat?.(id, trimmed);
+  }
+  function addNewSubcat(label) {
+    const trimmed = (label || "").trim();
+    if (!trimmed) return;
+    if (rateCardCategories.some((r) => r.id === trimmed.toLowerCase())) { alert(`"${trimmed}" already exists.`); return; }
+    onAddSubcat?.(trimmed);
   }
   function removeSupervisor(id) {
     const sup = supervisors.find((s) => s.id === id);
@@ -1321,10 +1336,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <div className="bg-white border rounded-2xl p-5">
               <p className="font-bold text-gray-900 mb-1">📂 Sub-Categories & Scaling Factors</p>
               <p className="text-xs text-gray-500 mb-4">IMS is now the source of truth for sub-category pricing. Each sub-category's scaling factor multiplies the base rate of every item inside it.</p>
-              <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
                 <input value={subcatSearch} onChange={(e) => setSubcatSearch(e.target.value)}
                   placeholder="Search sub-categories…" className="flex-1 min-w-[200px] border rounded-lg px-3 py-2 text-sm" />
                 <span className="text-xs text-gray-400">{invCount} from inventory · {rcOnlyCount} rate-card-only · {rateCardCategories.length} total</span>
+              </div>
+              <div className="mb-4 max-w-sm">
+                <AddInlineItem placeholder="Add a new sub-category…" onAdd={addNewSubcat} />
               </div>
               {rateCardCategories.length === 0 && (
                 <div className="text-center py-8 text-sm text-gray-400 border border-dashed rounded-xl">
@@ -1336,12 +1354,17 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   {filtered.map((r) => {
                     const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
                     const editVal = subcatFactorEdits[r.id];
+                    const labelEditVal = subcatLabelEdits[r.id];
                     return (
                       <div key={r.id} className="flex items-center gap-3 bg-white px-4 py-2.5">
-                        <span className={"text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 " + (r.source === "inventory" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
-                          {r.source === "inventory" ? "📦 stock" : "🏷️ rate-card only"}
+                        <span className={"text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 " + (r.source === "inventory" ? "bg-emerald-100 text-emerald-700" : r.source === "manual" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700")}>
+                          {r.source === "inventory" ? "📦 stock" : r.source === "manual" ? "✏️ manual" : "🏷️ rate-card only"}
                         </span>
-                        <span className="flex-1 text-sm text-gray-800 truncate" title={r.label}>{r.label}</span>
+                        <input value={labelEditVal !== undefined ? labelEditVal : r.label}
+                          onChange={(e) => setSubcatLabelEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                          onBlur={() => commitSubcatLabel(r.id, r.label)}
+                          onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                          className="flex-1 min-w-0 text-sm text-gray-800 border border-transparent hover:border-gray-200 focus:border-indigo-300 rounded-lg px-2 py-1 -mx-2" />
                         {dupes.length > 0 && (
                           <span className="text-amber-500 text-xs flex-shrink-0" title={`May be the same category as: ${dupes.join(", ")} — review before setting factors`}>⚠ possible dup</span>
                         )}

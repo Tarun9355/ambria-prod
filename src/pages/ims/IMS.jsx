@@ -179,6 +179,8 @@ export default function IMS() {
   const settingsRef = useRef(SETTINGS_DEFAULTS);
   const studioRcItemsRef = useRef([]);
   useEffect(() => { studioRcItemsRef.current = studioRcItems; }, [studioRcItems]);
+  const rateCardCategoriesRef = useRef([]);
+  useEffect(() => { rateCardCategoriesRef.current = rateCardCategories; }, [rateCardCategories]);
   useEffect(() => { itemsRef.current = items; }, [items]);
   useEffect(() => { fnsRef.current = functions; }, [functions]);
   useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
@@ -300,6 +302,50 @@ export default function IMS() {
       await updateRow("rate_card_categories", id, { scaling_factor: factor });
     } catch (e) {
       setError(`Failed to save scaling factor: ${e.message}`);
+    }
+  }, []);
+
+  // Add a sub-category IMS doesn't have yet (e.g. a new rate-card item with no inventory analog).
+  // id is derived the same way as the Phase 1 seed — lower(trim(label)) — so it's usable as a join
+  // key immediately. Plain insert (not upsert) so a name collision surfaces as an error instead of
+  // silently overwriting an existing factor.
+  const addSubcat = useCallback(async (label) => {
+    const trimmed = (label || "").trim();
+    if (!trimmed) return;
+    const id = trimmed.toLowerCase();
+    if (rateCardCategoriesRef.current.some((r) => r.id === id)) {
+      setError(`"${trimmed}" already exists.`);
+      return;
+    }
+    const row = { id, label: trimmed, scaling_factor: 1.0, source: "manual", sort_order: 0 };
+    setRateCardCategories((prev) => [...prev, row]);
+    try {
+      const { error } = await supabase.from("rate_card_categories").insert(row);
+      if (error) throw error;
+    } catch (e) {
+      setRateCardCategories((prev) => prev.filter((r) => r.id !== id));
+      setError(`Failed to add sub-category: ${e.message}`);
+    }
+  }, []);
+
+  // Rename a sub-category. When the new label normalizes to a different id, the row's PK changes
+  // too (id must stay lower(trim(label)) — the join key everything else matches on) — rolls back
+  // on failure (e.g. the new name collides with an existing sub-category).
+  const renameSubcat = useCallback(async (oldId, newLabel) => {
+    const trimmed = (newLabel || "").trim();
+    if (!trimmed) return;
+    const newId = trimmed.toLowerCase();
+    const prevRows = rateCardCategoriesRef.current;
+    if (newId !== oldId && prevRows.some((r) => r.id === newId)) {
+      setError(`"${trimmed}" already exists.`);
+      return;
+    }
+    setRateCardCategories((prev) => prev.map((r) => (r.id === oldId ? { ...r, id: newId, label: trimmed } : r)));
+    try {
+      await updateRow("rate_card_categories", oldId, { id: newId, label: trimmed });
+    } catch (e) {
+      setRateCardCategories(prevRows);
+      setError(`Failed to rename: ${e.message}`);
     }
   }, []);
 
@@ -982,6 +1028,7 @@ export default function IMS() {
             supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
             users={users} setUsers={setUsers} addUser={addUser} inventory={items} trussInv={trussInv}
             rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
+            onAddSubcat={addSubcat} onRenameSubcat={renameSubcat}
           />
         ) : tab === "supply" ? (
           <SupplyTab

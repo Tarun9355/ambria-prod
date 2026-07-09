@@ -53,7 +53,10 @@ The one genuinely new piece is the **per-sub-category scaling factor** — this 
   → `src/pages/ims/AdminSettingsTab.jsx`, wired through `src/pages/ims/AdminTab.jsx` and `src/pages/ims/IMS.jsx` (new `rateCardCategories` state, boot fetch, realtime subscription, `updateSubcatFactor` optimistic-update function)
 - [x] Realtime subscription for `rate_card_categories` added in `StudioApp.jsx` (mirrors the existing `rate_card` subscription pattern) — Studio now mirrors factor changes live into a new `rcSubcatFactors` state, read-only, unconsumed until Phase 2.
 
-**Not yet done — action needed from you:** run `supabase/migrations/012_rate_card_subcategory_scaling.sql` in the Supabase SQL editor (I don't run SQL directly against your DB). After it runs, refresh IMS → Admin → Settings → 📂 Sub-Categories to confirm all 103 rows appear, then this phase is fully done.
+- [x] **Add sub-category** — inline "+ Add" field (reuses the existing `AddInlineItem` component) for sub-categories that don't exist yet in the seeded 103. New rows default to `scaling_factor = 1.0`, tagged `source = 'manual'` (🖊️ badge).
+- [x] **Edit sub-category name** — every row's label is an editable input (blur/Enter to commit). Since `id = lower(trim(label))` is the join key, renaming updates both `id` and `label` together, with a duplicate-name check and rollback-on-failure.
+
+Migration run and confirmed working (103 rows visible in IMS → Admin → Settings → 📂 Sub-Categories). Phase 1 fully done.
 
 This phase is additive only — nothing existing changes behavior yet.
 
