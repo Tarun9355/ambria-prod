@@ -80,10 +80,17 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS apps text[] DEFAULT NULL;
 UPDATE public.users SET apps = ARRAY['studio','ims'] WHERE username = 'tarun';
 ```
 
-## Studio Rate Card seed — ⬜ (no SQL — just open the app once)
-`rate_card` is empty in the DB. Open **Studio → Manage → Pricing** once; the app
-auto-seeds the 60 rate items, which also populates IMS → Admin → Sub-Categories and
-Flowers → Recipes.
+## Studio Rate Card seed — ✅ done (155 items; superseded, see below)
+`rate_card` auto-seeds on first boot if empty (`RC_D` in `src/lib/studio/constants.js`), which also
+populates IMS → Admin → Sub-Categories and Flowers → Recipes. **Ownership has since moved to IMS**
+(Rate Card → IMS migration, see `RATE_CARD_MIGRATION_PLAN.md`) — item/category pricing is now edited
+in **IMS → Admin → Settings → 💰 Rate Card / 📂 Sub-Categories**, not Studio's Pricing page (now
+read-only).
+
+## Rate Card → IMS migration, Phase 1 (migration 012) — ✅ done
+`supabase/migrations/012_rate_card_subcategory_scaling.sql` — redefines the (previously dead)
+`rate_card_categories` table as one row per sub-category with a `scaling_factor` column (103 rows
+seeded), and trims whitespace drift on `rate_card.sub`. Confirmed run and working.
 
 ---
 

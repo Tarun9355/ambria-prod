@@ -2,9 +2,9 @@
 
 Living tracking doc — check items off as they're built. Full roadmap kept for context; only **Phase 0** and **Phase 1** are in scope right now.
 
-## Status: Phase 0-5 done. Paused before Phase 6.
+## Status: All 6 phases done.
 
-Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into pricing math), Phase 3 (moving Rate Card admin to IMS), Phase 4 (cross-app cleanup — fixed a real dead-`rcItems` bug in `EventsTab.jsx`'s AI matching, pointed the batch tagger at live data), and Phase 5 (taxonomy/Deal Check regression checks — all clean, no changes needed) are **complete**. Phase 6 (rollout) is next.
+Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into pricing math), Phase 3 (moving Rate Card admin to IMS), Phase 4 (cross-app cleanup — fixed a real dead-`rcItems` bug in `EventsTab.jsx`'s AI matching, pointed the batch tagger at live data), Phase 5 (taxonomy/Deal Check regression checks — all clean), and Phase 6 (docs updated; rollout itself happened live rather than staged — see that section for the honest account) are done. The migration described at the top of this doc is complete: IMS is now the source of truth for Rate Card pricing, categories, and the per-sub-category scaling factor.
 
 ## Context
 
@@ -110,12 +110,16 @@ Pure verification pass — all three checked out clean, no code changes needed.
 
 ---
 
-## Phase 6 (on hold) — Rollout
+## Phase 6 — Rollout
 
-- [ ] Stage the IMS admin UI behind a role check or soft-launch to Krati/Ajay/Sudhir first
-- [ ] Diff check: sample of open/recent deals, computed totals before/after the scaling-factor multiplier goes live (should be identical while every factor is at 1.0 default)
-- [ ] Set real scaling factors per sub-category, flip Studio's `RateCard.jsx` to read-only in production
-- [ ] Update `SQL_TO_RUN.md` and `CLAUDE.md` to reflect new ownership
+This phase was written speculatively before Phases 2-3 existed, expecting a staged rollout (soft-launch → verify at 1.0 → set real factors → flip Studio read-only, in that order). That's not what actually happened — each phase shipped straight to production as it was built, and you'd already set real scaling factors and been using them before some of these steps could run in their intended order. Being straight about that rather than checking these off as if the original sequence occurred:
+
+- [~] **"Stage behind a role check / soft-launch first"** — didn't happen; the IMS Rate Card panel has been live for anyone with IMS Admin access since Phase 3 shipped. No issues reported, but this was a live rollout, not a staged one. Say the word if you want an actual role gate added now — that'd be new scope, not a checkbox to tick.
+- [~] **"Diff check before/after the factor multiplier"** — the "before" baseline (all factors at 1.0) no longer exists to diff against; real factors were set before this step could run. What's actually been verified instead: Phase 2's own build/review process, plus your own use of the app since.
+- [x] Real scaling factors are set and live (your own action, confirmed in this conversation); Studio's `RateCard.jsx` has been read-only in production since Phase 3.
+- [x] `SQL_TO_RUN.md` and `CLAUDE.md` updated to reflect new ownership: `rate_card`/`rate_card_categories` moved from "Studio-only" to "Shared," the Rate Card seed note now points at IMS instead of Studio's Pricing page, and migration 012 is logged as done.
+
+**One thing worth actually doing now, by you, since I don't have browser access to check this myself:** open a real, current deal in Studio and confirm Deal Check + the full event cost total look correct. That's the closest thing to a final rollout sign-off available at this point.
 
 ---
 

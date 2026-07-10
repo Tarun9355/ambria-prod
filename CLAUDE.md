@@ -62,6 +62,8 @@ src/
 - `mandi_flowers` — flower prices + photos + variants
 - `flower_patterns` — recipes (flowers per arrangement)
 - `blocks` — date-indexed inventory reservations
+- `rate_card` — pricing items; **owned/edited by IMS** (Admin → Settings → 💰 Rate Card), Studio reads live (read-only reference view)
+- `rate_card_categories` — one row per sub-category, holds the pricing `scaling_factor` applied on top of each item's base rate; **owned/edited by IMS** (Admin → Settings → 📂 Sub-Categories)
 
 ### IMS-only:
 - `projects`, `functions`, `users`, `vendors`, `purchase_orders`
@@ -69,8 +71,7 @@ src/
 - `settings` (key-value), `truss_inventory`, `truss_allocations`, `boxes`
 
 ### Studio-only:
-- `studio_events`, `rate_card`, `rate_card_categories`
-- `library`, `templates`, `client_ledger`
+- `studio_events`, `library`, `templates`, `client_ledger`
 
 ### System:
 - `audit_log` — auto change tracking
