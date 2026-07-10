@@ -1333,11 +1333,63 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
       {/* ── Sub-Categories & Scaling Factors (IMS-owned — Rate Card → IMS migration Phase 1) ── */}
       {activePanel === "subcats" && (() => {
+        // Group sub-categories by top-level category — derived live from rcItems/rcCats (already
+        // loaded here for the Rate Card panel, Phase 3), no schema change needed. A sub-category
+        // maps to whichever category its rate-card item(s) use it under (matching by sub OR
+        // imsAlias, same join key Deal Check uses); one with no matching item falls into "Other".
+        const subToCatLabel = {};
+        rcItems.forEach((it) => {
+          const catLabel = rcCats.find((c) => c.id === it.cat)?.l || it.cat;
+          if (!catLabel) return;
+          const subKey = String(it.sub || "").trim().toLowerCase();
+          const aliasKey = String(it.imsAlias || "").trim().toLowerCase();
+          if (subKey) subToCatLabel[subKey] = catLabel;
+          if (aliasKey) subToCatLabel[aliasKey] = catLabel;
+        });
         const filtered = rateCardCategories
           .filter((r) => !subcatSearch.trim() || r.label.toLowerCase().includes(subcatSearch.trim().toLowerCase()))
           .sort((a, b) => a.label.localeCompare(b.label));
         const invCount = rateCardCategories.filter((r) => r.source === "inventory").length;
         const rcOnlyCount = rateCardCategories.filter((r) => r.source === "rate_card_only").length;
+        const catOrder = rcCats.map((c) => c.l);
+        const groups = {};
+        filtered.forEach((r) => { const label = subToCatLabel[r.id] || "Other"; (groups[label] = groups[label] || []).push(r); });
+        const groupLabels = Object.keys(groups).sort((a, b) => {
+          if (a === "Other") return 1; if (b === "Other") return -1;
+          const ai = catOrder.indexOf(a), bi = catOrder.indexOf(b);
+          if (ai === -1 && bi === -1) return a.localeCompare(b);
+          if (ai === -1) return 1; if (bi === -1) return -1;
+          return ai - bi;
+        });
+        const renderRow = (r) => {
+          const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
+          const editVal = subcatFactorEdits[r.id];
+          const labelEditVal = subcatLabelEdits[r.id];
+          return (
+            <div key={r.id} className="flex items-center gap-3 bg-white px-4 py-2.5">
+              <span className={"text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 " + (r.source === "inventory" ? "bg-emerald-100 text-emerald-700" : r.source === "manual" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700")}>
+                {r.source === "inventory" ? "📦 stock" : r.source === "manual" ? "✏️ manual" : "🏷️ rate-card only"}
+              </span>
+              <input value={labelEditVal !== undefined ? labelEditVal : r.label}
+                onChange={(e) => setSubcatLabelEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                onBlur={() => commitSubcatLabel(r.id, r.label)}
+                onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                className="flex-1 min-w-0 text-sm text-gray-800 border border-transparent hover:border-gray-200 focus:border-indigo-300 rounded-lg px-2 py-1 -mx-2" />
+              {dupes.length > 0 && (
+                <span className="text-amber-500 text-xs flex-shrink-0" title={`May be the same category as: ${dupes.join(", ")} — review before setting factors`}>⚠ possible dup</span>
+              )}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <input type="number" step="0.05" min="0"
+                  value={editVal !== undefined ? editVal : r.scaling_factor}
+                  onChange={(e) => setSubcatFactorEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                  onBlur={() => commitSubcatFactor(r.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                  className="w-20 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
+                <span className="text-xs text-gray-400">×</span>
+              </div>
+            </div>
+          );
+        };
         return (
           <div className="space-y-4">
             <div className="bg-white border rounded-2xl p-5">
@@ -1357,37 +1409,21 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               )}
               {rateCardCategories.length > 0 && (
-                <div className="divide-y border rounded-xl overflow-hidden">
-                  {filtered.map((r) => {
-                    const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
-                    const editVal = subcatFactorEdits[r.id];
-                    const labelEditVal = subcatLabelEdits[r.id];
+                <div className="space-y-3">
+                  {groupLabels.map((label) => {
+                    const color = rcCats.find((c) => c.l === label)?.c || "#9CA3AF";
                     return (
-                      <div key={r.id} className="flex items-center gap-3 bg-white px-4 py-2.5">
-                        <span className={"text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 " + (r.source === "inventory" ? "bg-emerald-100 text-emerald-700" : r.source === "manual" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700")}>
-                          {r.source === "inventory" ? "📦 stock" : r.source === "manual" ? "✏️ manual" : "🏷️ rate-card only"}
-                        </span>
-                        <input value={labelEditVal !== undefined ? labelEditVal : r.label}
-                          onChange={(e) => setSubcatLabelEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                          onBlur={() => commitSubcatLabel(r.id, r.label)}
-                          onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                          className="flex-1 min-w-0 text-sm text-gray-800 border border-transparent hover:border-gray-200 focus:border-indigo-300 rounded-lg px-2 py-1 -mx-2" />
-                        {dupes.length > 0 && (
-                          <span className="text-amber-500 text-xs flex-shrink-0" title={`May be the same category as: ${dupes.join(", ")} — review before setting factors`}>⚠ possible dup</span>
-                        )}
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <input type="number" step="0.05" min="0"
-                            value={editVal !== undefined ? editVal : r.scaling_factor}
-                            onChange={(e) => setSubcatFactorEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                            onBlur={() => commitSubcatFactor(r.id)}
-                            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                            className="w-20 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
-                          <span className="text-xs text-gray-400">×</span>
+                      <div key={label} className="border rounded-xl overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b">
+                          <span className="w-1.5 h-3.5 rounded" style={{ background: color }} />
+                          <span className="text-xs font-bold text-gray-700">{label}</span>
+                          <span className="text-[10px] text-gray-400">({groups[label].length})</span>
                         </div>
+                        <div className="divide-y">{groups[label].map(renderRow)}</div>
                       </div>
                     );
                   })}
-                  {filtered.length === 0 && <p className="text-sm text-gray-400 italic text-center py-6">No sub-categories match "{subcatSearch}".</p>}
+                  {filtered.length === 0 && <p className="text-sm text-gray-400 italic text-center py-6 border rounded-xl">No sub-categories match "{subcatSearch}".</p>}
                 </div>
               )}
             </div>
