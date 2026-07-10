@@ -23,11 +23,12 @@ import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories 
 import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
+import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 const BLOCKS_SK = "ambria-ims-blocks-v1"; // blocks document blob (faithful to reference Redis key)
 const RC_SK = "ambria-ratecard-v4"; // Studio Rate Card blob — the live source the Studio app writes
-const RC_SK_CATS = "ambria-rccats-v1"; // Studio Rate Card *categories* — the team edits/adds these in Studio
+const RC_SK_CATS = "ambria-rccats-v1"; // Rate Card *categories* — edited here in IMS as of Phase 3 (Studio's RateCard.jsx is now read-only)
 
 // blocks `blocks` TABLE rows (row-per-item) → in-memory { [itemId]: [reservations] } shape.
 const blocksRowsToMap = (rows) => Object.fromEntries((rows || []).map((r) => [r.item_id || r.id, Array.isArray(r.data) ? r.data : []]));
@@ -349,6 +350,38 @@ export default function IMS() {
     }
   }, []);
 
+  // Rate Card → IMS migration Phase 3: Rate Card admin authority moves from Studio to IMS. Same
+  // shape and rollback-on-error behavior as Studio's own saveRC/saveRcCats (StudioApp.jsx) —
+  // writing to the same `rate_card` table / `ambria-rccats-v1` settings key Studio already reads
+  // via its existing realtime subscription, so Studio's RateCard.jsx needs no code change beyond
+  // becoming read-only.
+  const saveRateCardItems = useCallback(async (nextItems, deletedIds) => {
+    const prev = studioRcItemsRef.current || [];
+    const prevById = {}; prev.forEach((i) => { if (i && i.id) prevById[i.id] = i; });
+    studioRcItemsRef.current = nextItems; setStudioRcItems(nextItems);
+    const changed = (nextItems || []).filter((i) => i && i.id && JSON.stringify(prevById[i.id]) !== JSON.stringify(i));
+    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    try {
+      if (changed.length) {
+        const rows = changed.map((i) => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() }));
+        const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" });
+        if (error) throw error;
+      }
+      for (const id of dels) { const { error } = await supabase.from("rate_card").delete().eq("id", id); if (error) throw error; }
+    } catch (e) {
+      studioRcItemsRef.current = prev; setStudioRcItems(prev);
+      setError(`Rate card save failed: ${e.message}`);
+    }
+  }, []);
+
+  const saveRateCardCats = useCallback(async (nextCats) => {
+    const prev = studioRcCats;
+    setStudioRcCats(nextCats);
+    const r = await reliableSave(RC_SK_CATS, JSON.stringify(nextCats), "Categories");
+    if (r && r.ok === false) { setStudioRcCats(prev); setError(`Failed to save categories: ${r.error}`); }
+    return r;
+  }, [studioRcCats]);
+
   // Auto-sync: reconcile Studio prices to the recipe whenever recipes / mandi / markup / driven-subs
   // change (debounced), and once after load — so Studio matches the recipe even with no button press.
   useEffect(() => {
@@ -408,7 +441,7 @@ export default function IMS() {
         // shared helper (also used by the settings Realtime subscription below).
         applySettingsRows(setRows);
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
-        setStudioRcItems(rcRows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id })));
+        setStudioRcItems(rcRows.map(rowToRcItem).filter(Boolean));
         setRateCardCategories(rcCatRows);
         setLoading(false);
       } catch (e) {
@@ -451,7 +484,7 @@ export default function IMS() {
       extraChannels.push(ch);
     };
     liveTable("settings", (rows) => applySettingsRows(rows));
-    liveTable("rate_card", (rows) => setStudioRcItems(rows.map((r) => ({ zones: [], ...(r.data || {}), id: r.id }))));
+    liveTable("rate_card", (rows) => setStudioRcItems(rows.map(rowToRcItem).filter(Boolean)));
     liveTable("rate_card_categories", (rows) => setRateCardCategories(rows));
     liveTable("blocks", (rows) => { const bm = blocksRowsToMap(rows); blocksRef.current = bm; setBlocksState(bm); });
     liveTable("event_orders", (rows) => setEventOrdersState(rows.map(rowToEO)));
@@ -1029,6 +1062,8 @@ export default function IMS() {
             users={users} setUsers={setUsers} addUser={addUser} inventory={items} trussInv={trussInv}
             rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat}
+            rcItems={studioRcItems} rcCats={studioRcCats}
+            onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
           />
         ) : tab === "supply" ? (
           <SupplyTab

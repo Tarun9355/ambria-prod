@@ -5,6 +5,7 @@ import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnit
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
+import RateCardPanel from "./RateCardPanel.jsx";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
@@ -21,7 +22,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onAddSubcat, onRenameSubcat }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onAddSubcat, onRenameSubcat, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
@@ -69,6 +70,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "venuedumping", label: "🚛 Venue Dumping" },
     { id: "dihari", label: "💰 Dihari Timings" },
     { id: "supervisors", label: "👷 Supervisors" },
+    { id: "ratecard", label: "💰 Rate Card" },
     { id: "subcats", label: "📂 Sub-Categories" },
     { id: "synonyms", label: "🔤 AI Synonyms" },
   ];
@@ -1322,6 +1324,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           ))}
           {supervisors.length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No supervisors yet. Add one above.</p>}
         </div>
+      )}
+
+      {/* ── Rate Card (IMS-owned — Rate Card → IMS migration Phase 3) ── */}
+      {activePanel === "ratecard" && (
+        <RateCardPanel rcItems={rcItems} rcCats={rcCats} onSaveItems={onSaveRateCardItems} onSaveCats={onSaveRateCardCats} />
       )}
 
       {/* ── Sub-Categories & Scaling Factors (IMS-owned — Rate Card → IMS migration Phase 1) ── */}

@@ -55,6 +55,7 @@ import {
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat } from "../../lib/ims/helpers";
+import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -940,24 +941,8 @@ async function loadEoRows() {
   return all;
 }
 
-// ═══ Rate card ↔ `rate_card` TABLE mappers (migrated off the settings blob; shared Studio↔IMS) ═══
-// Full item in `data`; typed columns mirrored for queries. IMS reads/writes the SAME table now.
-function rowToRcItem(row) {
-  if (!row) return null;
-  const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
-  if (d) return { zones: [], ...d, id: row.id };
-  return { id: row.id, name: row.name, cat: row.cat, sub: row.sub, unit: row.unit, inhouseMode: row.inhouse_mode, inhouseFlat: row.inhouse_flat, inhouseS: row.inhouse_s, inhouseM: row.inhouse_m, inhouseB: row.inhouse_b, outS: row.out_s, outM: row.out_m, outB: row.out_b, zones: Array.isArray(row.zones) ? row.zones : [], floralMode: row.floral_mode, defaultRealPct: row.default_real_pct };
-}
-function rcItemToRow(it) {
-  return {
-    id: it.id, name: it.name || "", cat: it.cat ?? null, sub: it.sub ?? null, unit: it.unit ?? null,
-    inhouse_mode: it.inhouseMode ?? "flat", inhouse_flat: Number(it.inhouseFlat) || 0,
-    inhouse_s: Number(it.inhouseS) || 0, inhouse_m: Number(it.inhouseM) || 0, inhouse_b: Number(it.inhouseB) || 0,
-    out_s: Number(it.outS) || 0, out_m: Number(it.outM) || 0, out_b: Number(it.outB) || 0,
-    zones: Array.isArray(it.zones) ? it.zones : [], floral_mode: it.floralMode ?? null,
-    default_real_pct: it.defaultRealPct ?? null, data: it,
-  };
-}
+// `rowToRcItem`/`rcItemToRow` now live in `src/lib/rateCard.js` (shared with IMS's own Rate Card
+// admin UI — Phase 3 of the Rate Card → IMS migration).
 async function loadRcRows() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
@@ -1942,9 +1927,19 @@ export default function StudioApp() {
         if (error) throw error;
       }
       for (const id of dels) await deleteRow("rate_card", id);
-    } catch (e) { showMsg?.("Rate card save failed: " + (e?.message || e), "red"); }
+    } catch (e) {
+      // Roll back the optimistic update — a failed save must not leave local state ahead of the DB.
+      rcItemsRef.current = prev; setRcItems(prev);
+      showMsg?.("Rate card save failed: " + (e?.message || e), "red");
+    }
   }, [showMsg]);
-  const saveRcCats = useCallback(async (nc) => { setRcCats(nc); return await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories"); }, []);
+  const saveRcCats = useCallback(async (nc) => {
+    const prev = rcCats;
+    setRcCats(nc);
+    const r = await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories");
+    if (r && r.ok === false) { setRcCats(prev); } // roll back on failure, same as saveRC
+    return r;
+  }, [rcCats]);
   // Tagging-hidden sub-categories — keyed "cat::sub". Set for O(1) lookup; toggle flips one sub.
   const tagSubKey = useCallback((cat, sub) => `${String(cat || "").trim()}::${String(sub || "").trim()}`, []);
   const tagHiddenSubSet = useMemo(() => new Set(tagHiddenSubs), [tagHiddenSubs]);
@@ -2284,7 +2279,7 @@ export default function StudioApp() {
   // ═══════════════════════════════════════════════════════════════
   // PRICING ENGINE CLOSURES — VERBATIM from the reference.
   // ═══════════════════════════════════════════════════════════════
-  const rcIsSMB = (rc) => rc && ((rc.inhouseS || 0) > 0 || (rc.inhouseM || 0) > 0 || (rc.inhouseB || 0) > 0 || rc.inhouseMode === "smb");
+  // rcIsSMB, getFloralMode now come from src/lib/rateCard.js (shared with IMS's own Rate Card admin UI).
 
   // Rate Card → IMS migration Phase 2: per-sub-category scaling factor (rate_card_categories,
   // IMS-owned — see Phase 1). Looked up by the same key Deal Check already uses to match a
@@ -2344,15 +2339,6 @@ export default function StudioApp() {
       trussFrontExtH: Number(d.trussFrontExtH) || 0,
     };
   };
-
-  const getFloralMode = useCallback((rc) => {
-    if (!rc || (rc.cat || "").toLowerCase() !== "florals") return "ratio";
-    if (rc.floralMode === "ratio" || rc.floralMode === "real" || rc.floralMode === "artificial") return rc.floralMode;
-    const hasArt = (rc.artificialFlat || 0) > 0 || (rc.artificialS || 0) > 0 || (rc.artificialM || 0) > 0 || (rc.artificialB || 0) > 0;
-    if (!hasArt) return "ratio";
-    const dp = typeof rc.defaultRealPct === "number" ? rc.defaultRealPct : (rc.unit === "truss_sqft" ? 0 : 100);
-    return dp >= 50 ? "real" : "artificial";
-  }, []);
 
   const applyFloralRatio = useCallback((unitPrice, rc) => unitPrice, []);
 

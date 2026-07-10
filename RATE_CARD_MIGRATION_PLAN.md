@@ -2,9 +2,9 @@
 
 Living tracking doc — check items off as they're built. Full roadmap kept for context; only **Phase 0** and **Phase 1** are in scope right now.
 
-## Status: Phase 0, 1, and 2 done. Paused before Phase 3.
+## Status: Phase 0, 1, 2, and 3 done. Paused before Phase 4.
 
-Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI, including add/rename sub-category), and Phase 2 (wiring the scaling factor into Studio's actual pricing math) are **complete**. Real factors are now live and affecting Studio's quoted prices, Deal Check billed-income, and event-cost calculations. Phases 3-6 (moving Rate Card write-authority to IMS, cleanup, rollout) are next — pick this plan back up there when ready. Recommended before moving on: spot-check a real deal's total in Studio against what it was before Phase 2, to confirm the factor math reads the way you expect.
+Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into Studio's pricing math), and Phase 3 (moving Rate Card item/category admin from Studio to IMS) are **complete**. IMS now owns Rate Card editing; Studio's Rate Card page is a live read-only reference. Phases 4-6 (cross-app cleanup, taxonomy/Deal Check regression checks, rollout) are next.
 
 ## Context
 
@@ -77,13 +77,16 @@ Why this mattered: applying the scaling factor once, in the consolidated functio
 
 ---
 
-## Phase 3 (on hold) — Move Rate Card admin authority from Studio to IMS
+## Phase 3 ✅ done — Move Rate Card admin authority from Studio to IMS
 
-- [ ] Build an IMS admin UI replicating `RateCard.jsx`'s editing capabilities (item CRUD, category CRUD, `imsAlias`, inhouse/artificial pricing fields, real/artificial/ratio mode selector) — writing to the same `rate_card` table and `RC_SK_CATS` settings key
-- [ ] Convert Studio's `RateCard.jsx` to read-only or remove its route/redirect to the new IMS tab
-- [ ] Fix `saveRC`'s (`StudioApp.jsx:1924-1938`) no-rollback-on-error gap while touching this code
+- [x] Extracted `rowToRcItem`/`rcItemToRow` (row↔item mappers) and `rcIsSMB`/`getFloralMode` (pure pricing-mode helpers) out of `StudioApp.jsx` into a new shared file, `src/lib/rateCard.js` — needed by both apps now, so duplicating them into IMS was never on the table.
+- [x] Built a new IMS admin UI, `src/pages/ims/RateCardPanel.jsx`, replicating `RateCard.jsx`'s editing capabilities: item CRUD (category, name, sub-category, unit, `imsAlias`, inhouse flat/S-M-B pricing, floral real/artificial/ratio mode, outsource S/M/B, notes, delete), category CRUD (icon/label/color/description, reorder, add, delete-if-empty). Wired in via `AdminSettingsTab.jsx` (new "💰 Rate Card" panel) → `AdminTab.jsx` → `IMS.jsx` (new `saveRateCardItems`/`saveRateCardCats` functions, same rollback-on-error pattern as Studio's `saveRC`/`saveRcCats`), writing to the same `rate_card` table / `ambria-rccats-v1` settings key Studio already reads.
+- [x] **Deliberate UX simplification vs. the Studio original:** category edits commit immediately per-field (matching the Phase 1 Sub-Categories panel's blur/change-commit pattern) instead of a staged "Save Categories" button — removes the risk of losing typed edits by navigating away mid-edit.
+- [x] **Deliberately NOT ported:** the tagging-visibility toggle (`isSubTagHidden`/`toggleTagHiddenSub`) — that's a Studio-side tagging concern (see Phase 5), not Rate Card pricing, and stays in Studio's read-only page where it's still fully interactive.
+- [x] Converted Studio's `RateCard.jsx` to a read-only reference view — search/browse/filter/health-stats all still work (still live via the existing realtime subscription, so IMS edits appear immediately), but all add/edit/delete controls are gone, replaced with a banner pointing to IMS.
+- [x] Fixed `saveRC`'s and `saveRcCats`'s no-rollback-on-error gap in `StudioApp.jsx` while touching this code — a failed save now reverts local state instead of leaving it ahead of the DB.
 
-Studio's pricing functions need no changes here — they keep reading `rcItems`/`rcCats` via the existing realtime subscription; only the write path moves.
+**Known, deliberate scope-limit:** `saveRC`/`saveRcCats` and RateCard.jsx's former UI-only state (`rcCatEditMode`, `rcAddMode`, `rcSubOpen`, `rcNewForm` + setters) are now dead code in `StudioApp.jsx` — no longer called from anywhere. Left in place rather than also ripped out in this same change, specifically to keep this diff's blast radius smaller after an unrelated mistake earlier in this session (a careless `replace_all` edit caused a shipped, if quickly fixed, production crash) — pure dead-code removal is safe but not free, and doing it separately means a smaller, easier-to-review diff for this pass. Worth a follow-up cleanup pass.
 
 ---
 
