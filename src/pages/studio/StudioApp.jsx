@@ -54,6 +54,7 @@ import {
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
+import { itemImsSubcat } from "../../lib/ims/helpers";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -2285,6 +2286,30 @@ export default function StudioApp() {
   // ═══════════════════════════════════════════════════════════════
   const rcIsSMB = (rc) => rc && ((rc.inhouseS || 0) > 0 || (rc.inhouseM || 0) > 0 || (rc.inhouseB || 0) > 0 || rc.inhouseMode === "smb");
 
+  // Rate Card → IMS migration Phase 2: per-sub-category scaling factor (rate_card_categories,
+  // IMS-owned — see Phase 1). Looked up by the same key Deal Check already uses to match a
+  // rate-card item to an IMS sub-category (imsAlias || sub), so no new taxonomy is introduced.
+  const rcFactorByKey = useMemo(() => {
+    const m = {};
+    (rcSubcatFactors || []).forEach((r) => { if (r && r.id) m[r.id] = Number(r.scaling_factor); });
+    return m;
+  }, [rcSubcatFactors]);
+  const rcScalingFactor = useCallback((rc) => {
+    const key = String(itemImsSubcat(rc) || "").trim().toLowerCase();
+    if (!key) return 1;
+    const f = rcFactorByKey[key];
+    return (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
+  }, [rcFactorByKey]);
+  // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
+  // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
+  // the sub-category scaling factor applied. Previously duplicated verbatim in all three
+  // functions; consolidated here so the factor only needs wiring in once.
+  const resolveRcRate = useCallback((rc, sz) => {
+    const { realRate, artRate } = resolveRcRate(rc, sz);
+    const factor = rcScalingFactor(rc);
+    return { realRate: realRate * factor, artRate: artRate * factor };
+  }, [rcScalingFactor]);
+
   const buildZoneConfig = (zk, photoDims) => {
     const zm = zoneMeta[zk]; if (!zm || !zm.dimFields?.length) return null;
     const d = photoDims || {};
@@ -2413,15 +2438,7 @@ export default function StudioApp() {
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
     const mode = getFloralMode(rc);
     const sz = (el.size || "").toUpperCase();
-    let realRate = 0, artRate = 0;
-    if (rcIsSMB(rc)) {
-      if (sz === "S" || sz === "SMALL") { realRate = rc.inhouseS || 0; artRate = rc.artificialS || 0; }
-      else if (sz === "B" || sz === "BIG" || sz === "LARGE" || sz === "PREMIUM" || sz === "HEAVY") { realRate = rc.inhouseB || 0; artRate = rc.artificialB || 0; }
-      else { realRate = rc.inhouseM || 0; artRate = rc.artificialM || 0; }
-    } else {
-      realRate = rc.inhouseFlat || 0;
-      artRate = rc.artificialFlat || 0;
-    }
+    const { realRate, artRate } = resolveRcRate(rc, sz);
     let up = 0, realPct = null;
     if (isFloral) {
       let modeDefault;
@@ -2451,7 +2468,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra]);
+  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate]);
 
   const calcElsCost = useCallback((elements, withFloral, zc) => {
     return (elements || []).reduce((s, el) => {
@@ -2468,15 +2485,7 @@ export default function StudioApp() {
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
     const mode = getFloralMode(rc);
     const sz = (el.size || "").toUpperCase();
-    let realRate = 0, artRate = 0;
-    if (rcIsSMB(rc)) {
-      if (sz === "S" || sz === "SMALL") { realRate = rc.inhouseS || 0; artRate = rc.artificialS || 0; }
-      else if (sz === "B" || sz === "BIG" || sz === "LARGE" || sz === "PREMIUM" || sz === "HEAVY") { realRate = rc.inhouseB || 0; artRate = rc.artificialB || 0; }
-      else { realRate = rc.inhouseM || 0; artRate = rc.artificialM || 0; }
-    } else {
-      realRate = rc.inhouseFlat || 0;
-      artRate = rc.artificialFlat || 0;
-    }
+    const { realRate, artRate } = resolveRcRate(rc, sz);
     let up = 0;
     if (isFloral) {
       let modeDefault;
@@ -2500,7 +2509,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, floralArtUnitRate, patternExtra]);
+  }, [rcItems, getFloralMode, floralArtUnitRate, patternExtra, resolveRcRate]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
@@ -2546,9 +2555,8 @@ export default function StudioApp() {
       (li.elements || []).forEach(el => {
         const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
         if (!rc) return;
-        let up = 0; const sz = (el.size || "").toUpperCase();
-        if (rcIsSMB(rc)) { if (sz === "S") up = rc.inhouseS || 0; else if (sz === "B") up = rc.inhouseB || 0; else up = rc.inhouseM || 0; }
-        else { up = rc.inhouseFlat || 0; }
+        const sz = (el.size || "").toUpperCase();
+        let up = resolveRcRate(rc, sz).realRate;
         if ((rc.cat || "").toLowerCase() === "florals") {
           totalFloralCostFull += (el.qty || 0) * up;
           up = getElPrice(el, null).unitPrice;
@@ -2573,7 +2581,7 @@ export default function StudioApp() {
     const gensets = match ? (match.gensets || 1) : 1;
     const gensetCost = gensets * gensetRate;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -2788,12 +2796,7 @@ export default function StudioApp() {
         // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
         // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
         // getElPrice's blend). Computed at element level, before the recipe gate below.
-        { const szU = String(el.size || "").toUpperCase(); let rr, ar;
-          if (rcIsSMB(rc)) {
-            if (szU === "S" || szU === "SMALL") { rr = rc.inhouseS || 0; ar = rc.artificialS || 0; }
-            else if (szU === "B" || szU === "BIG" || szU === "LARGE" || szU === "PREMIUM" || szU === "HEAVY") { rr = rc.inhouseB || 0; ar = rc.artificialB || 0; }
-            else { rr = rc.inhouseM || 0; ar = rc.artificialM || 0; }
-          } else { rr = rc.inhouseFlat || 0; ar = rc.artificialFlat || 0; }
+        { const szU = String(el.size || "").toUpperCase(); const { realRate: rr, artRate: ar } = resolveRcRate(rc, szU);
           realIncome += q * rp * rr; artIncome += q * ap * ar; }
         const tn = (rc.name || "").toLowerCase().trim();
         let pat = fp.find(p => (p.name || "").toLowerCase().trim() === tn);
@@ -2831,7 +2834,7 @@ export default function StudioApp() {
       });
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio]);
+  }, [dealCheckData, rcItems, floralRatio, resolveRcRate]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").

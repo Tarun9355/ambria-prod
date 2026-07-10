@@ -2,9 +2,9 @@
 
 Living tracking doc — check items off as they're built. Full roadmap kept for context; only **Phase 0** and **Phase 1** are in scope right now.
 
-## Current scope: Phase 0 + Phase 1 only
+## Status: Phase 0, 1, and 2 done. Paused before Phase 3.
 
-Phases 2-6 below are the full roadmap for context, but **only Phase 0 (data audit) and Phase 1 (scaling-factor schema + IMS admin UI) are being built right now.** Phase 2 wires the scaling factor into Studio's pricing math — that needs real factor values set on real sub-categories first, which only makes sense once Phase 1's UI exists and you've populated it. Phases 3-6 (moving Rate Card write-authority to IMS, cleanup, rollout) wait until Phase 2 is validated. Revisit this plan to continue past Phase 1 once the sub-category factors are filled in.
+Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI, including add/rename sub-category), and Phase 2 (wiring the scaling factor into Studio's actual pricing math) are **complete**. Real factors are now live and affecting Studio's quoted prices, Deal Check billed-income, and event-cost calculations. Phases 3-6 (moving Rate Card write-authority to IMS, cleanup, rollout) are next — pick this plan back up there when ready. Recommended before moving on: spot-check a real deal's total in Studio against what it was before Phase 2, to confirm the factor math reads the way you expect.
 
 ## Context
 
@@ -41,7 +41,7 @@ The one genuinely new piece is the **per-sub-category scaling factor** — this 
 
 ---
 
-## Phase 1 — Add the scaling-factor schema + IMS admin UI ✅ built, pending migration run
+## Phase 1 — Add the scaling-factor schema + IMS admin UI ✅ done
 
 **Schema-shape correction made while building:** the original bullet said "add a `scaling_factor` column to `rate_card_categories`." On closer inspection, that table's actual columns (`id/label/icon/sort_order/subs-as-JSONB-array`) are one-row-per-*top-level-category* (11 rows), not one-row-per-*sub-category* (103 needed). A single column addition would only have supported 11 category-level factors, not the per-sub-category factor the plan requires — and CLAUDE.md's own "no JSON blobs for flat data, row-level updates only" rule rules out nesting sub-categories as a JSONB array on the old shape. Since the table has 0 rows and 0 code references (confirmed in Phase 0), it's redefined with new columns instead: one row per sub-category.
 
@@ -56,18 +56,24 @@ The one genuinely new piece is the **per-sub-category scaling factor** — this 
 - [x] **Add sub-category** — inline "+ Add" field (reuses the existing `AddInlineItem` component) for sub-categories that don't exist yet in the seeded 103. New rows default to `scaling_factor = 1.0`, tagged `source = 'manual'` (🖊️ badge).
 - [x] **Edit sub-category name** — every row's label is an editable input (blur/Enter to commit). Since `id = lower(trim(label))` is the join key, renaming updates both `id` and `label` together, with a duplicate-name check and rollback-on-failure.
 
-Migration run and confirmed working (103 rows visible in IMS → Admin → Settings → 📂 Sub-Categories). Phase 1 fully done.
+Migration run and confirmed working (103 rows visible in IMS → Admin → Settings → 📂 Sub-Categories). Phase 1 fully done — additive only, nothing existing changes behavior yet.
 
-This phase is additive only — nothing existing changes behavior yet.
+**⏸ Paused here.** Next step is for you to go through IMS → Admin → Settings → 📂 Sub-Categories and set real scaling factors on the sub-categories that matter (everything currently defaults to 1.0, which is a no-op). Come back to Phase 2 once that's done.
 
 ---
 
-## Phase 2 (on hold — needs real scaling-factor data from Phase 1 first) — Consolidate Studio's duplicated price-resolution logic
+## Phase 2 ✅ done — Consolidate Studio's duplicated price-resolution logic
 
-- [ ] Extract the shared SMB rate-resolution branch out of `getElPrice` (`StudioApp.jsx:2387`), `getElPriceForFn` (`StudioApp.jsx:2442`), and `calcFullEventCost`'s inline copy (`StudioApp.jsx:2524-2528`) into one function, e.g. `resolveRcRate(rc, el, fnRatio)`
-- [ ] Multiply the resolved `realRate`/`artRate` by the matching sub-category's `scaling_factor`, joined via the existing `itemImsSubcat(rc)` helper (`src/lib/ims/helpers.js:86`)
+- [x] Extracted the shared SMB/flat rate-resolution branch out of `getElPrice`, `getElPriceForFn`, and `calcFullEventCost`'s inline copy into one function, `resolveRcRate(rc, sz)` (`StudioApp.jsx`, right after `rcIsSMB`)
+- [x] `resolveRcRate` multiplies the resolved `realRate`/`artRate` by the matching sub-category's `scaling_factor`, looked up via the existing `itemImsSubcat(rc)` helper (`src/lib/ims/helpers.js:86`) against a memoized map built from `rcSubcatFactors` (the Phase 1 realtime mirror of `rate_card_categories`). Unknown/missing/zero factors fall back to `1` (no-op), so ungoverned sub-categories are unaffected.
+- [x] **Scope expanded by one function found during implementation:** `calcFnFloralSourcingCost` (the Deal Check billed-income real/artificial split) had its own, fourth, independent copy of the same SMB/flat block — not in the original checklist, but left unscaled it would have made the client-billed quote reflect the new factor while the Deal Check P&L billed-income figure didn't. Fixed the same way, using `resolveRcRate`.
+- [x] Verified with `npx vite build` after each edit — no syntax/reference errors.
 
-Why now (once unblocked): applying the scaling factor once, in the consolidated function, avoids fixing the same multiplier in three places and re-introducing drift between them (the codebase already has a comment at `DealCheckOverlay.jsx:333` flagging one such duplicate as "MUST match DCManpowerTab" — worth closing here, not compounding).
+**Known, deliberately out-of-scope gap:** two *cosmetic preview* prices — `StudioModals.jsx:170` (Zone Upload Review "NEW element" cost preview) and `ManageLibrary.jsx:862` (Library tagging cost preview) — read `rc.inhouseFlat/S/M/B` directly rather than through `getElPrice`/`resolveRcRate`. Fixing them would mean threading `resolveRcRate` as a prop into two more components; since they're previews only (not the billed price), this was left alone. If a sub-category's factor is set meaningfully away from 1.0, these two previews will read low compared to the real billed price everywhere else — cosmetic only, but worth knowing.
+
+**One incidental behavior fix, not just a refactor:** `calcFullEventCost`'s old inline branch only recognized exact `"S"`/`"B"` size strings, while `getElPrice`/`getElPriceForFn` also recognized `"SMALL"`/`"BIG"`/`"LARGE"`/`"PREMIUM"`/`"HEAVY"`. Consolidating onto one function means `calcFullEventCost` (Browse-tab library video cost badges) now recognizes the full synonym set too — a minor consistency fix, surfaced here rather than shipped silently.
+
+Why this mattered: applying the scaling factor once, in the consolidated function, avoids fixing the same multiplier in four places and re-introducing drift between them (the codebase already had a comment at `DealCheckOverlay.jsx:333` flagging a *different* duplicate as "MUST match DCManpowerTab" — this closes the same class of problem for pricing, not labour).
 
 ---
 
@@ -108,7 +114,7 @@ Studio's pricing functions need no changes here — they keep reading `rcItems`/
 
 ## Verification
 
-- After Phase 2: unit-check `resolveRcRate` against current `getElPrice`/`getElPriceForFn`/`calcFullEventCost` outputs for a handful of real elements (florals + non-florals, flat + SMB) to confirm byte-for-byte equivalence before the scaling factor changes anything
+- **Phase 2, still to do by you:** open a real deal in Studio Build/Deal Check, pick an element whose sub-category now has a non-1.0 factor set, and confirm its price moved by exactly that factor (e.g. factor 1.1 → price up 10%). Then pick an element in an unfactored (1.0) sub-category and confirm its price is unchanged from before.
 - After Phase 3: edit an item/category in the new IMS UI, confirm it appears in Studio's Build/Deal Check views via the existing realtime subscription (no Studio code change needed)
 - After Phase 6: with all factors at 1.0, run Deal Check + full event cost calc on a real deal before/after cutover and diff the totals — must match exactly
 - Manually exercise: add a rate-card item in the new IMS UI → confirm it shows up in Studio's "+Add element" autocomplete and AI-tagging vocabulary on the next tag run
