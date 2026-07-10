@@ -2,9 +2,9 @@
 
 Living tracking doc — check items off as they're built. Full roadmap kept for context; only **Phase 0** and **Phase 1** are in scope right now.
 
-## Status: Phase 0-4 done. Paused before Phase 5.
+## Status: Phase 0-5 done. Paused before Phase 6.
 
-Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into pricing math), Phase 3 (moving Rate Card admin to IMS), and Phase 4 (cross-app cleanup — fixed a real dead-`rcItems` bug in `EventsTab.jsx`'s AI matching, pointed the batch tagger at live data) are **complete**. Phase 5 (taxonomy/Deal Check regression checks) is next.
+Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into pricing math), Phase 3 (moving Rate Card admin to IMS), Phase 4 (cross-app cleanup — fixed a real dead-`rcItems` bug in `EventsTab.jsx`'s AI matching, pointed the batch tagger at live data), and Phase 5 (taxonomy/Deal Check regression checks — all clean, no changes needed) are **complete**. Phase 6 (rollout) is next.
 
 ## Context
 
@@ -100,11 +100,13 @@ Why this mattered: applying the scaling factor once, in the consolidated functio
 
 ---
 
-## Phase 5 (on hold) — Verify taxonomy/AI-tagging and Deal Check are unaffected
+## Phase 5 ✅ done — Verify taxonomy/AI-tagging and Deal Check are unaffected
 
-- [ ] Regression-check AI tagging (`aiTagImage` in `StudioApp.jsx` + batch tagger post-Phase-4) still builds vocabulary correctly from `rcItems`
-- [ ] Regression-check Deal Check's 3-hop matcher (`getCardSpecsForZone` → `filterImsBySubcategory` → `nameMatchUnique`/AI fallback, `StudioApp.jsx:539-660`) — should need no changes, same fields/join key
-- [ ] Confirm `TAG_HIDDEN_SUBS_SK` stays Studio-side (tagging concern, not pricing)
+Pure verification pass — all three checked out clean, no code changes needed.
+
+- [x] `aiTagImage` (`StudioApp.jsx`) and the Phase-4-fixed batch tagger both build vocabulary from `rcItems`/`isSubTagHidden` — Studio-local state fed by the same live realtime subscription that Phase 3 never touched (only *who writes* `rate_card` changed, not how Studio reads it).
+- [x] Deal Check's 3-hop matcher (`filterImsBySubcategory` → `nameMatchUnique` → `getCardSpecsForZone`, `StudioApp.jsx:522-588`) still reads `rc.imsAlias`/`rc.sub`/`rc.cat`/`rc.name` — same fields, same join key, same `rate_card` row shape as before any of Phases 1-4.
+- [x] `TAG_HIDDEN_SUBS_SK`/`isSubTagHidden`/`toggleTagHiddenSub` confirmed genuinely Studio-only (`RateCard.jsx`, `StudioApp.jsx`, `StudioBuild.jsx`, `ManageLibrary.jsx`). The one hit in `RateCardPanel.jsx` (IMS) is a Phase 3 comment documenting the decision not to port it, not actual usage.
 
 ---
 
