@@ -130,9 +130,10 @@ export default function IMS() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Studio cross-app sync: derive cat labels / sub-cats / florals from the shared
-  // rate_card table (the Studio Rate Card). Powers Inventory categories, the Admin
-  // Sub-Categories viewer, and Flowers → Recipes.
+  // Derive cat labels / sub-cats / florals / raw items from the shared `rate_card` table — IMS's
+  // own admin UI writes it now (Rate Card → IMS migration Phase 3), Studio just mirrors it live.
+  // Powers Inventory categories, the Admin Sub-Categories viewer, Flowers → Recipes, and Events'
+  // AI matching (rcItems).
   const studio = useMemo(() => {
     // Use Studio's LIVE categories (RC_SK_CATS) — NOT the hardcoded defaults — so categories the
     // team adds in Studio (e.g. Fabric, Birthday, Printing) flow through to IMS. Fall back to the
@@ -159,7 +160,12 @@ export default function IMS() {
     const subcatsByCat = Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, [...v]]));
     const floralsItems = studioRcItems.filter((i) => i.cat === "florals").map((i) => ({ name: i.name, sub: i.sub, unit: i.unit, inhouseMode: i.inhouseMode }));
     const floralsSubcats = [...new Set(floralsItems.map((i) => i.sub).filter(Boolean))];
-    return { subcats: [...flat], catLabels: labelOrder, subcatsByCat, floralsItems, floralsSubcats, loading: false };
+    // rcItems: the full raw item list — EventsTab's aiMatchEvent needs this (name → item lookup for
+    // recipe-driven-floral detection), not just the derived subcat/label views above. This field was
+    // missing before (Phase 4 of the Rate Card → IMS migration fixed it) — every `studio?.rcItems`
+    // read was silently `[]`, so recipe-driven florals were never being skipped from inventory
+    // matching as intended.
+    return { subcats: [...flat], catLabels: labelOrder, subcatsByCat, floralsItems, floralsSubcats, rcItems: studioRcItems, loading: false };
   }, [studioRcItems, studioRcCats]);
 
   const itemsRef = useRef([]);

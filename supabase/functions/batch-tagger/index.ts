@@ -18,7 +18,7 @@
 //
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2", RC_SK = "ambria-ratecard-v4";
+const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2";
 const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1";
 const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // "cat::sub" keys flagged not-taggable in Pricing
 const PAUSED_SK = "batch-tagger-paused", LAST_RUN_SK = "batch-tagger-last-run";
@@ -60,8 +60,19 @@ Deno.serve(async (req) => {
     return json({ ok: true, tagged: 0, message: "paused via Studio UI" });
   }
 
-  const [taxonomy, rateCard, palette, kb, hiddenSubs] = await Promise.all(
-    [TAX_SK, RC_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
+  // Rate card: read the live `rate_card` TABLE (Rate Card → IMS migration, Phase 4) — this used to
+  // read the frozen `ambria-ratecard-v4` settings blob, which was only ever populated once by the
+  // original migration script, so every item added/renamed since then (in Studio, then in IMS from
+  // Phase 3 on) never reached this tagger's vocabulary. Same row shape as the app's rowToRcItem.
+  const [taxonomy, palette, kb, hiddenSubs] = await Promise.all(
+    [TAX_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
+  const { data: rcRows, error: rcErr } = await db.from("rate_card").select("*");
+  if (rcErr) return json({ error: rcErr.message }, 500);
+  const rowToRcItem = (row: any) => {
+    const d = row?.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length ? row.data : null;
+    if (d) return { ...d, id: row.id };
+    return { id: row.id, name: row.name, cat: row.cat, sub: row.sub, unit: row.unit, inhouseMode: row.inhouse_mode, inhouseFlat: row.inhouse_flat, inhouseS: row.inhouse_s, inhouseM: row.inhouse_m, inhouseB: row.inhouse_b };
+  };
 
   // Library is the `library` TABLE (row-per-photo); the full item lives in the `data` JSONB
   // column, typed columns (incl. status/tag_source/tagged_at — migration 008) are mirrors.
@@ -70,7 +81,7 @@ Deno.serve(async (req) => {
     ? { ...row.data, id: row.id }
     : { id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [], dims: row.dims || {} };
   const tax = taxonomy || {};
-  const rc = Array.isArray(rateCard) ? rateCard : [];
+  const rc = (rcRows || []).map(rowToRcItem);
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
   const colorVals = paletteVals.length ? paletteVals : (tax.colorPalette || []);
 

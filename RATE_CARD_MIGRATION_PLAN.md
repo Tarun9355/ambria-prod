@@ -2,9 +2,9 @@
 
 Living tracking doc — check items off as they're built. Full roadmap kept for context; only **Phase 0** and **Phase 1** are in scope right now.
 
-## Status: Phase 0, 1, 2, and 3 done. Paused before Phase 4.
+## Status: Phase 0-4 done. Paused before Phase 5.
 
-Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into Studio's pricing math), and Phase 3 (moving Rate Card item/category admin from Studio to IMS) are **complete**. IMS now owns Rate Card editing; Studio's Rate Card page is a live read-only reference. Phases 4-6 (cross-app cleanup, taxonomy/Deal Check regression checks, rollout) are next.
+Phase 0 (data audit), Phase 1 (scaling-factor schema + IMS admin UI), Phase 2 (wiring the scaling factor into pricing math), Phase 3 (moving Rate Card admin to IMS), and Phase 4 (cross-app cleanup — fixed a real dead-`rcItems` bug in `EventsTab.jsx`'s AI matching, pointed the batch tagger at live data) are **complete**. Phase 5 (taxonomy/Deal Check regression checks) is next.
 
 ## Context
 
@@ -90,11 +90,13 @@ Why this mattered: applying the scaling factor once, in the consolidated functio
 
 ---
 
-## Phase 4 (on hold) — Clean up now-inaccurate/broken cross-app artifacts
+## Phase 4 ✅ done — Clean up now-inaccurate/broken cross-app artifacts
 
-- [ ] Confirm `InventoryTab.jsx`, `PurchaseTab.jsx`, and Flowers→Recipes matching in `AdminSettingsTab.jsx` don't regress once IMS is the real `rate_card` author
-- [ ] Fix `EventsTab.jsx`'s dead `studio?.rcItems` reference (lines 447/479/834) — the `studio` memo never exposes an `rcItems` key, so this is a silent no-op today
-- [ ] Point `supabase/functions/batch-tagger/index.ts` at the live `rate_card` table instead of the frozen legacy blob (`ambria-ratecard-v4`) it currently reads
+- [x] Confirmed `InventoryTab.jsx`, `PurchaseTab.jsx`, and Flowers→Recipes matching in `AdminSettingsTab.jsx` don't regress: all three only read `studio.catLabels`/`subcats`/`subcatsByCat`/`floralsItems`/`floralsSubcats`, which are unaffected by *who writes* `rate_card`/`rate_card_categories` — Phase 3 only changed the write path, not this derivation.
+- [x] Fixed `EventsTab.jsx`'s dead `studio?.rcItems` reference — the `studio` memo (`IMS.jsx`) never actually exposed an `rcItems` key, so it always evaluated to `[]`. Added `rcItems: studioRcItems` to the memo's return value (one fix, all 3 call sites in `EventsTab.jsx` resolve correctly now, no changes needed there).
+  **This is a real behavior fix, not just dead-code cleanup:** recipe-driven floral elements (Reet, Garland, etc.) were never being correctly skipped from inventory matching — `isRecipeDrivenFloral(rc)` always saw `rc = null` and returned `false`, so these elements were fuzzy-matched against physical inventory ("Flower Reet" → some random flower-print cushion) exactly as the code's own comment warned against. And `fn.flowerOrders` was never populated via the auto-confirm path in `createProjectFromEO`, meaning Tier-1 Flowerist labour counts derived from it were likely wrong/incomplete for auto-confirmed EOs. Both should now work as originally intended.
+- [x] Pointed `supabase/functions/batch-tagger/index.ts` at the live `rate_card` table instead of the frozen `ambria-ratecard-v4` settings blob (which was only ever populated once, by the original migration script — every item added or renamed since, in Studio and now in IMS, never reached the nightly tagger's vocabulary).
+  **⚠️ Action needed from you:** this is a Supabase Edge Function — the code change alone does **not** take effect. Deploy it with `supabase functions deploy batch-tagger` (per the file's own header comment) for the fix to go live on the next cron run.
 
 ---
 
