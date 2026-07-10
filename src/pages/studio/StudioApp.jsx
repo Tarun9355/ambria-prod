@@ -2305,7 +2305,15 @@ export default function StudioApp() {
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
   // functions; consolidated here so the factor only needs wiring in once.
   const resolveRcRate = useCallback((rc, sz) => {
-    const { realRate, artRate } = resolveRcRate(rc, sz);
+    let realRate = 0, artRate = 0;
+    if (rcIsSMB(rc)) {
+      if (sz === "S" || sz === "SMALL") { realRate = rc.inhouseS || 0; artRate = rc.artificialS || 0; }
+      else if (sz === "B" || sz === "BIG" || sz === "LARGE" || sz === "PREMIUM" || sz === "HEAVY") { realRate = rc.inhouseB || 0; artRate = rc.artificialB || 0; }
+      else { realRate = rc.inhouseM || 0; artRate = rc.artificialM || 0; }
+    } else {
+      realRate = rc.inhouseFlat || 0;
+      artRate = rc.artificialFlat || 0;
+    }
     const factor = rcScalingFactor(rc);
     return { realRate: realRate * factor, artRate: artRate * factor };
   }, [rcScalingFactor]);
