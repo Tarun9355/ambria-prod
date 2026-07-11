@@ -172,6 +172,10 @@ export default function ManageLibrary({ ctx }) {
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
 
+  // Hover-preview for the "+Add element" inventory search — purely local UI state, no need to
+  // lift it to ctx like libElSearch (nothing else needs it, doesn't need to persist).
+  const [libElHoverItem, setLibElHoverItem] = useState(null);
+
   // `tagVenueGroup` defaults to "inhouse" (StudioApp.jsx) and is shared/sticky across whichever
   // photo is open, so without this it wins over the derived inhouse/outside group every time a
   // photo is (re)opened — e.g. opening a photo tagged with an Outside venue like "Canvas" would
@@ -827,24 +831,49 @@ export default function ManageLibrary({ ctx }) {
                     </select>
                   )}
                   <div style={{ position: "relative" }}>
-                    <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
+                    <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} onBlur={() => setLibElHoverItem(null)} />
                     {libElSearch.length >= 1 && (() => {
                       const q = libElSearch.toLowerCase();
                       // Searches IMS inventory directly (Rate Card is not consulted for elements
                       // added here — see getElPriceFromInventory in StudioApp.jsx).
                       const matches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && (it.name.toLowerCase().includes(q) || (it.cat || "").toLowerCase().includes(q) || (it.subCat || it.subcategory || "").toLowerCase().includes(q))).slice(0, 8);
-                      return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 200, overflowY: "auto" }}>
-                        {matches.map(it => { const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; return <div key={it.id} onClick={() => {
-                          if (!(libEditImg.elements || []).find(el => el.invId === it.id)) {
-                            setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
-                          }
-                          setLibElSearch("");
-                        }} style={{ padding: "6px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>{it.name}{isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}</span>
-                          <span style={{ fontSize: 9, color: textS }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</span>
+                      const Thumb = ({ item, size }) => {
+                        const src = item?.img || item?.photoUrls?.[0];
+                        return <div style={{ width: size, height: size, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: size / 2.2, opacity: 0.3 }}>📦</span>}
+                        </div>;
+                      };
+                      return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 260, overflowY: "auto", width: 300 }}>
+                        {matches.map(it => { const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; return <div key={it.id}
+                          onClick={() => {
+                            if (!(libEditImg.elements || []).find(el => el.invId === it.id)) {
+                              setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
+                            }
+                            setLibElSearch(""); setLibElHoverItem(null);
+                          }}
+                          onMouseEnter={() => setLibElHoverItem(it)}
+                          style={{ padding: "6px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 8 }}>
+                          <Thumb item={it} size={32} />
+                          <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden" }}>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+                              {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700, flexShrink: 0 }}>📦 KIT</span>}
+                            </span>
+                            <span style={{ fontSize: 9, color: textS, flexShrink: 0 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</span>
+                          </div>
                         </div>; })}
-                      </div> : <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS }}>No matches</div>;
+                      </div> : <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS, width: 300 }}>No matches</div>;
                     })()}
+                    {/* Larger preview of the hovered search result, floated beside the dropdown so it can be
+                        compared against the reference photo while tagging. */}
+                    {libElHoverItem && (
+                      <div style={{ position: "absolute", top: 0, left: "100%", marginLeft: 8, zIndex: 51, width: 160, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.25)", padding: 6, pointerEvents: "none" }}>
+                        <div style={{ width: "100%", height: 160, borderRadius: 6, overflow: "hidden", background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {(libElHoverItem.img || libElHoverItem.photoUrls?.[0]) ? <img src={libElHoverItem.img || libElHoverItem.photoUrls[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 40, opacity: 0.3 }}>📦</span>}
+                        </div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: textP, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{libElHoverItem.name}</div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -867,7 +896,10 @@ export default function ManageLibrary({ ctx }) {
                       const { lineCost } = getElPriceFromInventory(el);
                       return (
                         <Fragment key={idx}>
-                          <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                            <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              {(invItem?.img || invItem?.photoUrls?.[0]) ? <img src={invItem.img || invItem.photoUrls[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                            </div>
                             {el.name}
                             {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}
                             {!invItem && <span title="This inventory item no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
