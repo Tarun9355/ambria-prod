@@ -46,8 +46,10 @@ export default function StudioBuild({ ctx }) {
     zoneElSearch, setZoneElSearch,
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto,
-    // rate card
+    // rate card — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
+    // IMS inventory — "+Add element" sources from here now, not the Rate Card
+    imsInventory,
     // taxonomy
     taxonomy,
     // paint / deal check
@@ -688,23 +690,35 @@ export default function StudioBuild({ ctx }) {
                     <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
-                      const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&!(isSubTagHidden&&isSubTagHidden(rc.cat,rc.sub))&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
-                      return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:200,overflowY:"auto"}}>
-                        {matches.map(rc=><div key={rc.id} onClick={()=>{
-                          if(!(zoneElements[k]||[]).find(el=>el.name===rc.name)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:rc.name,qty:1,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
-                          setZoneElSearch(p=>({...p,[k]:""}));
-                        }} style={{padding:"6px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                          <span style={{fontWeight:500,color:textP}}>{rc.name}</span>
-                          <span style={{fontSize:9,color:textS}}>{rc.sub?rc.sub+" › ":""}{rcCats.find(c=>c.id===rc.cat)?.l||rc.cat}</span>
-                        </div>)}
-                      </div>:<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS}}>No matches</div>;
+                      // Searches IMS inventory directly (Rate Card is not consulted for elements added
+                      // here — see getElPriceFromInventory in StudioApp.jsx).
+                      const matches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
+                      return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
+                        {matches.map(it=>{ const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0]; return <div key={it.id}
+                          onClick={()=>{
+                            if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
+                            setZoneElSearch(p=>({...p,[k]:""}));
+                          }}
+                          style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:22,opacity:0.3}}>📦</span>}
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                              <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
+                              {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>📦 KIT</span>}
+                            </div>
+                            <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}</div>
+                          </div>
+                        </div>; })}
+                      </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS,width:320}}>No matches</div>;
                     })()}
                   </div>
                 </div>
               </div>
               <div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).map((el, idx) => {
-                  const priceInfo = getElPrice(el, zoneConfig[k]);
+                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
@@ -718,8 +732,9 @@ export default function StudioBuild({ ctx }) {
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
-                        <span style={{fontSize:12,fontWeight:500,color:rc?textP:"#F59E0B"}}>{el.name}</span>
-                        {!rc&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                        <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId)?textP:"#F59E0B"}}>{el.name}</span>
+                        {!rc&&!el.invId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                        {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                         {rc&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:11,opacity:0.5,padding:"0 1px",lineHeight:1}}>📦</span>}
                         {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {el.imsName||"pinned"}</span>}
                         {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
@@ -1126,22 +1141,34 @@ export default function StudioBuild({ ctx }) {
                 <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                 {(zoneElSearch[k]||"").length>=1&&(()=>{
                   const q=(zoneElSearch[k]||"").toLowerCase();
-                  const matches=rcItems.filter(rc=>!(zoneElements[k]||[]).find(el=>el.name===rc.name)&&!(isSubTagHidden&&isSubTagHidden(rc.cat,rc.sub))&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
-                  return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:200,overflowY:"auto"}}>
-                    {matches.map(rc=><div key={rc.id} onClick={()=>{
-                      if(!(zoneElements[k]||[]).find(el=>el.name===rc.name)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:rc.name,qty:1,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
-                      setZoneElSearch(p=>({...p,[k]:""}));
-                    }} style={{padding:"6px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <span style={{fontWeight:500,color:textP}}>{rc.name}</span>
-                      <span style={{fontSize:9,color:textS}}>{rc.sub?rc.sub+" › ":""}{rcCats.find(c=>c.id===rc.cat)?.l||rc.cat}</span>
-                    </div>)}
-                  </div>:<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS}}>No matches</div>;
+                  // Searches IMS inventory directly (Rate Card is not consulted for elements added
+                  // here — see getElPriceFromInventory in StudioApp.jsx).
+                  const matches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
+                  return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
+                    {matches.map(it=>{ const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0]; return <div key={it.id}
+                      onClick={()=>{
+                        if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(p=>({...p,[k]:[...(p[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
+                        setZoneElSearch(p=>({...p,[k]:""}));
+                      }}
+                      style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:22,opacity:0.3}}>📦</span>}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                          <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
+                          {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>📦 KIT</span>}
+                        </div>
+                        <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}</div>
+                      </div>
+                    </div>; })}
+                  </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS,width:320}}>No matches</div>;
                 })()}
               </div>
             </div>
             {(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
               {(zoneElements[k]||[]).map((el, idx) => {
-                const priceInfo = getElPrice(el, zoneConfig[k]);
+                const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                 const rc = priceInfo.rc;
                 const hasSizes = rcIsSMB(rc);
                 const isTrussSqft = rc && rc.unit === "truss_sqft";
@@ -1155,8 +1182,9 @@ export default function StudioBuild({ ctx }) {
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4}}>
-                      <span style={{fontSize:12,fontWeight:500,color:rc?textP:"#F59E0B"}}>{el.name}</span>
-                      {!rc&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                      <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId)?textP:"#F59E0B"}}>{el.name}</span>
+                      {!rc&&!el.invId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                      {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                       {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2}}>

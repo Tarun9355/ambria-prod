@@ -1447,6 +1447,9 @@ export default function StudioApp() {
   // IMS inventory, always-on (not deal-scoped like dealCheckData.inventory) — needed by Library's
   // "+Add element" search, which sources directly from inventory now, not the Rate Card.
   const [imsInventory, setImsInventory] = useState([]);
+  // Blocks for just the active function's date — warms once loadAvailability/activeFnMeta exist
+  // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
+  const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
   const [rcCatEditMode, setRcCatEditMode] = useState(false);
   const [rcCat, setRcCat] = useState("truss");
   const [rcSearch, setRcSearch] = useState("");
@@ -2340,18 +2343,51 @@ export default function StudioApp() {
   }, [rcFactorByKey]);
   const rcScalingFactor = useCallback((rc) => rcScalingFactorForSub(itemImsSubcat(rc)), [rcScalingFactorForSub]);
 
+  // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
+  // for the active date) — same rate_card_categories row as the scaling factor, same join key.
+  // Default 100 (full production cost) for a sub-category with no row yet.
+  const rcCostPctByKey = useMemo(() => {
+    const m = {};
+    (rcSubcatFactors || []).forEach((r) => { if (r && r.id) m[r.id] = Number(r.cost_percent); });
+    return m;
+  }, [rcSubcatFactors]);
+  const rcCostPctForSub = useCallback((subCat) => {
+    const key = String(subCat || "").trim().toLowerCase();
+    const v = key ? rcCostPctByKey[key] : undefined;
+    return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100;
+  }, [rcCostPctByKey]);
+
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
   // Returns the same shape getElPrice/getElPriceForFn do, so it drops into every existing caller
   // (calcElsCost, calcFunctionCost, etc. — all of which delegate to those two) unchanged. A kit's
   // `price` is already the auto-computed total (kitBase + Σ component price×qty, IMS-side) — one
   // formula covers kits and plain items alike.
-  const getElPriceFromInventory = useCallback((el) => {
+  //
+  // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
+  // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
+  // in stock for the active date bills at the normal rate, qty beyond that bills at item.cost ×
+  // the sub-category's cost%. Library's browse-grid cost badges never pass this flag, so they stay
+  // exactly as before — no availability context exists there (no event date to check against).
+  const getElPriceFromInventory = useCallback((el, opts) => {
     const item = imsInventory.find((i) => i.id === el.invId);
     if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const qty = el.qty || 0;
+    const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+    if (opts?.checkAvailability && !isKit) {
+      const available = getStudioAvailable(item, activeBlocksForDate);
+      const ownedQty = Math.min(qty, available);
+      const shortQty = Math.max(0, qty - available);
+      const ownedRate = priceForInvItem(item, rcFactorByKey);
+      const shortRate = (Number(item.cost) || 0) * (rcCostPctForSub(item.subCat || item.subcategory) / 100);
+      const lineCost = ownedQty * ownedRate + shortQty * shortRate;
+      const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
+      const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
+      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null };
+    }
     const unitPrice = priceForInvItem(item, rcFactorByKey);
-    return { rc: null, unitPrice, lineCost: (el.qty || 0) * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey]);
+    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -2483,8 +2519,8 @@ export default function StudioApp() {
     return Number(comp?.extraCost) || 0;
   }, [dealCheckData, studioFloralData]);
 
-  const getElPrice = useCallback((el, zc) => {
-    if (el.invId) return getElPriceFromInventory(el); // IMS inventory-sourced element — Rate Card never consulted
+  const getElPrice = useCallback((el, zc, opts) => {
+    if (el.invId) return getElPriceFromInventory(el, opts); // IMS inventory-sourced element — Rate Card never consulted
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -2522,9 +2558,9 @@ export default function StudioApp() {
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
   }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
 
-  const calcElsCost = useCallback((elements, withFloral, zc) => {
+  const calcElsCost = useCallback((elements, withFloral, zc, opts) => {
     return (elements || []).reduce((s, el) => {
-      const { rc, lineCost } = getElPrice(el, zc);
+      const { rc, lineCost } = getElPrice(el, zc, opts);
       if (!withFloral || !rc) return s + lineCost;
       if (rc.unit === "truss_sqft") return s + applyFloralRatio(lineCost, rc);
       return s + (el.qty || 0) * applyFloralRatio(lineCost / (el.qty || 1), rc);
@@ -2669,7 +2705,7 @@ export default function StudioApp() {
     zones.forEach(z => { c += calcStructCost(z.type, z.config).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
-      c += calcElsCost(elems, true, zoneConfig[zk]);
+      c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
     });
     const grades = itemGrades || {};
     Object.entries(itemQty || {}).forEach(([itemId, qty]) => {
@@ -5011,6 +5047,17 @@ Return ONLY JSON:
     availCacheRef.current[date] = val;
     return val;
   }, []);
+
+  // Warms activeBlocksForDate whenever the active function's date changes, so Build view's
+  // per-element pricing and the header ESTIMATE badge can read availability synchronously
+  // (getElPrice/calcElsCost are called inline during render — no per-element async fetch).
+  useEffect(() => {
+    const date = activeFnMeta?.date || clientDate || "";
+    if (!date) { setActiveBlocksForDate({}); return; }
+    let cancelled = false;
+    loadAvailability(date).then(({ blocksForDate }) => { if (!cancelled) setActiveBlocksForDate(blocksForDate || {}); }).catch(() => { if (!cancelled) setActiveBlocksForDate({}); });
+    return () => { cancelled = true; };
+  }, [activeFnMeta?.date, clientDate, loadAvailability]);
 
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
