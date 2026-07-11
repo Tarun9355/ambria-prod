@@ -43,18 +43,23 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
     { test: (low, raw) => /^(flowers?|florals?)$/.test(low), find: /floral|flower/i, fallbackCat: "Florals", fallbackSub: "Floral" },
     { test: (low, raw) => /^(cloths?|fabrics?|kapda|kapra)$/.test(low) || /कपड़ा|कपडा/.test(raw), find: /fabric|cloth|कपड़ा/i, fallbackCat: "Fabric", fallbackSub: "Fabric" },
   ];
-  // Generic matcher: alias group → exact (case-insensitive) → singular/plural tolerance → raw.
+  // Generic matcher: alias group → exact (case-insensitive, whitespace-squeezed) → singular/plural
+  // tolerance → raw. Squeezing internal whitespace (not just trim) catches manual-entry doubled
+  // spaces ("Cocktail  Ceremic  Accessories") that otherwise render identically to the clean
+  // single-spaced label but compare as a different string — producing a phantom duplicate filter
+  // chip with its own (wrong) 0-item count instead of merging into the real one.
+  const squeeze = (s) => String(s ?? "").trim().replace(/\s+/g, " ");
   const canonicalLabel = (value, labels, isSub) => {
-    const raw = String(value ?? "").trim();
+    const raw = squeeze(value);
     if (!raw) return "";
     const low = raw.toLowerCase();
     for (const g of ALIAS_GROUPS) {
       if (g.test(low, raw)) return labels.find((l) => g.find.test(l)) || (isSub ? g.fallbackSub : g.fallbackCat);
     }
-    let hit = labels.find((l) => l.toLowerCase() === low);
+    let hit = labels.find((l) => squeeze(l).toLowerCase() === low);
     if (hit) return hit;
     const sing = (x) => x.replace(/s$/, ""); // "Furnitures" → "Furniture"
-    hit = labels.find((l) => sing(l.toLowerCase()) === sing(low));
+    hit = labels.find((l) => sing(squeeze(l).toLowerCase()) === sing(low));
     if (hit) return hit;
     return raw;
   };
@@ -748,8 +753,12 @@ Rules:
         for (const i of itemsInCat) { const s = normSub(i.subCat); if (s) subCounts[s] = (subCounts[s] || 0) + 1; }
         // Studio sub-cats first (in order), then any extra spellings present in the data.
         const ordered = [...subCatOptions, ...Object.keys(subCounts).filter((s) => !subCatOptions.includes(s))];
+        // Dedupe by whitespace-squeezed/case-folded key, not literal string — Studio's own
+        // sub-category list (subCatOptions) can itself carry two Rate-Card-entered spellings that
+        // differ only by internal whitespace (e.g. a doubled space), which a literal-string Set
+        // wouldn't catch, producing a phantom 0-count chip alongside the real one.
         const seen = new Set();
-        const chips = ordered.filter((s) => { if (seen.has(s)) return false; seen.add(s); return true; });
+        const chips = ordered.filter((s) => { const key = squeeze(s).toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
         if (chips.length === 0) return null;
         return (
           <div className="flex flex-wrap gap-1.5">
