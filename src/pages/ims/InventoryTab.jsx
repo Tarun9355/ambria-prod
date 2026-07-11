@@ -69,6 +69,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
   const [filterSubCat, setFilterSubCat] = useState("All");
+  const [subChipSearch, setSubChipSearch] = useState(""); // live-filters the sub-category pill row below
   const [filterType, setFilterType] = useState("All");
   const [filterNeedsReview, setFilterNeedsReview] = useState(false); // Tier 1.2 — show only items flagged for cat-migration review
   const [availDate, setAvailDate] = useState(""); // check availability AS OF a specific date (YYYY-MM-DD)
@@ -681,7 +682,7 @@ Rules:
           </div>
           <span className="text-xs text-gray-500 font-medium">{filtered.length} of {inventory.length}</span>
           {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview) && (
-            <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setInvPage(0); }}
+            <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setSubChipSearch(""); setInvPage(0); }}
               className="text-xs text-indigo-600 hover:underline">Clear all filters</button>
           )}
           {needsReviewCount > 0 && (
@@ -723,12 +724,12 @@ Rules:
 
         {/* Row 2: Category chips (replaces the dropdown) */}
         <div className="flex flex-wrap gap-1.5 items-center">
-          <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setInvPage(0); }}
+          <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }}
             className={"px-2.5 py-1 rounded-full text-xs font-semibold transition-all " + (filterCat === "All" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
             All ({inventory.length})
           </button>
           {catChips.map((c) => (
-            <button key={c} onClick={() => { setFilterCat(c); setFilterSubCat("All"); setInvPage(0); }}
+            <button key={c} onClick={() => { setFilterCat(c); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }}
               className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterCat === c ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
               {c} <span className="opacity-60">({catCounts[c]})</span>
             </button>
@@ -758,10 +759,26 @@ Rules:
         // differ only by internal whitespace (e.g. a doubled space), which a literal-string Set
         // wouldn't catch, producing a phantom 0-count chip alongside the real one.
         const seen = new Set();
-        const chips = ordered.filter((s) => { const key = squeeze(s).toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
-        if (chips.length === 0) return null;
+        const allChips = ordered.filter((s) => { const key = squeeze(s).toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+        if (allChips.length === 0) return null;
+        // Alphabetical (not seed/discovery order) so a long list is actually scannable, plus a
+        // live text filter — with 20-30+ sub-cats under one category, hunting through an unsorted
+        // pill row for one specific name was the friction point being fixed here.
+        const q = subChipSearch.trim().toLowerCase();
+        const chips = allChips
+          .filter((s) => !q || s.toLowerCase().includes(q))
+          .sort((a, b) => a.localeCompare(b));
         return (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <div className="relative">
+              <input value={subChipSearch} onChange={(e) => setSubChipSearch(e.target.value)}
+                placeholder={`🔍 Filter ${filterCat} sub-cats…`}
+                className="text-xs border border-violet-200 rounded-full pl-3 pr-6 py-1 w-44 focus:border-violet-400 outline-none" />
+              {subChipSearch && (
+                <button onClick={() => setSubChipSearch("")} title="Clear"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-xs">✕</button>
+              )}
+            </div>
             <button onClick={() => setFilterSubCat("All")}
               className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterSubCat === "All" ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200")}>
               All {filterCat}
@@ -775,6 +792,7 @@ Rules:
                 </button>
               );
             })}
+            {chips.length === 0 && <span className="text-xs text-gray-400 italic">No sub-cats match "{subChipSearch}"</span>}
           </div>
         );
       })()}
