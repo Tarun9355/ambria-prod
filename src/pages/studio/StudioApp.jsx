@@ -519,6 +519,10 @@ function isZoneDirty(zoneState, dcCards, fnIdx, zoneKey) {
   return lastEditedAt > earliestResolved;
 }
 
+// Whitespace-squeeze + lowercase key — same normalization matchFlowerPattern (src/lib/ims/
+// flowerHelpers.js) uses, so a doubled internal space doesn't cause a false sub-category mismatch.
+function squeezeKey(s) { return String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase(); }
+
 // §7.9.6 #1 — filter IMS catalog to items matching a subcategory (case-insensitive).
 function filterImsBySubcategory(imsItems, subcategory) {
   if (!Array.isArray(imsItems)) return [];
@@ -550,6 +554,9 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems,
     if (!rcName) return;
     const qty = Number(el.qty) || 0;
     if (qty <= 0) return;  // skip elements with 0 qty (toggled off but still in array)
+    // Pure flower-recipe element (no inventory item at all) — nothing to block/check availability
+    // for, so it's simply never included as a card spec.
+    if (el.patternId && !el.invId) return;
     // IMS inventory-sourced element (Library "+Add element") — the exact IMS row is already known,
     // so pin directly and skip Rate Card name-matching entirely (no rc lookup for these).
     if (el.invId) {
@@ -2366,6 +2373,46 @@ export default function StudioApp() {
     return m;
   }, [rcSubcatFactors]);
 
+  // Flower-recipe patterns with NO physical inventory backing at all (e.g. "Flower Garden",
+  // "Floral Trail" — priced per running foot straight from the recipe, never tied to a pot/prop in
+  // Inventory). These need their own addable-element path since getElPriceFromInventory requires a
+  // real inventory row. A pattern whose sub-category DOES have inventory items keeps resolving via
+  // that item's invId exactly as today — this only covers the ones that don't.
+  const recipeOnlyPatterns = useMemo(() => {
+    const floralSrc = dealCheckData || studioFloralData || {};
+    const patterns = floralSrc.flowerPatterns || [];
+    if (!patterns.length) return [];
+    const invFloralSubs = new Set();
+    (imsInventory || []).forEach((it) => {
+      if (String(it.cat || it.category || "").trim().toLowerCase() !== "florals") return;
+      const sub = it.subCat || it.subcategory;
+      if (sub) invFloralSubs.add(squeezeKey(sub));
+    });
+    return patterns
+      .filter((p) => !invFloralSubs.has(squeezeKey(p?.sub)))
+      .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
+  }, [dealCheckData, studioFloralData, imsInventory]);
+
+  // Price an element sourced directly from a flower-recipe pattern with no inventory backing
+  // (el.patternId, sibling to el.invId's getElPriceFromInventory). Same formula as the floral branch
+  // there, minus the item-rental term (there's no physical item to add rental for) — flower cost
+  // blends by real/artificial %, then the recipe's own "extra (pot/base)" is added once.
+  const getElPriceFromPattern = useCallback((el) => {
+    const floralSrc = dealCheckData || studioFloralData || {};
+    const pattern = (floralSrc.flowerPatterns || []).find((p) => p.id === el.patternId);
+    if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const qty = el.qty || 0;
+    const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
+    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc);
+    if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const subKey = squeezeKey(pattern.sub);
+    const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
+    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+    const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
+    const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio]);
+
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
   // Returns the same shape getElPrice/getElPriceForFn do, so it drops into every existing caller
@@ -2558,6 +2605,7 @@ export default function StudioApp() {
 
   const getElPrice = useCallback((el, zc, opts) => {
     if (el.invId) return getElPriceFromInventory(el, opts); // IMS inventory-sourced element — Rate Card never consulted
+    if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -2593,7 +2641,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts) => {
     return (elements || []).reduce((s, el) => {
@@ -2606,6 +2654,7 @@ export default function StudioApp() {
 
   const getElPriceForFn = useCallback((el, zc, fnRatio) => {
     if (el.invId) return getElPriceFromInventory(el); // IMS inventory-sourced element — Rate Card never consulted
+    if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -2635,7 +2684,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
@@ -2680,6 +2729,7 @@ export default function StudioApp() {
       if (!(li.elements || []).length) return;
       (li.elements || []).forEach(el => {
         if (el.invId) { decorCost += getElPriceFromInventory(el).lineCost; return; } // IMS inventory-sourced — no Rate Card lookup
+        if (el.patternId) { decorCost += getElPriceFromPattern(el).lineCost; return; } // pure flower-recipe element, no inventory item
         const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
         if (!rc) return;
         const sz = (el.size || "").toUpperCase();
@@ -2708,7 +2758,7 @@ export default function StudioApp() {
     const gensets = match ? (match.gensets || 1) : 1;
     const gensetCost = gensets * gensetRate;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -4438,7 +4488,9 @@ Return ONLY JSON:
       const subKey = String(i.subCat || i.subcategory || "").trim().toLowerCase();
       return !(subKey && invTagHiddenByKey[subKey]);
     });
-    const elemList = taggableInv.map(i => `"${i.name}" (${i.unit})`).join(", ");
+    // Pure flower-recipe patterns with no inventory backing (e.g. "Flower Garden") join the same
+    // vocabulary so they can be tagged/matched exactly like an inventory item.
+    const elemList = [...taggableInv.map(i => `"${i.name}" (${i.unit})`), ...recipeOnlyPatterns.map(p => `"${p.name}" (${p.unit})`)].join(", ");
     // Sub-category vocabulary by top-level category (grounds element naming + routing).
     const subByCat = {}; taggableInv.forEach(i => { const c = String(i.cat || i.category || "").trim(); const s = String(i.subCat || i.subcategory || "").trim(); if (!c || !s) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
     const subcatText = Object.keys(subByCat).length ? ("Sub-category vocabulary by category (use these names and route each element to the right one):\n" + Object.entries(subByCat).map(([c, set]) => `- ${c}: ${[...set].join(", ")}`).join("\n")) : "";
@@ -4583,7 +4635,7 @@ Return ONLY JSON:
       if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
-      if (parsed.elements && imsInventory.length) {
+      if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         const sizeHints = { heavy: "B", large: "B", big: "B", tall: "B", medium: "M", mid: "M", regular: "M", small: "S", mini: "S", light: "S", short: "S" };
         const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
         const stopWords = new Set(["the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium", "standard", "basic", "indian", "wedding", "event", "decor"]);
@@ -4611,6 +4663,23 @@ Return ONLY JSON:
           if (bestMatch && bestScore >= 40) {
             const size = sizeFromName || el.size || "";
             return { ...el, name: bestMatch.name, unit: bestMatch.unit, size, invId: bestMatch.id, new: undefined };
+          }
+          // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
+          const patExact = recipeOnlyPatterns.find(p => normalize(p.name) === normalize(el.name));
+          if (patExact) return { ...el, name: patExact.name, unit: patExact.unit, patternId: patExact.id, new: undefined };
+          let bestPatScore = 0, bestPat = null;
+          for (const p of recipeOnlyPatterns) {
+            const pKw = keywords(p.name);
+            const pNorm = normalize(p.name);
+            const elNorm = normalize(el.name);
+            if (elNorm.includes(pNorm) || pNorm.includes(elNorm)) { bestPatScore = 100; bestPat = p; break; }
+            const overlap = elKw.filter(w => pKw.some(iw => iw.includes(w) || w.includes(iw))).length;
+            const score = overlap > 0 ? (overlap / Math.max(elKw.length, pKw.length)) * 100 : 0;
+            if (score > bestPatScore) { bestPatScore = score; bestPat = p; }
+          }
+          if (bestPat && bestPatScore >= 40) {
+            const size = sizeFromName || el.size || "";
+            return { ...el, name: bestPat.name, unit: bestPat.unit, size, patternId: bestPat.id, new: undefined };
           }
           return { ...el, new: true };
         });
@@ -5720,6 +5789,9 @@ Return ONLY JSON:
     RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
+    // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
+    // alongside inventory items, priced straight from the recipe
+    recipeOnlyPatterns, getElPriceFromPattern,
     // Sub-category scaling factor + cost% (rate_card_categories, IMS-owned) — Deal Check's
     // unavailable-shortfall pricing builds its own lookup map from this.
     rcSubcatFactors,

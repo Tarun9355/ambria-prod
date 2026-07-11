@@ -65,12 +65,13 @@ Deno.serve(async (req) => {
   // and getElPriceFromInventory). `rate_card_categories.tag_hidden` (set in IMS's Sub-Categories
   // admin panel) replaces the old TAG_HIDDEN_SUBS_SK settings-blob flag for this purpose — that key
   // is left alone/unread here now, in case anything else still reads it.
-  const [taxonomy, palette, kb] = await Promise.all([TAX_SK, PALETTE_SK, TAG_KB_SK].map(getKv));
+  const [taxonomy, palette, kb, flowerPatterns] = await Promise.all([TAX_SK, PALETTE_SK, TAG_KB_SK, "flowerPatterns"].map(getKv));
   const { data: invRows, error: invErr } = await db.from("inventory").select("*");
   if (invErr) return json({ error: invErr.message }, 500);
   const { data: subcatRows, error: subcatErr } = await db.from("rate_card_categories").select("id, tag_hidden");
   if (subcatErr) return json({ error: subcatErr.message }, 500);
   const rowToInvItem = (row: any) => ({ id: row.id, name: row.name, cat: row.cat, subCat: row.sub_cat, unit: row.unit, subItems: Array.isArray(row.sub_items) ? row.sub_items : [] });
+  const squeezeKey = (s: any) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 
   // Library is the `library` TABLE (row-per-photo); the full item lives in the `data` JSONB
   // column, typed columns (incl. status/tag_source/tagged_at — migration 008) are mirrors.
@@ -83,6 +84,16 @@ Deno.serve(async (req) => {
   const tagHiddenSubIds = new Set((subcatRows || []).filter((r: any) => r && r.tag_hidden).map((r: any) => r.id));
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
   const colorVals = paletteVals.length ? paletteVals : (tax.colorPalette || []);
+
+  // Pure flower-recipe patterns with NO inventory item at all (e.g. "Flower Garden", "Floral
+  // Trail" — priced per running foot straight from the recipe) — mirrors the client aiTagImage's
+  // recipeOnlyPatterns (StudioApp.jsx), so both tagging paths offer the same extra vocabulary.
+  const invFloralSubs = new Set(
+    inv.filter((i: any) => String(i.cat || "").trim().toLowerCase() === "florals").map((i: any) => squeezeKey(i.subCat))
+  );
+  const recipeOnlyPatterns = (Array.isArray(flowerPatterns) ? flowerPatterns : [])
+    .filter((p: any) => !invFloralSubs.has(squeezeKey(p?.sub)))
+    .map((p: any) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
 
   // One-off backfill: the existing Needs Review pile was tagged under the old rules, so drain
   // it before touching brand-new untagged photos. RETAG_REVIEW_BEFORE is fixed at the moment this
@@ -124,7 +135,7 @@ Deno.serve(async (req) => {
   const subByCat: Record<string, Set<string>> = {};
   taggableInv.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.subCat || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
   const subcatText = Object.keys(subByCat).length ? "Sub-category vocabulary by category:\n" + Object.entries(subByCat).map(([c, s]) => `- ${c}: ${[...s].join(", ")}`).join("\n") : "";
-  const elemList = taggableInv.map((i: any) => `"${i.name}"`).join(", ");
+  const elemList = [...taggableInv.map((i: any) => `"${i.name}"`), ...recipeOnlyPatterns.map((p: any) => `"${p.name}"`)].join(", ");
   // Names/keywords for structural items that must NEVER appear in the element breakdown (they're
   // captured in the dedicated truss/floor/masking sections — listing them too double-counts).
   const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
@@ -151,6 +162,19 @@ Deno.serve(async (req) => {
       if (score > bestScore) { bestScore = score; bestMatch = it; }
     }
     if (bestMatch && bestScore >= 40) return { ...el, name: bestMatch.name, unit: bestMatch.unit, invId: bestMatch.id, new: undefined };
+    // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
+    const patExact = recipeOnlyPatterns.find((p: any) => normName(p.name) === normName(el.name));
+    if (patExact) return { ...el, name: patExact.name, unit: patExact.unit, patternId: patExact.id, new: undefined };
+    let bestPatScore = 0, bestPat: any = null;
+    for (const p of recipeOnlyPatterns) {
+      const pKw = keywords(p.name);
+      const pNorm = normName(p.name), elNorm = normName(el.name);
+      if (elNorm.includes(pNorm) || pNorm.includes(elNorm)) { bestPatScore = 100; bestPat = p; break; }
+      const overlap = elKw.filter((w: string) => pKw.some((iw: string) => iw.includes(w) || w.includes(iw))).length;
+      const score = overlap > 0 ? (overlap / Math.max(elKw.length, pKw.length)) * 100 : 0;
+      if (score > bestPatScore) { bestPatScore = score; bestPat = p; }
+    }
+    if (bestPat && bestPatScore >= 40) return { ...el, name: bestPat.name, unit: bestPat.unit, patternId: bestPat.id, new: undefined };
     return { ...el, new: true };
   });
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";

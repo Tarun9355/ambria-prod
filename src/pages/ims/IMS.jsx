@@ -1191,6 +1191,7 @@ export default function IMS() {
             supervisors={supervisors} setSupervisors={setSupervisors}
             studio={studio} authUser={user}
             syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing}
+            inventory={items}
           />
         ) : tab === "approvals" ? (
           <ApprovalsTab

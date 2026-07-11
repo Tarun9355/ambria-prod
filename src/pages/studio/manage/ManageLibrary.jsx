@@ -145,6 +145,9 @@ export default function ManageLibrary({ ctx }) {
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // IMS inventory (element breakdown "+Add element" now sources from here, not the Rate Card)
     imsInventory, getElPriceFromInventory,
+    // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
+    // alongside inventory items, priced straight from the recipe
+    recipeOnlyPatterns, getElPriceFromPattern,
     // misc
     showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
@@ -830,32 +833,56 @@ export default function ManageLibrary({ ctx }) {
                     <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
                     {libElSearch.length >= 1 && (() => {
                       const q = libElSearch.toLowerCase();
-                      // Searches IMS inventory directly (Rate Card is not consulted for elements
-                      // added here — see getElPriceFromInventory in StudioApp.jsx).
-                      const matches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && (it.name.toLowerCase().includes(q) || (it.cat || "").toLowerCase().includes(q) || (it.subCat || it.subcategory || "").toLowerCase().includes(q))).slice(0, 8);
+                      // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
+                      // (Rate Card is not consulted here — see getElPriceFromInventory /
+                      // getElPriceFromPattern in StudioApp.jsx).
+                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && (it.name.toLowerCase().includes(q) || (it.cat || "").toLowerCase().includes(q) || (it.subCat || it.subcategory || "").toLowerCase().includes(q))).slice(0, 8);
+                      const patMatches = (recipeOnlyPatterns || []).filter(pt => !(libEditImg.elements || []).find(el => el.patternId === pt.id) && pt.name.toLowerCase().includes(q)).slice(0, 4);
+                      const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))].slice(0, 8);
                       // Thumbnail is sized to actually be readable inline — no hover step required to
                       // see it properly (an earlier hover-preview panel was fiddly and could run
                       // off-screen depending on where this search box sits on the page).
                       return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 340, overflowY: "auto", width: 320 }}>
-                        {matches.map(it => { const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; const src = it.img || it.photoUrls?.[0]; return <div key={it.id}
-                          onClick={() => {
-                            if (!(libEditImg.elements || []).find(el => el.invId === it.id)) {
-                              setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
-                            }
-                            setLibElSearch("");
-                          }}
-                          style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
-                              {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700, flexShrink: 0 }}>📦 KIT</span>}
+                        {matches.map(m => {
+                          if (m.kind === "pat") { const pt = m.pt; return <div key={"pat:" + pt.id}
+                            onClick={() => {
+                              if (!(libEditImg.elements || []).find(el => el.patternId === pt.id)) {
+                                setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: pt.name, qty: 1, unit: pt.unit, size: "", patternId: pt.id }] });
+                              }
+                              setLibElSearch("");
+                            }}
+                            style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <span style={{ fontSize: 22, opacity: 0.5 }}>🌺</span>
                             </div>
-                            <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</div>
-                          </div>
-                        </div>; })}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pt.name}</span>
+                                <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(236,72,153,0.15)", color: "#EC4899", fontWeight: 700, flexShrink: 0 }}>🌺 RECIPE</span>
+                              </div>
+                              <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{pt.sub ? pt.sub + " › " : ""}Flower recipe — no inventory item</div>
+                            </div>
+                          </div>; }
+                          const it = m.it; const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; const src = it.img || it.photoUrls?.[0]; return <div key={"inv:" + it.id}
+                            onClick={() => {
+                              if (!(libEditImg.elements || []).find(el => el.invId === it.id)) {
+                                setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
+                              }
+                              setLibElSearch("");
+                            }}
+                            style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+                                {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700, flexShrink: 0 }}>📦 KIT</span>}
+                              </div>
+                              <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</div>
+                            </div>
+                          </div>;
+                        })}
                       </div> : <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS, width: 320 }}>No matches</div>;
                     })()}
                   </div>
@@ -899,6 +926,35 @@ export default function ManageLibrary({ ctx }) {
                           ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
                           <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
                           <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : invItem ? "₹0" : "—"}</div>
+                          <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
+                        </Fragment>
+                      );
+                    }
+                    if (el.patternId) {
+                      // Pure flower-recipe element (no inventory item at all) — priced via
+                      // getElPriceFromPattern (StudioApp.jsx), same recipe real/artificial blend as
+                      // an invId floral element, just without an underlying physical item.
+                      const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromPattern(el);
+                      const patternExists = (recipeOnlyPatterns || []).some(p => p.id === el.patternId);
+                      return (
+                        <Fragment key={idx}>
+                          <div style={{ fontSize: 11, fontWeight: 500, color: textP, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                            <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <span style={{ fontSize: 11, opacity: 0.5 }}>🌺</span>
+                            </div>
+                            {el.name}
+                            <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(236,72,153,0.15)", color: "#EC4899", fontWeight: 700 }}>🌺 RECIPE</span>
+                            {!patternExists && <span title="This flower recipe no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
+                            {isFloralBlend && <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>🌸<button onClick={() => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], realPct: undefined }; setLibEditImg({ ...libEditImg, elements: elems }); }} title="Use this sub-category's default real/artificial ratio" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof el.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof el.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button><button onClick={() => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], realPct: 100 }; setLibEditImg({ ...libEditImg, elements: elems }); }} title="Price this element at 100% the recipe's Studio rate, overriding the sub-category's default" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: el.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: el.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button></span>}
+                          </div>
+                          <input type="number" value={el.qty || ""} onChange={e => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], qty: parseFloat(e.target.value) || 0 }; setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ ...S.input, fontSize: 11, padding: "3px 5px", textAlign: "center" }} placeholder="0" />
+                          {patternSMB ? (
+                            <select value={el.size || "B"} onChange={e => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], size: e.target.value }; setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ ...S.select, fontSize: 10, padding: "2px 3px" }}>
+                              {["S", "M", "B"].map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
+                          <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                          <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : "₹0"}</div>
                           <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
                         </Fragment>
                       );

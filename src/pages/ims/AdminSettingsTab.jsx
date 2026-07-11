@@ -874,9 +874,42 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const studioFloralsSubcats = studio?.floralsSubcats || [];
         const studioLoadingFlag = !!studio?.loading;
         const recipeSubs = settings.flowerRecipeSubcats || [];
+
+        // Real inventory counts/units per Florals sub-category — the Rate Card only ever has one
+        // abstract line item per sub, so its own item count is meaningless for "how many physical
+        // items does this recipe apply to." Squeeze internal whitespace (not just trim) before
+        // keying, same bug class already fixed in matchFlowerPattern (a doubled space in a manually
+        // entered sub-category renders identically but compares as a different string).
+        const squeezeKey = (s) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+        const floralsInvBySub = {};
+        (inventory || []).forEach((it) => {
+          if (squeezeKey(it.cat ?? it.category) !== "florals") return;
+          const rawSub = it.subCat ?? it.subcategory;
+          if (!rawSub) return;
+          const key = squeezeKey(rawSub);
+          if (!floralsInvBySub[key]) floralsInvBySub[key] = { label: String(rawSub).trim(), count: 0, unit: it.unit || "pc" };
+          floralsInvBySub[key].count += 1;
+        });
+        // Sub-categories toggleable above: union of Rate-Card-derived subs (today's source) and
+        // inventory-only subs (exist in real stock but have no Rate Card line item yet) — so a
+        // sub-category added directly in Inventory isn't invisible here.
+        const rcSubKeys = new Set(studioFloralsSubcats.map(squeezeKey));
+        const invOnlySubs = Object.keys(floralsInvBySub).filter((k) => !rcSubKeys.has(k)).map((k) => floralsInvBySub[k].label);
+        const allFloralsSubcats = [...studioFloralsSubcats, ...invOnlySubs];
+
         const activeStudioItems = studioFloralsItems.filter((i) => recipeSubs.includes((i.sub || "").trim()));
         const groupedBySub = {};
         activeStudioItems.forEach((i) => { const sub = (i.sub || "").trim() || "(uncategorized)"; (groupedBySub[sub] = groupedBySub[sub] || []).push(i); });
+        // Recipe-driven subs with zero Rate-Card items backing them (inventory-only subs) still need
+        // an editable card — synthesize one placeholder "studioItem" keyed by the sub-category itself
+        // so toggling it on doesn't silently produce nothing.
+        recipeSubs.forEach((sub) => {
+          const trimmedSub = (sub || "").trim();
+          if (!trimmedSub || (groupedBySub[trimmedSub] && groupedBySub[trimmedSub].length)) return;
+          const invInfo = floralsInvBySub[squeezeKey(trimmedSub)];
+          if (!invInfo) return;
+          groupedBySub[trimmedSub] = [{ id: "SUB::" + trimmedSub, name: trimmedSub, sub: trimmedSub, unit: invInfo.unit || "pc" }];
+        });
         const sortedSubs = Object.keys(groupedBySub).sort((a, b) => a.localeCompare(b));
         const legacyPatterns = (settings.flowerPatterns || []).filter((p) => {
           const norm = (p.name || "").toLowerCase().trim();
@@ -1029,14 +1062,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
 
             <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
-              <p className="text-xs font-semibold text-indigo-800 mb-2">Recipe-driven sub-categories <span className="font-normal text-indigo-600">— tick the Florals subs whose items use flower recipes for costing</span></p>
-              {studioLoadingFlag && studioFloralsSubcats.length === 0 && <p className="text-xs text-gray-400 italic">Loading from Studio…</p>}
-              {!studioLoadingFlag && studioFloralsSubcats.length === 0 && <p className="text-xs text-amber-600">No Florals sub-categories found in Studio Rate Card.</p>}
-              {studioFloralsSubcats.length > 0 && (
+              <p className="text-xs font-semibold text-indigo-800 mb-2">Recipe-driven sub-categories <span className="font-normal text-indigo-600">— tick the Florals subs whose items use flower recipes for costing. Counts are live inventory stock.</span></p>
+              {studioLoadingFlag && allFloralsSubcats.length === 0 && <p className="text-xs text-gray-400 italic">Loading from Studio…</p>}
+              {!studioLoadingFlag && allFloralsSubcats.length === 0 && <p className="text-xs text-amber-600">No Florals sub-categories found in Studio Rate Card or Inventory.</p>}
+              {allFloralsSubcats.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {studioFloralsSubcats.map((sub) => {
+                  {allFloralsSubcats.map((sub) => {
                     const on = recipeSubs.includes(sub);
-                    const count = studioFloralsItems.filter((i) => (i.sub || "").trim() === sub).length;
+                    const count = floralsInvBySub[squeezeKey(sub)]?.count ?? 0;
                     return (
                       <button key={sub} onClick={() => toggleSub(sub)} className={"text-xs px-2.5 py-1 rounded-full border transition-colors " + (on ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-300 hover:border-indigo-400")}>
                         {on ? "✓ " : ""}{sub} <span className={on ? "opacity-80" : "text-gray-400"}>({count})</span>
@@ -1047,7 +1080,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               )}
             </div>
 
-            {!studioLoadingFlag && activeStudioItems.length === 0 && (
+            {!studioLoadingFlag && sortedSubs.length === 0 && (
               <div className="text-center py-10 text-gray-400 text-sm border border-dashed rounded-xl">No patterns yet — tick a sub-category above to source patterns from Studio.</div>
             )}
 
