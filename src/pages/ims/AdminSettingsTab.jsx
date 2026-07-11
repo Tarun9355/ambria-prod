@@ -22,7 +22,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
@@ -112,6 +112,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (!trimmed) return;
     if (rateCardCategories.some((r) => r.id === trimmed.toLowerCase())) { alert(`"${trimmed}" already exists.`); return; }
     onAddSubcat?.(trimmed, categoryLabel);
+  }
+  function deleteSubcatRow(r) {
+    const n = inventory.filter((it) => String(it.subCat ?? it.subcategory ?? "").trim().toLowerCase() === r.id).length;
+    if (n > 0) { alert(`Cannot delete "${r.label}" — ${n} inventory item(s) still use this sub-category.\n\nMove them to another sub-category first: Inventory tab → 🔀 Move Sub-Category.`); return; }
+    if (!window.confirm(`Delete sub-category "${r.label}"? This cannot be undone.`)) return;
+    onDeleteSubcat?.(r.id);
   }
   async function syncMissingSubcats(missing) {
     if (!missing?.length || subcatSyncing) return;
@@ -1481,6 +1487,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   className="w-16 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
                 <span className="text-xs text-gray-400">% cost</span>
               </div>
+              <button onClick={() => deleteSubcatRow(r)} title="Delete sub-category"
+                className="text-red-400 hover:text-red-600 text-xs px-1 flex-shrink-0">🗑️</button>
             </div>
           );
         };

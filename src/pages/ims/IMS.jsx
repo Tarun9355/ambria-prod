@@ -378,6 +378,21 @@ export default function IMS() {
     }
   }, []);
 
+  // Delete a sub-category row. The Sub-Categories panel itself blocks this call when live inventory
+  // items still reference the sub-category (it checks before calling this) — this handler just
+  // does the write + optimistic-update/rollback, same shape as everything else here.
+  const deleteSubcat = useCallback(async (id) => {
+    const prev = rateCardCategoriesRef.current;
+    setRateCardCategories((p) => p.filter((r) => r.id !== id));
+    try {
+      const { error } = await supabase.from("rate_card_categories").delete().eq("id", id);
+      if (error) throw error;
+    } catch (e) {
+      setRateCardCategories(prev);
+      setError(`Failed to delete sub-category: ${e.message}`);
+    }
+  }, []);
+
   // Rename a sub-category. When the new label normalizes to a different id, the row's PK changes
   // too (id must stay lower(trim(label)) — the join key everything else matches on) — rolls back
   // on failure (e.g. the new name collides with an existing sub-category).
@@ -1112,7 +1127,7 @@ export default function IMS() {
             rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
             onUpdateSubcatCostPercent={updateSubcatCostPercent}
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
-            onSyncSubcatsFromInventory={syncSubcatsFromInventory}
+            onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
             rcItems={studioRcItems} rcCats={studioRcCats}
             onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
           />

@@ -76,6 +76,9 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [blockModal, setBlockModal] = useState(null);
   const [bulkModal, setBulkModal] = useState(false);
   const [importModal, setImportModal] = useState(false);
+  const [moveSubcatModal, setMoveSubcatModal] = useState(false);
+  const [moveFromSub, setMoveFromSub] = useState("");
+  const [moveToSub, setMoveToSub] = useState("");
   const [blockForm, setBlockForm] = useState({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" });
   // Bulk block state
   const [bulkFnId, setBulkFnId] = useState("");
@@ -633,6 +636,28 @@ Rules:
   const selItem = inventory.find((i) => i.id === detailItem);
   const blockInv = inventory.find((i) => i.id === blockModal);
 
+  // Distinct sub-categories across ALL inventory (not scoped to the active category filter) —
+  // powers the "Move Sub-Category" bulk-reassign modal below.
+  const allSubCounts = {};
+  for (const i of inventory) {
+    const s = String(i.subCat ?? i.subcategory ?? "").trim();
+    if (s) allSubCounts[s] = (allSubCounts[s] || 0) + 1;
+  }
+  const allSubOptions = Object.keys(allSubCounts).sort((a, b) => a.localeCompare(b));
+  function moveSubcatItems() {
+    const from = moveFromSub;
+    const to = moveToSub.trim();
+    if (!from || !to || from === to) return;
+    const n = allSubCounts[from] || 0;
+    if (!window.confirm(`Move ${n} item(s) from "${from}" to "${to}"?`)) return;
+    setInventory((prev) => prev.map((i) => {
+      const cur = String(i.subCat ?? i.subcategory ?? "").trim();
+      return cur === from ? { ...i, subCat: to, subcategory: to } : i;
+    }));
+    setMoveSubcatModal(false); setMoveFromSub(""); setMoveToSub("");
+    alert(`✅ Moved ${n} item(s) to "${to}".`);
+  }
+
   return (
     <div className="space-y-4">
       {/* Toolbar — smart search + chip filters */}
@@ -667,6 +692,8 @@ Rules:
             </button>
           )}
           <div className="ml-auto flex gap-2">
+            <button onClick={() => { setMoveFromSub(""); setMoveToSub(""); setMoveSubcatModal(true); }}
+              className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm whitespace-nowrap">🔀 Move Sub-Category</button>
             <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>
           </div>
         </div>
@@ -1671,6 +1698,34 @@ Rules:
               </button>
             </>);
           })()}
+        </div>
+      </Modal>
+
+      {/* ── Move Sub-Category Modal ──────────────────────────────────────── */}
+      <Modal open={moveSubcatModal} onClose={() => setMoveSubcatModal(false)} title="🔀 Move Sub-Category">
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">Move every item from one sub-category to another — useful for merging duplicates or fixing a typo across the whole inventory at once.</p>
+          <div>
+            <label className="text-xs text-gray-500">From sub-category</label>
+            <select value={moveFromSub} onChange={(e) => setMoveFromSub(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="">Select…</option>
+              {allSubOptions.map((s) => <option key={s} value={s}>{s} ({allSubCounts[s]})</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">To sub-category</label>
+            <input value={moveToSub} onChange={(e) => setMoveToSub(e.target.value)} list="ims-inv-move-sub-list"
+              placeholder="Pick an existing one or type a new name…" className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+            <datalist id="ims-inv-move-sub-list">{allSubOptions.map((s) => <option key={s} value={s} />)}</datalist>
+          </div>
+          {moveFromSub && moveToSub.trim() && moveFromSub === moveToSub.trim() && (
+            <p className="text-xs text-amber-600">From and To are the same — nothing to move.</p>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={() => setMoveSubcatModal(false)} className="px-3 py-2 rounded-lg text-sm text-gray-600 bg-gray-100">Cancel</button>
+            <button onClick={moveSubcatItems} disabled={!moveFromSub || !moveToSub.trim() || moveFromSub === moveToSub.trim()}
+              className="px-4 py-2 rounded-lg text-sm text-white bg-indigo-600 font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Move Items</button>
+          </div>
         </div>
       </Modal>
 
