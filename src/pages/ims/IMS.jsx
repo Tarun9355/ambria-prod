@@ -335,6 +335,18 @@ export default function IMS() {
     }
   }, []);
 
+  // Hides every item in this sub-category from AI photo-tagging's vocabulary (both the client
+  // aiTagImage tagger and the nightly batch-tagger Edge Function read this) — replaces the old
+  // Rate-Card-only "not taggable in Pricing" flag for tagging purposes. Same optimistic pattern.
+  const updateSubcatTagHidden = useCallback(async (id, hidden) => {
+    setRateCardCategories((prev) => prev.map((r) => (r.id === id ? { ...r, tag_hidden: hidden } : r)));
+    try {
+      await updateRow("rate_card_categories", id, { tag_hidden: hidden });
+    } catch (e) {
+      setError(`Failed to save tagging flag: ${e.message}`);
+    }
+  }, []);
+
   // Add a sub-category IMS doesn't have yet (e.g. a new rate-card item with no inventory analog).
   // id is derived the same way as the Phase 1 seed — lower(trim(label)) — so it's usable as a join
   // key immediately. Plain insert (not upsert) so a name collision surfaces as an error instead of
@@ -1140,7 +1152,7 @@ export default function IMS() {
             onUpdateSubcatCostPercent={updateSubcatCostPercent}
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
-            onUpdateSubcatFloralMode={updateSubcatFloralMode}
+            onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
             rcItems={studioRcItems} rcCats={studioRcCats}
             onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
           />

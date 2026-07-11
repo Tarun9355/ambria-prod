@@ -23,7 +23,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
@@ -1519,6 +1519,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   className="w-16 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
                 <span className="text-xs text-gray-400">% cost</span>
               </div>
+              <button onClick={() => onUpdateSubcatTagHidden?.(r.id, !r.tag_hidden)}
+                title={r.tag_hidden ? "Hidden from AI photo-tagging — click to make taggable again" : "Included in AI photo-tagging's vocabulary — click to hide"}
+                className={"text-[10px] font-semibold px-2 py-1 rounded-full whitespace-nowrap flex-shrink-0 " + (r.tag_hidden ? "bg-gray-200 text-gray-500" : "bg-emerald-100 text-emerald-700")}>
+                {r.tag_hidden ? "🚫 Hidden" : "🏷️ Taggable"}
+              </button>
               <button onClick={() => deleteSubcatRow(r)} title="Delete sub-category"
                 className="text-red-400 hover:text-red-600 text-xs px-1 flex-shrink-0">🗑️</button>
             </div>

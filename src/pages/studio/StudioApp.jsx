@@ -4420,21 +4420,31 @@ Return ONLY JSON:
   const aiTagImage = async (url) => {
     // Temporary daily cap (testing). Block before any work once the day's limit is reached.
     if (aiTagCountToday() >= AI_TAG_DAILY_LIMIT) { showMsg(`Daily AI-tagging limit reached (${AI_TAG_DAILY_LIMIT}/day during testing).`, "red"); return null; }
-    const STRUCTURAL_CATS = new Set(["truss", "platform", "masking", "fixed"]);
-    // Exclude structural cats AND any sub-category flagged not-taggable in Pricing, so the AI's
-    // "use these exact names" list never contains an item we don't want re-added during tagging.
-    const elemList = rcItems.filter(i => !STRUCTURAL_CATS.has(i.cat) && !isSubTagHidden(i.cat, i.sub)).map(i => `"${i.name}" (${i.unit}${i.inhouseMode === "smb" ? ", sizes: S/M/B" : ""})`).join(", ");
-    // #5 — Sub-category vocabulary by category (grounds element naming + routing to the right IMS sub-cat).
-    // Skip sub-categories the team flagged as NOT taggable in Pricing (already-costed structural subs +
-    // IMS-only subs) so the AI never suggests/re-adds them.
-    const subByCat = {}; rcItems.forEach(i => { const c = String(i.cat || "").trim(); const s = String(i.sub || "").trim(); if (!c || !s || isSubTagHidden(c, s)) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
+    // Rate Card → IMS migration: AI-tagging vocabulary now comes from live IMS inventory (matches
+    // the manual "+Add element" pickers), not Rate Card — so a tagged element resolves to a real
+    // invId and prices/blends via getElPriceFromInventory (floral-recipe Studio rate, SMB toggle,
+    // sub-category scaling factor) exactly like a manually-added element.
+    const STRUCTURAL_INV_CATS = new Set(["structure", "tenting"]);
+    // Sub-categories flagged "hidden from AI tagging" (rate_card_categories.tag_hidden, set in IMS's
+    // Sub-Categories admin panel) — replaces the old Rate-Card-only "not taggable in Pricing" flag.
+    const invTagHiddenByKey = {};
+    (rcSubcatFactors || []).forEach(r => { if (r && r.id && r.tag_hidden) invTagHiddenByKey[r.id] = true; });
+    const taggableInv = imsInventory.filter(i => {
+      const cat = String(i.cat || i.category || "").trim().toLowerCase();
+      if (STRUCTURAL_INV_CATS.has(cat)) return false;
+      const subKey = String(i.subCat || i.subcategory || "").trim().toLowerCase();
+      return !(subKey && invTagHiddenByKey[subKey]);
+    });
+    const elemList = taggableInv.map(i => `"${i.name}" (${i.unit})`).join(", ");
+    // Sub-category vocabulary by top-level category (grounds element naming + routing).
+    const subByCat = {}; taggableInv.forEach(i => { const c = String(i.cat || i.category || "").trim(); const s = String(i.subCat || i.subcategory || "").trim(); if (!c || !s) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
     const subcatText = Object.keys(subByCat).length ? ("Sub-category vocabulary by category (use these names and route each element to the right one):\n" + Object.entries(subByCat).map(([c, set]) => `- ${c}: ${[...set].join(", ")}`).join("\n")) : "";
     // #1 — House tagging rules (admin-editable in Manage → Library), followed strictly.
     const houseRules = (taxonomy.taggingStandards && String(taxonomy.taggingStandards).trim()) ? ("HOUSE TAGGING RULES (set by your team — follow strictly):\n" + String(taxonomy.taggingStandards).trim()) : "";
-    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this Rate Card list. Copy the name character-for-character:\n${elemList}\n2. For each visible element, estimate quantity and pick size (S/M/B) if available.\n3. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional.\n4. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n5. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n6. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"short descriptive name","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal"},{"name":"Custom Drape Structure","qty":2,"unit":"pc","size":"","detail":"fabric","new":true}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`;
+    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this IMS Inventory list. Copy the name character-for-character:\n${elemList}\n2. For each visible element, estimate quantity and pick size (S/M/B) if available.\n3. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional.\n4. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n5. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n6. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"short descriptive name","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal"},{"name":"Custom Drape Structure","qty":2,"unit":"pc","size":"","detail":"fabric","new":true}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`;
     // Structured-outputs schema — the 7 tag fields are LOCKED to your exact taxonomy values (enums), so
     // Claude can never return an off-list or mis-cased tag (the root of photos not matching their zone).
-    // Element names stay free text (the fuzzy match below maps them to the rate card / flags new items).
+    // Element names stay free text (the fuzzy match below maps them to IMS inventory / flags new items).
     const paletteVals = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette;
     // Lock to the taxonomy values; if a list is empty, fall back to a free string array (an empty
     // enum is an invalid schema and would 400 every request).
@@ -4570,38 +4580,41 @@ Return ONLY JSON:
       if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
-      if (parsed.elements && rcItems.length) {
+      if (parsed.elements && imsInventory.length) {
         const sizeHints = { heavy: "B", large: "B", big: "B", tall: "B", medium: "M", mid: "M", regular: "M", small: "S", mini: "S", light: "S", short: "S" };
         const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
         const stopWords = new Set(["the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium", "standard", "basic", "indian", "wedding", "event", "decor"]);
         const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1);
+        // Matches an AI-proposed element name against a real IMS inventory item and, on a match,
+        // sets invId so it prices via getElPriceFromInventory (floral-recipe Studio rate, SMB
+        // toggle, sub-category scaling factor) exactly like a manually-added element.
         parsed.elements = parsed.elements.map(el => {
-          const exact = rcItems.find(rc => normalize(rc.name) === normalize(el.name));
-          if (exact) return { ...el, name: exact.name, unit: exact.unit, new: undefined };
+          const exact = taggableInv.find(it => normalize(it.name) === normalize(el.name));
+          if (exact) return { ...el, name: exact.name, unit: exact.unit, invId: exact.id, new: undefined };
           const elWords = normalize(el.name).split(" ");
           let sizeFromName = "";
           for (const w of elWords) { if (sizeHints[w]) { sizeFromName = sizeHints[w]; break; } }
           const elKw = keywords(el.name);
           let bestScore = 0, bestMatch = null;
-          for (const rc of rcItems) {
-            const rcKw = keywords(rc.name);
-            const rcNorm = normalize(rc.name);
+          for (const it of taggableInv) {
+            const itKw = keywords(it.name);
+            const itNorm = normalize(it.name);
             const elNorm = normalize(el.name);
-            if (elNorm.includes(rcNorm) || rcNorm.includes(elNorm)) { bestScore = 100; bestMatch = rc; break; }
-            const overlap = elKw.filter(w => rcKw.some(rw => rw.includes(w) || w.includes(rw))).length;
-            const score = overlap > 0 ? (overlap / Math.max(elKw.length, rcKw.length)) * 100 : 0;
-            if (score > bestScore) { bestScore = score; bestMatch = rc; }
+            if (elNorm.includes(itNorm) || itNorm.includes(elNorm)) { bestScore = 100; bestMatch = it; break; }
+            const overlap = elKw.filter(w => itKw.some(iw => iw.includes(w) || w.includes(iw))).length;
+            const score = overlap > 0 ? (overlap / Math.max(elKw.length, itKw.length)) * 100 : 0;
+            if (score > bestScore) { bestScore = score; bestMatch = it; }
           }
           if (bestMatch && bestScore >= 40) {
-            const size = sizeFromName || el.size || (bestMatch.inhouseMode === "smb" ? "M" : "");
-            return { ...el, name: bestMatch.name, unit: bestMatch.unit, size, new: undefined };
+            const size = sizeFromName || el.size || "";
+            return { ...el, name: bestMatch.name, unit: bestMatch.unit, size, invId: bestMatch.id, new: undefined };
           }
           return { ...el, new: true };
         });
         // Drop structural items (truss / floor-carpet / masking) from the element breakdown — they're
         // captured in the dedicated Zone-Dimensions/Masking sections, so listing them as elements too
         // double-counts cost AND double-blocks inventory.
-        const structuralNames = new Set(rcItems.filter(i => STRUCTURAL_CATS.has(i.cat)).map(i => normalize(i.name)));
+        const structuralNames = new Set(imsInventory.filter(i => STRUCTURAL_INV_CATS.has(String(i.cat || i.category || "").trim().toLowerCase())).map(i => normalize(i.name)));
         const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
         parsed.elements = parsed.elements.filter(el => !structuralNames.has(normalize(el.name)) && !STRUCT_KW.test(el.name || ""));
       }

@@ -1,8 +1,8 @@
 // Supabase Edge Function — continuous batch tagger, cron-triggered every 15 minutes.
 //
 // Tags untagged Studio library photos using the SAME knowledge the in-app tagger uses (taxonomy,
-// rate card, the verified-photo knowledge base, and recent human corrections — all read live from
-// the DB), so the server path and the client path stay aligned. An admin can pause/resume it from
+// IMS inventory, the verified-photo knowledge base, and recent human corrections — all read live
+// from the DB), so the server path and the client path stay aligned. An admin can pause/resume it from
 // Studio → Settings → Manage → Library / Tagger (settings key 'batch-tagger-paused') — the cron
 // keeps firing every 15 min regardless; a paused invocation just no-ops before any Anthropic calls.
 //
@@ -20,7 +20,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const LIB_SK = "ambria-library-v2", TAX_SK = "ambria-taxonomy-v2";
 const PALETTE_SK = "ambria-palette-v1", TAG_KB_SK = "ambria-tag-knowledgebase-v1";
-const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // "cat::sub" keys flagged not-taggable in Pricing
 const PAUSED_SK = "batch-tagger-paused", LAST_RUN_SK = "batch-tagger-last-run";
 const MAX_PER_RUN = 100;
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -30,7 +29,7 @@ const ALLOWED_SOURCE_FOLDERS = ["ambria", "client-uploads", "inhouse venues", "O
 
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 const parse = (v: unknown) => { if (v == null) return null; if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } } return v; };
-const STRUCTURAL = new Set(["truss", "platform", "masking", "fixed"]);
+const STRUCTURAL = new Set(["structure", "tenting"]);
 const enumArr = (vals: string[]) => ({ type: "array", items: { type: "string", enum: (vals || []).filter(Boolean) } });
 
 Deno.serve(async (req) => {
@@ -60,19 +59,18 @@ Deno.serve(async (req) => {
     return json({ ok: true, tagged: 0, message: "paused via Studio UI" });
   }
 
-  // Rate card: read the live `rate_card` TABLE (Rate Card → IMS migration, Phase 4) — this used to
-  // read the frozen `ambria-ratecard-v4` settings blob, which was only ever populated once by the
-  // original migration script, so every item added/renamed since then (in Studio, then in IMS from
-  // Phase 3 on) never reached this tagger's vocabulary. Same row shape as the app's rowToRcItem.
-  const [taxonomy, palette, kb, hiddenSubs] = await Promise.all(
-    [TAX_SK, PALETTE_SK, TAG_KB_SK, TAG_HIDDEN_SUBS_SK].map(getKv));
-  const { data: rcRows, error: rcErr } = await db.from("rate_card").select("*");
-  if (rcErr) return json({ error: rcErr.message }, 500);
-  const rowToRcItem = (row: any) => {
-    const d = row?.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length ? row.data : null;
-    if (d) return { ...d, id: row.id };
-    return { id: row.id, name: row.name, cat: row.cat, sub: row.sub, unit: row.unit, inhouseMode: row.inhouse_mode, inhouseFlat: row.inhouse_flat, inhouseS: row.inhouse_s, inhouseM: row.inhouse_m, inhouseB: row.inhouse_b };
-  };
+  // Vocabulary: read the live `inventory` TABLE — this replaces the Rate Card table this function
+  // used to read (Phase 4 of the earlier Rate Card → IMS migration); tagging now matches the manual
+  // "+Add element" pickers, which source directly from inventory (see StudioApp.jsx's aiTagImage
+  // and getElPriceFromInventory). `rate_card_categories.tag_hidden` (set in IMS's Sub-Categories
+  // admin panel) replaces the old TAG_HIDDEN_SUBS_SK settings-blob flag for this purpose — that key
+  // is left alone/unread here now, in case anything else still reads it.
+  const [taxonomy, palette, kb] = await Promise.all([TAX_SK, PALETTE_SK, TAG_KB_SK].map(getKv));
+  const { data: invRows, error: invErr } = await db.from("inventory").select("*");
+  if (invErr) return json({ error: invErr.message }, 500);
+  const { data: subcatRows, error: subcatErr } = await db.from("rate_card_categories").select("id, tag_hidden");
+  if (subcatErr) return json({ error: subcatErr.message }, 500);
+  const rowToInvItem = (row: any) => ({ id: row.id, name: row.name, cat: row.cat, subCat: row.sub_cat, unit: row.unit, subItems: Array.isArray(row.sub_items) ? row.sub_items : [] });
 
   // Library is the `library` TABLE (row-per-photo); the full item lives in the `data` JSONB
   // column, typed columns (incl. status/tag_source/tagged_at — migration 008) are mirrors.
@@ -81,7 +79,8 @@ Deno.serve(async (req) => {
     ? { ...row.data, id: row.id }
     : { id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [], dims: row.dims || {} };
   const tax = taxonomy || {};
-  const rc = (rcRows || []).map(rowToRcItem);
+  const inv = (invRows || []).map(rowToInvItem);
+  const tagHiddenSubIds = new Set((subcatRows || []).filter((r: any) => r && r.tag_hidden).map((r: any) => r.id));
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
   const colorVals = paletteVals.length ? paletteVals : (tax.colorPalette || []);
 
@@ -117,21 +116,43 @@ Deno.serve(async (req) => {
     ? "PREVIOUS HUMAN CORRECTIONS — the corrected value is right:\n" + corr!.map((c) => `- ${c.field}: was "${c.ai_value || "(blank)"}" → correct is "${c.corrected_value || "(blank)"}"`).join("\n")
     : "";
 
-  // Sub-categories flagged not-taggable in Pricing ("cat::sub") — dropped from the vocabulary and
-  // the exact-name element list so the batch tagger never re-adds already-costed / IMS-only subs.
-  const hiddenSubSet = new Set(Array.isArray(hiddenSubs) ? hiddenSubs.filter((x: any) => typeof x === "string") : []);
-  const isSubHidden = (cat: any, sub: any) => hiddenSubSet.has(`${String(cat || "").trim()}::${String(sub || "").trim()}`);
-  // Sub-category vocabulary by category (from the rate card).
+  // Sub-categories flagged hidden from AI tagging (rate_card_categories.tag_hidden, set in IMS's
+  // Sub-Categories admin panel) — dropped from the vocabulary and the exact-name element list.
+  const isSubHidden = (subCat: any) => tagHiddenSubIds.has(String(subCat || "").trim().toLowerCase());
+  const taggableInv = inv.filter((i: any) => !STRUCTURAL.has(String(i.cat || "").trim().toLowerCase()) && !isSubHidden(i.subCat));
+  // Sub-category vocabulary by top-level category (from live inventory).
   const subByCat: Record<string, Set<string>> = {};
-  rc.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.sub || "").trim(); if (c && s && !isSubHidden(c, s)) (subByCat[c] = subByCat[c] || new Set()).add(s); });
+  taggableInv.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.subCat || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
   const subcatText = Object.keys(subByCat).length ? "Sub-category vocabulary by category:\n" + Object.entries(subByCat).map(([c, s]) => `- ${c}: ${[...s].join(", ")}`).join("\n") : "";
-  const elemList = rc.filter((i: any) => !STRUCTURAL.has(i.cat) && !isSubHidden(i.cat, i.sub)).map((i: any) => `"${i.name}"`).join(", ");
+  const elemList = taggableInv.map((i: any) => `"${i.name}"`).join(", ");
   // Names/keywords for structural items that must NEVER appear in the element breakdown (they're
   // captured in the dedicated truss/floor/masking sections — listing them too double-counts).
   const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
-  const structuralNames = new Set(rc.filter((i: any) => STRUCTURAL.has(i.cat)).map((i: any) => normName(i.name)));
+  const structuralNames = new Set(inv.filter((i: any) => STRUCTURAL.has(String(i.cat || "").trim().toLowerCase())).map((i: any) => normName(i.name)));
   const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
   const dropStructural = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => e && e.name && !structuralNames.has(normName(e.name)) && !STRUCT_KW.test(e.name));
+  // Matches an AI-proposed element name against a real inventory item — mirrors StudioApp.jsx's
+  // aiTagImage matching exactly (exact normalized match → substring → keyword-overlap ≥40 score),
+  // so both tagging paths resolve to the same invId given the same name.
+  const stopWords = new Set(["the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium", "standard", "basic", "indian", "wedding", "event", "decor"]);
+  const keywords = (s: string) => normName(s).split(" ").filter((w: string) => !stopWords.has(w) && w.length > 1);
+  const matchInventory = (els: any[]) => (Array.isArray(els) ? els : []).map((el: any) => {
+    if (!el || !el.name) return el;
+    const exact = taggableInv.find((it: any) => normName(it.name) === normName(el.name));
+    if (exact) return { ...el, name: exact.name, unit: exact.unit, invId: exact.id, new: undefined };
+    const elKw = keywords(el.name);
+    let bestScore = 0, bestMatch: any = null;
+    for (const it of taggableInv) {
+      const itKw = keywords(it.name);
+      const itNorm = normName(it.name), elNorm = normName(el.name);
+      if (elNorm.includes(itNorm) || itNorm.includes(elNorm)) { bestScore = 100; bestMatch = it; break; }
+      const overlap = elKw.filter((w: string) => itKw.some((iw: string) => iw.includes(w) || w.includes(iw))).length;
+      const score = overlap > 0 ? (overlap / Math.max(elKw.length, itKw.length)) * 100 : 0;
+      if (score > bestScore) { bestScore = score; bestMatch = it; }
+    }
+    if (bestMatch && bestScore >= 40) return { ...el, name: bestMatch.name, unit: bestMatch.unit, invId: bestMatch.id, new: undefined };
+    return { ...el, new: true };
+  });
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";
 
   const basePrompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:
@@ -144,7 +165,7 @@ Design style: ${(tax.designStyle || []).join(", ")}
 Time/setting: ${(tax.timeSetting || []).join(", ")}
 
 Rules:
-1. Use EXACT rate-card names for visible decor elements where possible: ${elemList}
+1. Use EXACT IMS Inventory names for visible decor elements where possible: ${elemList}
 2. For each element estimate quantity; mark items not in the list with "new":true.
 3. Do NOT tag structural items (truss/platform/masking/carpet/flex) as elements.
 4. LIGHTS — count every light fixture; put the total in "lightCount" (0 if none).
@@ -206,7 +227,7 @@ Return ONLY JSON matching the provided schema.`;
     if (Date.now() - runStart > RUN_TIME_BUDGET_MS) { skipped = targets.length - ok - fail; break; }
     try {
       const r = await tagOne(img);
-      const patch = { tags: r.tags || {}, elements: dropStructural(r.elements), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(r.elements)), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.
