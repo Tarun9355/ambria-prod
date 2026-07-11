@@ -54,7 +54,7 @@ import {
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { itemImsSubcat } from "../../lib/ims/helpers";
+import { itemImsSubcat, priceForInvItem } from "../../lib/ims/helpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
@@ -538,16 +538,32 @@ function nameMatchUnique(rcName, scopedItems) {
 }
 
 // §7.9.4 #2 + §7.9.5 — derive all expected card specs for a zone.
-function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems) {
+function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems, imsInventory) {
   if (!Array.isArray(zoneElems) || zoneElems.length === 0) return [];
   const out = [];
   const rcArr = Array.isArray(rcItems) ? rcItems : [];
+  const invArr = Array.isArray(imsInventory) ? imsInventory : [];
   zoneElems.forEach((el, idx) => {
     if (!el) return;
     const rcName = el.name || "";
     if (!rcName) return;
     const qty = Number(el.qty) || 0;
     if (qty <= 0) return;  // skip elements with 0 qty (toggled off but still in array)
+    // IMS inventory-sourced element (Library "+Add element") — the exact IMS row is already known,
+    // so pin directly and skip Rate Card name-matching entirely (no rc lookup for these).
+    if (el.invId) {
+      const invItem = invArr.find(i => i.id === el.invId);
+      out.push({
+        cardKey: buildElCardKey(zoneKey, rcName, idx),
+        kind: "el",
+        rcName, rcCode: el.invId, qty,
+        subcategory: invItem?.subCat || invItem?.subcategory || "",
+        propType: null,
+        photoUrl,
+        pinnedImsId: el.invId,
+      });
+      return;
+    }
     const rc = rcArr.find(i => String(i?.name || "").toLowerCase() === String(rcName).toLowerCase());
     const rcCode = rc?.id || "";
     // IMS sub-category alias: a Studio placeholder ("Centre Piece") auto-matches against its aliased IMS
@@ -1428,6 +1444,9 @@ export default function StudioApp() {
   const [rcItems, setRcItems] = useState(RC_D);
   const [rcCats, setRcCats] = useState(RC_CATS_DEFAULT);
   const [rcSubcatFactors, setRcSubcatFactors] = useState([]); // IMS-owned; read-only here until Phase 2
+  // IMS inventory, always-on (not deal-scoped like dealCheckData.inventory) — needed by Library's
+  // "+Add element" search, which sources directly from inventory now, not the Rate Card.
+  const [imsInventory, setImsInventory] = useState([]);
   const [rcCatEditMode, setRcCatEditMode] = useState(false);
   const [rcCat, setRcCat] = useState("truss");
   const [rcSearch, setRcSearch] = useState("");
@@ -1765,6 +1784,12 @@ export default function StudioApp() {
         const rows = await fetchAll("rate_card_categories");
         if (Array.isArray(rows) && !cancelled) setRcSubcatFactors(rows);
       } catch { /* ignore — table may not exist yet in this environment */ }
+      // IMS inventory — always-on copy for Library's "+Add element" search (sources from
+      // inventory now, not the Rate Card). Not deal-scoped like dealCheckData.inventory.
+      try {
+        const rows = await fetchAll("inventory");
+        if (Array.isArray(rows) && !cancelled) setImsInventory(rows.map(rowToItem).filter(Boolean));
+      } catch { /* ignore */ }
       // Rate Card Categories — on first boot (v == null), seed defaults and recover orphaned
       // category IDs so items still have a group to render under. When a saved blob exists,
       // skip recovery entirely: the team intentionally manages categories via the editor and
@@ -2019,6 +2044,21 @@ export default function StudioApp() {
         } else if (payload.new) {
           const row = payload.new; if (!row?.id) return;
           setRcSubcatFactors((prev) => { const i = prev.findIndex((r) => r.id === row.id); return i >= 0 ? prev.map((r) => (r.id === row.id ? row : r)) : [...prev, row]; });
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: IMS inventory — Library "+Add element" sources from here now, not the Rate Card. ──
+  useEffect(() => {
+    const ch = subscribeTable("inventory", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setImsInventory((prev) => prev.filter((i) => i.id !== id));
+        } else if (payload.new) {
+          const it = rowToItem(payload.new); if (!it?.id) return;
+          setImsInventory((prev) => { const i = prev.findIndex((x) => x.id === it.id); return i >= 0 ? prev.map((x) => (x.id === it.id ? it : x)) : [...prev, it]; });
         }
       } catch { /* ignore */ }
     });
@@ -2289,12 +2329,29 @@ export default function StudioApp() {
     (rcSubcatFactors || []).forEach((r) => { if (r && r.id) m[r.id] = Number(r.scaling_factor); });
     return m;
   }, [rcSubcatFactors]);
-  const rcScalingFactor = useCallback((rc) => {
-    const key = String(itemImsSubcat(rc) || "").trim().toLowerCase();
+  // Shared by both sides of the join: a rate-card item resolves its sub-category via
+  // itemImsSubcat(rc); a raw inventory item just uses its own subCat directly (see
+  // getElPriceFromInventory below — Library "+Add element" now sources from inventory).
+  const rcScalingFactorForSub = useCallback((subCat) => {
+    const key = String(subCat || "").trim().toLowerCase();
     if (!key) return 1;
     const f = rcFactorByKey[key];
     return (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
   }, [rcFactorByKey]);
+  const rcScalingFactor = useCallback((rc) => rcScalingFactorForSub(itemImsSubcat(rc)), [rcScalingFactorForSub]);
+
+  // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
+  // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
+  // Returns the same shape getElPrice/getElPriceForFn do, so it drops into every existing caller
+  // (calcElsCost, calcFunctionCost, etc. — all of which delegate to those two) unchanged. A kit's
+  // `price` is already the auto-computed total (kitBase + Σ component price×qty, IMS-side) — one
+  // formula covers kits and plain items alike.
+  const getElPriceFromInventory = useCallback((el) => {
+    const item = imsInventory.find((i) => i.id === el.invId);
+    if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const unitPrice = priceForInvItem(item, rcFactorByKey);
+    return { rc: null, unitPrice, lineCost: (el.qty || 0) * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
+  }, [imsInventory, rcFactorByKey]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -2427,6 +2484,7 @@ export default function StudioApp() {
   }, [dealCheckData, studioFloralData]);
 
   const getElPrice = useCallback((el, zc) => {
+    if (el.invId) return getElPriceFromInventory(el); // IMS inventory-sourced element — Rate Card never consulted
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -2462,7 +2520,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate]);
+  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
 
   const calcElsCost = useCallback((elements, withFloral, zc) => {
     return (elements || []).reduce((s, el) => {
@@ -2474,6 +2532,7 @@ export default function StudioApp() {
   }, [getElPrice, applyFloralRatio]);
 
   const getElPriceForFn = useCallback((el, zc, fnRatio) => {
+    if (el.invId) return getElPriceFromInventory(el); // IMS inventory-sourced element — Rate Card never consulted
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
@@ -2503,7 +2562,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, floralArtUnitRate, patternExtra, resolveRcRate]);
+  }, [rcItems, getFloralMode, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
@@ -2547,6 +2606,7 @@ export default function StudioApp() {
       }
       if (!(li.elements || []).length) return;
       (li.elements || []).forEach(el => {
+        if (el.invId) { decorCost += getElPriceFromInventory(el).lineCost; return; } // IMS inventory-sourced — no Rate Card lookup
         const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
         if (!rc) return;
         const sz = (el.size || "").toUpperCase();
@@ -2575,7 +2635,7 @@ export default function StudioApp() {
     const gensets = match ? (match.gensets || 1) : 1;
     const gensetCost = gensets * gensetRate;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -5250,7 +5310,7 @@ Return ONLY JSON:
         // elSelectedPhoto[zoneKey] is an object { src, eventName, … } — use its .src URL string
         // (passing the object as an image url silently broke the visual matcher + knowledge key).
         const photoUrl = fn.elSelectedPhoto?.[zoneKey]?.src || null;
-        const specs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems);
+        const specs = getCardSpecsForZone(zoneElems, zoneKey, photoUrl, floralHardPropMap, rcItems, imsInventory);
         zoneSpecs[zoneKey] = { specs, photoUrl };
         specs.forEach(s => validKeys.add(s.cardKey));
       }
@@ -5558,6 +5618,8 @@ Return ONLY JSON:
     rcItems, setRcItems, saveRC, rcCats, setRcCats, saveRcCats, rcCatEditMode, setRcCatEditMode, rcCat, setRcCat, rcSearch, setRcSearch,
     rcEditId, setRcEditId, rcTab, setRcTab, rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen, rcNewForm, setRcNewForm,
     RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
+    // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
+    imsInventory, getElPriceFromInventory,
     trVenues, setTrVenues, truckCap, setTruckCap, floralPerTruck, setFloralPerTruck, gensetRate, setGensetRate, bufferTiers, setBufferTiers,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS,
     // templates

@@ -141,8 +141,10 @@ export default function ManageLibrary({ ctx }) {
     // photo tag venue picker
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub,
     setPreviewImg,
-    // rate card (element breakdown)
+    // rate card (element breakdown) — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
+    // IMS inventory (element breakdown "+Add element" now sources from here, not the Rate Card)
+    imsInventory, getElPriceFromInventory,
     // misc
     showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
@@ -828,17 +830,19 @@ export default function ManageLibrary({ ctx }) {
                     <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
                     {libElSearch.length >= 1 && (() => {
                       const q = libElSearch.toLowerCase();
-                      const matches = rcItems.filter(rc => !(libEditImg.elements || []).find(el => el.name === rc.name) && !(isSubTagHidden && isSubTagHidden(rc.cat, rc.sub)) && (rc.name.toLowerCase().includes(q) || (rc.cat || "").toLowerCase().includes(q) || (rc.sub || "").toLowerCase().includes(q))).slice(0, 8);
+                      // Searches IMS inventory directly (Rate Card is not consulted for elements
+                      // added here — see getElPriceFromInventory in StudioApp.jsx).
+                      const matches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && (it.name.toLowerCase().includes(q) || (it.cat || "").toLowerCase().includes(q) || (it.subCat || it.subcategory || "").toLowerCase().includes(q))).slice(0, 8);
                       return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 200, overflowY: "auto" }}>
-                        {matches.map(rc => <div key={rc.id} onClick={() => {
-                          if (!(libEditImg.elements || []).find(el => el.name === rc.name)) {
-                            setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: rc.name, qty: 1, unit: rc.unit, size: rcIsSMB(rc) ? "M" : "", detail: "" }] });
+                        {matches.map(it => { const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; return <div key={it.id} onClick={() => {
+                          if (!(libEditImg.elements || []).find(el => el.invId === it.id)) {
+                            setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
                           }
                           setLibElSearch("");
                         }} style={{ padding: "6px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontWeight: 500 }}>{rc.name}</span>
-                          <span style={{ fontSize: 9, color: textS }}>{rc.sub?rc.sub+" › ":""}{rcCats.find(c=>c.id===rc.cat)?.l||rc.cat}</span>
-                        </div>)}
+                          <span style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>{it.name}{isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}</span>
+                          <span style={{ fontSize: 9, color: textS }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</span>
+                        </div>; })}
                       </div> : <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS }}>No matches</div>;
                     })()}
                   </div>
@@ -855,6 +859,27 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{ fontWeight: 600, color: textS, fontSize: 9, textAlign: "right" }}>COST</div>
                   <div></div>
                   {(libEditImg.elements || []).map((el, idx) => {
+                    if (el.invId) {
+                      // IMS inventory-sourced element — priced via getElPriceFromInventory (StudioApp.jsx),
+                      // no Rate Card lookup at all. Flat price only — inventory items have no S/M/B sizing.
+                      const invItem = (imsInventory || []).find(i => i.id === el.invId);
+                      const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length > 0);
+                      const { lineCost } = getElPriceFromInventory(el);
+                      return (
+                        <Fragment key={idx}>
+                          <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                            {el.name}
+                            {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}
+                            {!invItem && <span title="This inventory item no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
+                          </div>
+                          <input type="number" value={el.qty || ""} onChange={e => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], qty: parseFloat(e.target.value) || 0 }; setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ ...S.input, fontSize: 11, padding: "3px 5px", textAlign: "center" }} placeholder="0" />
+                          <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>
+                          <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                          <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : invItem ? "₹0" : "—"}</div>
+                          <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
+                        </Fragment>
+                      );
+                    }
                     const rc = rcItems.find(i => i.name === el.name);
                     const sizes = rcIsSMB(rc) ? ["S","M","B"] : null;
                     const isTrussSqft = rc && rc.unit === "truss_sqft";
@@ -881,7 +906,7 @@ export default function ManageLibrary({ ctx }) {
                   );})}
                 </div>
               )}
-              <div style={{ marginTop: 8, fontSize: 10, color: textS }}>Only Rate Card items can be added manually. Items tagged <span style={{color:"#F59E0B",fontWeight:600}}>NEW</span> were AI-detected but not in Rate Card — add them to Rate Card for pricing, or remove.</div>
+              <div style={{ marginTop: 8, fontSize: 10, color: textS }}>Manually-added elements come from IMS inventory (📦 KIT items price as one line at the kit's own rate). Items tagged <span style={{color:"#F59E0B",fontWeight:600}}>NEW</span> were AI-detected but not in Rate Card — add them to Rate Card for pricing, or remove.</div>
             </div>
           </div>
           </div>

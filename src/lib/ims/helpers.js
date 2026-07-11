@@ -85,6 +85,19 @@ export function mpEffWinIds(d, mpWin, type) {
 // the real IMS "Flower Pot" sub-category WITHOUT changing the item's name or its per-item floral pricing.
 export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? String(rc.imsAlias).trim() : ""; return a || (rc && rc.sub) || ""; };
 
+// Price an IMS inventory item directly (no Rate Card involved) — Library "+Add element" now
+// sources from inventory instead of the Rate Card. `factorByKey` is the same lower(trim(sub))
+// → scaling_factor map the Rate Card → IMS migration's Phase 2 already builds from
+// `rate_card_categories`. A kit's `price` is already the auto-computed total (kitBase + Σ
+// component price×qty, set in InventoryTab.jsx) — no separate kit formula needed here.
+export function priceForInvItem(item, factorByKey) {
+  if (!item) return 0;
+  const key = String(item.subCat || item.subcategory || "").trim().toLowerCase();
+  const f = key ? factorByKey?.[key] : undefined;
+  const factor = (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
+  return (Number(item.price) || 0) * factor;
+}
+
 export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
   const dayCount = mpEffDay(r, d, mpDay);
   const ids = mpEffWinIds(d, mpWin, r.type);
