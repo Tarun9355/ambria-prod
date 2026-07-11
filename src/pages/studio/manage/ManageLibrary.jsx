@@ -172,10 +172,6 @@ export default function ManageLibrary({ ctx }) {
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
 
-  // Hover-preview for the "+Add element" inventory search — purely local UI state, no need to
-  // lift it to ctx like libElSearch (nothing else needs it, doesn't need to persist).
-  const [libElHoverItem, setLibElHoverItem] = useState(null);
-
   // `tagVenueGroup` defaults to "inhouse" (StudioApp.jsx) and is shared/sticky across whichever
   // photo is open, so without this it wins over the derived inhouse/outside group every time a
   // photo is (re)opened — e.g. opening a photo tagged with an Outside venue like "Canvas" would
@@ -831,49 +827,37 @@ export default function ManageLibrary({ ctx }) {
                     </select>
                   )}
                   <div style={{ position: "relative" }}>
-                    <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} onBlur={() => setLibElHoverItem(null)} />
+                    <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
                     {libElSearch.length >= 1 && (() => {
                       const q = libElSearch.toLowerCase();
                       // Searches IMS inventory directly (Rate Card is not consulted for elements
                       // added here — see getElPriceFromInventory in StudioApp.jsx).
                       const matches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && (it.name.toLowerCase().includes(q) || (it.cat || "").toLowerCase().includes(q) || (it.subCat || it.subcategory || "").toLowerCase().includes(q))).slice(0, 8);
-                      const Thumb = ({ item, size }) => {
-                        const src = item?.img || item?.photoUrls?.[0];
-                        return <div style={{ width: size, height: size, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: size / 2.2, opacity: 0.3 }}>📦</span>}
-                        </div>;
-                      };
-                      return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 260, overflowY: "auto", width: 300 }}>
-                        {matches.map(it => { const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; return <div key={it.id}
+                      // Thumbnail is sized to actually be readable inline — no hover step required to
+                      // see it properly (an earlier hover-preview panel was fiddly and could run
+                      // off-screen depending on where this search box sits on the page).
+                      return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 340, overflowY: "auto", width: 320 }}>
+                        {matches.map(it => { const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; const src = it.img || it.photoUrls?.[0]; return <div key={it.id}
                           onClick={() => {
                             if (!(libEditImg.elements || []).find(el => el.invId === it.id)) {
                               setLibEditImg({ ...libEditImg, elements: [...(libEditImg.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
                             }
-                            setLibElSearch(""); setLibElHoverItem(null);
+                            setLibElSearch("");
                           }}
-                          onMouseEnter={() => setLibElHoverItem(it)}
-                          style={{ padding: "6px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 8 }}>
-                          <Thumb item={it} size={32} />
-                          <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                            <span style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden" }}>
+                          style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
                               {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700, flexShrink: 0 }}>📦 KIT</span>}
-                            </span>
-                            <span style={{ fontSize: 9, color: textS, flexShrink: 0 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</span>
+                            </div>
+                            <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</div>
                           </div>
                         </div>; })}
-                      </div> : <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS, width: 300 }}>No matches</div>;
+                      </div> : <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS, width: 320 }}>No matches</div>;
                     })()}
-                    {/* Larger preview of the hovered search result, floated beside the dropdown so it can be
-                        compared against the reference photo while tagging. */}
-                    {libElHoverItem && (
-                      <div style={{ position: "absolute", top: 0, left: "100%", marginLeft: 8, zIndex: 51, width: 160, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.25)", padding: 6, pointerEvents: "none" }}>
-                        <div style={{ width: "100%", height: 160, borderRadius: 6, overflow: "hidden", background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          {(libElHoverItem.img || libElHoverItem.photoUrls?.[0]) ? <img src={libElHoverItem.img || libElHoverItem.photoUrls[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 40, opacity: 0.3 }}>📦</span>}
-                        </div>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: textP, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{libElHoverItem.name}</div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
