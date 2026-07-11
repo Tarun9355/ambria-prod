@@ -2392,7 +2392,7 @@ export default function StudioApp() {
     // from the item's name.
     const isFloral = String(item.cat || item.category || "").toLowerCase() === "florals";
     if (isFloral && !isKit) {
-      const pattern = matchFlowerPattern(item.name, dealCheckData?.flowerPatterns || []);
+      const pattern = matchFlowerPattern(item, dealCheckData?.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
       const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, dealCheckData?.mandiCatalogue || [], dealCheckData) : null;
       if (rates) {

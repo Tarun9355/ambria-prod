@@ -59,17 +59,26 @@ export const effectiveMarkup = (pat, settings) => {
   return 3;
 };
 
-// Matches an item's name to a flower recipe pattern — same bidirectional-substring convention as
-// StudioApp.jsx's floralArtUnitRate/patternExtra (exact lowercase-trim match first, else either
-// name containing the other). Size is resolved separately (resolveSizeKey/sizeClassToPatternKey
-// above) — a pattern can have 3 sizes; the caller's own size selection picks which one.
-export const matchFlowerPattern = (name, flowerPatterns) => {
-  const tn = String(name || "").toLowerCase().trim();
-  if (!tn) return null;
+// Matches an INVENTORY ITEM to a flower recipe pattern. A pattern is created per SUB-CATEGORY
+// (AdminSettingsTab.jsx's Recipes panel stamps `pattern.sub` from the Rate Card item it was
+// provisioned from — e.g. "Flower Pot Small" applies to every differently-named physical item in
+// that sub-category: "Round Fibre Pot", "Terracotta Fibre Element", etc., NOT just an item whose
+// own product name happens to match). Match by sub-category first; fall back to an exact name
+// match only for the case where the pattern's name literally equals the item's own name (legacy
+// patterns with no `.sub`, or a pattern named after one specific product). Deliberately no
+// substring fallback — that matched "Blue Pottery Pot"/"Blue Pottery Pot Big" only by coincidence
+// and produces wrong matches for every other sub-category (confirmed bug: "Round Fibre Pot" under
+// sub-category "Flower Pot Small" needs the sub-category join, not a name-text relationship).
+export const matchFlowerPattern = (item, flowerPatterns) => {
   const patterns = flowerPatterns || [];
-  let pattern = patterns.find((p) => String(p?.name || "").toLowerCase().trim() === tn);
-  if (!pattern) pattern = patterns.find((p) => { const n = String(p?.name || "").toLowerCase().trim(); return n && (tn.includes(n) || n.includes(tn)); });
-  return pattern || null;
+  const itemSub = String(item?.subcategory || item?.subCat || "").trim().toLowerCase();
+  if (itemSub) {
+    const bySub = patterns.find((p) => String(p?.sub || "").trim().toLowerCase() === itemSub);
+    if (bySub) return bySub;
+  }
+  const tn = String(item?.name || "").trim().toLowerCase();
+  if (!tn) return null;
+  return patterns.find((p) => String(p?.name || "").trim().toLowerCase() === tn) || null;
 };
 
 // Real (Studio rate) + artificial unit rates for a matched pattern at a resolved size key.
