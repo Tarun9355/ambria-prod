@@ -2403,7 +2403,10 @@ export default function StudioApp() {
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
         const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
         const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
-        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+        // Flower cost blends by real/artificial %; the pot/container itself doesn't — this specific
+        // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
+        // the recipe's own generic "extra (pot/base)" figure.
+        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey);
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }

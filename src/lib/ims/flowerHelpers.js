@@ -69,16 +69,20 @@ export const effectiveMarkup = (pat, settings) => {
 // substring fallback — that matched "Blue Pottery Pot"/"Blue Pottery Pot Big" only by coincidence
 // and produces wrong matches for every other sub-category (confirmed bug: "Round Fibre Pot" under
 // sub-category "Flower Pot Small" needs the sub-category join, not a name-text relationship).
+// Squeeze internal whitespace (not just trim) before comparing — a manual-entry doubled space
+// ("Flower Pot  Small") renders identically to the clean label but compares as a different string,
+// the exact bug already found/fixed for the Inventory tab's sub-category chips.
+const squeezeKey = (s) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 export const matchFlowerPattern = (item, flowerPatterns) => {
   const patterns = flowerPatterns || [];
-  const itemSub = String(item?.subcategory || item?.subCat || "").trim().toLowerCase();
+  const itemSub = squeezeKey(item?.subcategory || item?.subCat);
   if (itemSub) {
-    const bySub = patterns.find((p) => String(p?.sub || "").trim().toLowerCase() === itemSub);
+    const bySub = patterns.find((p) => squeezeKey(p?.sub) === itemSub);
     if (bySub) return bySub;
   }
-  const tn = String(item?.name || "").trim().toLowerCase();
+  const tn = squeezeKey(item?.name);
   if (!tn) return null;
-  return patterns.find((p) => String(p?.name || "").trim().toLowerCase() === tn) || null;
+  return patterns.find((p) => squeezeKey(p?.name) === tn) || null;
 };
 
 // Real (Studio rate) + artificial unit rates for a matched pattern at a resolved size key.
