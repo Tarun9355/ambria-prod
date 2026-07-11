@@ -360,6 +360,24 @@ export default function IMS() {
     }
   }, []);
 
+  // Bulk-create rate_card_categories rows for inventory sub-categories that don't have one yet.
+  // Explicit action (a "Sync from Inventory" button in the Sub-Categories panel), never automatic
+  // on load — same optimistic-update/rollback shape as addSubcat, just batched into one insert.
+  const syncSubcatsFromInventory = useCallback(async (missing) => {
+    const rows = (missing || []).filter((m) => m && m.id && m.label)
+      .map((m) => ({ id: m.id, label: m.label, scaling_factor: 1.0, source: "inventory", sort_order: 0, category_label: m.cat || null }));
+    if (!rows.length) return;
+    setRateCardCategories((prev) => [...prev, ...rows]);
+    try {
+      const { error } = await supabase.from("rate_card_categories").insert(rows);
+      if (error) throw error;
+    } catch (e) {
+      const ids = new Set(rows.map((r) => r.id));
+      setRateCardCategories((prev) => prev.filter((r) => !ids.has(r.id)));
+      setError(`Failed to sync sub-categories from inventory: ${e.message}`);
+    }
+  }, []);
+
   // Rename a sub-category. When the new label normalizes to a different id, the row's PK changes
   // too (id must stay lower(trim(label)) — the join key everything else matches on) — rolls back
   // on failure (e.g. the new name collides with an existing sub-category).
@@ -1094,6 +1112,7 @@ export default function IMS() {
             rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
             onUpdateSubcatCostPercent={updateSubcatCostPercent}
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
+            onSyncSubcatsFromInventory={syncSubcatsFromInventory}
             rcItems={studioRcItems} rcCats={studioRcCats}
             onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
           />

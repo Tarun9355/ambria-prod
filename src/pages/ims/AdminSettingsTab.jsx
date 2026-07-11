@@ -22,16 +22,17 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [subcatFactorEdits, setSubcatFactorEdits] = useState({});
   const [subcatCostPctEdits, setSubcatCostPctEdits] = useState({});
   const [subcatLabelEdits, setSubcatLabelEdits] = useState({});
-  const [subcatCollapsed, setSubcatCollapsed] = useState(() => new Set());
-  const [subcatAddOpen, setSubcatAddOpen] = useState(null);
+  const [subcatActiveCat, setSubcatActiveCat] = useState("");
+  const [subcatAddOpen, setSubcatAddOpen] = useState(false);
   const [subcatAddVal, setSubcatAddVal] = useState("");
+  const [subcatSyncing, setSubcatSyncing] = useState(false);
   // Sub-category pairs that look like the same real-world category under different names on
   // either side of the Studio/IMS split — flagged for manual review, never auto-merged.
   const SUBCAT_NEAR_DUPES = {
@@ -112,8 +113,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (rateCardCategories.some((r) => r.id === trimmed.toLowerCase())) { alert(`"${trimmed}" already exists.`); return; }
     onAddSubcat?.(trimmed, categoryLabel);
   }
-  function toggleSubcatGroup(label) {
-    setSubcatCollapsed((prev) => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n; });
+  async function syncMissingSubcats(missing) {
+    if (!missing?.length || subcatSyncing) return;
+    setSubcatSyncing(true);
+    try { await onSyncSubcatsFromInventory?.(missing); } finally { setSubcatSyncing(false); }
   }
   function removeSupervisor(id) {
     const sup = supervisors.find((s) => s.id === id);
@@ -1346,11 +1349,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       )}
 
       {/* ── Sub-Categories & Scaling Factors (IMS-owned — Rate Card → IMS migration Phase 1) ── */}
+      {/* Layout mirrors RateCardPanel.jsx: a category sidebar + a single-category main list, so the
+          two admin screens feel like one system instead of two different UI languages. */}
       {activePanel === "subcats" && (() => {
-        // Group sub-categories by top-level category — derived live from rcItems/rcCats (already
-        // loaded here for the Rate Card panel, Phase 3), no schema change needed. A sub-category
-        // maps to whichever category its rate-card item(s) use it under (matching by sub OR
-        // imsAlias, same join key Deal Check uses); one with no matching item falls into "Other".
+        // Legacy fallback grouping — derived from OLD Rate Card items (rcItems/rcCats), kept only
+        // for the ~29 "rate_card_only" sub-categories that have no physical inventory row at all
+        // (so there's nothing for invSubToCat below to match against). Everything with real
+        // inventory presence is now grouped from live inventory data instead (see invSubToCat) —
+        // that join was too sparse to be the primary source (most sub-cats have no matching
+        // rate-card ITEM with the same sub/imsAlias, so they all fell into "Other").
         const subToCatLabel = {};
         rcItems.forEach((it) => {
           const catLabel = rcCats.find((c) => c.id === it.cat)?.l || it.cat;
@@ -1360,26 +1367,78 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           if (subKey) subToCatLabel[subKey] = catLabel;
           if (aliasKey) subToCatLabel[aliasKey] = catLabel;
         });
-        const filtered = rateCardCategories
-          .filter((r) => !subcatSearch.trim() || r.label.toLowerCase().includes(subcatSearch.trim().toLowerCase()))
-          .sort((a, b) => a.label.localeCompare(b.label));
+
+        // Category/sub-category alias normalization — mirrors InventoryTab.jsx's ALIAS_GROUPS /
+        // canonicalLabel exactly (kept as a local copy rather than a shared import to avoid
+        // touching that already-working file), so a raw inventory `cat` value like "Flower" or
+        // "Cloths" collapses onto the same canonical label ("Florals"/"Fabric") the Inventory tab's
+        // own category chips show — otherwise this panel would grow near-duplicate category groups.
+        const CAT_ALIAS_GROUPS = [
+          { test: (low, raw) => /^(flowers?|florals?)$/.test(low), find: /floral|flower/i, fallback: "Florals" },
+          { test: (low, raw) => /^(cloths?|fabrics?|kapda|kapra)$/.test(low) || /कपड़ा|कपडा/.test(raw), find: /fabric|cloth|कपड़ा/i, fallback: "Fabric" },
+        ];
+        const studioCatLabels = studio?.catLabels || [];
+        const normInvCat = (value) => {
+          const raw = String(value ?? "").trim();
+          if (!raw) return "";
+          const low = raw.toLowerCase();
+          for (const g of CAT_ALIAS_GROUPS) {
+            if (g.test(low, raw)) return studioCatLabels.find((l) => g.find.test(l)) || g.fallback;
+          }
+          let hit = studioCatLabels.find((l) => l.toLowerCase() === low);
+          if (hit) return hit;
+          const sing = (x) => x.replace(/s$/, "");
+          hit = studioCatLabels.find((l) => sing(l.toLowerCase()) === sing(low));
+          if (hit) return hit;
+          return raw;
+        };
+
+        // Live inventory → sub-category-key → top-level-category map. This is the PRIMARY grouping
+        // source (matches exactly what the Inventory tab's own category chips show).
+        const invSubToCat = {};
+        inventory.forEach((it) => {
+          const rawSub = it.subCat ?? it.subcategory;
+          if (!rawSub) return;
+          const subKey = String(rawSub).trim().toLowerCase();
+          if (!subKey || invSubToCat[subKey]) return;
+          const rawCat = it.cat ?? it.category;
+          invSubToCat[subKey] = rawCat ? normInvCat(rawCat) : "Other";
+        });
+
+        const groupLabelFor = (r) => r.category_label || invSubToCat[r.id] || subToCatLabel[r.id] || "Other";
         const invCount = rateCardCategories.filter((r) => r.source === "inventory").length;
         const rcOnlyCount = rateCardCategories.filter((r) => r.source === "rate_card_only").length;
-        const catOrder = rcCats.map((c) => c.l);
-        const groupLabelFor = (r) => r.category_label || subToCatLabel[r.id] || "Other";
         const groups = {};
-        filtered.forEach((r) => { const label = groupLabelFor(r); (groups[label] = groups[label] || []).push(r); });
-        const groupLabels = Object.keys(groups).sort((a, b) => {
-          if (a === "Other") return 1; if (b === "Other") return -1;
-          const ai = catOrder.indexOf(a), bi = catOrder.indexOf(b);
-          if (ai === -1 && bi === -1) return a.localeCompare(b);
-          if (ai === -1) return 1; if (bi === -1) return -1;
-          return ai - bi;
+        rateCardCategories.forEach((r) => { const label = groupLabelFor(r); (groups[label] = groups[label] || []).push(r); });
+        Object.values(groups).forEach((rows) => rows.sort((a, b) => a.label.localeCompare(b.label)));
+
+        // Inventory sub-categories that don't have a rate_card_categories row yet at all — "reflect
+        // all cats/sub-cats from inventory here" means these need to be visible even before anyone
+        // has set a factor for them.
+        const existingIds = new Set(rateCardCategories.map((r) => r.id));
+        const missingByKey = {};
+        inventory.forEach((it) => {
+          const rawSub = it.subCat ?? it.subcategory;
+          if (!rawSub) return;
+          const subKey = String(rawSub).trim().toLowerCase();
+          if (!subKey || existingIds.has(subKey) || missingByKey[subKey]) return;
+          missingByKey[subKey] = { id: subKey, label: String(rawSub).trim(), cat: invSubToCat[subKey] || "Other" };
         });
-        // Full move-to target list: every top-level category (even ones with 0 sub-categories
-        // right now), plus "Other" — not just groupLabels, so a sub-cat can be moved into a
-        // category that currently has nothing grouped under it.
-        const allCatLabels = [...catOrder, "Other"];
+        const missingSubcats = Object.values(missingByKey);
+
+        // Sidebar category order: live inventory categories first (in the order Inventory's own
+        // chips would show them), then any legacy Rate Card categories with no inventory presence,
+        // then "Other" last.
+        const catOrder = [...new Set([...studioCatLabels, ...Object.values(invSubToCat), ...rcCats.map((c) => c.l)])];
+        const sidebarCats = [...catOrder, "Other"].filter((c, i, arr) => arr.indexOf(c) === i);
+        const allCatLabels = sidebarCats; // move-to dropdown target list — same universe as the sidebar
+
+        const curCat = sidebarCats.includes(subcatActiveCat) ? subcatActiveCat : (sidebarCats[0] || "Other");
+        const searchQ = subcatSearch.trim().toLowerCase();
+        const matchesSearch = (label) => !searchQ || label.toLowerCase().includes(searchQ);
+        const rowsForCat = (groups[curCat] || []).filter((r) => matchesSearch(r.label));
+        const missingForCat = missingSubcats.filter((m) => m.cat === curCat && matchesSearch(m.label));
+
         const renderRow = (r) => {
           const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
           const editVal = subcatFactorEdits[r.id];
@@ -1425,61 +1484,99 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
           );
         };
+
+        const renderMissingRow = (m) => (
+          <div key={"missing::" + m.id} className="flex items-center gap-3 bg-amber-50/50 px-4 py-2.5">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 bg-amber-100 text-amber-700">📦 not configured</span>
+            <span className="flex-1 min-w-0 text-sm text-gray-600 truncate">{m.label}</span>
+            <button onClick={() => syncMissingSubcats([m])}
+              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-lg border border-indigo-200 flex-shrink-0">+ Add</button>
+          </div>
+        );
+
         return (
           <div className="space-y-4">
             <div className="bg-white border rounded-2xl p-5">
-              <p className="font-bold text-gray-900 mb-1">📂 Sub-Categories & Scaling Factors</p>
-              <p className="text-xs text-gray-500 mb-4">IMS is now the source of truth for sub-category pricing. Each sub-category's scaling factor multiplies the base rate of every item inside it. Cost% prices a Deal Check shortfall (not enough free stock for the date) at item cost × this % instead of the rental rate.</p>
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <input value={subcatSearch} onChange={(e) => setSubcatSearch(e.target.value)}
-                  placeholder="Search sub-categories…" className="flex-1 min-w-[200px] border rounded-lg px-3 py-2 text-sm" />
-                <span className="text-xs text-gray-400">{invCount} from inventory · {rcOnlyCount} rate-card-only · {rateCardCategories.length} total</span>
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                <div>
+                  <p className="font-bold text-gray-900 mb-1">📂 Sub-Categories & Scaling Factors</p>
+                  <p className="text-xs text-gray-500">IMS is now the source of truth for sub-category pricing. Each sub-category's scaling factor multiplies the base rate of every item inside it. Cost% prices a Deal Check shortfall (not enough free stock for the date) at item cost × this % instead of the rental rate.</p>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+                  <span>{invCount} from inventory · {rcOnlyCount} rate-card-only · {rateCardCategories.length} total</span>
+                  {missingSubcats.length > 0 && (
+                    <button disabled={subcatSyncing} onClick={() => syncMissingSubcats(missingSubcats)}
+                      title="Create a row here for every inventory sub-category that doesn't have one yet"
+                      className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50 whitespace-nowrap">
+                      {subcatSyncing ? "Syncing…" : `🔄 Sync ${missingSubcats.length} from Inventory`}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="mb-4 max-w-sm">
-                <AddInlineItem placeholder="Add a new sub-category…" onAdd={addNewSubcat} />
-              </div>
-              {rateCardCategories.length === 0 && (
+
+              {rateCardCategories.length === 0 && missingSubcats.length === 0 ? (
                 <div className="text-center py-8 text-sm text-gray-400 border border-dashed rounded-xl">
                   No sub-categories loaded yet. Run the Phase 1 migration (012_rate_card_subcategory_scaling.sql) if this is a fresh environment.
                 </div>
-              )}
-              {rateCardCategories.length > 0 && (
-                <div className="space-y-3">
-                  {groupLabels.map((label) => {
-                    const color = rcCats.find((c) => c.l === label)?.c || "#9CA3AF";
-                    const collapsed = subcatCollapsed.has(label);
-                    const addOpen = subcatAddOpen === label;
-                    return (
-                      <div key={label} className="border rounded-xl overflow-hidden">
-                        <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b">
-                          <button type="button" onClick={() => toggleSubcatGroup(label)}
-                            className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                            <span className="text-gray-400 text-[10px] w-2.5 flex-shrink-0">{collapsed ? "▸" : "▾"}</span>
-                            <span className="w-1.5 h-3.5 rounded flex-shrink-0" style={{ background: color }} />
-                            <span className="text-xs font-bold text-gray-700 truncate">{label}</span>
-                            <span className="text-[10px] text-gray-400 flex-shrink-0">({groups[label].length})</span>
-                          </button>
-                          {addOpen ? (
-                            <input autoFocus value={subcatAddVal}
-                              onChange={(e) => setSubcatAddVal(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") { addNewSubcat(subcatAddVal, label); setSubcatAddVal(""); setSubcatAddOpen(null); }
-                                if (e.key === "Escape") { setSubcatAddVal(""); setSubcatAddOpen(null); }
-                              }}
-                              onBlur={() => { if (subcatAddVal.trim()) addNewSubcat(subcatAddVal, label); setSubcatAddVal(""); setSubcatAddOpen(null); }}
-                              placeholder="New sub-category…"
-                              className="text-xs border rounded-lg px-2 py-1 w-40 flex-shrink-0" />
-                          ) : (
-                            <button type="button" onClick={() => { setSubcatAddOpen(label); setSubcatAddVal(""); }}
-                              title={`Add a sub-category to ${label}`}
-                              className="text-xs font-bold text-indigo-500 hover:text-indigo-700 px-1.5 flex-shrink-0">+ Add</button>
-                          )}
-                        </div>
-                        {!collapsed && <div className="divide-y">{groups[label].map(renderRow)}</div>}
+              ) : (
+                <div className="grid grid-cols-[220px_1fr] gap-5">
+                  {/* Category sidebar */}
+                  <div>
+                    <span className="text-xs font-bold text-gray-500 mb-2 block">Categories</span>
+                    <div className="space-y-1">
+                      {sidebarCats.map((label) => {
+                        const color = rcCats.find((c) => c.l === label)?.c || "#9CA3AF";
+                        const n = groups[label]?.length || 0;
+                        const missingN = missingSubcats.filter((m) => m.cat === label).length;
+                        return (
+                          <div key={label} onClick={() => setSubcatActiveCat(label)}
+                            className={"px-3 py-2 rounded-lg cursor-pointer border text-sm flex items-center justify-between " + (curCat === label ? "bg-indigo-50 border-indigo-300" : "bg-white border-gray-200")}>
+                            <span className="flex items-center gap-1.5 truncate">
+                              <span className="w-1.5 h-3.5 rounded flex-shrink-0" style={{ background: color }} />
+                              <span className={"truncate " + (curCat === label ? "font-semibold text-indigo-700" : "text-gray-700")}>{label}</span>
+                            </span>
+                            <span className="flex items-center gap-1 flex-shrink-0">
+                              <span className="text-[10px] text-gray-400">{n}</span>
+                              {missingN > 0 && <span title={`${missingN} inventory sub-categor${missingN === 1 ? "y" : "ies"} not yet configured`} className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Sub-categories in the selected category */}
+                  <div>
+                    <div className="flex gap-2 mb-3">
+                      <input value={subcatSearch} onChange={(e) => setSubcatSearch(e.target.value)}
+                        placeholder="Search sub-categories…" className="flex-1 border rounded-lg px-3 py-2 text-sm" />
+                      <button onClick={() => { setSubcatAddOpen(!subcatAddOpen); setSubcatAddVal(""); }}
+                        className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold whitespace-nowrap">+ Add Sub-Category</button>
+                    </div>
+
+                    {subcatAddOpen && (
+                      <div className="flex items-center gap-2 mb-3">
+                        <input autoFocus value={subcatAddVal} onChange={(e) => setSubcatAddVal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { addNewSubcat(subcatAddVal, curCat); setSubcatAddVal(""); setSubcatAddOpen(false); }
+                            if (e.key === "Escape") { setSubcatAddVal(""); setSubcatAddOpen(false); }
+                          }}
+                          placeholder={`New sub-category in ${curCat}…`} className="flex-1 border rounded-lg px-3 py-2 text-sm" />
+                        <button onClick={() => { addNewSubcat(subcatAddVal, curCat); setSubcatAddVal(""); setSubcatAddOpen(false); }}
+                          className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold whitespace-nowrap">Add</button>
+                        <button onClick={() => { setSubcatAddVal(""); setSubcatAddOpen(false); }}
+                          className="px-3 py-2 rounded-lg bg-gray-100 text-xs whitespace-nowrap">Cancel</button>
                       </div>
-                    );
-                  })}
-                  {filtered.length === 0 && <p className="text-sm text-gray-400 italic text-center py-6 border rounded-xl">No sub-categories match "{subcatSearch}".</p>}
+                    )}
+
+                    <div className="border rounded-xl overflow-hidden divide-y">
+                      {rowsForCat.map(renderRow)}
+                      {missingForCat.map(renderMissingRow)}
+                      {rowsForCat.length === 0 && missingForCat.length === 0 && (
+                        <div className="text-center py-10 text-sm text-gray-400">{subcatSearch ? "No matches" : "No sub-categories in this category yet"}</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
