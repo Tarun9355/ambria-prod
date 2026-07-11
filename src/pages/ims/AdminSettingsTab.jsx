@@ -22,13 +22,16 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [subcatFactorEdits, setSubcatFactorEdits] = useState({});
   const [subcatCostPctEdits, setSubcatCostPctEdits] = useState({});
   const [subcatLabelEdits, setSubcatLabelEdits] = useState({});
+  const [subcatCollapsed, setSubcatCollapsed] = useState(() => new Set());
+  const [subcatAddOpen, setSubcatAddOpen] = useState(null);
+  const [subcatAddVal, setSubcatAddVal] = useState("");
   // Sub-category pairs that look like the same real-world category under different names on
   // either side of the Studio/IMS split — flagged for manual review, never auto-merged.
   const SUBCAT_NEAR_DUPES = {
@@ -103,11 +106,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (!trimmed || trimmed === currentLabel) return;
     onRenameSubcat?.(id, trimmed);
   }
-  function addNewSubcat(label) {
+  function addNewSubcat(label, categoryLabel) {
     const trimmed = (label || "").trim();
     if (!trimmed) return;
     if (rateCardCategories.some((r) => r.id === trimmed.toLowerCase())) { alert(`"${trimmed}" already exists.`); return; }
-    onAddSubcat?.(trimmed);
+    onAddSubcat?.(trimmed, categoryLabel);
+  }
+  function toggleSubcatGroup(label) {
+    setSubcatCollapsed((prev) => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n; });
   }
   function removeSupervisor(id) {
     const sup = supervisors.find((s) => s.id === id);
@@ -1360,8 +1366,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const invCount = rateCardCategories.filter((r) => r.source === "inventory").length;
         const rcOnlyCount = rateCardCategories.filter((r) => r.source === "rate_card_only").length;
         const catOrder = rcCats.map((c) => c.l);
+        const groupLabelFor = (r) => r.category_label || subToCatLabel[r.id] || "Other";
         const groups = {};
-        filtered.forEach((r) => { const label = subToCatLabel[r.id] || "Other"; (groups[label] = groups[label] || []).push(r); });
+        filtered.forEach((r) => { const label = groupLabelFor(r); (groups[label] = groups[label] || []).push(r); });
         const groupLabels = Object.keys(groups).sort((a, b) => {
           if (a === "Other") return 1; if (b === "Other") return -1;
           const ai = catOrder.indexOf(a), bi = catOrder.indexOf(b);
@@ -1369,6 +1376,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           if (ai === -1) return 1; if (bi === -1) return -1;
           return ai - bi;
         });
+        // Full move-to target list: every top-level category (even ones with 0 sub-categories
+        // right now), plus "Other" — not just groupLabels, so a sub-cat can be moved into a
+        // category that currently has nothing grouped under it.
+        const allCatLabels = [...catOrder, "Other"];
         const renderRow = (r) => {
           const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
           const editVal = subcatFactorEdits[r.id];
@@ -1387,6 +1398,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               {dupes.length > 0 && (
                 <span className="text-amber-500 text-xs flex-shrink-0" title={`May be the same category as: ${dupes.join(", ")} — review before setting factors`}>⚠ possible dup</span>
               )}
+              <select value={groupLabelFor(r)}
+                onChange={(e) => onUpdateSubcatCategory?.(r.id, e.target.value)}
+                title="Move to another top-level category"
+                className="flex-shrink-0 max-w-[130px] border rounded-lg px-1.5 py-1 text-xs text-gray-600 bg-white">
+                {allCatLabels.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
               <div className="flex items-center gap-1.5 flex-shrink-0" title="Scaling factor — multiplies every item's rental rate in this sub-category">
                 <input type="number" step="0.05" min="0"
                   value={editVal !== undefined ? editVal : r.scaling_factor}
@@ -1430,14 +1447,35 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 <div className="space-y-3">
                   {groupLabels.map((label) => {
                     const color = rcCats.find((c) => c.l === label)?.c || "#9CA3AF";
+                    const collapsed = subcatCollapsed.has(label);
+                    const addOpen = subcatAddOpen === label;
                     return (
                       <div key={label} className="border rounded-xl overflow-hidden">
                         <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b">
-                          <span className="w-1.5 h-3.5 rounded" style={{ background: color }} />
-                          <span className="text-xs font-bold text-gray-700">{label}</span>
-                          <span className="text-[10px] text-gray-400">({groups[label].length})</span>
+                          <button type="button" onClick={() => toggleSubcatGroup(label)}
+                            className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                            <span className="text-gray-400 text-[10px] w-2.5 flex-shrink-0">{collapsed ? "▸" : "▾"}</span>
+                            <span className="w-1.5 h-3.5 rounded flex-shrink-0" style={{ background: color }} />
+                            <span className="text-xs font-bold text-gray-700 truncate">{label}</span>
+                            <span className="text-[10px] text-gray-400 flex-shrink-0">({groups[label].length})</span>
+                          </button>
+                          {addOpen ? (
+                            <input autoFocus value={subcatAddVal}
+                              onChange={(e) => setSubcatAddVal(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") { addNewSubcat(subcatAddVal, label); setSubcatAddVal(""); setSubcatAddOpen(null); }
+                                if (e.key === "Escape") { setSubcatAddVal(""); setSubcatAddOpen(null); }
+                              }}
+                              onBlur={() => { if (subcatAddVal.trim()) addNewSubcat(subcatAddVal, label); setSubcatAddVal(""); setSubcatAddOpen(null); }}
+                              placeholder="New sub-category…"
+                              className="text-xs border rounded-lg px-2 py-1 w-40 flex-shrink-0" />
+                          ) : (
+                            <button type="button" onClick={() => { setSubcatAddOpen(label); setSubcatAddVal(""); }}
+                              title={`Add a sub-category to ${label}`}
+                              className="text-xs font-bold text-indigo-500 hover:text-indigo-700 px-1.5 flex-shrink-0">+ Add</button>
+                          )}
                         </div>
-                        <div className="divide-y">{groups[label].map(renderRow)}</div>
+                        {!collapsed && <div className="divide-y">{groups[label].map(renderRow)}</div>}
                       </div>
                     );
                   })}

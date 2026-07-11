@@ -326,8 +326,10 @@ export default function IMS() {
   // Add a sub-category IMS doesn't have yet (e.g. a new rate-card item with no inventory analog).
   // id is derived the same way as the Phase 1 seed — lower(trim(label)) — so it's usable as a join
   // key immediately. Plain insert (not upsert) so a name collision surfaces as an error instead of
-  // silently overwriting an existing factor.
-  const addSubcat = useCallback(async (label) => {
+  // silently overwriting an existing factor. categoryLabel is optional — set when added via the
+  // "+ Add" button on a specific top-level-category heading, so the new row lands there instead
+  // of "Other" (see category_label override, below).
+  const addSubcat = useCallback(async (label, categoryLabel) => {
     const trimmed = (label || "").trim();
     if (!trimmed) return;
     const id = trimmed.toLowerCase();
@@ -335,7 +337,7 @@ export default function IMS() {
       setError(`"${trimmed}" already exists.`);
       return;
     }
-    const row = { id, label: trimmed, scaling_factor: 1.0, source: "manual", sort_order: 0 };
+    const row = { id, label: trimmed, scaling_factor: 1.0, source: "manual", sort_order: 0, category_label: categoryLabel || null };
     setRateCardCategories((prev) => [...prev, row]);
     try {
       const { error } = await supabase.from("rate_card_categories").insert(row);
@@ -343,6 +345,18 @@ export default function IMS() {
     } catch (e) {
       setRateCardCategories((prev) => prev.filter((r) => r.id !== id));
       setError(`Failed to add sub-category: ${e.message}`);
+    }
+  }, []);
+
+  // Manual override of which top-level category a sub-category is grouped under in the Sub-
+  // Categories panel — wins over the live rate_card-item-derived grouping (subToCatLabel in
+  // AdminSettingsTab.jsx) when set. Same optimistic-update/rollback pattern as the factor/cost%.
+  const updateSubcatCategory = useCallback(async (id, categoryLabel) => {
+    setRateCardCategories((prev) => prev.map((r) => (r.id === id ? { ...r, category_label: categoryLabel } : r)));
+    try {
+      await updateRow("rate_card_categories", id, { category_label: categoryLabel });
+    } catch (e) {
+      setError(`Failed to move sub-category: ${e.message}`);
     }
   }, []);
 
@@ -1079,7 +1093,7 @@ export default function IMS() {
             users={users} setUsers={setUsers} addUser={addUser} inventory={items} trussInv={trussInv}
             rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
             onUpdateSubcatCostPercent={updateSubcatCostPercent}
-            onAddSubcat={addSubcat} onRenameSubcat={renameSubcat}
+            onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
             rcItems={studioRcItems} rcCats={studioRcCats}
             onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
           />
