@@ -22,11 +22,12 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onAddSubcat, onRenameSubcat, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [subcatFactorEdits, setSubcatFactorEdits] = useState({});
+  const [subcatCostPctEdits, setSubcatCostPctEdits] = useState({});
   const [subcatLabelEdits, setSubcatLabelEdits] = useState({});
   // Sub-category pairs that look like the same real-world category under different names on
   // either side of the Studio/IMS split — flagged for manual review, never auto-merged.
@@ -86,6 +87,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     const val = Math.max(0, parseFloat(raw) || 1.0);
     onUpdateSubcatFactor?.(id, val);
     setSubcatFactorEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+  function commitSubcatCostPct(id) {
+    const raw = subcatCostPctEdits[id];
+    if (raw === undefined) return;
+    const val = Math.max(0, parseFloat(raw) || 0);
+    onUpdateSubcatCostPercent?.(id, val);
+    setSubcatCostPctEdits((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
   function commitSubcatLabel(id, currentLabel) {
     const raw = subcatLabelEdits[id];
@@ -1364,6 +1372,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const renderRow = (r) => {
           const dupes = SUBCAT_NEAR_DUPES[r.id] || [];
           const editVal = subcatFactorEdits[r.id];
+          const costPctEditVal = subcatCostPctEdits[r.id];
           const labelEditVal = subcatLabelEdits[r.id];
           return (
             <div key={r.id} className="flex items-center gap-3 bg-white px-4 py-2.5">
@@ -1378,7 +1387,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               {dupes.length > 0 && (
                 <span className="text-amber-500 text-xs flex-shrink-0" title={`May be the same category as: ${dupes.join(", ")} — review before setting factors`}>⚠ possible dup</span>
               )}
-              <div className="flex items-center gap-1.5 flex-shrink-0">
+              <div className="flex items-center gap-1.5 flex-shrink-0" title="Scaling factor — multiplies every item's rental rate in this sub-category">
                 <input type="number" step="0.05" min="0"
                   value={editVal !== undefined ? editVal : r.scaling_factor}
                   onChange={(e) => setSubcatFactorEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
@@ -1387,6 +1396,15 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   className="w-20 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
                 <span className="text-xs text-gray-400">×</span>
               </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0" title="Cost% — Deal Check bills a shortfall (qty beyond what's free in stock) at item cost × this %, instead of the rental rate">
+                <input type="number" step="5" min="0"
+                  value={costPctEditVal !== undefined ? costPctEditVal : (r.cost_percent ?? 100)}
+                  onChange={(e) => setSubcatCostPctEdits((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                  onBlur={() => commitSubcatCostPct(r.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                  className="w-16 border rounded-lg px-2 py-1 text-sm font-bold text-center" />
+                <span className="text-xs text-gray-400">% cost</span>
+              </div>
             </div>
           );
         };
@@ -1394,7 +1412,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           <div className="space-y-4">
             <div className="bg-white border rounded-2xl p-5">
               <p className="font-bold text-gray-900 mb-1">📂 Sub-Categories & Scaling Factors</p>
-              <p className="text-xs text-gray-500 mb-4">IMS is now the source of truth for sub-category pricing. Each sub-category's scaling factor multiplies the base rate of every item inside it.</p>
+              <p className="text-xs text-gray-500 mb-4">IMS is now the source of truth for sub-category pricing. Each sub-category's scaling factor multiplies the base rate of every item inside it. Cost% prices a Deal Check shortfall (not enough free stock for the date) at item cost × this % instead of the rental rate.</p>
               <div className="mb-3 flex flex-wrap items-center gap-3">
                 <input value={subcatSearch} onChange={(e) => setSubcatSearch(e.target.value)}
                   placeholder="Search sub-categories…" className="flex-1 min-w-[200px] border rounded-lg px-3 py-2 text-sm" />

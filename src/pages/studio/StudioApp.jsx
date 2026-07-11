@@ -5620,6 +5620,9 @@ Return ONLY JSON:
     RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
+    // Sub-category scaling factor + cost% (rate_card_categories, IMS-owned) — Deal Check's
+    // unavailable-shortfall pricing builds its own lookup map from this.
+    rcSubcatFactors,
     trVenues, setTrVenues, truckCap, setTruckCap, floralPerTruck, setFloralPerTruck, gensetRate, setGensetRate, bufferTiers, setBufferTiers,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS,
     // templates

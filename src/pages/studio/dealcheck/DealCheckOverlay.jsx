@@ -39,7 +39,7 @@ export default function DealCheckOverlay({ ctx }) {
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
-    libItems, rcItems, normalizePaintAllocation, ensureLibItemsByUrl,
+    libItems, rcItems, rcSubcatFactors, normalizePaintAllocation, ensureLibItemsByUrl,
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // orchestration + persistence
@@ -105,6 +105,17 @@ export default function DealCheckOverlay({ ctx }) {
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0;
+          // Unavailable-shortfall pricing: a matched card's qty beyond what's actually free in
+          // stock for the event date bills at item.cost × this sub-category's cost% instead of
+          // the rental rate (rate_card_categories.cost_percent, IMS-owned). Default 100 (full
+          // production cost) when a sub-category has no row yet.
+          const costPctByKey = {};
+          (rcSubcatFactors || []).forEach((r) => { if (r && r.id) costPctByKey[r.id] = Number(r.cost_percent); });
+          const costPctFor = (subcat) => {
+            const key = String(subcat || "").trim().toLowerCase();
+            const v = key ? costPctByKey[key] : undefined;
+            return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100;
+          };
           // ═══ §Department income (7 depts) — every rupee tagged to a department ═══
           const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
           const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
@@ -152,6 +163,9 @@ export default function DealCheckOverlay({ ctx }) {
           const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
+            // Same blocksByDate resolution the Inventory Status tab already uses (line ~1690) —
+            // one lookup per function, reused for every card's availability check below.
+            const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
             Object.entries(cards).forEach(([ck, c]) => {
               // Split fulfilment: the card's qty is spread across several simple items ({imsId,qty}) — each
               // bills + reserves as its own line (repeat discount per its own sub-category). Overrides the single item.
@@ -184,7 +198,22 @@ export default function DealCheckOverlay({ ctx }) {
               }
               const qty = c.qty || 1;
               const _rep = zoneIsRepeat(fn, ck);
-              const lineRental = _rep ? qty * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : qty * baseR;
+              // Unavailable-shortfall pricing: qty beyond what's actually free in stock for this
+              // function's date bills at item.cost × sub-category cost%, not the rental rate.
+              // Kits are excluded — their base+components pricing model doesn't map onto a simple
+              // per-unit reused/fresh split (same reasoning calcZoneCarpet already uses for carpet).
+              const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+              let lineRental;
+              if (isKit) {
+                lineRental = _rep ? qty * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : qty * baseR;
+              } else {
+                const available = getStudioAvailable(item, fnBlocks);
+                const ownedQty = Math.min(qty, available);
+                const shortQty = Math.max(0, qty - available);
+                const ownedRental = _rep ? ownedQty * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : ownedQty * baseR;
+                const shortCost = shortQty * (Number(item.cost) || 0) * (costPctFor(imsField.subcategory(item)) / 100);
+                lineRental = ownedRental + shortCost;
+              }
               rental += lineRental;
               const dD = catToDept(imsField.category(item) || c.cat);
               addD(dD, "rental", lineRental);

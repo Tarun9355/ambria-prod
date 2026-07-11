@@ -312,6 +312,17 @@ export default function IMS() {
     }
   }, []);
 
+  // Cost% for pricing a Deal Check card's shortfall (qty beyond what's free in stock) at
+  // item.cost × this% instead of the rental rate — same optimistic-update/rollback pattern.
+  const updateSubcatCostPercent = useCallback(async (id, pct) => {
+    setRateCardCategories((prev) => prev.map((r) => (r.id === id ? { ...r, cost_percent: pct } : r)));
+    try {
+      await updateRow("rate_card_categories", id, { cost_percent: pct });
+    } catch (e) {
+      setError(`Failed to save cost%: ${e.message}`);
+    }
+  }, []);
+
   // Add a sub-category IMS doesn't have yet (e.g. a new rate-card item with no inventory analog).
   // id is derived the same way as the Phase 1 seed — lower(trim(label)) — so it's usable as a join
   // key immediately. Plain insert (not upsert) so a name collision surfaces as an error instead of
@@ -1067,6 +1078,7 @@ export default function IMS() {
             supervisors={supervisors} setSupervisors={setSupervisors} studio={studio}
             users={users} setUsers={setUsers} addUser={addUser} inventory={items} trussInv={trussInv}
             rateCardCategories={rateCardCategories} onUpdateSubcatFactor={updateSubcatFactor}
+            onUpdateSubcatCostPercent={updateSubcatCostPercent}
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat}
             rcItems={studioRcItems} rcCats={studioRcCats}
             onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
