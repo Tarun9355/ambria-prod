@@ -874,10 +874,12 @@ export default function ManageLibrary({ ctx }) {
                   {(libEditImg.elements || []).map((el, idx) => {
                     if (el.invId) {
                       // IMS inventory-sourced element — priced via getElPriceFromInventory (StudioApp.jsx),
-                      // no Rate Card lookup at all. Flat price only — inventory items have no S/M/B sizing.
+                      // no Rate Card lookup at all. Flat price, UNLESS the item matches a flower recipe
+                      // (isFloralBlend) — those get a real/artificial % + Small/Medium/Big size toggle,
+                      // same as Build view.
                       const invItem = (imsInventory || []).find(i => i.id === el.invId);
                       const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length > 0);
-                      const { lineCost } = getElPriceFromInventory(el);
+                      const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromInventory(el);
                       return (
                         <Fragment key={idx}>
                           <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -887,9 +889,14 @@ export default function ManageLibrary({ ctx }) {
                             {el.name}
                             {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}
                             {!invItem && <span title="This inventory item no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
+                            {isFloralBlend && <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, color: "#EC4899", fontWeight: 600 }}>🌸<input type="number" min="0" max="100" value={realPct} onChange={e => { const v = Math.max(0, Math.min(100, Number(e.target.value) || 0)); const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], realPct: v }; setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ width: 28, padding: "1px 3px", borderRadius: 3, border: `1px solid ${border}`, fontSize: 9, fontWeight: 700, textAlign: "center" }} />%</span>}
                           </div>
                           <input type="number" value={el.qty || ""} onChange={e => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], qty: parseFloat(e.target.value) || 0 }; setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ ...S.input, fontSize: 11, padding: "3px 5px", textAlign: "center" }} placeholder="0" />
-                          <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>
+                          {patternSMB ? (
+                            <select value={el.size || "B"} onChange={e => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], size: e.target.value }; setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ ...S.select, fontSize: 10, padding: "2px 3px" }}>
+                              {["S", "M", "B"].map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
                           <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
                           <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : invItem ? "₹0" : "—"}</div>
                           <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>

@@ -55,6 +55,7 @@ import {
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, priceForInvItem } from "../../lib/ims/helpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
@@ -2382,6 +2383,28 @@ export default function StudioApp() {
     if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+
+    // Floral-recipe pricing: an inventory item whose name matches a flower pattern prices from the
+    // recipe's real/artificial Studio rates instead of rental × scaling factor — that rate is
+    // already the final all-in customer price (synced verbatim from the same recipe onto Rate Card
+    // items elsewhere), so no factor/availability-shortfall logic applies on top. Size defaults to
+    // "B" (Big) per the element's own size toggle (StudioBuild.jsx/ManageLibrary.jsx), not derived
+    // from the item's name.
+    const isFloral = String(item.cat || item.category || "").toLowerCase() === "florals";
+    if (isFloral && !isKit) {
+      const pattern = matchFlowerPattern(item.name, dealCheckData?.flowerPatterns || []);
+      const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
+      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, dealCheckData?.mandiCatalogue || [], dealCheckData) : null;
+      if (rates) {
+        const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
+        const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
+        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
+        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+        return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+      }
+    }
+
     if (opts?.checkAvailability && !isKit) {
       const available = getStudioAvailable(item, activeBlocksForDate);
       const ownedQty = Math.min(qty, available);
@@ -2395,7 +2418,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey);
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, rcFloralModeByKey, floralRatio]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
