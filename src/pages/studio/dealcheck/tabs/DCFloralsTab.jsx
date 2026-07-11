@@ -17,7 +17,7 @@ export default function DCFloralsTab({ ctx }) {
     // build / fn state
     activeFnIdx, collectAllFunctionData, rcItems,
     // deal check data + pricing
-    dealCheckData, floralRatio, resolveMandiFlower, imsField, dcInventoryCache,
+    dealCheckData, floralRatio, resolveMandiFlower, imsField, dcInventoryCache, rcFloralModeByKey,
     // floral state
     dcFloralCalcOpen, setDcFloralCalcOpen,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal,
@@ -62,6 +62,10 @@ export default function DCFloralsTab({ ctx }) {
                     const mode = String(rc?.floralMode||"").toLowerCase();
                     if (mode === "real") return 100;
                     if (mode === "artificial") return 0;
+                    const subKey = String(rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
+                    const subMode = subKey ? rcFloralModeByKey?.[subKey] : undefined;
+                    if (subMode === "real") return 100;
+                    if (subMode === "artificial") return 0;
                     if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
                     return Math.max(0, Math.min(100, 100 - fnFloralRatio));
                   };

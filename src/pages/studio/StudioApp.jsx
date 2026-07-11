@@ -2357,6 +2357,14 @@ export default function StudioApp() {
     return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100;
   }, [rcCostPctByKey]);
 
+  // Sub-category default floral pricing mode (rate_card_categories.floral_mode, IMS-owned) — an
+  // additive override layer under getFloralMode()'s existing per-item logic; see src/lib/rateCard.js.
+  const rcFloralModeByKey = useMemo(() => {
+    const m = {};
+    (rcSubcatFactors || []).forEach((r) => { if (r && r.id) m[r.id] = r.floral_mode; });
+    return m;
+  }, [rcSubcatFactors]);
+
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
   // Returns the same shape getElPrice/getElPriceForFn do, so it drops into every existing caller
@@ -2524,7 +2532,7 @@ export default function StudioApp() {
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
-    const mode = getFloralMode(rc);
+    const mode = getFloralMode(rc, rcFloralModeByKey);
     const sz = (el.size || "").toUpperCase();
     const { realRate, artRate } = resolveRcRate(rc, sz);
     let up = 0, realPct = null;
@@ -2556,7 +2564,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
 
   const calcElsCost = useCallback((elements, withFloral, zc, opts) => {
     return (elements || []).reduce((s, el) => {
@@ -2572,7 +2580,7 @@ export default function StudioApp() {
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
     const isFloral = (rc.cat || "").toLowerCase() === "florals";
-    const mode = getFloralMode(rc);
+    const mode = getFloralMode(rc, rcFloralModeByKey);
     const sz = (el.size || "").toUpperCase();
     const { realRate, artRate } = resolveRcRate(rc, sz);
     let up = 0;
@@ -2598,7 +2606,7 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
-  }, [rcItems, getFloralMode, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory]);
 
   const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
@@ -2871,6 +2879,9 @@ export default function StudioApp() {
       if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
       const m = String(rc?.floralMode || "").toLowerCase();
       if (m === "real") return 100; if (m === "artificial") return 0;
+      const subKey = String(rc?.sub || rc?.imsAlias || "").trim().toLowerCase();
+      const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
+      if (subMode === "real") return 100; if (subMode === "artificial") return 0;
       if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
@@ -2924,7 +2935,7 @@ export default function StudioApp() {
       });
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate]);
+  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
@@ -5670,6 +5681,9 @@ Return ONLY JSON:
     // Sub-category scaling factor + cost% (rate_card_categories, IMS-owned) — Deal Check's
     // unavailable-shortfall pricing builds its own lookup map from this.
     rcSubcatFactors,
+    // Sub-category default floral pricing mode — DCFloralsTab.jsx's resolveRealPct consumes this
+    // pre-built map directly rather than re-deriving it from rcSubcatFactors itself.
+    rcFloralModeByKey,
     trVenues, setTrVenues, truckCap, setTruckCap, floralPerTruck, setFloralPerTruck, gensetRate, setGensetRate, bufferTiers, setBufferTiers,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS,
     // templates

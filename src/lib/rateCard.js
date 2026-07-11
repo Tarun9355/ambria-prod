@@ -26,11 +26,18 @@ export function rcItemToRow(it) {
 // Does this item price by Small/Medium/Big instead of one flat rate?
 export const rcIsSMB = (rc) => rc && ((rc.inhouseS || 0) > 0 || (rc.inhouseM || 0) > 0 || (rc.inhouseB || 0) > 0 || rc.inhouseMode === "smb");
 
-// Effective real/artificial pricing mode for a floral item: explicit override, else inferred from
-// whether an artificial rate is set at all, else the global ratio slider.
-export function getFloralMode(rc) {
+// Effective real/artificial pricing mode for a floral item: explicit per-item override, else the
+// item's sub-category default (rate_card_categories.floral_mode, IMS-owned — optional 2nd arg, a
+// { [subKey]: mode } map), else inferred from whether an artificial rate is set at all, else the
+// global ratio slider. subFloralModeByKey is optional and additive — omitting it (existing callers
+// that don't pass it) reproduces the exact prior behavior.
+export function getFloralMode(rc, subFloralModeByKey) {
   if (!rc || (rc.cat || "").toLowerCase() !== "florals") return "ratio";
-  if (rc.floralMode === "ratio" || rc.floralMode === "real" || rc.floralMode === "artificial") return rc.floralMode;
+  if (rc.floralMode === "real" || rc.floralMode === "artificial") return rc.floralMode;
+  const subKey = String(rc.sub || rc.imsAlias || "").trim().toLowerCase();
+  const subMode = subKey ? subFloralModeByKey?.[subKey] : undefined;
+  if (subMode === "real" || subMode === "artificial") return subMode;
+  if (rc.floralMode === "ratio") return rc.floralMode;
   const hasArt = (rc.artificialFlat || 0) > 0 || (rc.artificialS || 0) > 0 || (rc.artificialM || 0) > 0 || (rc.artificialB || 0) > 0;
   if (!hasArt) return "ratio";
   const dp = typeof rc.defaultRealPct === "number" ? rc.defaultRealPct : (rc.unit === "truss_sqft" ? 0 : 100);

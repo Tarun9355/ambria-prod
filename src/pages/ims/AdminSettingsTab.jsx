@@ -6,6 +6,7 @@ import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVEN
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import RateCardPanel from "./RateCardPanel.jsx";
+import { getFloralMode } from "../../lib/rateCard";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
@@ -22,7 +23,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, rcItems = [], rcCats = [], onSaveRateCardItems, onSaveRateCardCats }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
@@ -1450,6 +1451,24 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const editVal = subcatFactorEdits[r.id];
           const costPctEditVal = subcatCostPctEdits[r.id];
           const labelEditVal = subcatLabelEdits[r.id];
+          const isFlorals = groupLabelFor(r) === "Florals";
+          // "Mixed today" hint — computed from each Florals item's OWN current effective mode
+          // (getFloralMode with no 2nd arg, so it reflects today's per-item state, not this
+          // sub-category's not-yet-applied default) so the admin can see before setting one.
+          let floralMix = null;
+          if (isFlorals) {
+            const matches = rcItems.filter((it) => {
+              if (String(it.cat || "").toLowerCase() !== "florals") return false;
+              const subKey = String(it.sub || "").trim().toLowerCase();
+              const aliasKey = String(it.imsAlias || "").trim().toLowerCase();
+              return subKey === r.id || aliasKey === r.id;
+            });
+            if (matches.length) {
+              const counts = {};
+              matches.forEach((it) => { const m = getFloralMode(it); counts[m] = (counts[m] || 0) + 1; });
+              if (Object.keys(counts).length > 1) floralMix = counts;
+            }
+          }
           return (
             <div key={r.id} className="flex items-center gap-3 bg-white px-4 py-2.5">
               <span className={"text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0 " + (r.source === "inventory" ? "bg-emerald-100 text-emerald-700" : r.source === "manual" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700")}>
@@ -1469,6 +1488,19 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 className="flex-shrink-0 max-w-[130px] border rounded-lg px-1.5 py-1 text-xs text-gray-600 bg-white">
                 {allCatLabels.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
+              {isFlorals && (
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {[["ratio", "🌐 Ratio"], ["real", "🎯 Real"], ["artificial", "🎯 Art"]].map(([m, l]) => (
+                    <button key={m} onClick={() => onUpdateSubcatFloralMode?.(r.id, m)}
+                      title="Default floral pricing mode — applies to items in this sub-category that don't already have their own per-item override (Rate Card screen)"
+                      className={"text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap " + ((r.floral_mode || "ratio") === m ? "bg-pink-500 text-white" : "bg-gray-100 text-gray-500")}>{l}</button>
+                  ))}
+                  {floralMix && (
+                    <span title={`Items here today: ${Object.entries(floralMix).map(([m, n]) => `${n} ${m}`).join(", ")} — setting a mode here only overrides items without their own explicit pin`}
+                      className="text-amber-500 text-xs">⚠</span>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-1.5 flex-shrink-0" title="Scaling factor — multiplies every item's rental rate in this sub-category">
                 <input type="number" step="0.05" min="0"
                   value={editVal !== undefined ? editVal : r.scaling_factor}

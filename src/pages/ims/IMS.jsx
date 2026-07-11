@@ -323,6 +323,18 @@ export default function IMS() {
     }
   }, []);
 
+  // Default floral pricing mode ('ratio'|'real'|'artificial') applied to every Florals item in this
+  // sub-category that doesn't already have its own explicit per-item pin — see getFloralMode() in
+  // src/lib/rateCard.js. Same optimistic-update/rollback pattern as the factor/cost%.
+  const updateSubcatFloralMode = useCallback(async (id, mode) => {
+    setRateCardCategories((prev) => prev.map((r) => (r.id === id ? { ...r, floral_mode: mode } : r)));
+    try {
+      await updateRow("rate_card_categories", id, { floral_mode: mode });
+    } catch (e) {
+      setError(`Failed to save floral mode: ${e.message}`);
+    }
+  }, []);
+
   // Add a sub-category IMS doesn't have yet (e.g. a new rate-card item with no inventory analog).
   // id is derived the same way as the Phase 1 seed — lower(trim(label)) — so it's usable as a join
   // key immediately. Plain insert (not upsert) so a name collision surfaces as an error instead of
@@ -1128,6 +1140,7 @@ export default function IMS() {
             onUpdateSubcatCostPercent={updateSubcatCostPercent}
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
+            onUpdateSubcatFloralMode={updateSubcatFloralMode}
             rcItems={studioRcItems} rcCats={studioRcCats}
             onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
           />
