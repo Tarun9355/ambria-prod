@@ -2392,9 +2392,12 @@ export default function StudioApp() {
     // from the item's name.
     const isFloral = String(item.cat || item.category || "").toLowerCase() === "florals";
     if (isFloral && !isKit) {
-      const pattern = matchFlowerPattern(item, dealCheckData?.flowerPatterns || []);
+      // dealCheckData is null outside an active Deal Check session — floralArtUnitRate/patternExtra
+      // already fall back to studioFloralData for this exact reason; mirror that here too.
+      const floralSrc = dealCheckData || studioFloralData || {};
+      const pattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
-      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, dealCheckData?.mandiCatalogue || [], dealCheckData) : null;
+      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc) : null;
       if (rates) {
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -2418,7 +2421,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey);
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, rcFloralModeByKey, floralRatio]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
