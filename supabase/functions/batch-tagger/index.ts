@@ -82,6 +82,7 @@ Deno.serve(async (req) => {
   const tax = taxonomy || {};
   const inv = (invRows || []).map(rowToInvItem);
   const tagHiddenSubIds = new Set((subcatRows || []).filter((r: any) => r && r.tag_hidden).map((r: any) => r.id));
+  const rcSubIds = new Set((subcatRows || []).map((r: any) => r.id));
   const paletteVals = (palette?.paletteCatalogue || []).map((p: any) => p?.name).filter(Boolean);
   const colorVals = paletteVals.length ? paletteVals : (tax.colorPalette || []);
 
@@ -128,9 +129,12 @@ Deno.serve(async (req) => {
     : "";
 
   // Sub-categories flagged hidden from AI tagging (rate_card_categories.tag_hidden, set in IMS's
-  // Sub-Categories admin panel) — dropped from the vocabulary and the exact-name element list.
+  // Sub-Categories admin panel) — dropped from the vocabulary and the exact-name element list. A
+  // sub-category with no canonical rate_card_categories row at all (orphaned/typo'd sub_cat text)
+  // is dropped the same way — mirrors the client aiTagImage's same rule.
   const isSubHidden = (subCat: any) => tagHiddenSubIds.has(String(subCat || "").trim().toLowerCase());
-  const taggableInv = inv.filter((i: any) => !STRUCTURAL.has(String(i.cat || "").trim().toLowerCase()) && !isSubHidden(i.subCat));
+  const isSubUnrecognized = (subCat: any) => { const k = String(subCat || "").trim().toLowerCase(); return !!k && !rcSubIds.has(k); };
+  const taggableInv = inv.filter((i: any) => !STRUCTURAL.has(String(i.cat || "").trim().toLowerCase()) && !isSubHidden(i.subCat) && !isSubUnrecognized(i.subCat));
   // Sub-category vocabulary by top-level category (from live inventory).
   const subByCat: Record<string, Set<string>> = {};
   taggableInv.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.subCat || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
@@ -145,36 +149,48 @@ Deno.serve(async (req) => {
   // Matches an AI-proposed element name against a real inventory item — mirrors StudioApp.jsx's
   // aiTagImage matching exactly (exact normalized match → substring → keyword-overlap ≥40 score),
   // so both tagging paths resolve to the same invId given the same name.
-  const stopWords = new Set(["the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium", "standard", "basic", "indian", "wedding", "event", "decor"]);
+  // Generic words that inflate keyword-overlap scores between UNRELATED items (colors/sizes/filler
+  // adjectives shared across many catalog names) — excluded so overlap only counts words that
+  // actually identify what the thing IS.
+  const stopWords = new Set([
+    "the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium",
+    "standard", "basic", "indian", "wedding", "event", "decor", "decorative", "piece", "item", "set",
+    "style", "design", "type", "look", "variant", "large", "small", "big", "mini", "tall", "short",
+    "medium", "huge", "giant", "tiny", "gold", "golden", "white", "silver", "black", "red", "pink",
+    "green", "blue", "ivory", "cream", "rose", "peach", "purple", "yellow", "orange", "maroon", "copper",
+  ]);
   const keywords = (s: string) => normName(s).split(" ").filter((w: string) => !stopWords.has(w) && w.length > 1);
+  // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
+  // keyword-overlap ≥40%). Shared by the sub-cat-scoped and full-catalog passes below.
+  const bestOf = (name: string, pool: any[], keyOf: (c: any) => string): any => {
+    const nameNorm = normName(name);
+    const exact = pool.find((c) => normName(keyOf(c)) === nameNorm);
+    if (exact) return exact;
+    const nameKw = keywords(name);
+    let bestScore = 0, best: any = null;
+    for (const c of pool) {
+      const cNorm = normName(keyOf(c));
+      if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return c;
+      const cKw = keywords(keyOf(c));
+      const overlap = nameKw.filter((w: string) => cKw.some((cw: string) => cw.includes(w) || w.includes(cw))).length;
+      const score = overlap > 0 ? (overlap / Math.max(nameKw.length, cKw.length)) * 100 : 0;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    return bestScore >= 40 ? best : null;
+  };
   const matchInventory = (els: any[]) => (Array.isArray(els) ? els : []).map((el: any) => {
     if (!el || !el.name) return el;
-    const exact = taggableInv.find((it: any) => normName(it.name) === normName(el.name));
-    if (exact) return { ...el, name: exact.name, unit: exact.unit, invId: exact.id, new: undefined };
-    const elKw = keywords(el.name);
-    let bestScore = 0, bestMatch: any = null;
-    for (const it of taggableInv) {
-      const itKw = keywords(it.name);
-      const itNorm = normName(it.name), elNorm = normName(el.name);
-      if (elNorm.includes(itNorm) || itNorm.includes(elNorm)) { bestScore = 100; bestMatch = it; break; }
-      const overlap = elKw.filter((w: string) => itKw.some((iw: string) => iw.includes(w) || w.includes(iw))).length;
-      const score = overlap > 0 ? (overlap / Math.max(elKw.length, itKw.length)) * 100 : 0;
-      if (score > bestScore) { bestScore = score; bestMatch = it; }
-    }
-    if (bestMatch && bestScore >= 40) return { ...el, name: bestMatch.name, unit: bestMatch.unit, invId: bestMatch.id, new: undefined };
+    // Scope the search to the model's own guessed sub-category first — routes the match to the
+    // right bucket instead of the whole catalog; falls back to the full catalog if the guess
+    // didn't narrow to anything, so a wrong/blank category guess never costs recall.
+    const elSubKey = normName(el.subCat);
+    const scopedInv = elSubKey ? taggableInv.filter((it: any) => normName(it.subCat) === elSubKey) : [];
+    const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
+    if (invMatch) return { ...el, name: invMatch.name, unit: invMatch.unit, invId: invMatch.id, new: undefined };
     // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
-    const patExact = recipeOnlyPatterns.find((p: any) => normName(p.name) === normName(el.name));
-    if (patExact) return { ...el, name: patExact.name, unit: patExact.unit, patternId: patExact.id, new: undefined };
-    let bestPatScore = 0, bestPat: any = null;
-    for (const p of recipeOnlyPatterns) {
-      const pKw = keywords(p.name);
-      const pNorm = normName(p.name), elNorm = normName(el.name);
-      if (elNorm.includes(pNorm) || pNorm.includes(elNorm)) { bestPatScore = 100; bestPat = p; break; }
-      const overlap = elKw.filter((w: string) => pKw.some((iw: string) => iw.includes(w) || w.includes(iw))).length;
-      const score = overlap > 0 ? (overlap / Math.max(elKw.length, pKw.length)) * 100 : 0;
-      if (score > bestPatScore) { bestPatScore = score; bestPat = p; }
-    }
-    if (bestPat && bestPatScore >= 40) return { ...el, name: bestPat.name, unit: bestPat.unit, patternId: bestPat.id, new: undefined };
+    const scopedPat = elSubKey ? recipeOnlyPatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
+    const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, recipeOnlyPatterns, (p) => p.name);
+    if (patMatch) return { ...el, name: patMatch.name, unit: patMatch.unit, patternId: patMatch.id, new: undefined };
     return { ...el, new: true };
   });
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";
@@ -190,10 +206,11 @@ Time/setting: ${(tax.timeSetting || []).join(", ")}
 
 Rules:
 1. Use EXACT IMS Inventory names for visible decor elements where possible: ${elemList}
-2. For each element estimate quantity; mark items not in the list with "new":true.
-3. Do NOT tag structural items (truss/platform/masking/carpet/flex) as elements.
-4. LIGHTS — count every light fixture; put the total in "lightCount" (0 if none).
-5. MISSING — items you cannot match go in elements with "new":true AND a short note in "unrecognized" ([] if none).
+2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat" (from the sub-category vocabulary below) — this routes the exact-name match to the right bucket instead of the whole catalog, so pick the one that's visually true.
+3. For each element estimate quantity; mark items not in the list with "new":true (still fill "cat"/"subCat" with your best guess).
+4. Do NOT tag structural items (truss/platform/masking/carpet/flex) as elements.
+5. LIGHTS — count every light fixture; put the total in "lightCount" (0 if none).
+6. MISSING — items you cannot match go in elements with "new":true AND a short note in "unrecognized" ([] if none).
 Return ONLY JSON matching the provided schema.`;
 
   const promptText = [houseRules, corrText, kb?.promptText || "", subcatText, basePrompt].filter(Boolean).join("\n\n");
@@ -214,7 +231,7 @@ Return ONLY JSON matching the provided schema.`;
           colorPalette: enumArr(colorVals), categoryTier: enumArr(tax.categoryTier), designStyle: enumArr(tax.designStyle), timeSetting: enumArr(tax.timeSetting),
         },
       },
-      elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "qty"], properties: { name: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, new: { type: "boolean" } } } },
+      elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "cat", "subCat", "qty"], properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, new: { type: "boolean" } } } },
     },
   };
 

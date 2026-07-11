@@ -4482,11 +4482,17 @@ Return ONLY JSON:
     // Sub-Categories admin panel) — replaces the old Rate-Card-only "not taggable in Pricing" flag.
     const invTagHiddenByKey = {};
     (rcSubcatFactors || []).forEach(r => { if (r && r.id && r.tag_hidden) invTagHiddenByKey[r.id] = true; });
+    // A sub-category with no canonical rate_card_categories row (orphaned/typo'd sub_cat text) is
+    // excluded from tagging vocabulary too — same "only recognized sub-cats" rule as the Inventory
+    // tab's filter pills. Items with NO sub-category at all are unaffected (nothing to recognize).
+    const rcSubIds = new Set((rcSubcatFactors || []).map(r => r.id));
     const taggableInv = imsInventory.filter(i => {
       const cat = String(i.cat || i.category || "").trim().toLowerCase();
       if (STRUCTURAL_INV_CATS.has(cat)) return false;
       const subKey = String(i.subCat || i.subcategory || "").trim().toLowerCase();
-      return !(subKey && invTagHiddenByKey[subKey]);
+      if (subKey && invTagHiddenByKey[subKey]) return false;
+      if (subKey && !rcSubIds.has(subKey)) return false;
+      return true;
     });
     // Pure flower-recipe patterns with no inventory backing (e.g. "Flower Garden") join the same
     // vocabulary so they can be tagged/matched exactly like an inventory item.
@@ -4496,7 +4502,7 @@ Return ONLY JSON:
     const subcatText = Object.keys(subByCat).length ? ("Sub-category vocabulary by category (use these names and route each element to the right one):\n" + Object.entries(subByCat).map(([c, set]) => `- ${c}: ${[...set].join(", ")}`).join("\n")) : "";
     // #1 — House tagging rules (admin-editable in Manage → Library), followed strictly.
     const houseRules = (taxonomy.taggingStandards && String(taxonomy.taggingStandards).trim()) ? ("HOUSE TAGGING RULES (set by your team — follow strictly):\n" + String(taxonomy.taggingStandards).trim()) : "";
-    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this IMS Inventory list. Copy the name character-for-character:\n${elemList}\n2. For each visible element, estimate quantity and pick size (S/M/B) if available.\n3. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional.\n4. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n5. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n6. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"short descriptive name","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal"},{"name":"Custom Drape Structure","qty":2,"unit":"pc","size":"","detail":"fabric","new":true}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`;
+    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this IMS Inventory list. Copy the name character-for-character:\n${elemList}\n2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat", picked from the "Sub-category vocabulary by category" list below — this routes the exact-name match to the right bucket instead of the whole catalog, so pick the one that's visually true (e.g. a floral pot is cat "Florals", subCat "Flower Pot Large" — not a Lighting subCat just because a light sits nearby).\n3. For each visible element, estimate quantity and pick size (S/M/B) if available.\n4. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional; still fill "cat"/"subCat" with your best guess.\n5. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n6. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n7. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"short descriptive name","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","cat":"Lighting","subCat":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal"},{"name":"Custom Drape Structure","cat":"Fabric","subCat":"","qty":2,"unit":"pc","size":"","detail":"fabric","new":true}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`;
     // Structured-outputs schema — the 7 tag fields are LOCKED to your exact taxonomy values (enums), so
     // Claude can never return an off-list or mis-cased tag (the root of photos not matching their zone).
     // Element names stay free text (the fuzzy match below maps them to IMS inventory / flags new items).
@@ -4535,8 +4541,8 @@ Return ONLY JSON:
           type: "array",
           items: {
             type: "object", additionalProperties: false,
-            required: ["name", "qty", "unit", "size", "detail", "new"],
-            properties: { name: { type: "string" }, qty: { type: "number" }, unit: { type: "string" }, size: { type: "string", enum: ["S", "M", "B", ""] }, detail: { type: "string" }, new: { type: "boolean" } },
+            required: ["name", "cat", "subCat", "qty", "unit", "size", "detail", "new"],
+            properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, unit: { type: "string" }, size: { type: "string", enum: ["S", "M", "B", ""] }, detail: { type: "string" }, new: { type: "boolean" } },
           },
         },
       },
@@ -4637,50 +4643,60 @@ Return ONLY JSON:
       const parsed = JSON.parse(clean);
       if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         const sizeHints = { heavy: "B", large: "B", big: "B", tall: "B", medium: "M", mid: "M", regular: "M", small: "S", mini: "S", light: "S", short: "S" };
-        const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
-        const stopWords = new Set(["the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium", "standard", "basic", "indian", "wedding", "event", "decor"]);
+        const normalize = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+        // Generic words that inflate keyword-overlap scores between UNRELATED items (colors/sizes/
+        // filler adjectives shared across many catalog names) — excluded so overlap only counts
+        // words that actually identify what the thing IS.
+        const stopWords = new Set([
+          "the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium",
+          "standard", "basic", "indian", "wedding", "event", "decor", "decorative", "piece", "item", "set",
+          "style", "design", "type", "look", "variant", "large", "small", "big", "mini", "tall", "short",
+          "medium", "huge", "giant", "tiny", "gold", "golden", "white", "silver", "black", "red", "pink",
+          "green", "blue", "ivory", "cream", "rose", "peach", "purple", "yellow", "orange", "maroon", "copper",
+        ]);
         const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1);
+        // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
+        // keyword-overlap ≥40%). Shared by both the sub-cat-scoped and full-catalog passes below.
+        const bestOf = (name, pool, keyOf) => {
+          const nameNorm = normalize(name);
+          const exact = pool.find(c => normalize(keyOf(c)) === nameNorm);
+          if (exact) return exact;
+          const nameKw = keywords(name);
+          let bestScore = 0, best = null;
+          for (const c of pool) {
+            const cNorm = normalize(keyOf(c));
+            if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return c; // near-certain, stop here
+            const cKw = keywords(keyOf(c));
+            const overlap = nameKw.filter(w => cKw.some(cw => cw.includes(w) || w.includes(cw))).length;
+            const score = overlap > 0 ? (overlap / Math.max(nameKw.length, cKw.length)) * 100 : 0;
+            if (score > bestScore) { bestScore = score; best = c; }
+          }
+          return bestScore >= 40 ? best : null;
+        };
         // Matches an AI-proposed element name against a real IMS inventory item and, on a match,
         // sets invId so it prices via getElPriceFromInventory (floral-recipe Studio rate, SMB
         // toggle, sub-category scaling factor) exactly like a manually-added element.
         parsed.elements = parsed.elements.map(el => {
-          const exact = taggableInv.find(it => normalize(it.name) === normalize(el.name));
-          if (exact) return { ...el, name: exact.name, unit: exact.unit, invId: exact.id, new: undefined };
           const elWords = normalize(el.name).split(" ");
           let sizeFromName = "";
           for (const w of elWords) { if (sizeHints[w]) { sizeFromName = sizeHints[w]; break; } }
-          const elKw = keywords(el.name);
-          let bestScore = 0, bestMatch = null;
-          for (const it of taggableInv) {
-            const itKw = keywords(it.name);
-            const itNorm = normalize(it.name);
-            const elNorm = normalize(el.name);
-            if (elNorm.includes(itNorm) || itNorm.includes(elNorm)) { bestScore = 100; bestMatch = it; break; }
-            const overlap = elKw.filter(w => itKw.some(iw => iw.includes(w) || w.includes(iw))).length;
-            const score = overlap > 0 ? (overlap / Math.max(elKw.length, itKw.length)) * 100 : 0;
-            if (score > bestScore) { bestScore = score; bestMatch = it; }
-          }
-          if (bestMatch && bestScore >= 40) {
-            const size = sizeFromName || el.size || "";
-            return { ...el, name: bestMatch.name, unit: bestMatch.unit, size, invId: bestMatch.id, new: undefined };
-          }
+          const size = () => sizeFromName || el.size || "";
+
+          // Scope the search to the model's own guessed sub-category first — routes the match to
+          // the right ~10-30 item bucket instead of the whole ~600-item catalog, so a shared
+          // generic word (or a plausible-but-wrong name) can't collide across categories. Falls
+          // back to the full catalog if the guess didn't narrow to anything, so a wrong/blank
+          // category guess never costs recall.
+          const elSubKey = normalize(el.subCat);
+          const scopedInv = elSubKey ? taggableInv.filter(it => normalize(it.subCat || it.subcategory) === elSubKey) : [];
+          const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, it => it.name)) || bestOf(el.name, taggableInv, it => it.name);
+          if (invMatch) return { ...el, name: invMatch.name, unit: invMatch.unit, size: size(), invId: invMatch.id, new: undefined };
+
           // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
-          const patExact = recipeOnlyPatterns.find(p => normalize(p.name) === normalize(el.name));
-          if (patExact) return { ...el, name: patExact.name, unit: patExact.unit, patternId: patExact.id, new: undefined };
-          let bestPatScore = 0, bestPat = null;
-          for (const p of recipeOnlyPatterns) {
-            const pKw = keywords(p.name);
-            const pNorm = normalize(p.name);
-            const elNorm = normalize(el.name);
-            if (elNorm.includes(pNorm) || pNorm.includes(elNorm)) { bestPatScore = 100; bestPat = p; break; }
-            const overlap = elKw.filter(w => pKw.some(iw => iw.includes(w) || w.includes(iw))).length;
-            const score = overlap > 0 ? (overlap / Math.max(elKw.length, pKw.length)) * 100 : 0;
-            if (score > bestPatScore) { bestPatScore = score; bestPat = p; }
-          }
-          if (bestPat && bestPatScore >= 40) {
-            const size = sizeFromName || el.size || "";
-            return { ...el, name: bestPat.name, unit: bestPat.unit, size, patternId: bestPat.id, new: undefined };
-          }
+          const scopedPat = elSubKey ? recipeOnlyPatterns.filter(p => normalize(p.sub) === elSubKey) : [];
+          const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, recipeOnlyPatterns, p => p.name);
+          if (patMatch) return { ...el, name: patMatch.name, unit: patMatch.unit, size: size(), patternId: patMatch.id, new: undefined };
+
           return { ...el, new: true };
         });
         // Drop structural items (truss / floor-carpet / masking) from the element breakdown — they're

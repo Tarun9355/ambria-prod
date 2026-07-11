@@ -7,7 +7,7 @@ import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
 
-export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio }) {
+export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [] }) {
   // Studio sub-categories (Tier 1.1 source of truth · flat list · empty during boot)
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
@@ -758,8 +758,12 @@ Rules:
         // sub-category list (subCatOptions) can itself carry two Rate-Card-entered spellings that
         // differ only by internal whitespace (e.g. a doubled space), which a literal-string Set
         // wouldn't catch, producing a phantom 0-count chip alongside the real one.
+        // Also require a canonical rate_card_categories row to exist — a stray/typo'd sub_cat value
+        // on an inventory item shouldn't produce its own phantom filter pill (the item itself still
+        // shows under "All <cat>" regardless; only the pill-list display is scoped down here).
+        const rcSubIds = new Set((rateCardCategories || []).map((r) => squeeze(r.id).toLowerCase()));
         const seen = new Set();
-        const allChips = ordered.filter((s) => { const key = squeeze(s).toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+        const allChips = ordered.filter((s) => { const key = squeeze(s).toLowerCase(); if (seen.has(key)) return false; seen.add(key); return rcSubIds.has(key); });
         if (allChips.length === 0) return null;
         // Alphabetical (not seed/discovery order) so a long list is actually scannable, plus a
         // live text filter — with 20-30+ sub-cats under one category, hunting through an unsorted

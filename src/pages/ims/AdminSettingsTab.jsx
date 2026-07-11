@@ -881,12 +881,17 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         // keying, same bug class already fixed in matchFlowerPattern (a doubled space in a manually
         // entered sub-category renders identically but compares as a different string).
         const squeezeKey = (s) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+        // Only count/list sub-categories that have a canonical rate_card_categories row — an
+        // orphaned/typo'd sub_cat value on an inventory item shouldn't produce its own toggleable
+        // pill here, same "only recognized sub-cats" rule as the Inventory tab's filter pills.
+        const rcCatIds = new Set((rateCardCategories || []).map((r) => squeezeKey(r.id)));
         const floralsInvBySub = {};
         (inventory || []).forEach((it) => {
           if (squeezeKey(it.cat ?? it.category) !== "florals") return;
           const rawSub = it.subCat ?? it.subcategory;
           if (!rawSub) return;
           const key = squeezeKey(rawSub);
+          if (!rcCatIds.has(key)) return;
           if (!floralsInvBySub[key]) floralsInvBySub[key] = { label: String(rawSub).trim(), count: 0, unit: it.unit || "pc" };
           floralsInvBySub[key].count += 1;
         });
