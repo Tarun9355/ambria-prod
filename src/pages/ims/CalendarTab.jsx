@@ -6,7 +6,7 @@ import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings }) {
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -72,9 +72,34 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
     return events;
   }, [lmsContracts]);
 
-  function eventsOnDate(d) { return calEvents.filter((e) => e.date === dateStr(d)); }
-  const selEvents = selDate ? calEvents.filter((e) => e.date === selDate) : [];
-  const monthEvents = calEvents.filter((e) => {
+  // Studio-booked deals (event_orders) — a separate source from the external LMS/CRM contracts
+  // above, so a deal only shows here if it's booked in Studio, whether or not it also exists in
+  // the CRM. `functionsDetail[]` covers multi-function events; single-date EOs fall back to `.date`.
+  const studioEvents = useMemo(() => {
+    const events = [];
+    for (const eo of (eventOrders || [])) {
+      if (!eo || eo.status === "cancelled") continue;
+      const fnsDetail = Array.isArray(eo.functionsDetail) ? eo.functionsDetail : null;
+      const fnList = fnsDetail && fnsDetail.length ? fnsDetail : [{ date: eo.date, venue: eo.venue, type: (eo.functions || [])[0] }];
+      fnList.forEach((fn, fi) => {
+        const date = fn.date || eo.date;
+        if (!date) return;
+        const venue = typeof fn.venue === "string" ? fn.venue : (fn.venue?.name || (typeof eo.venue === "string" ? eo.venue : eo.venue?.name) || "");
+        events.push({
+          id: "eo-" + eo.id + "-" + fi, date,
+          guestName: eo.clientName || "—", functionType: fn.type || "", venue,
+          dept: "studio", totalAmt: eo.totalCost || 0, balance: 0, eoStatus: eo.status || "pending",
+        });
+      });
+    }
+    return events;
+  }, [eventOrders]);
+
+  const allEvents = useMemo(() => [...calEvents, ...studioEvents], [calEvents, studioEvents]);
+
+  function eventsOnDate(d) { return allEvents.filter((e) => e.date === dateStr(d)); }
+  const selEvents = selDate ? allEvents.filter((e) => e.date === selDate) : [];
+  const monthEvents = allEvents.filter((e) => {
     const parts = (e.date || "").split("-");
     return parseInt(parts[0]) === year && parseInt(parts[1]) === month + 1;
   });
@@ -125,7 +150,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                   {evts.length > 0 && <span className="text-xs font-bold text-indigo-500 ml-auto">{evts.length}</span>}
                 </div>
                 {evts.slice(0, 3).map((e) => (
-                  <div key={e.id} className={"text-xs px-1 py-0.5 rounded mb-0.5 truncate " + (e.dept === "venue" ? "bg-indigo-100 text-indigo-800" : "bg-amber-100 text-amber-800")}>
+                  <div key={e.id} className={"text-xs px-1 py-0.5 rounded mb-0.5 truncate " + (e.dept === "studio" ? "bg-purple-100 text-purple-800" : e.dept === "venue" ? "bg-indigo-100 text-indigo-800" : "bg-amber-100 text-amber-800")}>
                     {e.guestName}
                   </div>
                 ))}
@@ -139,6 +164,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
       <div className="flex gap-4 flex-wrap text-xs text-gray-500">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-indigo-200 inline-block" /> Venue Contract</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-200 inline-block" /> Decor Contract</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-200 inline-block" /> 🎭 Studio Booking</span>
         {hasCats && <>
           <span className="text-gray-300">|</span>
           <span className="flex items-center gap-1"><span className="w-3 h-3 rounded inline-block" style={{ background: "#fef2f2", border: "1px solid #fca5a5" }} /> 👑 King's</span>
@@ -182,17 +208,18 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
           })()}
           {selEvents.length === 0 ? <p className="text-sm text-gray-400 italic">No events on this date</p>
             : selEvents.map((e) => (
-              <div key={e.id} className="border rounded-xl p-3 mb-2" style={{ borderLeft: "4px solid " + (e.dept === "venue" ? "#6366f1" : "#f59e0b") }}>
+              <div key={e.id} className="border rounded-xl p-3 mb-2" style={{ borderLeft: "4px solid " + (e.dept === "studio" ? "#a855f7" : e.dept === "venue" ? "#6366f1" : "#f59e0b") }}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-gray-900">{e.guestName}</span>
-                    <span className={"text-xs px-2 py-0.5 rounded-md font-semibold " + (e.dept === "venue" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-700")}>
-                      {e.dept === "venue" ? "🏛 Venue" : "🎨 Decor"}
+                    <span className={"text-xs px-2 py-0.5 rounded-md font-semibold " + (e.dept === "studio" ? "bg-purple-50 text-purple-700" : e.dept === "venue" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-700")}>
+                      {e.dept === "studio" ? "🎭 Studio Booking" : e.dept === "venue" ? "🏛 Venue" : "🎨 Decor"}
                     </span>
+                    {e.eoStatus && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-gray-100 text-gray-600 capitalize">{e.eoStatus}</span>}
                     {e.priority && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-yellow-50 text-yellow-700">{e.priority}</span>}
                     {e.matched && <span className="text-xs px-2 py-0.5 rounded-md font-bold bg-green-50 text-green-700">🔗 {e.matchType === "exact" ? "Exact" : "Fuzzy"}</span>}
                   </div>
-                  <span className="text-xs text-gray-400">#{e.entryNo}</span>
+                  {e.entryNo && <span className="text-xs text-gray-400">#{e.entryNo}</span>}
                 </div>
                 <div className="flex gap-3 flex-wrap text-sm text-gray-600 mt-1">
                   {e.brideName && e.groomName && <span>💑 {e.brideName.trim()} × {e.groomName.trim()}</span>}

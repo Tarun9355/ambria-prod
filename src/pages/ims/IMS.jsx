@@ -1207,6 +1207,7 @@ export default function IMS() {
           <CalendarTab
             lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
+            eventOrders={eventOrders}
           />
         ) : tab === "flowers" ? (
           <FlowersTab
