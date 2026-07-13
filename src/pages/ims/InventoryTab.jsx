@@ -1576,8 +1576,12 @@ Rules:
                       const child = inventory.find((i) => i.id === si.itemId);
                       const childRental = child ? (Number(child.price ?? child.rentalCost) || 0) : 0;
                       const lineTotal = childRental * (Number(si.qty) || 0);
+                      const childImg = child?.img || (Array.isArray(child?.photoUrls) && child.photoUrls[0]) || "";
                       return (
                         <div key={idx} className="flex items-center gap-2 bg-white border border-indigo-100 rounded-lg px-2 py-1.5">
+                          {childImg
+                            ? <img src={childImg} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                            : <div className="w-7 h-7 rounded bg-gray-100 flex-shrink-0" />}
                           <span className="flex-1 text-xs font-medium text-gray-700 truncate">{child ? child.name : `⚠ ${si.itemId} (missing)`}</span>
                           <span className="text-xs text-gray-400">₹{childRental.toLocaleString("en-IN")} ea</span>
                           <input type="number" min="1" value={si.qty} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
