@@ -2428,9 +2428,12 @@ export default function StudioApp() {
     // already the final all-in customer price (synced verbatim from the same recipe onto Rate Card
     // items elsewhere), so no factor/availability-shortfall logic applies on top. Size defaults to
     // "B" (Big) per the element's own size toggle (StudioBuild.jsx/ManageLibrary.jsx), not derived
-    // from the item's name.
+    // from the item's name. Kits matching a recipe (e.g. a console table with a floral topper) go
+    // through this same branch — priceForInvItem below already handles the kit-total × factor case,
+    // so the combined formula is (kit rental × scaling factor) + flower recipe rate, unchanged for
+    // plain (non-kit) items.
     const isFloral = String(item.cat || item.category || "").toLowerCase() === "florals";
-    if (isFloral && !isKit) {
+    if (isFloral) {
       // dealCheckData is null outside an active Deal Check session — floralArtUnitRate/patternExtra
       // already fall back to studioFloralData for this exact reason; mirror that here too.
       const floralSrc = dealCheckData || studioFloralData || {};
