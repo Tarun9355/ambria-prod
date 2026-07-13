@@ -267,3 +267,19 @@ export async function checkExistingLibraryIds(ids) {
   }
   return existing;
 }
+
+/** Every library row's id/name/url, across the WHOLE table (no folder/status filter) — for the
+ * orphaned-image scan (find rows whose Cloudinary asset was deleted outside the app). Paginated
+ * via .range() since this is a full-table read, unlike the batched existence checks above. */
+export async function fetchAllLibraryRowsMinimal(onProgress) {
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library").select("id,name,url").order("id", { ascending: true }).range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    onProgress?.(out.length);
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
+}

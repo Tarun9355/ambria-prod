@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "rea
 import LazyYT from "../../../components/studio/LazyYT";
 import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
-import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls } from "../../../lib/studio/libraryQueries";
+import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
 // any sidebar filter, venue selection, or (debounced) search term changes; loadMore() appends.
@@ -255,6 +255,8 @@ export default function ManageLibrary({ ctx }) {
   const [importingFolder, setImportingFolder] = useState(false); // recursive folder import in progress
   const [rebuildRunning, setRebuildRunning] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState("");
+  const [orphanScan, setOrphanScan] = useState({ running: false, msg: "", result: null }); // { orphaned:[{id,name,url}], totalLibrary, totalCloudinary }
+  const [orphanDeleting, setOrphanDeleting] = useState(false);
   const untaggedCount = libPage.counts.untagged; // server count (migration 008 `status` column) — not a full-array scan
 
   // Bulk "Tag all untagged" now runs APP-WIDE (in StudioApp) so it keeps going while you move
@@ -353,6 +355,73 @@ export default function ManageLibrary({ ctx }) {
     } finally {
       setRebuildRunning(false);
     }
+  };
+
+  // Cloudinary secure_url → public_id (strip domain/version prefix + extension) — lets the
+  // orphan check match a library row even if its stored URL's version number is stale (e.g. the
+  // asset was re-uploaded/overwritten rather than deleted), same as handleRebuildLibrary's own
+  // dedupe which keys on both secure_url AND public_id.
+  const cldPublicIdFromUrl = (url) => {
+    if (!url) return null;
+    const afterUpload = String(url).replace(/^.*\/upload\/(v\d+\/)?/, "").replace(/\.[a-zA-Z0-9]+$/, "");
+    try { return decodeURIComponent(afterUpload); } catch { return afterUpload; }
+  };
+
+  // Find Orphaned Images — the reverse of Rebuild Library. Scans the same Cloudinary folders to
+  // build the set of assets that ACTUALLY still exist, then flags any Library row whose image
+  // isn't in that set (e.g. the team deleted it directly in Cloudinary, bypassing the app).
+  // Read-only: only reports the list — deleting is a separate explicit action below.
+  const handleFindOrphaned = async () => {
+    const TOP_FOLDERS = ["Ambria", "inhouse venues", "inventory", "Outside Venues", "client-uploads", "production-ref"];
+    if (!window.confirm(
+      `Scan for orphaned Library images?\n\n` +
+      `Scans all ${TOP_FOLDERS.length} Cloudinary folders (~9,987 images) and cross-checks every Library row.\n` +
+      `Read-only — nothing is deleted yet, you'll get a list to review first.\n` +
+      `May take 3–8 minutes.`
+    )) return;
+
+    setOrphanScan({ running: true, msg: "Starting…", result: null });
+    const existingUrls = new Set();
+    const existingIds = new Set();
+    try {
+      for (const topFolder of TOP_FOLDERS) {
+        setOrphanScan((s) => ({ ...s, msg: `Scanning "${topFolder}"…` }));
+        let cursor = "";
+        for (let pg = 0; pg < 100; pg++) {
+          const d = await ctx.cldAdmin("list", { prefix: topFolder, max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
+          for (const r of d.resources || []) {
+            if (r.secure_url) existingUrls.add(r.secure_url);
+            if (r.public_id) existingIds.add(r.public_id);
+          }
+          if (!d.next_cursor) break;
+          cursor = d.next_cursor;
+        }
+      }
+      setOrphanScan((s) => ({ ...s, msg: `Fetching Library rows…` }));
+      const rows = await fetchAllLibraryRowsMinimal((n) => setOrphanScan((s) => ({ ...s, msg: `Fetching Library rows… ${n}` })));
+      const orphaned = rows.filter((r) => r.url && !existingUrls.has(r.url) && !existingIds.has(cldPublicIdFromUrl(r.url)));
+      setOrphanScan({ running: false, msg: "", result: { orphaned, totalLibrary: rows.length, totalCloudinary: existingUrls.size } });
+      showMsg(orphaned.length ? `Found ${orphaned.length} orphaned row(s) out of ${rows.length} Library images.` : "No orphaned rows found — Library matches Cloudinary.", orphaned.length ? "orange" : "green");
+    } catch (e) {
+      setOrphanScan({ running: false, msg: "", result: null });
+      showMsg("Orphan scan failed: " + (e.message || "Unknown error"), "red");
+    }
+  };
+
+  const handleDeleteOrphaned = async () => {
+    const ids = (orphanScan.result?.orphaned || []).map((r) => r.id);
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} orphaned Library row(s)?\n\nThis removes the Library entry only (there's no Cloudinary image left to delete) and cannot be undone.`)) return;
+    setOrphanDeleting(true);
+    try {
+      await saveLib([], ids);
+      ids.forEach((id) => libPage.removeItem(id));
+      showMsg(`✓ Deleted ${ids.length} orphaned row(s).`, "green");
+      setOrphanScan({ running: false, msg: "", result: null });
+    } catch (e) {
+      showMsg("Delete failed: " + (e.message || "Unknown error"), "red");
+    }
+    setOrphanDeleting(false);
   };
 
   // Status filter, search, sidebar filters, and sort (most-recently-tagged first for
@@ -1335,8 +1404,38 @@ export default function ManageLibrary({ ctx }) {
         <button onClick={() => setLibShowBulk(!libShowBulk)} style={{ ...S.btn(false), fontSize: 11 }}>📦 Bulk</button>
         <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>☁️ Cloudinary</button>
         <button onClick={handleRebuildLibrary} disabled={rebuildRunning} title="Scan all Cloudinary folders and add any missing images to the Library" style={{ ...S.btn(false), fontSize: 11, opacity: rebuildRunning ? 0.5 : 1, border: `1px solid ${rebuildRunning ? "#9CA3AF" : "#7C3AED"}`, color: rebuildRunning ? "#9CA3AF" : "#7C3AED" }}>{rebuildRunning ? "⏳ Rebuilding…" : "🔄 Rebuild Library"}</button>
+        <button onClick={handleFindOrphaned} disabled={orphanScan.running} title="Scan Cloudinary and flag Library rows whose image no longer exists there" style={{ ...S.btn(false), fontSize: 11, opacity: orphanScan.running ? 0.5 : 1, border: `1px solid ${orphanScan.running ? "#9CA3AF" : "#E11D48"}`, color: orphanScan.running ? "#9CA3AF" : "#E11D48" }}>{orphanScan.running ? "⏳ Scanning…" : "🧹 Find Orphaned"}</button>
       </div>
       {rebuildMsg && <div style={{ padding: "8px 14px", borderRadius: 8, background: "#7C3AED12", border: "1px solid #7C3AED30", marginBottom: 8, fontSize: 11, color: "#7C3AED" }}>⏳ {rebuildMsg}</div>}
+      {orphanScan.msg && <div style={{ padding: "8px 14px", borderRadius: 8, background: "#E11D4812", border: "1px solid #E11D4830", marginBottom: 8, fontSize: 11, color: "#E11D48" }}>⏳ {orphanScan.msg}</div>}
+      {orphanScan.result && (
+        <div style={{ border: `1px solid ${border}`, borderRadius: 12, padding: 14, marginBottom: 14, background: cardBg }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: orphanScan.result.orphaned.length ? 10 : 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: orphanScan.result.orphaned.length ? "#E11D48" : "#10B981" }}>
+              {orphanScan.result.orphaned.length ? `🧹 ${orphanScan.result.orphaned.length} orphaned row(s) found` : "✓ No orphaned rows — Library matches Cloudinary"}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 10, color: textS }}>{orphanScan.result.totalLibrary} Library rows · {orphanScan.result.totalCloudinary} Cloudinary images</span>
+              {orphanScan.result.orphaned.length > 0 && (
+                <button onClick={handleDeleteOrphaned} disabled={orphanDeleting} style={{ ...S.btn(true), fontSize: 11, padding: "5px 10px", background: "#E11D48", opacity: orphanDeleting ? 0.5 : 1 }}>
+                  {orphanDeleting ? "Deleting…" : `🗑 Delete ${orphanScan.result.orphaned.length}`}
+                </button>
+              )}
+              <button onClick={() => setOrphanScan({ running: false, msg: "", result: null })} style={{ ...S.btn(false), fontSize: 11, padding: "5px 10px" }}>Dismiss</button>
+            </div>
+          </div>
+          {orphanScan.result.orphaned.length > 0 && (
+            <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              {orphanScan.result.orphaned.map((r) => (
+                <div key={r.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, padding: "4px 8px", borderRadius: 6, background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)" }}>
+                  <span style={{ color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name || r.id}</span>
+                  <span style={{ color: textS, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "50%" }} title={r.url}>{r.url}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {/* Cloudinary Browser for Library */}
       {cldOpen==="library"&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:14,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
