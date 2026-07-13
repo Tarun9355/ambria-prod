@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge, Modal, Tabs, Field, Input, Sel, Btn } from "../../components/ui";
 import { resolveMandiFlower, resolveSizeKey, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { resolveDateCategory } from "../../lib/inventory/helpers";
 
 function fmt(n){ return "₹"+(Number(n)||0).toLocaleString("en-IN"); }
 
@@ -69,9 +70,9 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
 
   // Get mandi price multiplier for selected function's date
   const fnDate=fn?.date||"";
-  const fnDateCategory=(settings.datePricing?.markedDates||{})[fnDate]||"competition";
+  const fnDateCategory=resolveDateCategory(fnDate,settings);
   const mandiMultiplier=(settings.mandiPriceMultipliers||{})[fnDateCategory]||1.0;
-  const mandiDateLabel=fnDateCategory==="heavy_saya"?"🔴 Heavy Saya":fnDateCategory==="non_saya"?"🟢 Non-Saya":"🟡 Competition";
+  const mandiDateLabel=(settings.datePricing?.categories||{})[fnDateCategory]?.label||"✦ Perfect";
 
   // Calculate shopping list
   // Tier 1.6 Phase 2: each pattern entry has its OWN realPct (from rcItem.floralMode at booking time).
@@ -296,7 +297,7 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
           <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2">
             <span className="text-lg">⚠️</span>
             <div>
-              <p className="text-sm font-bold text-red-800">Heavy Saya Date — Mandi prices expected ~{Math.round((mandiMultiplier-1)*100)}% higher</p>
+              <p className="text-sm font-bold text-red-800">King's Date — Mandi prices expected ~{Math.round((mandiMultiplier-1)*100)}% higher</p>
               <p className="text-xs text-red-600 mt-0.5">Shopping list adjusted at ×{mandiMultiplier}. Consider increasing artificial flower ratio to reduce real flower cost.</p>
             </div>
           </div>
@@ -305,7 +306,7 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
           <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-start gap-2">
             <span className="text-lg">🟢</span>
             <div>
-              <p className="text-sm font-bold text-green-800">Non-Saya Date — Mandi prices expected ~{Math.round((1-mandiMultiplier)*100)}% lower</p>
+              <p className="text-sm font-bold text-green-800">Filler Date — Mandi prices expected ~{Math.round((1-mandiMultiplier)*100)}% lower</p>
               <p className="text-xs text-green-600 mt-0.5">Shopping list adjusted at ×{mandiMultiplier}. Good opportunity for richer real flower arrangements.</p>
             </div>
           </div>

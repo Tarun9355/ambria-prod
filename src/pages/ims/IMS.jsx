@@ -203,6 +203,24 @@ export default function IMS() {
   useEffect(() => { trussAllocRef.current = trussAlloc; }, [trussAlloc]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
+  // Settings are a key→value table; persist only the keys that changed. Declared here (rather
+  // than near its other read/write siblings further down) so effects that run earlier in this
+  // component — like the LMS/season sync — can depend on it without a temporal-dead-zone error.
+  const setSettings = useCallback((updater) => {
+    const prev = settingsRef.current;
+    const next = typeof updater === "function" ? updater(prev) : updater;
+    settingsRef.current = next;
+    setSettingsState(next);
+    (async () => {
+      for (const k of Object.keys(next)) {
+        if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) {
+          const { error: e } = await supabase.from("settings").upsert({ key: k, value: next[k] }, { onConflict: "key" });
+          if (e) setError(`Save failed: ${e.message}`);
+        }
+      }
+    })();
+  }, []);
+
   // Apply settings-table rows → blocks blob, Studio rate-card mirror (RC_SK), settings object.
   // Shared by the initial load and the settings Realtime subscription so config syncs live.
   const applySettingsRows = useCallback((setRows) => {
@@ -597,9 +615,18 @@ export default function IMS() {
     const { contracts, lastSync } = await fetchCachedContracts();
     setLmsContracts(contracts);
     const season = await fetchSeason();
-    if (season) setStudioLmsCache({ dateCategories: buildDateCategories(season, contracts) });
+    if (season) {
+      const dateCategories = buildDateCategories(season, contracts);
+      setStudioLmsCache({ dateCategories });
+      // Keep Date Pricing's auto-synced categories in step with the calendar — manual overrides
+      // (datePricing.markedDates) still win via resolveDateCategory; this is just the default.
+      const AUTO_CAT_MAP = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
+      const autoCategories = {};
+      Object.entries(dateCategories).forEach(([d, cat]) => { autoCategories[d] = AUTO_CAT_MAP[cat] || "non_saya"; });
+      setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoCategories } }));
+    }
     return lastSync;
-  }, []);
+  }, [setSettings]);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
   const syncLms = useCallback(async () => {
@@ -852,22 +879,6 @@ export default function IMS() {
         const before = prevMap.get(o.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(o)) {
           const { error: e } = await supabase.from("overheads").upsert(overheadToRow(o), { onConflict: "id" });
-          if (e) setError(`Save failed: ${e.message}`);
-        }
-      }
-    })();
-  }, []);
-
-  // Settings are a key→value table; persist only the keys that changed.
-  const setSettings = useCallback((updater) => {
-    const prev = settingsRef.current;
-    const next = typeof updater === "function" ? updater(prev) : updater;
-    settingsRef.current = next;
-    setSettingsState(next);
-    (async () => {
-      for (const k of Object.keys(next)) {
-        if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) {
-          const { error: e } = await supabase.from("settings").upsert({ key: k, value: next[k] }, { onConflict: "key" });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }

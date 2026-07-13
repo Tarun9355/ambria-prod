@@ -34,6 +34,15 @@ export function findAlternatives(targetItem, inventory, neededQty = 1, excludeId
     .slice(0, 3);
 }
 
+// Effective date-pricing category: manual override (markedDates) wins, else the auto-synced
+// LMS category (datePricing.autoCategories, kept in sync from the Calendar's LMS/season data),
+// else Filler (non_saya) — the single source of truth every date-pricing consumer should share.
+export function resolveDateCategory(dateStr, settings) {
+  const dp = settings?.datePricing;
+  if (!dateStr || !dp) return "non_saya";
+  return (dp.markedDates || {})[dateStr] || (dp.autoCategories || {})[dateStr] || "non_saya";
+}
+
 // Dynamic date pricing → { effectivePrice, multiplier, category, label, reason }.
 export function getEffectivePricing(basePrice, functionDate, settings) {
   if (!basePrice || !functionDate || !settings?.datePricing)
@@ -46,12 +55,13 @@ export function getEffectivePricing(basePrice, functionDate, settings) {
   const lastMinDays = dp.lastMinuteDays || 10;
   if (daysUntil >= 0 && daysUntil <= lastMinDays) {
     const cat = dp.categories.non_saya;
-    return { effectivePrice: Math.round(basePrice * (cat?.multiplier || 0.75)), multiplier: cat?.multiplier || 0.75, category: "non_saya", label: cat?.label || "Non-Saya", reason: `Last-minute booking (${daysUntil}d away)` };
+    return { effectivePrice: Math.round(basePrice * (cat?.multiplier || 0.75)), multiplier: cat?.multiplier || 0.75, category: "non_saya", label: cat?.label || "Filler", reason: `Last-minute booking (${daysUntil}d away)` };
   }
-  const catKey = (dp.markedDates || {})[functionDate];
+  const catKey = resolveDateCategory(functionDate, settings);
   if (catKey && dp.categories[catKey]) {
     const cat = dp.categories[catKey];
-    return { effectivePrice: Math.round(basePrice * cat.multiplier), multiplier: cat.multiplier, category: catKey, label: cat.label, reason: `Date marked as ${cat.label}` };
+    const marked = (dp.markedDates || {})[functionDate];
+    return { effectivePrice: Math.round(basePrice * cat.multiplier), multiplier: cat.multiplier, category: catKey, label: cat.label, reason: marked ? `Date marked as ${cat.label}` : `Auto-synced as ${cat.label}` };
   }
   const cat = dp.categories.competition;
   return { effectivePrice: basePrice, multiplier: 1, category: "competition", label: cat?.label || "Standard", reason: "Unmarked date (standard pricing)" };

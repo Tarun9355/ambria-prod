@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
+import { SETTINGS_DEFAULTS } from "../../lib/ims/constants";
 
 // Faithful copy of the reference IMS DatePricingPanel (shown in Calendar → Date Pricing Config).
 export default function DatePricingPanel({ settings, setSettings }) {
-  const dp = settings.datePricing || { lastMinuteDays: 10, categories: {}, markedDates: {} };
+  const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
   const marked = dp.markedDates || {};
+  // Auto-synced from the Calendar's LMS/season data (IMS.jsx's loadLmsFromCache) — the default
+  // category for any date the admin hasn't manually overridden in `marked`.
+  const auto = dp.autoCategories || {};
 
   const today = new Date();
   const [calYear, setCalYear] = useState(today.getFullYear());
@@ -42,6 +46,13 @@ export default function DatePricingPanel({ settings, setSettings }) {
     competition: "bg-yellow-100 text-yellow-800 font-bold border border-yellow-300",
     non_saya: "bg-green-100 text-green-800 font-bold border border-green-300",
   };
+  // Lighter variant for dates with no manual override — shows what the auto-synced (LMS/season)
+  // category would price it at, so an admin can see what they'd be overriding before clicking.
+  const CAT_CELL_LIGHT = {
+    heavy_saya: "bg-red-50 text-red-500 border border-red-100 hover:bg-red-100",
+    competition: "bg-yellow-50 text-yellow-600 border border-yellow-100 hover:bg-yellow-100",
+    non_saya: "bg-green-50 text-green-500 border border-green-100 hover:bg-green-100",
+  };
 
   return (
     <div className="space-y-6">
@@ -58,8 +69,8 @@ export default function DatePricingPanel({ settings, setSettings }) {
                 <p className="text-sm font-semibold text-gray-800">{cat.label}</p>
                 <p className="text-xs text-gray-400">
                   {key === "heavy_saya" ? "Peak wedding season — charge premium" :
-                    key === "competition" ? "Standard market rate — default for unmarked dates" :
-                      "Off-season or last-minute — attract business with lower rates"}
+                    key === "competition" ? "Solid demand — standard market rate" :
+                      "Off-season, unlisted, or last-minute — attract business with lower rates"}
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -82,7 +93,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
         <div className="flex-1">
           <p className="font-bold text-amber-800">Last-Minute Booking Override</p>
           <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
-            If a project is created within <strong>N days</strong> of the function date, Non-Saya pricing automatically applies — regardless of the date's calendar category.
+            If a project is created within <strong>N days</strong> of the function date, Filler pricing automatically applies — regardless of the date's calendar category.
           </p>
           <div className="flex items-center gap-3 mt-3">
             <span className="text-sm text-amber-800 font-medium">Override window:</span>
@@ -92,7 +103,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
             <span className="text-sm text-amber-700">days before the event</span>
           </div>
           <p className="text-xs text-amber-600 mt-2">
-            Current: booking ≤ {dp.lastMinuteDays || 10} days from event → Non-Saya ({(cats.non_saya?.multiplier || 0.75) * 100}% of base price)
+            Current: booking ≤ {dp.lastMinuteDays || 10} days from event → Filler ({(cats.non_saya?.multiplier || 0.75) * 100}% of base price)
           </p>
         </div>
       </div>
@@ -130,15 +141,18 @@ export default function DatePricingPanel({ settings, setSettings }) {
             const d = i + 1;
             const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
             const catKey = marked[dateStr];
+            const autoKey = !catKey ? auto[dateStr] : null;
             const isToday = dateStr === todayStr;
             const isPast = dateStr < todayStr;
             return (
               <button key={d} onClick={() => toggleDate(dateStr, selCat)}
+                title={autoKey ? `Auto-synced as ${cats[autoKey]?.label || autoKey} — click to override` : undefined}
                 className={"w-full aspect-square rounded-xl text-sm font-medium transition-all flex items-center justify-center relative "
                   + (catKey ? (CAT_CELL[catKey] || "bg-gray-100")
-                    : isPast ? "text-gray-300 hover:bg-gray-50"
-                      : isToday ? "border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50"
-                        : "hover:bg-gray-100 text-gray-700")}>
+                    : autoKey ? (CAT_CELL_LIGHT[autoKey] || "text-gray-700")
+                      : isPast ? "text-gray-300 hover:bg-gray-50"
+                        : isToday ? "border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50"
+                          : "hover:bg-gray-100 text-gray-700")}>
                 {d}
                 {isToday && !catKey && <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-500" />}
               </button>

@@ -10,6 +10,7 @@ import {
   heavyExtraLabour,
 } from "../../lib/ims/constants";
 import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
+import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { heavyElementExtraForFn, standingPillarCount, fixedVenueFor } from "../../lib/ims/fixedVenues";
 import { resolveSizeKey, sizeClassToPatternKey } from "../../lib/ims/flowerHelpers";
 
@@ -200,7 +201,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       const fnDate=fn?.date||"";
       const season=(settings.seasonMap||{})[fnDate];
       // Heavy Saya now uses the per-type factor (Workforce tab); single scalar removed.
-      const heavySayaOn=season==="kings"||(settings.datePricing?.markedDates||{})[fnDate]==="heavy_saya";
+      const heavySayaOn=season==="kings"||resolveDateCategory(fnDate,settings)==="heavy_saya";
       if(heavySayaOn) candidates.push((settings.situationalMultipliers?.heavySaya||{})[type]||SIT_MULT_DEFAULTS.heavySaya[type]||1.3);
       // Event timing — THIS function's start time determines pressure
       const fnTiming=getEventTimingFromTime(fn?.eventStartTime);
@@ -236,7 +237,7 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
       if(!dp){
         const cands=[tempDump];
         const season=(settings.seasonMap||{})[otherFn.date||""];
-        const heavySayaOn=season==="kings"||(settings.datePricing?.markedDates||{})[otherFn.date||""]==="heavy_saya";
+        const heavySayaOn=season==="kings"||resolveDateCategory(otherFn.date||"",settings)==="heavy_saya";
         if(heavySayaOn) cands.push((settings.situationalMultipliers?.heavySaya||{}).Labours||SIT_MULT_DEFAULTS.heavySaya.Labours||1.3);
         // Event timing — this function's own start time
         const otherTiming=getEventTimingFromTime(otherFn.eventStartTime);
@@ -448,12 +449,12 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
     // Factor 1 — Date Category (only Heavy Saya pushes up, others 1.0)
     let dateMult=1.0;
     const fnDate=fn?.date||"";
-    const dateCategory=(settings.datePricing?.markedDates||{})[fnDate];
+    const dateCategory=resolveDateCategory(fnDate,settings);
     if(dateCategory==="heavy_saya"){
       dateMult=(sm.heavySaya||{})[type]||SIT_MULT_DEFAULTS.heavySaya[type]||1.0;
-      factors.push({label:"🔴 Heavy Saya",mult:dateMult});
+      factors.push({label:"👑 King's",mult:dateMult});
     } else {
-      factors.push({label:dateCategory==="non_saya"?"🟢 Non-Saya":"🟡 Competition",mult:1.0});
+      factors.push({label:dateCategory==="non_saya"?"○ Filler":"✦ Perfect",mult:1.0});
     }
 
     // Factor 2 — Event Segment (only Premium pushes up, others 1.0)

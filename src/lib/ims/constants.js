@@ -119,11 +119,12 @@ export const SETTINGS_DEFAULTS = {
   datePricing: {
     lastMinuteDays: 10,
     categories: {
-      heavy_saya: { label: "🔴 Heavy Saya", multiplier: 1.4, color: "red" },
-      competition: { label: "🟡 Perfect Competition", multiplier: 1.0, color: "yellow" },
-      non_saya: { label: "🟢 Non-Saya", multiplier: 0.75, color: "green" },
+      heavy_saya: { label: "👑 King's", multiplier: 1.4, color: "red" },
+      competition: { label: "✦ Perfect", multiplier: 1.0, color: "yellow" },
+      non_saya: { label: "○ Filler", multiplier: 0.75, color: "green" },
     },
     markedDates: {},
+    autoCategories: {},
   },
   artificialColours: ["Red", "White", "Pastels", "Yellow/Orange", "Purple", "Greens", "Mixed/Other"],
   artificialKgToPieces: 200,
