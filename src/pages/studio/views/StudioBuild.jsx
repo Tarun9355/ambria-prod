@@ -112,7 +112,10 @@ export default function StudioBuild({ ctx }) {
   // (deal-local) → Deal Check auto-match honors the pin. No costs shown — availability only.
   const [availModal, setAvailModal] = useState(null); // { zoneKey, idx, elName, subcat, loading, items, selectedId }
   const openAvailModal = async (zoneKey, idx, el, rc) => {
-    const subcat = (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
+    // Inventory-sourced elements (el.invId) already know their exact real sub-category — no
+    // Rate-Card→IMS alias lookup needed, unlike the legacy rc path below.
+    const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+    const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
     const date = activeFnMeta?.date || clientDate || "";
     setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || null });
     try {
@@ -760,7 +763,7 @@ export default function StudioBuild({ ctx }) {
                         <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{el.name}</span>
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
-                        {rc&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:11,opacity:0.5,padding:"0 1px",lineHeight:1}}>📦</span>}
+                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:11,opacity:0.5,padding:"0 1px",lineHeight:1}}>📦</span>}
                         {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {el.imsName||"pinned"}</span>}
                         {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
