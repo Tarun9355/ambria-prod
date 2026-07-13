@@ -109,6 +109,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [moveSubcatModal, setMoveSubcatModal] = useState(false);
   const [moveFromSub, setMoveFromSub] = useState("");
   const [moveToSub, setMoveToSub] = useState("");
+  const [kitCompSearch, setKitCompSearch] = useState("");
   const [blockForm, setBlockForm] = useState({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" });
   // Bulk block state
   const [bulkFnId, setBulkFnId] = useState("");
@@ -441,6 +442,7 @@ Rules:
     });
     setEditModal(itemId);
     setDetailItem(null); // close detail modal if it was open
+    setKitCompSearch("");
   }
 
   async function handleEditPhoto(e) {
@@ -1593,14 +1595,36 @@ Rules:
                       );
                     })}
 
-                    {/* Add component (datalist autocomplete) */}
-                    <div className="flex items-center gap-2">
-                      <input list="kit-comp-options" placeholder="🔍 Type an item name to add as a component…"
-                        onChange={(e) => { const name = e.target.value; const it = inventory.find((i) => i.name === name && i.id !== editForm.id); if (it) { setEditForm((f) => (f.subItems || []).some((s) => s.itemId === it.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: it.id, qty: 1 }] })); e.target.value = ""; } }}
-                        className="flex-1 border rounded-lg px-3 py-2 text-sm" />
-                      <datalist id="kit-comp-options">
-                        {kitComponentOpts.map((i) => <option key={i.id} value={i.name}>{`₹${(Number(i.price ?? i.rentalCost) || 0)} · ${i.cat || i.category || ""}`}</option>)}
-                      </datalist>
+                    {/* Add component — custom search dropdown (native <datalist> can't show thumbnails) */}
+                    <div className="relative">
+                      <input value={kitCompSearch} onChange={(e) => setKitCompSearch(e.target.value)} placeholder="🔍 Type an item name to add as a component…"
+                        className="w-full border rounded-lg px-3 py-2 text-sm" />
+                      {kitCompSearch.trim() && (() => {
+                        const q = kitCompSearch.trim().toLowerCase();
+                        const matches = kitComponentOpts.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 40);
+                        return (
+                          <div className="absolute z-50 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                            {matches.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No matches</div>}
+                            {matches.map((i) => {
+                              const img = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+                              return (
+                                <div key={i.id} onClick={() => {
+                                  setEditForm((f) => (f.subItems || []).some((s) => s.itemId === i.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: i.id, qty: 1 }] }));
+                                  setKitCompSearch("");
+                                }} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
+                                  {img
+                                    ? <img src={img} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                                    : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0" />}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm text-gray-800 truncate">{i.name}</div>
+                                    <div className="text-xs text-gray-400">₹{(Number(i.price ?? i.rentalCost) || 0)} · {i.cat || i.category || ""}</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Live kit price */}
