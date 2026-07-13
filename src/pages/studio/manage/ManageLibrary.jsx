@@ -104,7 +104,7 @@ function LoadMoreSentinel({ onIntersect }) {
 // ═══ MANAGE: LIBRARY & CONTENT ═══
 // Faithful rebuild of the reference AmbriStudioInner library view.
 // Reference: App_latest.jsx — ManageLibrary() render block (~11684), LibraryBrowse()
-// (~11042), LibraryAdd() (~11426), LibraryBulk() (~11505), plus the inline helpers
+// (~11042), plus the inline helpers
 // toggleLibFilter/toggleLibVenueName/clearLibFilters (~10964–10995) — filtering/status/search/sort
 // itself is now server-side (usePaginatedLibrary), not the client-side libFiltered memo this once was.
 //
@@ -134,10 +134,7 @@ export default function ManageLibrary({ ctx }) {
     libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames,
     libEditImg, setLibEditImg, libElSearch, setLibElSearch,
-    libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview,
-    libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
-    libBulkProgress, setLibBulkProgress, libAiLoading, setLibAiLoading,
-    libShowBulk, setLibShowBulk,
+    libAiLoading, setLibAiLoading,
     // photo tag venue picker
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub,
     setPreviewImg,
@@ -1123,87 +1120,6 @@ export default function ManageLibrary({ ctx }) {
     </div>
   );
 
-  // ═══ LIBRARY: ADD SINGLE IMAGE ═══
-  const LibraryAdd = () => {
-    const doAiTag = async () => {
-      const trimmed = libAddUrl.trim();
-      if (!trimmed) { showMsg("Paste a URL first", "red"); return; }
-      if (!trimmed.startsWith("http")) { showMsg("Must be a web URL (https://...) — local file paths won't work", "red"); return; }
-      // Detect page URLs vs direct image URLs
-      if (trimmed.includes("pinterest.com/pin/") || trimmed.includes("pin.it/")) { showMsg("That's a Pinterest page — right-click the image → 'Copy image address' to get the direct URL (i.pinimg.com/...)", "red"); return; }
-      if (trimmed.includes("instagram.com/p/") || trimmed.includes("instagram.com/reel/")) { showMsg("That's an Instagram page — right-click the image → 'Copy image address' to get the direct URL", "red"); return; }
-      setLibAiLoading(true);
-      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000));
-      try {
-        const tags = await Promise.race([aiTagImage(trimmed), timeout]);
-        if (tags) {
-          const { name, elements, ...rest } = tags;
-          setLibAddPreview({ url: trimmed, name: name || "Untitled", tags: rest, elements: Array.isArray(elements) ? elements : [] });
-        } else {
-          // No fallback showMsg here — aiTagImage already surfaced the specific reason
-          // (rate limit, empty response, parse error, etc.) before returning null.
-          setLibAddPreview({ url: trimmed, name: "Untitled", tags: {} });
-        }
-      } catch (e) {
-        setLibAddPreview({ url: trimmed, name: "Untitled", tags: {} });
-        showMsg(e.message === "timeout" ? "Timed out — tag manually" : "AI tagging failed — tag manually", "red");
-      }
-      setLibAiLoading(false);
-    };
-    const doSave = () => {
-      if (!libAddPreview) return;
-      const newImg = { id: "LIB" + Date.now().toString(36), url: libAddPreview.url, name: libAddPreview.name, tags: libAddPreview.tags, elements: libAddPreview.elements || [], addedAt: Date.now(), source: "internal" };
-      saveLib([newImg]);
-      if (photoStatus(newImg) === libStatus) libPage.prependItems([newImg]);
-      setLibAddUrl(""); setLibAddPreview(null);
-    };
-    const toggleTag = (cat, val) => {
-      if (!libAddPreview) return;
-      const cur = libAddPreview.tags?.[cat] || [];
-      const has = cur.includes(val);
-      const next = has ? cur.filter(x => x !== val) : [...cur, val];
-      setLibAddPreview({ ...libAddPreview, tags: { ...libAddPreview.tags, [cat]: next } });
-    };
-    return (
-      <div style={{ maxWidth: 680 }}>
-        <div style={{ background: cardBg, borderRadius: 14, border: `1px solid ${border}`, padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: textP, marginBottom: 4 }}>Add single image</div>
-          <div style={{ fontSize: 12, color: textS, marginBottom: 12 }}>Paste a direct image URL (Cloudinary, Pexels, or right-click → "Copy image address" from Pinterest/Instagram)</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input value={libAddUrl} onChange={e => setLibAddUrl(e.target.value)} placeholder="https://i.pinimg.com/... or https://res.cloudinary.com/..." style={{ ...S.input, flex: 1, fontSize: 12 }} />
-            <button onClick={doAiTag} disabled={libAiLoading} style={{ ...S.btn(true), fontSize: 12, opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "Tagging..." : "🤖 AI Tag"}</button>
-          </div>
-          {libAddPreview && (
-            <div style={{ display: "flex", gap: 16, marginTop: 16 }}>
-              <div style={{ flexShrink: 0 }}>
-                <img src={libAddPreview.url} alt="" style={{ width: 160, height: 120, objectFit: "cover", borderRadius: 10 }} onError={e => { e.target.style.display = "none"; }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "inline-block", fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "#0EA5E918", color: "#0EA5E9", marginBottom: 8 }}>AI auto-tagged</div>
-                <input value={libAddPreview.name} onChange={e => setLibAddPreview({ ...libAddPreview, name: e.target.value })} style={{ ...S.input, fontSize: 12, fontWeight: 600, marginBottom: 8 }} placeholder="Image name..." />
-                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => (
-                  <div key={k} style={{ marginBottom: 5 }}>
-                    <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>{getTaxLabel(k)}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                      {taxonomy[k].map(v => {
-                        const sel = (libAddPreview.tags?.[k] || []).includes(v);
-                        return <span key={v} onClick={() => toggleTag(k, v)} style={{ padding: "2px 7px", fontSize: 9, borderRadius: 8, cursor: "pointer", border: `1px solid ${sel ? "#0EA5E9" : border}`, background: sel ? "#0EA5E912" : "transparent", color: sel ? "#0EA5E9" : textS }}>{v}</span>;
-                      })}
-                    </div>
-                  </div>
-                ))}
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <button onClick={doSave} style={{ ...S.btn(true), fontSize: 12 }}>✓ Save to library</button>
-                  <button onClick={() => setLibAddPreview(null)} style={{ ...S.btn(false), fontSize: 12 }}>Cancel</button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   // ═══ CONTRIBUTIONS PANEL — who corrected how many photos, by date (Phase 1b reporting) ═══
   const CorrectionsPanel = () => {
     const now = Date.now();
@@ -1286,122 +1202,11 @@ export default function ManageLibrary({ ctx }) {
     );
   };
 
-  // ═══ LIBRARY: BULK IMPORT ═══
-  const LibraryBulk = () => {
-    const startBulk = async () => {
-      const urls = libBulkText.split("\n").map(u => u.trim()).filter(u => u.startsWith("http"));
-      if (!urls.length) { showMsg("Paste at least one URL", "red"); return; }
-      const q = urls.map(url => ({ url, name: "Untitled", tags: {}, status: "pending" }));
-      setLibBulkQueue(q);
-      setLibBulkProgress(0);
-      setLibAiLoading(true);
-      for (let i = 0; i < q.length; i++) {
-        try {
-          const tags = await aiTagImage(q[i].url);
-          if (tags) {
-            const { name, elements, ...rest } = tags;
-            q[i] = { ...q[i], name: name || "Untitled", tags: rest, elements: Array.isArray(elements) ? elements : [], status: "tagged" };
-          } else {
-            q[i] = { ...q[i], status: "tagged" };
-          }
-        } catch { q[i] = { ...q[i], status: "tagged" }; }
-        setLibBulkProgress(i + 1);
-        setLibBulkQueue([...q]);
-      }
-      setLibAiLoading(false);
-    };
-    const saveBulk = () => {
-      const newImgs = libBulkQueue.filter(q => q.status === "tagged").map(q => ({
-        id: "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-        url: q.url, name: q.name, tags: q.tags, elements: q.elements || [], addedAt: Date.now(), source: "internal"
-      }));
-      saveLib(newImgs);
-      const matching = newImgs.filter(i => photoStatus(i) === libStatus);
-      if (matching.length) libPage.prependItems(matching);
-      setLibBulkQueue([]); setLibBulkText(""); setLibBulkProgress(0);
-    };
-    const toggleBulkTag = (idx, cat, val) => {
-      const q = [...libBulkQueue];
-      const cur = q[idx].tags?.[cat] || [];
-      const has = cur.includes(val);
-      q[idx] = { ...q[idx], tags: { ...q[idx].tags, [cat]: has ? cur.filter(x => x !== val) : [...cur, val] } };
-      setLibBulkQueue(q);
-    };
-    return (
-      <div style={{ maxWidth: 700 }}>
-        <div style={{ background: cardBg, borderRadius: 14, border: `1px solid ${border}`, padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: textP, marginBottom: 4 }}>Bulk import</div>
-          <div style={{ fontSize: 12, color: textS, marginBottom: 12 }}>Paste multiple Cloudinary URLs (one per line). Each will be AI-tagged, then you review the batch.</div>
-          {libBulkQueue.length === 0 ? (
-            <>
-              <textarea value={libBulkText} onChange={e => setLibBulkText(e.target.value)} rows={5} placeholder={"https://res.cloudinary.com/ambria/.../image1.jpg\nhttps://res.cloudinary.com/ambria/.../image2.jpg\nhttps://res.cloudinary.com/ambria/.../image3.jpg"} style={{ ...S.input, resize: "vertical", fontSize: 12, width: "100%", boxSizing: "border-box" }} />
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                <button onClick={startBulk} disabled={libAiLoading} style={{ ...S.btn(true), fontSize: 12 }}>🤖 Process all (AI tag)</button>
-                <span style={{ fontSize: 11, color: textS }}>~3-5 sec per image</span>
-              </div>
-            </>
-          ) : (
-            <>
-              {libAiLoading && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: textS }}>Processing: {libBulkProgress} of {libBulkQueue.length} tagged</div>
-                  <div style={{ height: 4, background: `${border}`, borderRadius: 2, marginTop: 6 }}>
-                    <div style={{ height: 4, width: `${(libBulkProgress / libBulkQueue.length) * 100}%`, background: accent, borderRadius: 2, transition: "width 0.3s" }} />
-                  </div>
-                </div>
-              )}
-              {!libAiLoading && <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <button onClick={saveBulk} style={{ ...S.btn(true), fontSize: 12 }}>✓ Save all {libBulkQueue.filter(q => q.status === "tagged").length} to library</button>
-                <button onClick={() => { setLibBulkQueue([]); setLibBulkProgress(0); }} style={{ ...S.btn(false), fontSize: 12 }}>Cancel</button>
-              </div>}
-              <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                {libBulkQueue.map((item, idx) => (
-                  <div key={idx} style={{ display: "flex", gap: 12, padding: 10, borderBottom: `1px solid ${border}`, alignItems: "flex-start" }}>
-                    <img src={item.url} alt="" style={{ width: 80, height: 56, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} onError={e => { e.target.style.display = "none"; }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                        <input value={item.name} onChange={e => { const q = [...libBulkQueue]; q[idx] = { ...q[idx], name: e.target.value }; setLibBulkQueue(q); }} style={{ ...S.input, fontSize: 11, fontWeight: 600, flex: 1 }} />
-                        <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 6, background: item.status === "tagged" ? "#0EA5E918" : `${border}`, color: item.status === "tagged" ? "#0EA5E9" : textS }}>{item.status === "tagged" ? "Tagged" : "Pending"}</span>
-                      </div>
-                      {item.status === "tagged" && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
-                          {Object.keys(taxonomy).map(k => (item.tags?.[k] || []).map(v => (
-                            <span key={`${k}-${v}`} onClick={() => toggleBulkTag(idx, k, v)} style={{ fontSize: 8, padding: "1px 5px", borderRadius: 6, background: `${accent}12`, color: accent, cursor: "pointer" }}>{v} ×</span>
-                          )))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   // ═══ MANAGE: LIBRARY & CONTENT ═══ (reference ManageLibrary() ~11684)
   return (
     <div>
       {/* Inline add bar */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 12, background: cardBg, border: `1px dashed ${accent}40`, borderRadius: 12, marginBottom: 14 }}>
-        <input value={libAddUrl} onChange={e => setLibAddUrl(e.target.value)} placeholder="Paste image URL (Cloudinary, i.pinimg.com, Pexels...)" style={{ ...S.input, flex: 1, fontSize: 12 }} />
-        <button onClick={async () => {
-          const trimmed = libAddUrl.trim();
-          if (!trimmed) { showMsg("Paste a URL first", "red"); return; }
-          if (!trimmed.startsWith("http")) { showMsg("Must be a web URL (https://...)", "red"); return; }
-          if (trimmed.includes("pinterest.com/pin/") || trimmed.includes("pin.it/")) { showMsg("Right-click image → 'Copy image address' for direct URL", "red"); return; }
-          setLibAiLoading(true);
-          const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000));
-          try {
-            const tags = await Promise.race([aiTagImage(trimmed), timeout]);
-            const { name, ...rest } = tags || {};
-            setLibAddPreview({ url: trimmed, name: name || "Untitled", tags: rest || {} });
-          } catch { setLibAddPreview({ url: trimmed, name: "Untitled", tags: {} }); showMsg("AI tag failed — tag manually", "red"); }
-          setLibAiLoading(false);
-        }} disabled={libAiLoading} style={{ ...S.btn(true), fontSize: 11, opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "Tagging..." : "🤖 AI tag & add"}</button>
-        <button onClick={() => setLibShowBulk(!libShowBulk)} style={{ ...S.btn(false), fontSize: 11 }}>📦 Bulk</button>
         <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>☁️ Cloudinary</button>
         <button onClick={handleRebuildLibrary} disabled={rebuildRunning} title="Scan all Cloudinary folders and add any missing images to the Library" style={{ ...S.btn(false), fontSize: 11, opacity: rebuildRunning ? 0.5 : 1, border: `1px solid ${rebuildRunning ? "#9CA3AF" : "#7C3AED"}`, color: rebuildRunning ? "#9CA3AF" : "#7C3AED" }}>{rebuildRunning ? "⏳ Rebuilding…" : "🔄 Rebuild Library"}</button>
         <button onClick={handleFindOrphaned} disabled={orphanScan.running} title="Scan Cloudinary and flag Library rows whose image no longer exists there" style={{ ...S.btn(false), fontSize: 11, opacity: orphanScan.running ? 0.5 : 1, border: `1px solid ${orphanScan.running ? "#9CA3AF" : "#E11D48"}`, color: orphanScan.running ? "#9CA3AF" : "#E11D48" }}>{orphanScan.running ? "⏳ Scanning…" : "🧹 Find Orphaned"}</button>
@@ -1582,27 +1387,6 @@ export default function ManageLibrary({ ctx }) {
         </>}
         {!cldLoading&&cldFolders.length===0&&cldImages.length===0&&cldPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>Empty folder</div>}
       </div>}
-      {/* Add preview panel */}
-      {libAddPreview && (
-        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: 14, marginBottom: 14 }}>
-          <div style={{ display: "flex", gap: 12 }}>
-            <img src={libAddPreview.url} alt="" style={{ width: 120, height: 85, objectFit: "cover", borderRadius: 8, flexShrink: 0 }} onError={e => { e.target.style.display = "none"; }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "inline-block", fontSize: 9, padding: "2px 7px", borderRadius: 6, background: "#0EA5E918", color: "#0EA5E9", marginBottom: 6 }}>AI auto-tagged</div>
-              <input value={libAddPreview.name} onChange={e => setLibAddPreview({ ...libAddPreview, name: e.target.value })} style={{ ...S.input, fontSize: 12, fontWeight: 600, marginBottom: 6 }} placeholder="Image name..." />
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
-                {Object.keys(taxonomy).map(k => (libAddPreview.tags?.[k] || []).map(v => <span key={`${k}-${v}`} style={{ padding: "2px 6px", fontSize: 9, borderRadius: 6, background: `${accent}12`, color: accent }}>{v}</span>))}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => { const ni = { id: "LIB" + Date.now().toString(36), url: libAddPreview.url, name: libAddPreview.name, tags: libAddPreview.tags, elements: libAddPreview.elements || [], addedAt: Date.now(), source: "internal" }; saveLib([ni]); if (photoStatus(ni) === libStatus) libPage.prependItems([ni]); setLibAddUrl(""); setLibAddPreview(null); }} style={{ ...S.btn(true), fontSize: 11 }}>✓ Save to library</button>
-                <button onClick={() => setLibAddPreview(null)} style={{ ...S.btn(false), fontSize: 11 }}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Bulk import panel */}
-      {libShowBulk && LibraryBulk()}
       {/* Images / Videos toggle */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}

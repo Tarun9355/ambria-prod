@@ -1036,7 +1036,6 @@ export default function StudioApp() {
 
   // ═══ LIBRARY STATE ═══
   const [libView, setLibView] = useState("images");
-  const [libShowBulk, setLibShowBulk] = useState(false);
   const [pricingView, setPricingView] = useState("rates");
   const [settingsView, setSettingsView] = useState("venues");
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
@@ -1098,14 +1097,9 @@ export default function StudioApp() {
   const [libVenueNames, setLibVenueNames] = useState([]);
   const [libEditImg, setLibEditImg] = useState(null);
   const [zoneElements, setZoneElements] = useState({});
-  const [libAddUrl, setLibAddUrl] = useState("");
-  const [libAddPreview, setLibAddPreview] = useState(null);
-  const [libBulkText, setLibBulkText] = useState("");
-  const [libBulkQueue, setLibBulkQueue] = useState([]);
   const [libAiLoading, setLibAiLoading] = useState(false);
   const [zoneAiFilling, setZoneAiFilling] = useState({});
   const [zoneElSearch, setZoneElSearch] = useState({});
-  const [libBulkProgress, setLibBulkProgress] = useState(0);
   const [taxEditCat, setTaxEditCat] = useState(null);
   const [taxNewTag, setTaxNewTag] = useState("");
   const [taxNewCat, setTaxNewCat] = useState("");
@@ -5781,14 +5775,13 @@ Return ONLY JSON:
     // admin / library state
     photoUrl, setPhotoUrl, evEditPhotoIdx, setEvEditPhotoIdx, tagInput, setTagInput, bulkUrls, setBulkUrls,
     bulkTarget, setBulkTarget, adminSearch, setAdminSearch, adminFilterV, setAdminFilterV, adminFilterC, setAdminFilterC, previewImg, setPreviewImg,
-    libView, setLibView, libShowBulk, setLibShowBulk, pricingView, setPricingView, settingsView, setSettingsView,
+    libView, setLibView, pricingView, setPricingView, settingsView, setSettingsView,
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
     taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
-    libAddUrl, setLibAddUrl, libAddPreview, setLibAddPreview, libBulkText, setLibBulkText, libBulkQueue, setLibBulkQueue,
-    libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch, libBulkProgress, setLibBulkProgress,
+    libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch,
     taxEditCat, setTaxEditCat, taxNewTag, setTaxNewTag, taxNewCat, setTaxNewCat, libElSearch, setLibElSearch,
     addTagWithAreaZoneSync, addZoneWithAreaSync,
     // venues
