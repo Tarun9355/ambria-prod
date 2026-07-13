@@ -175,6 +175,11 @@ export default function ManageLibrary({ ctx }) {
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
 
+  // Element Breakdown hover previews: enlarged thumbnail on hover, and — for a kit — its component
+  // list on hovering the name. Index-keyed (not URL-keyed) so two rows can never collide.
+  const [elHoverImgIdx, setElHoverImgIdx] = useState(null);
+  const [elHoverKitIdx, setElHoverKitIdx] = useState(null);
+
   // `tagVenueGroup` defaults to "inhouse" (StudioApp.jsx) and is shared/sticky across whichever
   // photo is open, so without this it wins over the derived inhouse/outside group every time a
   // photo is (re)opened — e.g. opening a photo tagged with an Outside venue like "Canvas" would
@@ -907,13 +912,42 @@ export default function ManageLibrary({ ctx }) {
                       const invItem = (imsInventory || []).find(i => i.id === el.invId);
                       const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length > 0);
                       const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromInventory(el);
+                      const thumbSrc = invItem?.img || invItem?.photoUrls?.[0];
                       return (
                         <Fragment key={idx}>
                           <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                            <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              {(invItem?.img || invItem?.photoUrls?.[0]) ? <img src={invItem.img || invItem.photoUrls[0]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                            <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", cursor: thumbSrc ? "zoom-in" : "default" }}
+                              onMouseEnter={() => thumbSrc && setElHoverImgIdx(idx)} onMouseLeave={() => setElHoverImgIdx(null)}>
+                              {thumbSrc ? <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                              {elHoverImgIdx === idx && thumbSrc && (
+                                <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 100, marginTop: 4, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+                                  <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                </div>
+                              )}
                             </div>
-                            {el.name}
+                            <span style={{ position: "relative", cursor: isKit ? "help" : "default" }}
+                              onMouseEnter={() => isKit && setElHoverKitIdx(idx)} onMouseLeave={() => setElHoverKitIdx(null)}>
+                              {el.name}
+                              {isKit && elHoverKitIdx === idx && (
+                                <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 100, marginTop: 4, minWidth: 200, maxWidth: 280, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+                                  <div style={{ fontSize: 9, fontWeight: 700, color: textS, marginBottom: 4 }}>📦 Kit contents</div>
+                                  {(invItem.subItems || []).map((si, i) => {
+                                    const comp = (imsInventory || []).find(x => x.id === si.itemId);
+                                    if (!comp) return null;
+                                    const compSrc = comp.img || comp.photoUrls?.[0];
+                                    return (
+                                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                                        <div style={{ width: 28, height: 28, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                          {compSrc ? <img src={compSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                                        </div>
+                                        <div style={{ fontSize: 10, color: textP, flex: 1, whiteSpace: "nowrap" }}>{comp.name}</div>
+                                        <div style={{ fontSize: 9, color: textS, flexShrink: 0 }}>×{si.qty}</div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </span>
                             {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}
                             {!invItem && <span title="This inventory item no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
                             {isFloralBlend && <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>🌸<button onClick={() => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], realPct: undefined }; setLibEditImg({ ...libEditImg, elements: elems }); }} title="Use this sub-category's default real/artificial ratio" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof el.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof el.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button><button onClick={() => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], realPct: 100 }; setLibEditImg({ ...libEditImg, elements: elems }); }} title="Price this element at 100% the recipe's Studio rate, overriding the sub-category's default" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: el.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: el.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button><input type="number" min="0" max="100" value={el.realPct ?? ""} placeholder={String(realPct ?? "")} onChange={(e) => { const v = e.target.value; const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) }; setLibEditImg({ ...libEditImg, elements: elems }); }} title="Manually set the exact % real — overrides Ratio/100%" style={{ width: 42, padding: "1px 4px", borderRadius: 3, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 9, textAlign: "center" }} /></span>}
