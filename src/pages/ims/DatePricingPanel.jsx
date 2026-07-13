@@ -1,32 +1,16 @@
-import { useState } from "react";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS } from "../../lib/ims/constants";
 
 // Faithful copy of the reference IMS DatePricingPanel (shown in Calendar → Date Pricing Config).
+// Marking individual dates now happens directly on the Calendar tab's main month grid (click a
+// date → pick a pricing override there) — this panel only configures the multipliers + last-minute
+// override and lists/clears whatever's been marked, so there's one calendar to look at, not two.
 export default function DatePricingPanel({ settings, setSettings }) {
   const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
   const marked = dp.markedDates || {};
-  // Auto-synced from the Calendar's LMS/season data (IMS.jsx's loadLmsFromCache) — the default
-  // category for any date the admin hasn't manually overridden in `marked`.
-  const auto = dp.autoCategories || {};
+  const markedCount = Object.keys(marked).length;
 
-  const today = new Date();
-  const [calYear, setCalYear] = useState(today.getFullYear());
-  const [calMonth, setCalMonth] = useState(today.getMonth());
-  const [selCat, setSelCat] = useState("heavy_saya");
-
-  function getDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
-  function getFirstDay(y, m) { return new Date(y, m, 1).getDay(); }
-
-  function toggleDate(dateStr, catKey) {
-    setSettings((s) => {
-      const m = { ...(s.datePricing?.markedDates || {}) };
-      if (m[dateStr] === catKey) delete m[dateStr];
-      else m[dateStr] = catKey;
-      return { ...s, datePricing: { ...s.datePricing, markedDates: m } };
-    });
-  }
   function setMultiplier(catKey, val) {
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, categories: { ...s.datePricing.categories, [catKey]: { ...s.datePricing.categories[catKey], multiplier: parseFloat(val) || 1 } } } }));
   }
@@ -34,25 +18,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
     setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, lastMinuteDays: parseInt(val) || 10 } }));
   }
 
-  const days = getDaysInMonth(calYear, calMonth);
-  const firstDay = getFirstDay(calYear, calMonth);
-  const monthName = new Date(calYear, calMonth, 1).toLocaleString("default", { month: "long" });
-  const markedCount = Object.keys(marked).length;
-  const todayStr = today.toISOString().split("T")[0];
-
   const CAT_DOT = { heavy_saya: "bg-red-500", competition: "bg-yellow-400", non_saya: "bg-green-500" };
-  const CAT_CELL = {
-    heavy_saya: "bg-red-100 text-red-800 font-bold border border-red-300",
-    competition: "bg-yellow-100 text-yellow-800 font-bold border border-yellow-300",
-    non_saya: "bg-green-100 text-green-800 font-bold border border-green-300",
-  };
-  // Lighter variant for dates with no manual override — shows what the auto-synced (LMS/season)
-  // category would price it at, so an admin can see what they'd be overriding before clicking.
-  const CAT_CELL_LIGHT = {
-    heavy_saya: "bg-red-50 text-red-500 border border-red-100 hover:bg-red-100",
-    competition: "bg-yellow-50 text-yellow-600 border border-yellow-100 hover:bg-yellow-100",
-    non_saya: "bg-green-50 text-green-500 border border-green-100 hover:bg-green-100",
-  };
 
   return (
     <div className="space-y-6">
@@ -108,80 +74,14 @@ export default function DatePricingPanel({ settings, setSettings }) {
         </div>
       </div>
 
-      <div className="bg-white border rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h4 className="font-bold text-gray-800">📅 Mark Dates on Calendar</h4>
-            <p className="text-xs text-gray-500 mt-0.5">{markedCount} date{markedCount !== 1 ? "s" : ""} marked · Select a category below then click any date</p>
-          </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {Object.entries(cats).map(([key, cat]) => (
-              <button key={key} onClick={() => setSelCat(key)}
-                className={"text-xs px-3 py-1.5 rounded-lg font-semibold border transition-all " + (selCat === key ? `ring-2 ring-offset-1 ${PRICING_CAT_STYLES[key]} ring-current` : `${PRICING_CAT_STYLES[key]} opacity-60 hover:opacity-100`)}>
-                {DATE_PRICING_LABELS[key] || cat.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center justify-between px-4 py-2 border-b">
-          <button onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear((y) => y - 1); } else setCalMonth((m) => m - 1); }}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 font-bold">‹</button>
-          <p className="font-bold text-gray-800">{monthName} {calYear}</p>
-          <button onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear((y) => y + 1); } else setCalMonth((m) => m + 1); }}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-600 font-bold">›</button>
-        </div>
-        <div className="grid grid-cols-7 text-center px-3 py-1 border-b">
-          {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-            <div key={d} className="text-xs font-semibold text-gray-400 py-1">{d}</div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 gap-1 p-3">
-          {Array(firstDay).fill(null).map((_, i) => <div key={"e" + i} />)}
-          {Array(days).fill(null).map((_, i) => {
-            const d = i + 1;
-            const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-            const catKey = marked[dateStr];
-            const autoKey = !catKey ? auto[dateStr] : null;
-            const isToday = dateStr === todayStr;
-            const isPast = dateStr < todayStr;
-            return (
-              <button key={d} onClick={() => toggleDate(dateStr, selCat)}
-                title={autoKey ? `Auto-synced as ${DATE_PRICING_LABELS[autoKey] || autoKey} — click to override` : undefined}
-                className={"w-full aspect-square rounded-xl text-sm font-medium transition-all flex items-center justify-center relative "
-                  + (catKey ? (CAT_CELL[catKey] || "bg-gray-100")
-                    : autoKey ? (CAT_CELL_LIGHT[autoKey] || "text-gray-700")
-                      : isPast ? "text-gray-300 hover:bg-gray-50"
-                        : isToday ? "border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50"
-                          : "hover:bg-gray-100 text-gray-700")}>
-                {d}
-                {autoKey && <span className={"absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full " + (CAT_DOT[autoKey] || "bg-gray-400")} />}
-                {isToday && !catKey && <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-500" />}
-              </button>
-            );
-          })}
-        </div>
-        <div className="px-4 py-3 bg-gray-50 border-t flex flex-wrap gap-3">
-          {Object.entries(cats).map(([key, cat]) => {
-            const count = Object.values(marked).filter((v) => v === key).length;
-            return (
-              <div key={key} className="flex items-center gap-1.5">
-                <div className={"w-3 h-3 rounded " + (CAT_DOT[key] || "bg-gray-400")} />
-                <span className="text-xs text-gray-600">{DATE_PRICING_LABELS[key] || cat.label}: <strong>{count} dates</strong></span>
-              </div>
-            );
-          })}
-          {markedCount > 0 && (
-            <button onClick={() => setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, markedDates: {} } }))}
-              className="ml-auto text-xs text-red-500 hover:text-red-700 underline">Clear all dates</button>
-          )}
-        </div>
-      </div>
-
       {markedCount > 0 && (
         <div className="bg-white border rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b">
-            <h4 className="font-bold text-gray-800">📋 All Marked Dates ({markedCount})</h4>
+          <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between flex-wrap gap-2">
+            <h4 className="font-bold text-gray-800">📋 Manually Overridden Dates ({markedCount})</h4>
+            <button onClick={() => setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, markedDates: {} } }))}
+              className="text-xs text-red-500 hover:text-red-700 underline">Clear all overrides</button>
           </div>
+          <p className="text-xs text-gray-400 px-4 pt-2">Set from the Calendar tab's main month grid — click any date, then pick a category. Anything not listed here prices off the auto-synced calendar category.</p>
           <div className="divide-y max-h-48 overflow-y-auto">
             {Object.entries(marked).sort(([a], [b]) => a.localeCompare(b)).map(([date, catKey]) => {
               const cat = cats[catKey];

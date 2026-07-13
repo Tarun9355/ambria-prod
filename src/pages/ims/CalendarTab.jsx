@@ -1,5 +1,8 @@
 import { useState, useMemo } from "react";
 import DatePricingPanel from "./DatePricingPanel.jsx";
+import { resolveDateCategory } from "../../lib/inventory/helpers";
+import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS } from "../../lib/ims/constants";
+import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
@@ -26,6 +29,17 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
     "Normal": { bg: "#f0fdf4", border: "#86efac", text: "#16a34a", label: "○ Normal" },
   };
   const hasCats = Object.keys(dateCategories).length > 0;
+
+  // Manual pricing overrides live right here now — one calendar to view AND set dates on, instead
+  // of a second click-to-mark grid duplicated in Date Pricing Config below.
+  const marked = settings?.datePricing?.markedDates || {};
+  function setDateCategory(ds, catKey) {
+    setSettings((s) => {
+      const m = { ...(s.datePricing?.markedDates || {}) };
+      if (catKey == null) delete m[ds]; else m[ds] = catKey;
+      return { ...s, datePricing: { ...s.datePricing, markedDates: m } };
+    });
+  }
 
   const fmtTime = (t) => {
     if (!t) return "";
@@ -99,10 +113,12 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             const isSel = ds === selDate;
             const cat = getDateCategory(ds);
             const catStyle = cat && dateCatColors[cat] ? dateCatColors[cat] : null;
+            const override = marked[ds];
             return (
               <div key={d} onClick={() => setSelDate(isSel ? null : ds)}
-                className={"min-h-16 border-b border-r p-1 cursor-pointer transition-colors " + (isToday ? "bg-indigo-50" : " hover:bg-gray-50") + (isSel ? " ring-2 ring-inset ring-indigo-400" : "")}
+                className={"min-h-16 border-b border-r p-1 cursor-pointer transition-colors relative " + (isToday ? "bg-indigo-50" : " hover:bg-gray-50") + (isSel ? " ring-2 ring-inset ring-indigo-400" : "")}
                 style={catStyle && !isToday ? { background: catStyle.bg, borderBottomColor: catStyle.border } : undefined}>
+                {override && <span className="absolute top-1 right-1 text-[10px]" title={`Pricing manually overridden as ${DATE_PRICING_LABELS[override]}`}>📌</span>}
                 <div className="flex items-center gap-1 mb-1">
                   <span className={"text-xs font-medium " + (isToday ? "bg-indigo-600 text-white rounded-full w-5 h-5 flex items-center justify-center" : "text-gray-700")}>{d}</span>
                   {catStyle && <span style={{ fontSize: 9, color: catStyle.text, fontWeight: 700 }}>{catStyle.label}</span>}
@@ -143,6 +159,27 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
               </span>
             )}
           </h3>
+          {settings && setSettings && (() => {
+            const manualKey = marked[selDate];
+            const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
+            const effectiveKey = resolveDateCategory(selDate, settings);
+            return (
+              <div className="mb-4 pb-4 border-b flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium text-gray-500">💰 Pricing:</span>
+                {Object.keys(dp.categories || {}).map((key) => (
+                  <button key={key} onClick={() => setDateCategory(selDate, manualKey === key ? null : key)}
+                    className={"text-xs px-2.5 py-1 rounded-lg font-semibold border transition-all " + (manualKey === key ? `ring-2 ring-offset-1 ${PRICING_CAT_STYLES[key]} ring-current` : `${PRICING_CAT_STYLES[key]} opacity-60 hover:opacity-100`)}>
+                    {DATE_PRICING_LABELS[key]}
+                  </button>
+                ))}
+                {manualKey ? (
+                  <button onClick={() => setDateCategory(selDate, null)} className="text-xs text-gray-400 hover:text-gray-600 underline">Clear override (use auto)</button>
+                ) : (
+                  <span className="text-xs text-gray-400">Auto: {DATE_PRICING_LABELS[effectiveKey]}</span>
+                )}
+              </div>
+            );
+          })()}
           {selEvents.length === 0 ? <p className="text-sm text-gray-400 italic">No events on this date</p>
             : selEvents.map((e) => (
               <div key={e.id} className="border rounded-xl p-3 mb-2" style={{ borderLeft: "4px solid " + (e.dept === "venue" ? "#6366f1" : "#f59e0b") }}>
