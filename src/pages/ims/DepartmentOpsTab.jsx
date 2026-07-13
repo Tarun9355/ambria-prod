@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost } from "../../lib/ims/helpers";
 import { uploadAudioToCloudinary } from "../../lib/cloudinary";
+import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 
 // Small in-browser voice-note recorder → uploads to Cloudinary, hands the URL back via onSave.
 // Used on-site so the ops manager can attach a spoken note to a transferred/repair item; the receiving
@@ -699,7 +700,19 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
     if (t.kind === "pillars") return <div className="mb-1.5 text-[10px] text-gray-600">🏗️ {t.total} pillar(s){t.zoneP ? ` — ${t.zoneP} from truss tool${t.recipeP ? `, ${t.recipeP} from build` : ""}` : ""} → range → <b>{t.result}</b></div>;
     if (t.kind === "ratio") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.num} {t.numLabel} ÷ {t.denomLabel} = <b>{t.result}</b></div>;
     if (t.kind === "range") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.value} {t.unit} → range → <b>{t.result}</b></div>;
-    if (t.kind === "labours") return <div className="mb-1.5 text-[10px] text-gray-600">📐 venue min {t.venueMin}{t.mult > 1 ? ` × ${Number(t.mult).toFixed(2)} season/timing` : ""}{t.heavy ? ` + ${t.heavy} heavy-element` : ""} = <b>{t.result}</b> (before split)</div>;
+    // "labours" is a frozen snapshot captured at booking time (StudioApp.jsx) — it only stores the
+    // COMBINED situational multiplier (season/timing maxed together), not the individual dumping/
+    // saya/timing factors ManpowerTab.jsx's live Tier-3 breakdown exposes, so the pill display here
+    // is necessarily a simpler "what we know" version rather than the full Setup-Access/Dumping-Space
+    // breakdown — that granularity isn't in the stored data to show honestly.
+    if (t.kind === "labours") return (
+      <div className="mb-1.5 space-y-1">
+        <ManpowerFactorPills mode="generic" label="Labours" baseQty={t.venueMin}
+          qty={t.result}
+          sitMult={{ factors: [{ label: "📐 Venue-min situational", mult: t.mult }], cappedMult: t.mult, rawMult: t.mult, capped: false }} />
+        {t.heavy > 0 && <div className="text-[10px] text-gray-500 px-1">+ {t.heavy} heavy-element add-on</div>}
+      </div>
+    );
     if (t.kind === "fixed") return <div className="mb-1.5 text-[10px] text-gray-600">📐 {t.note} = <b>{t.result}</b>{" "}(before split)</div>;
     return null;
   };

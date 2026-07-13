@@ -13,15 +13,9 @@ import { hoursFromSlots, calcDihari } from "../../lib/ims/helpers";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { heavyElementExtraForFn, standingPillarCount, fixedVenueFor } from "../../lib/ims/fixedVenues";
 import { resolveSizeKey, sizeClassToPatternKey } from "../../lib/ims/flowerHelpers";
+import { getEventTimingFromTime, applySituationalMultipliers as applySituationalMultipliersShared, computeTier3Trace } from "../../lib/ims/manpowerFactors";
+import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 
-// ─── Local helpers (copied verbatim from reference) ───────────────────────────
-function getEventTimingFromTime(timeStr){
-  if(!timeStr) return EVENT_TIMINGS[3]; // default dinner
-  const [h,m]=(timeStr||"19:00").split(":").map(Number);
-  const hour=h+(m||0)/60;
-  for(const t of EVENT_TIMINGS){ if(hour<t.beforeHour) return t; }
-  return EVENT_TIMINGS[4];
-}
 function fmt(n){ return "₹"+(Number(n)||0).toLocaleString("en-IN"); }
 
 export default function ManpowerTab({ projects, functions, setFunctions, settings, setSettings, vendors, setVendors, inventory }){
@@ -439,74 +433,11 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
     setPhases(selFn, phases=>phases.map(p=>p.phase===selPhase?{...p,crew:p.crew.map(cc=>cc.type==="Fabric Bangali"?{...cc,qty:total||0}:cc)}:p));
   }
 
-  // ── Situational Multiplier System ──────────────────────────────────────────
+  // ── Situational Multiplier System — shared with Deal Check & Dept Ops ──────
+  // (src/lib/ims/manpowerFactors.js); thin wrapper so the many call sites below
+  // don't need to thread fn/proj/settings through individually.
   function applySituationalMultipliers(baseQty, type){
-    if(type==="Supervisors"||type==="Drivers") return {adjusted:baseQty, rawMult:1, capped:false, factors:[]};
-    const sm=settings.situationalMultipliers||{};
-    const cap=settings.situationalMultiplierCap||1.8;
-    const factors=[];
-
-    // Factor 1 — Date Category (only Heavy Saya pushes up, others 1.0)
-    let dateMult=1.0;
-    const fnDate=fn?.date||"";
-    const dateCategory=resolveDateCategory(fnDate,settings);
-    if(dateCategory==="heavy_saya"){
-      dateMult=(sm.heavySaya||{})[type]||SIT_MULT_DEFAULTS.heavySaya[type]||1.0;
-      factors.push({label:"👑 King's",mult:dateMult});
-    } else {
-      factors.push({label:dateCategory==="non_saya"?"○ Filler":"✦ Perfect",mult:1.0});
-    }
-
-    // Factor 2 — Event Segment (only Premium pushes up, others 1.0)
-    let segMult=1.0;
-    const segment=proj?.segment||"outdoor_budgeted";
-    if(segment==="outdoor_premium"){
-      segMult=(sm.premium||{})[type]||SIT_MULT_DEFAULTS.premium[type]||1.0;
-      factors.push({label:"★ Premium",mult:segMult});
-    } else {
-      factors.push({label:segment==="inhouse"?"🏠 In-house":"$ Budgeted",mult:1.0});
-    }
-
-    // Factor 3 — Setup Timing (day-prior can go below, rush goes above)
-    let timingMult=1.0;
-    const setupAccess=fn?.setupAccess||"same_day";
-    const dayPriorConfirmed=setupAccess==="day_prior_confirmed";
-    const dayPriorTentative=setupAccess==="day_prior_tentative";
-    const bookingDays=fn?.date?Math.ceil((new Date(fn.date)-new Date())/(1000*60*60*24)):999;
-    const isRush=bookingDays<=(settings.datePricing?.lastMinuteDays||10)&&bookingDays>=0;
-    if(dayPriorConfirmed){
-      timingMult=(sm.dayPrior||{})[type]||SIT_MULT_DEFAULTS.dayPrior[type]||1.0;
-      factors.push({label:"📅 Day-Prior ✓",mult:timingMult});
-    } else if(isRush&&!dayPriorTentative){
-      timingMult=(sm.rush||{})[type]||SIT_MULT_DEFAULTS.rush[type]||1.0;
-      factors.push({label:"⚡ Rush",mult:timingMult});
-    } else {
-      factors.push({label:dayPriorTentative?"🟡 Tentative (calc as same-day)":"📅 Same-Day",mult:1.0});
-    }
-
-    // Factor 4 — Event Timing (lunch/brunch/sundowner): tighter setup window multiplies
-    // ALL manpower types. Skipped on day-prior confirmed (extra day removes the pressure).
-    let evtTimingMult=1.0;
-    if(!dayPriorConfirmed){
-      const ev=getEventTimingFromTime(fn?.eventStartTime);
-      evtTimingMult=eventTimingMultFor(settings.eventTimingMultipliers, ev.id, type, ev.mult||1.0);
-      if(evtTimingMult!==1.0) factors.push({label:`⏰ ${ev.label||ev.id}`,mult:evtTimingMult});
-    }
-
-    const rawMult=dateMult*segMult*timingMult*evtTimingMult;
-    const cappedMult=Math.min(rawMult, cap);
-    const wasCapped=rawMult>cap;
-    const adjusted=Math.max(1, Math.ceil(baseQty*cappedMult));
-    // If tentative, calculate what day-prior would give
-    let tentativeSavings=null;
-    if(dayPriorTentative){
-      const dpMult=(sm.dayPrior||{})[type]||SIT_MULT_DEFAULTS.dayPrior[type]||1.0;
-      const dpRaw=dateMult*segMult*dpMult;
-      const dpCapped=Math.min(dpRaw,cap);
-      const dpAdj=Math.max(1, Math.ceil(baseQty*dpCapped));
-      if(dpAdj<adjusted) tentativeSavings={ifConfirmed:dpAdj, saving:adjusted-dpAdj};
-    }
-    return {adjusted, rawMult:parseFloat(rawMult.toFixed(3)), cappedMult:parseFloat(cappedMult.toFixed(3)), capped:wasCapped, factors, cap, tentativeSavings};
+    return applySituationalMultipliersShared(baseQty, type, { fn, proj, settings });
   }
 
   function getSuggestion(type){
@@ -823,30 +754,12 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
                     </div>
                     {/* Tier 3 Labour — Factor Breakdown */}
                     {c.tier===3&&(()=>{
-                      const venueName=fn?.venue?.name||"";
-                      const venueConfig=(settings.venueMinLabour||{})[venueName];
-                      const venueMin=typeof venueConfig==="object"?(venueConfig?.min||4):((typeof venueConfig==="number"?venueConfig:null)||settings.defaultMinLabour||4);
-                      const dumpMult=typeof venueConfig==="object"?(venueConfig?.dumping||1.0):1.0;
-                      const segment=proj?.segment||"outdoor_budgeted";
-                      const eventMult=(settings.eventTypeMultipliers||{})[segment]||1;
-                      const setupAccess=fn?.setupAccess||"same_day";
-                      const dayPrior=setupAccess==="day_prior_confirmed";
-                      const tentative=setupAccess==="day_prior_tentative";
-                      const base=Math.ceil(venueMin*eventMult);
-                      const season=(settings.seasonMap||{})[fn?.date||""];
-                      const sayaMult=season==="kings"?(settings.sayaMultiplier||1.3):1.0;
-                      const fnTiming=getEventTimingFromTime(fn?.eventStartTime);
-                      const timingMult=eventTimingMultFor(settings.eventTimingMultipliers, fnTiming.id, c.type, fnTiming.mult);
-                      const timingLabel=fnTiming.label;
-                      const sitCandidates=dayPrior?[1.0]:[dumpMult,sayaMult,timingMult];
-                      const sitMax=Math.max(...sitCandidates,1.0);
-                      const sitWinner=dayPrior?"none (day-prior ✓)":sitMax===dumpMult&&dumpMult>1?"Dumping ×"+dumpMult:sitMax===sayaMult&&sayaMult>1?"Saya ×"+sayaMult:sitMax===timingMult&&timingMult>1?timingLabel+" ×"+timingMult:"none";
-                      const { total: heavyExtra, breakdown: heavyBreakdown } = heavyElementExtraForFn(fn, settings, inventory);
-                      const sameDayFns=fnList.filter(f=>f.date===fn.date&&(f.venue?.name||"")===venueName);
+                      const trace=computeTier3Trace({ fn, proj, settings, inventory, fnList, crewType: c.type });
+                      const venueConfig=(settings.venueMinLabour||{})[trace.venueName];
                       return (
                         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
                           <p className="text-xs font-bold text-blue-800">🏢 Labour Factor Breakdown</p>
-                          {/* Setup Access status — set by Sales in function detail */}
+                          {/* Setup Access status — set by Sales in function detail (EDITABLE — only here) */}
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-blue-800 font-medium">📅 Setup Access:</span>
                             <div className="flex gap-1">
@@ -855,14 +768,14 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
                                   setSetupAccess(opt.id);
                                   setTimeout(()=>{const result=calcLabourWithMultiFnMax();updateCrew(c.type,"qty",result);},50);
                                 }}
-                                  className={"text-xs px-2.5 py-1 rounded-lg border-2 font-medium transition-all "+(setupAccess===opt.id?opt.active:"border-gray-200 text-gray-500 hover:border-blue-300")}>
+                                  className={"text-xs px-2.5 py-1 rounded-lg border-2 font-medium transition-all "+(trace.setupAccess===opt.id?opt.active:"border-gray-200 text-gray-500 hover:border-blue-300")}>
                                   {opt.label}
                                 </button>
                               ))}
                             </div>
-                            {tentative&&<span className="text-xs text-amber-600 italic">Calculates as same-day (conservative)</span>}
+                            {trace.tentative&&<span className="text-xs text-amber-600 italic">Calculates as same-day (conservative)</span>}
                           </div>
-                          {/* Dumping space selector */}
+                          {/* Dumping space selector (EDITABLE — only here) */}
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-blue-800 font-medium">🚛 Dumping Space:</span>
                             <div className="flex gap-1">
@@ -884,82 +797,13 @@ export default function ManpowerTab({ projects, functions, setFunctions, setting
                             </div>
                             {fn?.dumpingSpace&&<button onClick={()=>setFunctions(prev=>prev.map(f=>f.id===selFn?{...f,dumpingSpace:null}:f))} className="text-xs text-gray-400 hover:text-red-500">↩ Reset to venue default</button>}
                           </div>
-                          {/* Factor pills */}
-                          <div className="flex flex-wrap gap-1.5">
-                            <span className="text-xs bg-white border border-blue-200 rounded-full px-2 py-0.5">🏢 Venue: {venueName||"Default"} ({venueMin})</span>
-                            <span className="text-xs bg-blue-100 border border-blue-300 text-blue-700 rounded-full px-2 py-0.5 font-medium">Layer 1: {segment==="outdoor_premium"?"★ Premium":segment==="inhouse"?"🏠 In-house":"$ Budgeted"} ×{eventMult}</span>
-                            {!dayPrior&&sitMax>1&&<span className="text-xs bg-amber-100 border border-amber-300 text-amber-700 rounded-full px-2 py-0.5 font-medium">Layer 2: {sitWinner} (highest)</span>}
-                            {dayPrior&&<span className="text-xs bg-green-100 border border-green-300 text-green-700 rounded-full px-2 py-0.5 font-medium">✅ Day-prior confirmed — no situational multiplier</span>}
-                          </div>
-                          {/* Situational candidates (when not day-prior) */}
-                          {!dayPrior&&(
-                            <div className="flex flex-wrap gap-1">
-                              {[["🚛 Dumping",dumpMult],["👑 Saya",sayaMult],[timingLabel,timingMult]].map(([label,val])=>(
-                                <span key={label} className={"text-xs px-2 py-0.5 rounded-full border "+(val===sitMax&&val>1?"bg-amber-500 text-white border-amber-500":"bg-white text-gray-500 border-gray-200")}>
-                                  {label} ×{val} {val===sitMax&&val>1?"← used":""}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {/* Heavy elements */}
-                          {heavyBreakdown.length>0&&(
-                            <div className="text-xs text-blue-700">
-                              <span className="font-medium">Heavy elements:</span> {heavyBreakdown.join(", ")} = +{heavyExtra}
-                            </div>
-                          )}
-                          {/* Multi-fn MAX + Event timing info */}
-                          {sameDayFns.length>1&&(
-                            <div className="text-xs bg-purple-50 border border-purple-200 rounded-lg px-2 py-1.5 text-purple-700 space-y-1">
-                              <p>🔄 {sameDayFns.length} functions same day at {venueName} — each calculates independently, MAX count used</p>
-                              <div className="flex flex-wrap gap-1">
-                                {sameDayFns.map(f=>{
-                                  const et=getEventTimingFromTime(f.eventStartTime);
-                                  return <span key={f.id} className={"px-2 py-0.5 rounded-full border "+(f.id===fn.id?"bg-purple-100 border-purple-300 font-medium":"bg-white border-gray-200")}>{f.name}: {f.eventStartTime||"TBD"} ({et.label})</span>;
-                                })}
-                              </div>
-                            </div>
-                          )}
-                          {/* Tentative day-prior savings hint */}
-                          {tentative&&(()=>{
-                            // Calculate what day-prior would give for Tier 3
-                            const dpCandidates=[1.0]; // day-prior kills situational
-                            const dpAdj=Math.ceil(base*1.0)+heavyExtra;
-                            const currentAdj=Math.ceil(base*sitMax)+heavyExtra;
-                            return dpAdj<currentAdj?(
-                              <div className="text-xs bg-yellow-50 border border-yellow-200 rounded-lg px-2 py-1.5 text-yellow-700">
-                                💡 If day-prior confirms → {dpAdj} labours (saves {currentAdj-dpAdj})
-                              </div>
-                            ):null;
-                          })()}
-                          {/* Summary */}
-                          <div className="bg-white border border-blue-100 rounded-lg px-3 py-2 flex items-center justify-between">
-                            <span className="text-xs text-gray-600">{venueMin} × {eventMult}{!dayPrior&&sitMax>1?` × ${sitMax}`:""}{heavyExtra>0?` + ${heavyExtra} heavy`:""}</span>
-                            <span className="text-sm font-bold text-blue-700">= {c.qty} Labours</span>
-                          </div>
+                          <ManpowerFactorPills mode="tier3" trace={trace} qty={c.qty} label="Labours" showHeader={false} showSetupAccess={false} />
                         </div>
                       );
                     })()}
                     {/* Situational Multiplier Breakdown (for non-Tier-3 types) */}
                     {suggestion.sitMult&&suggestion.sitMult.rawMult!==1&&c.tier!==3&&(
-                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
-                        <p className="text-xs font-bold text-amber-800">⚡ Situational Multipliers</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {suggestion.sitMult.factors.map((f,fi)=>(
-                            <span key={fi} className={"text-xs px-2 py-0.5 rounded-full border "+(f.mult!==1?"bg-amber-100 border-amber-300 text-amber-700 font-medium":"bg-white border-gray-200 text-gray-500")}>
-                              {f.label} ×{f.mult}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="bg-white border border-amber-100 rounded-lg px-3 py-2 flex items-center justify-between">
-                          <span className="text-xs text-gray-600">Base {suggestion.baseQty} × {suggestion.sitMult.cappedMult}{suggestion.sitMult.capped?" (⚠️ capped from ×"+suggestion.sitMult.rawMult+")":""}</span>
-                          <span className="text-sm font-bold text-amber-700">= {suggestion.qty} {c.type}</span>
-                        </div>
-                        {suggestion.sitMult.tentativeSavings&&(
-                          <div className="text-xs bg-yellow-50 border border-yellow-200 rounded-lg px-2 py-1.5 text-yellow-700">
-                            💡 If day-prior confirms → {suggestion.sitMult.tentativeSavings.ifConfirmed} {c.type} (saves {suggestion.sitMult.tentativeSavings.saving})
-                          </div>
-                        )}
-                      </div>
+                      <ManpowerFactorPills mode="generic" sitMult={suggestion.sitMult} baseQty={suggestion.baseQty} qty={suggestion.qty} label={c.type} />
                     )}
                     {/* Pillar-based planning for Truss Labour */}
                     {c.tier==="pillar-range"&&(

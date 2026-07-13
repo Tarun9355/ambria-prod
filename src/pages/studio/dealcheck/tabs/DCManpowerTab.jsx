@@ -5,9 +5,10 @@
 // per-day calculation breakdown panel it drives (15416–15587).
 // ═══════════════════════════════════════════════════════════════
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
-import { heavyExtraLabour, eventTimingMultFor } from "../../../../lib/ims/constants";
+import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat } from "../../../../lib/ims/helpers";
+import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 
 export default function DCManpowerTab({ ctx }) {
   const {
@@ -25,6 +26,9 @@ export default function DCManpowerTab({ ctx }) {
     dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle,
     dcMpCalcOpen, setDcMpCalcOpen,
+    // auth — manpower planning now lives in IMS Dept Ops; salespeople get a read-only view here,
+    // Admin can still edit (e.g. for a special case or troubleshooting)
+    isAdmin,
   } = ctx;
 
   return (() => {
@@ -424,13 +428,14 @@ export default function DCManpowerTab({ ctx }) {
                     const dumpingMult = ({ nearby:1.0, medium:1.1, far:1.2 })[dumpingLevel] || 1.0;
                     const eventMult = eventTypeMultipliers["outdoor_budgeted"] || 1;
                     const base = Math.ceil(venueMin * eventMult);
+                    const season = seasonMapMP[fn.fnDate||""];
+                    const sayaMult = season === "kings" ? sayaMultiplier : 1.0;
+                    const timingId = shiftToTiming(fn.fnShift);
+                    const timingMult = eventTimingMultFor(eventTimingMultipliers, timingId, "Labours", 1.0);
+                    const timingLabel = "⏰ " + (EVENT_TIMINGS.find(t => t.id === timingId)?.label || timingId);
                     let situationalMult = 1.0;
                     if (!dcMpIncludeMinusOne) {
-                      const cands = [dumpingMult];
-                      const season = seasonMapMP[fn.fnDate||""];
-                      if (season === "kings") cands.push(sayaMultiplier);
-                      cands.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0));
-                      situationalMult = Math.max(...cands, 1.0);
+                      situationalMult = Math.max(dumpingMult, sayaMult, timingMult, 1.0);
                     }
                     const adjusted = Math.ceil(base * situationalMult); // venue-min floor (with situational)
                     const subCounts = {};
@@ -449,7 +454,17 @@ export default function DCManpowerTab({ ctx }) {
                     const usageCeil = Math.ceil(usageSum);
                     const floorSide = adjusted + heavyFloor; // venue-min (situational) + per-sub-cat heavy floors
                     const total = Math.max(floorSide, usageCeil);
-                    return { kind: "subcat_table", header: ["Sub-category","Count","1 per","Need"], rows, sum: usageCeil, frac: Math.round(usageSum * 100) / 100, minimum: floorSide, total, formula: "max(venue-min floor, ⌈Σ(count ÷ 1-per-N)⌉) — summed across ALL elements (Tier 3)" };
+                    // Read-only trace for the shared ManpowerFactorPills breakdown (Deal Check → Dept
+                    // Ops → old Manpower tab parity) — mirrors computeTier3Trace's shape.
+                    const situational = {
+                      venueName, venueMin, segment: "outdoor_budgeted", eventMult,
+                      dayPrior: dcMpIncludeMinusOne, tentative: false,
+                      dumpMult: dumpingMult, sayaMult, timingMult, timingLabel,
+                      sitMax: situationalMult,
+                      sitWinner: dcMpIncludeMinusOne ? "none (day-prior ✓)" : situationalMult===dumpingMult&&dumpingMult>1 ? "Dumping ×"+dumpingMult : situationalMult===sayaMult&&sayaMult>1 ? "Saya ×"+sayaMult : situationalMult===timingMult&&timingMult>1 ? timingLabel+" ×"+timingMult : "none",
+                      heavyExtra: heavyFloor, heavyBreakdown: [], sameDayFns: [],
+                    };
+                    return { kind: "subcat_table", header: ["Sub-category","Count","1 per","Need"], rows, sum: usageCeil, frac: Math.round(usageSum * 100) / 100, minimum: floorSide, total, formula: "max(venue-min floor, ⌈Σ(count ÷ 1-per-N)⌉) — summed across ALL elements (Tier 3)", situational };
                   };
                   // §23 Phase 2.6 — trace mirrors new top+RFT logic
                   const traceFabricBangali = (fn) => {
@@ -742,14 +757,15 @@ export default function DCManpowerTab({ ctx }) {
                           </div>
                         </div>
                         <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#fff",cursor:"pointer"}}>
-                            <input type="checkbox" checked={dcMpIncludeMinusOne} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} />
+                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:isAdmin?"#fff":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
+                            <input type="checkbox" checked={dcMpIncludeMinusOne} disabled={!isAdmin} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} />
                             ⏮️ Include -1 day early setup
                           </label>
-                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#fff",cursor:"pointer"}}>
-                            <input type="checkbox" checked={dcMpIncludeDismantle} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} />
+                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:isAdmin?"#fff":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
+                            <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!isAdmin} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} />
                             🧹 Include dismantle day
                           </label>
+                          {!isAdmin && <span style={{fontSize:10,color:"#6B7280",fontStyle:"italic",alignSelf:"center"}}>Manpower planning now lives in IMS → Dept Ops</span>}
                         </div>
                       </div>
 
@@ -806,8 +822,8 @@ export default function DCManpowerTab({ ctx }) {
                                       {wins.map(w => {
                                         const on = ticked.includes(w.id);
                                         if (!on) return (
-                                          <button key={w.id} onClick={()=>toggleWindow(d.date, t, w.id, d.phase)}
-                                            style={{ fontSize:10,padding:"3px 8px",borderRadius:11,cursor:"pointer",border:`1px solid ${border}`,background:"transparent",color:textS,fontWeight:400 }}>
+                                          <button key={w.id} onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined}
+                                            style={{ fontSize:10,padding:"3px 8px",borderRadius:11,cursor:isAdmin?"pointer":"default",border:`1px solid ${border}`,background:"transparent",color:textS,fontWeight:400 }}>
                                             {w.label}
                                           </button>
                                         );
@@ -815,10 +831,10 @@ export default function DCManpowerTab({ ctx }) {
                                         const wc = winCountFor(d.date, t, w.id, ppl);
                                         return (
                                           <span key={w.id} style={{display:"inline-flex",alignItems:"center",border:`1px solid #10B981`,borderRadius:11,overflow:"hidden",background:"rgba(16,185,129,0.15)"}}>
-                                            <button onClick={()=>toggleWindow(d.date, t, w.id, d.phase)} title="Remove this shift" style={{fontSize:10,padding:"3px 6px 3px 9px",cursor:"pointer",border:"none",background:"transparent",color:"#10B981",fontWeight:600}}>✓ {w.label}</button>
-                                            <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>−</button>
+                                            <button onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={isAdmin?"Remove this shift":undefined} style={{fontSize:10,padding:"3px 6px 3px 9px",cursor:isAdmin?"pointer":"default",border:"none",background:"transparent",color:"#10B981",fontWeight:600}}>✓ {w.label}</button>
+                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>−</button>}
                                             <span title="Crew in this shift" style={{fontSize:10,minWidth:16,textAlign:"center",color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{wc}</span>
-                                            <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderRight:`1px solid rgba(16,185,129,0.4)`,borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>+</button>
+                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderRight:`1px solid rgba(16,185,129,0.4)`,borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>+</button>}
                                           </span>
                                         );
                                       })}
@@ -876,6 +892,12 @@ export default function DCManpowerTab({ ctx }) {
                                                         </table>
                                                       </>
                                                     )
+                                                  )}
+                                                  {/* Situational-multiplier pills (Tier 3 Labours only — venue-min floor side of the max()) */}
+                                                  {trace.situational && (
+                                                    <div style={{marginBottom:8}}>
+                                                      <ManpowerFactorPills mode="tier3" trace={trace.situational} qty={trace.total} label="Labours" dark />
+                                                    </div>
                                                   )}
                                                   {/* Sub-cat table (Carpenters/Painters Tier 2) */}
                                                   {trace.kind === "subcat_table" && (
