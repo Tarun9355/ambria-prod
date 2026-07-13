@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
-import { SETTINGS_DEFAULTS } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, DATE_PRICING_LABELS } from "../../lib/ims/constants";
 
 // Faithful copy of the reference IMS DatePricingPanel (shown in Calendar → Date Pricing Config).
 export default function DatePricingPanel({ settings, setSettings }) {
@@ -66,7 +66,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
             <div key={key} className="flex items-center gap-4 px-4 py-3">
               <div className={"w-3 h-3 rounded-full flex-shrink-0 " + (CAT_DOT[key] || "bg-gray-400")}></div>
               <div className="flex-1">
-                <p className="text-sm font-semibold text-gray-800">{cat.label}</p>
+                <p className="text-sm font-semibold text-gray-800">{DATE_PRICING_LABELS[key] || cat.label}</p>
                 <p className="text-xs text-gray-400">
                   {key === "heavy_saya" ? "Peak wedding season — charge premium" :
                     key === "competition" ? "Solid demand — standard market rate" :
@@ -118,7 +118,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
             {Object.entries(cats).map(([key, cat]) => (
               <button key={key} onClick={() => setSelCat(key)}
                 className={"text-xs px-3 py-1.5 rounded-lg font-semibold border transition-all " + (selCat === key ? `ring-2 ring-offset-1 ${PRICING_CAT_STYLES[key]} ring-current` : `${PRICING_CAT_STYLES[key]} opacity-60 hover:opacity-100`)}>
-                {cat.label}
+                {DATE_PRICING_LABELS[key] || cat.label}
               </button>
             ))}
           </div>
@@ -146,7 +146,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
             const isPast = dateStr < todayStr;
             return (
               <button key={d} onClick={() => toggleDate(dateStr, selCat)}
-                title={autoKey ? `Auto-synced as ${cats[autoKey]?.label || autoKey} — click to override` : undefined}
+                title={autoKey ? `Auto-synced as ${DATE_PRICING_LABELS[autoKey] || autoKey} — click to override` : undefined}
                 className={"w-full aspect-square rounded-xl text-sm font-medium transition-all flex items-center justify-center relative "
                   + (catKey ? (CAT_CELL[catKey] || "bg-gray-100")
                     : autoKey ? (CAT_CELL_LIGHT[autoKey] || "text-gray-700")
@@ -154,6 +154,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
                         : isToday ? "border-2 border-indigo-500 text-indigo-700 font-bold hover:bg-indigo-50"
                           : "hover:bg-gray-100 text-gray-700")}>
                 {d}
+                {autoKey && <span className={"absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full " + (CAT_DOT[autoKey] || "bg-gray-400")} />}
                 {isToday && !catKey && <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-500" />}
               </button>
             );
@@ -165,7 +166,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
             return (
               <div key={key} className="flex items-center gap-1.5">
                 <div className={"w-3 h-3 rounded " + (CAT_DOT[key] || "bg-gray-400")} />
-                <span className="text-xs text-gray-600">{cat.label}: <strong>{count} dates</strong></span>
+                <span className="text-xs text-gray-600">{DATE_PRICING_LABELS[key] || cat.label}: <strong>{count} dates</strong></span>
               </div>
             );
           })}
@@ -186,7 +187,7 @@ export default function DatePricingPanel({ settings, setSettings }) {
               const cat = cats[catKey];
               return (
                 <div key={date} className="flex items-center gap-3 px-4 py-2">
-                  <span className={"text-xs px-2 py-0.5 rounded-full font-medium border " + (PRICING_CAT_STYLES[catKey] || "")}>{cat?.label || catKey}</span>
+                  <span className={"text-xs px-2 py-0.5 rounded-full font-medium border " + (PRICING_CAT_STYLES[catKey] || "")}>{DATE_PRICING_LABELS[catKey] || cat?.label || catKey}</span>
                   <span className="text-sm text-gray-700 font-medium">{new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
                   <span className="ml-auto text-xs text-gray-400">{cat?.multiplier}×</span>
                   <button onClick={() => setSettings((s) => { const m = { ...s.datePricing.markedDates }; delete m[date]; return { ...s, datePricing: { ...s.datePricing, markedDates: m } }; })}

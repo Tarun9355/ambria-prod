@@ -116,6 +116,10 @@ export default function IMS() {
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
+  // True once the real settings row(s) have loaded at least once — guards the LMS auto-category
+  // sync below from ever persisting on top of the SETTINGS_DEFAULTS placeholder (a race would
+  // otherwise be able to wipe an admin's real datePricing.categories/markedDates back to defaults).
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [studioRcItems, setStudioRcItems] = useState([]);
   const [studioRcCats, setStudioRcCats] = useState(RC_CATS_DEFAULT); // Studio's LIVE categories (RC_SK_CATS) — falls back to defaults until loaded
   // Rate Card → IMS migration Phase 1: per-sub-category scaling factor, IMS-owned (rate_card_categories table).
@@ -235,6 +239,7 @@ export default function IMS() {
     for (const r of setRows) { if (!/^ambria-/.test(r.key)) settingsObj[r.key] = r.value; }
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
+    setSettingsLoaded(true);
   }, []);
 
   // ── Recipe → Studio rate sync (Tier 1.5) ───────────────────────────────────
@@ -615,18 +620,25 @@ export default function IMS() {
     const { contracts, lastSync } = await fetchCachedContracts();
     setLmsContracts(contracts);
     const season = await fetchSeason();
-    if (season) {
-      const dateCategories = buildDateCategories(season, contracts);
-      setStudioLmsCache({ dateCategories });
-      // Keep Date Pricing's auto-synced categories in step with the calendar — manual overrides
-      // (datePricing.markedDates) still win via resolveDateCategory; this is just the default.
-      const AUTO_CAT_MAP = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
-      const autoCategories = {};
-      Object.entries(dateCategories).forEach(([d, cat]) => { autoCategories[d] = AUTO_CAT_MAP[cat] || "non_saya"; });
-      setSettings((s) => ({ ...s, datePricing: { ...s.datePricing, autoCategories } }));
-    }
+    if (season) setStudioLmsCache({ dateCategories: buildDateCategories(season, contracts) });
     return lastSync;
-  }, [setSettings]);
+  }, []);
+
+  // Keep Date Pricing's auto-synced categories in step with the calendar whenever LMS/season data
+  // refreshes — manual overrides (datePricing.markedDates) still win via resolveDateCategory, this
+  // is just the default. Split out from loadLmsFromCache and gated on `settingsLoaded` so it can
+  // never race the real settings boot-load and persist SETTINGS_DEFAULTS on top of an admin's
+  // actual saved categories/markedDates.
+  useEffect(() => {
+    if (!settingsLoaded || !studioLmsCache?.dateCategories) return;
+    const AUTO_CAT_MAP = { "Heavy Saya": "heavy_saya", "Saya": "competition", "Normal": "non_saya" };
+    const autoCategories = {};
+    Object.entries(studioLmsCache.dateCategories).forEach(([d, cat]) => { autoCategories[d] = AUTO_CAT_MAP[cat] || "non_saya"; });
+    setSettings((s) => {
+      if (JSON.stringify(s.datePricing?.autoCategories || {}) === JSON.stringify(autoCategories)) return s; // no-op, skip the write
+      return { ...s, datePricing: { ...s.datePricing, autoCategories } };
+    });
+  }, [studioLmsCache, settingsLoaded, setSettings]);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
   const syncLms = useCallback(async () => {

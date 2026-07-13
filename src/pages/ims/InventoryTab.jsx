@@ -3,6 +3,7 @@ import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing } from "../../lib/inventory/helpers";
+import { DATE_PRICING_LABELS } from "../../lib/ims/constants";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
@@ -873,7 +874,7 @@ Rules:
                     <td className="px-2 py-2 align-top">
                       {i.price ? (() => {
                         const dp = settings?.datePricing;
-                        const tiers = dp ? Object.entries(dp.categories || {}).map(([k, cat]) => ({ k, label: cat.label, price: Math.round(i.price * cat.multiplier), mult: cat.multiplier })) : [];
+                        const tiers = dp ? Object.entries(dp.categories || {}).map(([k, cat]) => ({ k, label: DATE_PRICING_LABELS[k] || cat.label, price: Math.round(i.price * cat.multiplier), mult: cat.multiplier })) : [];
                         return (<div className="flex flex-col gap-0.5 items-start">
                           <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">Base {fmt(i.price)}</span>
                           {tiers.map((t) => (

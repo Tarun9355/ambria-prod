@@ -113,6 +113,13 @@ export const INIT_TRUSS_INV = {
 
 // Minimal default settings so finance math (buffer / min-profit) + date pricing work
 // before the Settings phase populates the real settings table. Faithful to INIT_SETTINGS.
+// Canonical display labels for the 3 date-pricing category keys — code-owned, NOT read from the
+// persisted settings.datePricing.categories[key].label. That field lives in a DB row that predates
+// any future rename, so trusting it would mean renaming this constant never actually shows up for
+// an install that already has a saved datePricing row (multiplier stays admin-owned/persisted;
+// label text does not).
+export const DATE_PRICING_LABELS = { heavy_saya: "👑 King's", competition: "✦ Perfect", non_saya: "○ Filler" };
+
 export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
   minProfitPct: 30,

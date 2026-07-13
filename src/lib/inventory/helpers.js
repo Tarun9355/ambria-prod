@@ -1,4 +1,5 @@
 // ─── Inventory helpers (faithful copies of reference IMS app) ─────────────────
+import { DATE_PRICING_LABELS } from "../ims/constants";
 
 // Suggest up to 3 similar in-stock items when a target is low/out of stock.
 export function findAlternatives(targetItem, inventory, neededQty = 1, excludeId = null) {
@@ -55,14 +56,16 @@ export function getEffectivePricing(basePrice, functionDate, settings) {
   const lastMinDays = dp.lastMinuteDays || 10;
   if (daysUntil >= 0 && daysUntil <= lastMinDays) {
     const cat = dp.categories.non_saya;
-    return { effectivePrice: Math.round(basePrice * (cat?.multiplier || 0.75)), multiplier: cat?.multiplier || 0.75, category: "non_saya", label: cat?.label || "Filler", reason: `Last-minute booking (${daysUntil}d away)` };
+    const label = DATE_PRICING_LABELS.non_saya;
+    return { effectivePrice: Math.round(basePrice * (cat?.multiplier || 0.75)), multiplier: cat?.multiplier || 0.75, category: "non_saya", label, reason: `Last-minute booking (${daysUntil}d away)` };
   }
   const catKey = resolveDateCategory(functionDate, settings);
   if (catKey && dp.categories[catKey]) {
     const cat = dp.categories[catKey];
+    const label = DATE_PRICING_LABELS[catKey] || cat.label;
     const marked = (dp.markedDates || {})[functionDate];
-    return { effectivePrice: Math.round(basePrice * cat.multiplier), multiplier: cat.multiplier, category: catKey, label: cat.label, reason: marked ? `Date marked as ${cat.label}` : `Auto-synced as ${cat.label}` };
+    return { effectivePrice: Math.round(basePrice * cat.multiplier), multiplier: cat.multiplier, category: catKey, label, reason: marked ? `Date marked as ${label}` : `Auto-synced as ${label}` };
   }
   const cat = dp.categories.competition;
-  return { effectivePrice: basePrice, multiplier: 1, category: "competition", label: cat?.label || "Standard", reason: "Unmarked date (standard pricing)" };
+  return { effectivePrice: basePrice, multiplier: 1, category: "competition", label: DATE_PRICING_LABELS.competition || cat?.label || "Standard", reason: "Unmarked date (standard pricing)" };
 }
