@@ -909,12 +909,16 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{ position: "relative" }}>
                     <input value={libElSearch} onChange={e => setLibElSearch(e.target.value)} placeholder="+ Add element..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setLibElSearch("")} />
                     {libElSearch.length >= 1 && (() => {
-                      const q = libElSearch.toLowerCase();
+                      // Token AND-match (every typed word must appear SOMEWHERE in the haystack,
+                      // any order) instead of one literal substring — "candle 3d" now finds "3D iron
+                      // candle wall" even though the words appear in a different order in the name.
+                      const tokens = libElSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                      const matchesTokens = (haystack) => tokens.every(t => haystack.includes(t));
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && (it.name.toLowerCase().includes(q) || (it.cat || "").toLowerCase().includes(q) || (it.subCat || it.subcategory || "").toLowerCase().includes(q)));
-                      const patMatches = (recipeOnlyPatterns || []).filter(pt => !(libEditImg.elements || []).find(el => el.patternId === pt.id) && pt.name.toLowerCase().includes(q));
+                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
+                      const patMatches = (recipeOnlyPatterns || []).filter(pt => !(libEditImg.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));
                       const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))];
                       // Thumbnail is sized to actually be readable inline — no hover step required to
                       // see it properly (an earlier hover-preview panel was fiddly and could run

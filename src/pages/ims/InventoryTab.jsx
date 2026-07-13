@@ -1600,8 +1600,10 @@ Rules:
                       <input value={kitCompSearch} onChange={(e) => setKitCompSearch(e.target.value)} placeholder="🔍 Type an item name to add as a component…"
                         className="w-full border rounded-lg px-3 py-2 text-sm" />
                       {kitCompSearch.trim() && (() => {
-                        const q = kitCompSearch.trim().toLowerCase();
-                        const matches = kitComponentOpts.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 40);
+                        // Token AND-match (every typed word must appear somewhere in the name, any
+                        // order) — "candle 3d" should still find "3D iron candle wall".
+                        const tokens = kitCompSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+                        const matches = kitComponentOpts.filter((i) => { const n = i.name.toLowerCase(); return tokens.every((t) => n.includes(t)); }).slice(0, 40);
                         return (
                           <div className="absolute z-50 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
                             {matches.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No matches</div>}
