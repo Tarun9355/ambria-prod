@@ -580,7 +580,10 @@ export default function ManageLibrary({ ctx }) {
                           if(hasDims){updated.dims={...(updated.dims||{}),trussL:d.trussL||0,trussW:d.trussW||0,trussH:d.trussH||0,floorL:d.floorL||0,floorW:d.floorW||0,plH:d.plH||updated.dims?.plH||"",mkT:d.mkT||updated.dims?.mkT||"",mkWalls:d.mkWalls||updated.dims?.mkWalls||{}};}
                           setLibEditImg(updated);
                           showMsg(`✓ AI: ${result.elements?.length||0} elements${hasDims?", dims "+d.trussL+"×"+d.trussW+"×"+d.trussH:"— no dims (fill manually)"}`,"green");
-                        }else{showMsg("AI returned no results","red");}
+                        }
+                        // No else here: aiTagImage already shows the specific reason (rate limit,
+                        // empty response, parse error, etc.) via its own showMsg before returning
+                        // null — a generic "no results" message here would just overwrite it.
                       }catch(e){showMsg("AI error: "+e.message,"red");}
                       setLibAiLoading(false);
                     }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px", background: "#7C3AED", opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "🔄 Tagging..." : "🤖 AI Tag"}</button>
@@ -1068,8 +1071,9 @@ export default function ManageLibrary({ ctx }) {
           const { name, elements, ...rest } = tags;
           setLibAddPreview({ url: trimmed, name: name || "Untitled", tags: rest, elements: Array.isArray(elements) ? elements : [] });
         } else {
+          // No fallback showMsg here — aiTagImage already surfaced the specific reason
+          // (rate limit, empty response, parse error, etc.) before returning null.
           setLibAddPreview({ url: trimmed, name: "Untitled", tags: {} });
-          showMsg("AI tagging failed — tag manually", "red");
         }
       } catch (e) {
         setLibAddPreview({ url: trimmed, name: "Untitled", tags: {} });
