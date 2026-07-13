@@ -2441,6 +2441,14 @@ export default function StudioApp() {
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
       const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc) : null;
       if (rates) {
+        if (isKit) {
+          // Kit + recipe (e.g. a console table with a floral topper): no real/artificial blend —
+          // that toggle exists so a client can cut cost on plain flower-pot-style items with an
+          // artificial mix, which doesn't apply to a fixed decorative kit. Price at the recipe's
+          // full Studio rate (100% real) plus the kit's own rental × scaling factor.
+          const unitPrice = rates.realRate + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
+          return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: pattern.mode === "smb" };
+        }
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
         const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
