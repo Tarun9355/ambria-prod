@@ -920,22 +920,38 @@ export default function ManageLibrary({ ctx }) {
                         <Fragment key={idx}>
                           <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                             <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center", cursor: thumbSrc ? "zoom-in" : "default" }}
-                              onMouseEnter={(e) => { if (!thumbSrc) return; const r = e.currentTarget.getBoundingClientRect(); setElHoverImg({ idx, top: r.bottom + 4, left: r.left }); }}
+                              onMouseEnter={(e) => {
+                                if (!thumbSrc) return;
+                                const r = e.currentTarget.getBoundingClientRect();
+                                const POP = 164;
+                                const openUp = window.innerHeight - r.bottom < POP + 8 && r.top > POP + 8;
+                                setElHoverImg({ idx, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
+                              }}
                               onMouseLeave={() => setElHoverImg(null)}>
                               {thumbSrc ? <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
                             </div>
                             {elHoverImg?.idx === idx && thumbSrc && (
-                              <div style={{ position: "fixed", top: elHoverImg.top, left: elHoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
+                              <div style={{ position: "fixed", top: elHoverImg.top, bottom: elHoverImg.bottom, left: elHoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
                                 <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                               </div>
                             )}
                             <span style={{ cursor: isKit ? "help" : "default" }}
-                              onMouseEnter={(e) => { if (!isKit) return; const r = e.currentTarget.getBoundingClientRect(); setElHoverKit({ idx, top: r.bottom + 4, left: r.left }); }}
+                              onMouseEnter={(e) => {
+                                if (!isKit) return;
+                                const r = e.currentTarget.getBoundingClientRect();
+                                const rows = (invItem.subItems || []).length;
+                                const estH = Math.min(24 + rows * 34 + 16, 360);
+                                const spaceBelow = window.innerHeight - r.bottom;
+                                const spaceAbove = r.top;
+                                const openUp = spaceBelow < estH + 8 && spaceAbove > spaceBelow;
+                                const avail = (openUp ? spaceAbove : spaceBelow) - 12;
+                                setElHoverKit({ idx, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 288), maxHeight: Math.max(avail, 80) });
+                              }}
                               onMouseLeave={() => setElHoverKit(null)}>
                               {el.name}
                             </span>
                             {isKit && elHoverKit?.idx === idx && (
-                              <div style={{ position: "fixed", top: elHoverKit.top, left: elHoverKit.left, zIndex: 10000, minWidth: 200, maxWidth: 280, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
+                              <div style={{ position: "fixed", top: elHoverKit.top, bottom: elHoverKit.bottom, left: elHoverKit.left, zIndex: 10000, minWidth: 200, maxWidth: 280, maxHeight: elHoverKit.maxHeight, overflowY: "auto", background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
                                 <div style={{ fontSize: 9, fontWeight: 700, color: textS, marginBottom: 4 }}>📦 Kit contents</div>
                                 {(invItem.subItems || []).map((si, i) => {
                                   const comp = (imsInventory || []).find(x => x.id === si.itemId);
