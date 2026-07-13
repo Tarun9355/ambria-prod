@@ -165,23 +165,26 @@ Deno.serve(async (req) => {
   ]);
   const keywords = (s: string) => normName(s).split(" ").filter((w: string) => !stopWords.has(w) && w.length > 1);
   // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
-  // keyword-overlap ≥40%). Shared by the sub-cat-scoped and full-catalog passes below.
-  const bestOf = (name: string, pool: any[], keyOf: (c: any) => string): any => {
+  // keyword-overlap ≥40%). Shared by the sub-cat-scoped and full-catalog passes below. Returns
+  // { item, method, score } — mirrors the client aiTagImage's shape so low-confidence overlap
+  // matches can be flagged for human review the same way on both tagging paths.
+  const bestOf = (name: string, pool: any[], keyOf: (c: any) => string): { item: any; method: string; score: number } | null => {
     const nameNorm = normName(name);
     const exact = pool.find((c) => normName(keyOf(c)) === nameNorm);
-    if (exact) return exact;
+    if (exact) return { item: exact, method: "exact", score: 100 };
     const nameKw = keywords(name);
     let bestScore = 0, best: any = null;
     for (const c of pool) {
       const cNorm = normName(keyOf(c));
-      if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return c;
+      if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return { item: c, method: "substring", score: 90 };
       const cKw = keywords(keyOf(c));
       const overlap = nameKw.filter((w: string) => cKw.some((cw: string) => cw.includes(w) || w.includes(cw))).length;
       const score = overlap > 0 ? (overlap / Math.max(nameKw.length, cKw.length)) * 100 : 0;
       if (score > bestScore) { bestScore = score; best = c; }
     }
-    return bestScore >= 40 ? best : null;
+    return bestScore >= 40 ? { item: best, method: "overlap", score: bestScore } : null;
   };
+  const LOW_CONFIDENCE_BELOW = 65;
   // Real-vs-artificial flower content is a %-blend the pricing engine applies automatically to the
   // matched floral item — it's never its own physical inventory item, so an "artificial flower
   // bunch"-style proposal is always noise. Mirrors the client aiTagImage's rule.
@@ -197,11 +200,17 @@ Deno.serve(async (req) => {
       const elSubKey = normName(el.subCat);
       const scopedInv = elSubKey ? taggableInv.filter((it: any) => normName(it.subCat) === elSubKey) : [];
       const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
-      if (invMatch) return { ...el, name: invMatch.name, unit: invMatch.unit, invId: invMatch.id, new: undefined };
+      if (invMatch) {
+        const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
+        return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+      }
       // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
       const scopedPat = elSubKey ? recipeOnlyPatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
       const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, recipeOnlyPatterns, (p) => p.name);
-      if (patMatch) return { ...el, name: patMatch.name, unit: patMatch.unit, patternId: patMatch.id, new: undefined };
+      if (patMatch) {
+        const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
+        return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+      }
       return { ...el, new: true };
     });
     // A matched kit already represents its own components' cost/stock — drop any OTHER element that

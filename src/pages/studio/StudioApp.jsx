@@ -4668,22 +4668,28 @@ Return ONLY JSON:
         const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1);
         // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
         // keyword-overlap ≥40%). Shared by both the sub-cat-scoped and full-catalog passes below.
+        // Returns { item, method, score } (method: "exact"|"substring"|"overlap") so the caller can
+        // flag weak overlap-only matches for human review instead of silently trusting every match
+        // the same way a "new":true flag would.
         const bestOf = (name, pool, keyOf) => {
           const nameNorm = normalize(name);
           const exact = pool.find(c => normalize(keyOf(c)) === nameNorm);
-          if (exact) return exact;
+          if (exact) return { item: exact, method: "exact", score: 100 };
           const nameKw = keywords(name);
           let bestScore = 0, best = null;
           for (const c of pool) {
             const cNorm = normalize(keyOf(c));
-            if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return c; // near-certain, stop here
+            if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return { item: c, method: "substring", score: 90 }; // near-certain, stop here
             const cKw = keywords(keyOf(c));
             const overlap = nameKw.filter(w => cKw.some(cw => cw.includes(w) || w.includes(cw))).length;
             const score = overlap > 0 ? (overlap / Math.max(nameKw.length, cKw.length)) * 100 : 0;
             if (score > bestScore) { bestScore = score; best = c; }
           }
-          return bestScore >= 40 ? best : null;
+          return bestScore >= 40 ? { item: best, method: "overlap", score: bestScore } : null;
         };
+        // Below this overlap-match score, flag the tagged element as low-confidence so a human
+        // reviewer can spot-check it — an exact/substring match, or a strong overlap, needs no flag.
+        const LOW_CONFIDENCE_BELOW = 65;
         // Matches an AI-proposed element name against a real IMS inventory item and, on a match,
         // sets invId so it prices via getElPriceFromInventory (floral-recipe Studio rate, SMB
         // toggle, sub-category scaling factor) exactly like a manually-added element.
@@ -4701,12 +4707,18 @@ Return ONLY JSON:
           const elSubKey = normalize(el.subCat);
           const scopedInv = elSubKey ? taggableInv.filter(it => normalize(it.subCat || it.subcategory) === elSubKey) : [];
           const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, it => it.name)) || bestOf(el.name, taggableInv, it => it.name);
-          if (invMatch) return { ...el, name: invMatch.name, unit: invMatch.unit, size: size(), invId: invMatch.id, new: undefined };
+          if (invMatch) {
+            const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
+            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+          }
 
           // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
           const scopedPat = elSubKey ? recipeOnlyPatterns.filter(p => normalize(p.sub) === elSubKey) : [];
           const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, recipeOnlyPatterns, p => p.name);
-          if (patMatch) return { ...el, name: patMatch.name, unit: patMatch.unit, size: size(), patternId: patMatch.id, new: undefined };
+          if (patMatch) {
+            const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
+            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+          }
 
           return { ...el, new: true };
         });
