@@ -8,17 +8,11 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [] }) {
-  // Studio sub-categories (Tier 1.1 source of truth · flat list · empty during boot)
-  const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
-  // Tier 1.2 — Studio cat labels + scoped subcat lookup
+  // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
+  // small, stable set still sourced from Studio's live Rate-Card categories — only the
+  // SUB-category list moves to rate_card_categories below (see studioSubcats/studioSubcatsByCat).
   const studioCatLabels = studio?.catLabels || [];
-  const studioSubcatsByCat = studio?.subcatsByCat || {};
-  // Returns subcats for a given cat label, falling back to flat list for legacy/ambiguous cats
-  const subcatsForCat = (catLabel) => {
-    const scoped = studioSubcatsByCat[catLabel];
-    return (scoped && scoped.length > 0) ? scoped : studioSubcats;
-  };
   // A category "needs migration" only if it can't be resolved to a CURRENT Studio category
   // (the live rate-card cats). The old hardcoded legacy list wrongly flagged names like
   // Lighting / Furniture / Fabric that are now real Studio categories — false "needs migration"
@@ -65,6 +59,35 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   };
   const normCat = (c) => canonicalLabel(c, studioCatLabels, false);
   const normSub = (s) => canonicalLabel(s, studioSubcats, true);
+
+  // Sub-categories: sourced from the canonical rate_card_categories table (IMS's admin-managed
+  // source of truth, Settings → Sub-Categories) — NOT the legacy Rate-Card-item-derived list this
+  // used to read. A sub-category created or renamed there now shows up here immediately; before,
+  // this list came from Studio's Rate Card, which the Sub-Categories admin panel never touched, so
+  // a manual add/rename there was invisible in Inventory's dropdowns and filter pills.
+  const invSubToRcCat = {};
+  inventory.forEach((it) => {
+    const rawSub = it.subCat ?? it.subcategory;
+    if (!rawSub) return;
+    const subKey = String(rawSub).trim().toLowerCase();
+    if (!subKey || invSubToRcCat[subKey]) return;
+    const rawCat = it.cat ?? it.category;
+    invSubToRcCat[subKey] = rawCat ? normCat(rawCat) : "Other";
+  });
+  const studioSubcatsByCat = {};
+  const studioSubcats = [];
+  (rateCardCategories || []).forEach((r) => {
+    if (!r || !r.label) return;
+    const catLabel = r.category_label || invSubToRcCat[r.id] || "Other";
+    (studioSubcatsByCat[catLabel] = studioSubcatsByCat[catLabel] || []).push(r.label);
+    studioSubcats.push(r.label);
+  });
+  // Returns subcats for a given cat label, falling back to flat list for legacy/ambiguous cats
+  const subcatsForCat = (catLabel) => {
+    const scoped = studioSubcatsByCat[catLabel];
+    return (scoped && scoped.length > 0) ? scoped : studioSubcats;
+  };
+
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
@@ -1007,8 +1030,8 @@ Rules:
                       autoFocus placeholder="Type custom sub-cat (Tarun: add to Studio later)"
                       className="mt-1 w-full border-2 border-amber-300 rounded-lg px-3 py-2 text-sm" />
                   )}
-                  {studioLoading && studioSubcats.length === 0 && (
-                    <p className="text-[10px] text-gray-400 mt-1">Loading sub-categories from Studio…</p>
+                  {studioSubcats.length === 0 && (
+                    <p className="text-[10px] text-gray-400 mt-1">Loading sub-categories…</p>
                   )}
                 </div>
                 <div>
