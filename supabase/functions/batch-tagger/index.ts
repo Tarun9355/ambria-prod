@@ -135,6 +135,10 @@ Deno.serve(async (req) => {
   const isSubHidden = (subCat: any) => tagHiddenSubIds.has(String(subCat || "").trim().toLowerCase());
   const isSubUnrecognized = (subCat: any) => { const k = String(subCat || "").trim().toLowerCase(); return !!k && !rcSubIds.has(k); };
   const taggableInv = inv.filter((i: any) => !STRUCTURAL.has(String(i.cat || "").trim().toLowerCase()) && !isSubHidden(i.subCat) && !isSubUnrecognized(i.subCat));
+  // Kit (bundle) items → their own components' itemIds, so a photo matching the kit itself doesn't
+  // ALSO get its individual sub-items tagged separately — mirrors the client aiTagImage's rule.
+  const kitOf: Record<string, string[]> = {};
+  taggableInv.forEach((i: any) => { if (Array.isArray(i.subItems) && i.subItems.length) kitOf[i.id] = i.subItems.map((s: any) => s.itemId); });
   // Sub-category vocabulary by top-level category (from live inventory).
   const subByCat: Record<string, Set<string>> = {};
   taggableInv.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.subCat || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
@@ -178,21 +182,34 @@ Deno.serve(async (req) => {
     }
     return bestScore >= 40 ? best : null;
   };
-  const matchInventory = (els: any[]) => (Array.isArray(els) ? els : []).map((el: any) => {
-    if (!el || !el.name) return el;
-    // Scope the search to the model's own guessed sub-category first — routes the match to the
-    // right bucket instead of the whole catalog; falls back to the full catalog if the guess
-    // didn't narrow to anything, so a wrong/blank category guess never costs recall.
-    const elSubKey = normName(el.subCat);
-    const scopedInv = elSubKey ? taggableInv.filter((it: any) => normName(it.subCat) === elSubKey) : [];
-    const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
-    if (invMatch) return { ...el, name: invMatch.name, unit: invMatch.unit, invId: invMatch.id, new: undefined };
-    // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
-    const scopedPat = elSubKey ? recipeOnlyPatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
-    const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, recipeOnlyPatterns, (p) => p.name);
-    if (patMatch) return { ...el, name: patMatch.name, unit: patMatch.unit, patternId: patMatch.id, new: undefined };
-    return { ...el, new: true };
-  });
+  // Real-vs-artificial flower content is a %-blend the pricing engine applies automatically to the
+  // matched floral item — it's never its own physical inventory item, so an "artificial flower
+  // bunch"-style proposal is always noise. Mirrors the client aiTagImage's rule.
+  const ARTIFICIAL_KW = /\b(artificial|faux|fake)\b/i;
+  const FLORAL_KW = /\b(flower|floral|greenery|leaves|leaf|petal|bouquet|garland|bunch|foliage|plant)\b/i;
+  const dropArtificialFloral = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => !(e && ARTIFICIAL_KW.test(e.name || "") && FLORAL_KW.test(e.name || "")));
+  const matchInventory = (els: any[]) => {
+    const mapped = (Array.isArray(els) ? els : []).map((el: any) => {
+      if (!el || !el.name) return el;
+      // Scope the search to the model's own guessed sub-category first — routes the match to the
+      // right bucket instead of the whole catalog; falls back to the full catalog if the guess
+      // didn't narrow to anything, so a wrong/blank category guess never costs recall.
+      const elSubKey = normName(el.subCat);
+      const scopedInv = elSubKey ? taggableInv.filter((it: any) => normName(it.subCat) === elSubKey) : [];
+      const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
+      if (invMatch) return { ...el, name: invMatch.name, unit: invMatch.unit, invId: invMatch.id, new: undefined };
+      // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
+      const scopedPat = elSubKey ? recipeOnlyPatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
+      const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, recipeOnlyPatterns, (p) => p.name);
+      if (patMatch) return { ...el, name: patMatch.name, unit: patMatch.unit, patternId: patMatch.id, new: undefined };
+      return { ...el, new: true };
+    });
+    // A matched kit already represents its own components' cost/stock — drop any OTHER element that
+    // matched one of THAT kit's sub-items so the same physical object isn't tagged twice.
+    const suppressedCompIds = new Set<string>();
+    mapped.forEach((el: any) => { if (el && el.invId && kitOf[el.invId]) kitOf[el.invId].forEach((id) => suppressedCompIds.add(id)); });
+    return suppressedCompIds.size ? mapped.filter((el: any) => !(el && el.invId && suppressedCompIds.has(el.invId))) : mapped;
+  };
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";
 
   const basePrompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:
@@ -211,6 +228,9 @@ Rules:
 4. Do NOT tag structural items (truss/platform/masking/carpet/flex) as elements.
 5. LIGHTS — count every light fixture; put the total in "lightCount" (0 if none).
 6. MISSING — items you cannot match go in elements with "new":true AND a short note in "unrecognized" ([] if none).
+7. NEVER tag "artificial flower/faux flower/fake flower/greenery/bouquet/garland" as its own element — real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item; just tag the flower/floral item normally.
+8. KITS — if several pieces are sold and priced together as ONE bundled inventory item, tag it ONCE using that bundled item's exact name; do not also separately list its individual component pieces.
+9. NAMING — "name" must be a specific, human-scannable name (5-9 words) referencing the zone, dominant design style, and one hero element (e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier"). Never use generic filler alone like "Wedding Decor" or "Elegant Setup".
 Return ONLY JSON matching the provided schema.`;
 
   const promptText = [houseRules, corrText, kb?.promptText || "", subcatText, basePrompt].filter(Boolean).join("\n\n");
@@ -268,7 +288,7 @@ Return ONLY JSON matching the provided schema.`;
     if (Date.now() - runStart > RUN_TIME_BUDGET_MS) { skipped = targets.length - ok - fail; break; }
     try {
       const r = await tagOne(img);
-      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(r.elements)), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(dropArtificialFloral(r.elements))), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.
