@@ -875,8 +875,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
                 (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
             {deptIncome ? (() => {
-              const artTotal = fp.artificial ? Math.round(fp.artificial.total) : 0;
-              const realFloral = Math.max(0, Math.round((deptIncome.florals || 0) - artTotal));
+              // fp (floralPlan) is a whole-EVENT floral sourcing plan, not scoped per department —
+              // only show its real/artificial split under the Floral dept itself.
+              const artTotal = (dept === "Floral" && fp.artificial) ? Math.round(fp.artificial.total) : 0;
+              const realFloral = dept === "Floral" ? Math.max(0, Math.round((deptIncome.florals || 0) - artTotal)) : 0;
               const liveManpower = Math.round(mpCost);   // edited crew plan (not the stale snapshot)
               const liveTotal = Math.round((deptIncome.total || 0) - (deptIncome.manpower || 0) + liveManpower);
               const rows = [["📦 Inventory rental", deptIncome.rental], ["🏗️ Truss", deptIncome.truss], ["🧵 Fabric / draping", deptIncome.fabric], ["🌿 Real flowers (mandi)", realFloral], ["🌸 Artificial flowers", artTotal], ["👷 Manpower", liveManpower], ["🏭 Production", deptIncome.production], ["🛒 Buying", deptIncome.buying], ["🚚 Transport", deptIncome.transport]];
