@@ -85,17 +85,37 @@ export function mpEffWinIds(d, mpWin, type) {
 // the real IMS "Flower Pot" sub-category WITHOUT changing the item's name or its per-item floral pricing.
 export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? String(rc.imsAlias).trim() : ""; return a || (rc && rc.sub) || ""; };
 
+// A kit's total = its own base rental + Σ(each component's CURRENT price × qty), read live from
+// the inventory list — mirrors InventoryTab.jsx's kitPriceFrom exactly. Computed fresh on every
+// call rather than trusted from the kit's own stored `price` column: that column is only a
+// snapshot, written when someone last opened+saved THIS specific kit's Edit form, so it silently
+// goes stale the moment any component's own price changes elsewhere. Recomputing live means
+// Build/Deal Check and the Edit screen can never disagree again.
+function kitTotalFromInventory(item, allInventory) {
+  const base = Number(item.kitBase) || 0;
+  const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+  if (!Array.isArray(allInventory)) return base;
+  return subItems.reduce((sum, si) => {
+    const c = allInventory.find((i) => i.id === si.itemId);
+    const r = c ? (Number(c.price ?? c.rentalCost) || 0) : 0;
+    return sum + r * (Number(si.qty) || 0);
+  }, base);
+}
+
 // Price an IMS inventory item directly (no Rate Card involved) — Library "+Add element" now
 // sources from inventory instead of the Rate Card. `factorByKey` is the same lower(trim(sub))
 // → scaling_factor map the Rate Card → IMS migration's Phase 2 already builds from
-// `rate_card_categories`. A kit's `price` is already the auto-computed total (kitBase + Σ
-// component price×qty, set in InventoryTab.jsx) — no separate kit formula needed here.
-export function priceForInvItem(item, factorByKey) {
+// `rate_card_categories`. `allInventory` (optional) enables the live kit-total recompute above;
+// pass it whenever available — omitting it only matters for kits, where it falls back to the
+// item's own (possibly stale) stored price.
+export function priceForInvItem(item, factorByKey, allInventory) {
   if (!item) return 0;
   const key = String(item.subCat || item.subcategory || "").trim().toLowerCase();
   const f = key ? factorByKey?.[key] : undefined;
   const factor = (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
-  return (Number(item.price) || 0) * factor;
+  const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+  const base = isKit ? kitTotalFromInventory(item, allInventory) : (Number(item.price) || 0);
+  return base * factor;
 }
 
 export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {

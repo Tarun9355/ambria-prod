@@ -1270,14 +1270,21 @@ Rules:
 
       {/* ── Item Detail Modal ─────────────────────────────────────────── */}
       <Modal open={!!detailItem} onClose={() => setDetailItem(null)} title={selItem?.name || ""} wide>
-        {selItem && <div className="space-y-4">
+        {selItem && (() => {
+          // A kit's displayed price is always the LIVE total (kitBase + Σ current component
+          // price×qty) — same formula Edit's "Rental Price" field computes — never the possibly
+          // stale stored `.price` snapshot, so this modal can't disagree with Edit or Build/Deal
+          // Check (see priceForInvItem in src/lib/ims/helpers.js for the Studio-side mirror).
+          const selIsKit = Array.isArray(selItem.subItems) && selItem.subItems.length > 0;
+          const selPrice = selIsKit ? kitPriceFrom(selItem.subItems, selItem.kitBase) : selItem.price;
+          return <div className="space-y-4">
           <div className="flex gap-4">
             {selItem.img
               ? <img src={selItem.img} alt="" className="w-28 h-28 rounded-xl object-cover border shadow" onError={(e) => { e.target.onerror = null; e.target.src = ""; e.target.style.display = "none"; }} />
               : <div className="w-28 h-28 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300 flex-shrink-0"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
             }
             <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm flex-1">
-              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selItem.price ? fmt(selItem.price) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"]].map(([l, v]) => (
+              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"]].map(([l, v]) => (
                 <div key={l}><span className="text-gray-400">{l}: </span><span className="font-medium text-gray-800">{v}</span></div>
               ))}
             </div>
@@ -1302,7 +1309,8 @@ Rules:
               ✏️ Edit Item
             </button>
           </div>
-        </div>}
+        </div>;
+        })()}
       </Modal>
 
       {/* ── Edit Item Modal ─────────────────────────────────────────────── */}

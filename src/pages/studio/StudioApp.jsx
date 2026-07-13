@@ -2453,7 +2453,7 @@ export default function StudioApp() {
         // Flower cost blends by real/artificial %; the pot/container itself doesn't — this specific
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
-        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey);
+        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
@@ -2462,14 +2462,14 @@ export default function StudioApp() {
       const available = getStudioAvailable(item, activeBlocksForDate);
       const ownedQty = Math.min(qty, available);
       const shortQty = Math.max(0, qty - available);
-      const ownedRate = priceForInvItem(item, rcFactorByKey);
+      const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory);
       const shortRate = (Number(item.cost) || 0) * (rcCostPctForSub(item.subCat || item.subcategory) / 100);
       const lineCost = ownedQty * ownedRate + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null };
     }
-    const unitPrice = priceForInvItem(item, rcFactorByKey);
+    const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory);
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
