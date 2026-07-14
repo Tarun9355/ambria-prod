@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
   // and getElPriceFromInventory). `rate_card_categories.tag_hidden` (set in IMS's Sub-Categories
   // admin panel) replaces the old TAG_HIDDEN_SUBS_SK settings-blob flag for this purpose — that key
   // is left alone/unread here now, in case anything else still reads it.
-  const [taxonomy, palette, kb, flowerPatterns] = await Promise.all([TAX_SK, PALETTE_SK, TAG_KB_SK, "flowerPatterns"].map(getKv));
+  const [taxonomy, palette, kb, flowerPatterns, synonymDictionary] = await Promise.all([TAX_SK, PALETTE_SK, TAG_KB_SK, "flowerPatterns", "synonymDictionary"].map(getKv));
   const { data: invRows, error: invErr } = await db.from("inventory").select("*");
   if (invErr) return json({ error: invErr.message }, 500);
   const { data: subcatRows, error: subcatErr } = await db.from("rate_card_categories").select("id, tag_hidden");
@@ -184,7 +184,19 @@ Deno.serve(async (req) => {
     "medium", "huge", "giant", "tiny", "gold", "golden", "white", "silver", "black", "red", "pink",
     "green", "blue", "ivory", "cream", "rose", "peach", "purple", "yellow", "orange", "maroon", "copper",
   ]);
-  const keywords = (s: string) => normName(s).split(" ").filter((w: string) => !stopWords.has(w) && w.length > 1);
+  // AI Synonym Dictionary (IMS Admin → Settings → 🔤 AI Synonyms) — ops-editable groups of words that
+  // mean the same physical thing (e.g. "Jali"/"Lattice"/"Mesh"/"Screen"). Maps every word in a group
+  // to that group's first word, so two synonym-equivalent words normalize to the same token before
+  // keyword-overlap scoring. Mirrors the client aiTagImage's rule.
+  const synonymOf: Record<string, string> = {};
+  (Array.isArray(synonymDictionary) ? synonymDictionary : []).forEach((g: any) => {
+    const words = Array.isArray(g?.words) ? g.words : [];
+    if (words.length < 2) return;
+    const canon = normName(words[0]);
+    words.forEach((w: string) => { synonymOf[normName(w)] = canon; });
+  });
+  const canonWord = (w: string) => synonymOf[w] || w;
+  const keywords = (s: string) => normName(s).split(" ").filter((w: string) => !stopWords.has(w) && w.length > 1).map(canonWord);
   // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
   // keyword-overlap ≥40%). Shared by the sub-cat-scoped and full-catalog passes below. Returns
   // { item, method, score } — mirrors the client aiTagImage's shape so low-confidence overlap
@@ -208,10 +220,16 @@ Deno.serve(async (req) => {
   const LOW_CONFIDENCE_BELOW = 65;
   // Real-vs-artificial flower content is a %-blend the pricing engine applies automatically to the
   // matched floral item — it's never its own physical inventory item, so an "artificial flower
-  // bunch"-style proposal is always noise. Mirrors the client aiTagImage's rule.
+  // bunch"-style proposal should be tagged under its cleaned name, not deleted outright (deleting it
+  // would silently undercount a real, visible floral arrangement whenever the model's naming didn't
+  // perfectly follow the "don't say artificial" instruction). Mirrors the client aiTagImage's rule.
   const ARTIFICIAL_KW = /\b(artificial|faux|fake)\b/i;
   const FLORAL_KW = /\b(flower|floral|greenery|leaves|leaf|petal|bouquet|garland|bunch|foliage|plant)\b/i;
-  const dropArtificialFloral = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => !(e && ARTIFICIAL_KW.test(e.name || "") && FLORAL_KW.test(e.name || "")));
+  const sanitizeArtificialFloral = (els: any[]) => (Array.isArray(els) ? els : []).map((e: any) => {
+    if (!e || !e.name || !(ARTIFICIAL_KW.test(e.name) && FLORAL_KW.test(e.name))) return e;
+    const cleanName = String(e.name).replace(/\b(artificial|faux|fake)\b/gi, "").replace(/\s+/g, " ").trim();
+    return cleanName ? { ...e, name: cleanName } : e;
+  });
   const matchInventory = (els: any[]) => {
     const mapped = (Array.isArray(els) ? els : []).map((el: any) => {
       if (!el || !el.name) return el;
@@ -287,7 +305,17 @@ Rules:
 8. KITS — if several pieces are sold and priced together as ONE bundled inventory item, tag it ONCE using that bundled item's exact name; do not also separately list its individual component pieces.
 9. ATTACHMENT — for EVERY element, decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle on a console table, a vase on a pedestal). If so, set "attachedTo" to the EXACT "name" you used for that other element (character-for-character); otherwise set it to "". Still tag the item normally even when it's attached to something else — do not skip it.
 10. CRITICAL — NAMING IS MANDATORY: "name" must ALWAYS be a specific, human-scannable name (5-9 words) referencing the zone/area, the dominant design style, AND one standout hero element (e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier"). NEVER settle for generic filler alone like "Wedding Decor", "Elegant Setup", "Floral Arrangement", "Event Design", or a bare venue/zone label — every photo needs its own distinct, descriptive name, not a placeholder.
-11. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The truss/platform/masking dims capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss), regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT force a Jali into the Arch/Panel naming, it is its own shape). FIRST search the IMS Inventory list above for a SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic label. ONLY if no specific item matches, fall back to the generic sub-category combo name: MATERIAL (Wooden or Wrought Iron) + DEPTH (2D flat / 3D with visible depth) + SHAPE (Arch/Panel) from the sub-category vocabulary below. NEVER invent your own descriptive label for a structure element instead of matching it to the inventory list. Do NOT skip this element just because you already tagged the plain truss/platform.
+11. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The "dims" fields (trussL/trussW/trussH/plH/mkT) capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss), regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT force a Jali into the Arch/Panel naming, it is its own shape). FIRST search the IMS Inventory list above for a SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic label. ONLY if no specific item matches, fall back to the generic sub-category combo name: MATERIAL (Wooden or Wrought Iron) + DEPTH (2D flat / 3D with visible depth) + SHAPE (Arch/Panel) from the sub-category vocabulary below. NEVER invent your own descriptive label for a structure element instead of matching it to the inventory list. Do NOT skip this element just because you already tagged the plain truss/platform.
+
+Dimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):
+- trussL: length of the main structure (front-to-back or stage width)
+- trussW: width/depth of the structure
+- trussH: height of the overhead structure/truss
+- floorL: floor area length (may be larger than truss if carpet/platform extends)
+- floorW: floor area width
+- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level
+- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none
+- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}
 Return ONLY JSON matching the provided schema.`;
 
   const promptText = [houseRules, corrText, kb?.promptText || "", subcatText, basePrompt].filter(Boolean).join("\n\n");
@@ -295,7 +323,7 @@ Return ONLY JSON matching the provided schema.`;
 
   const schema = {
     type: "object", additionalProperties: false,
-    required: ["name", "tags", "elements", "lightCount", "unrecognized"],
+    required: ["name", "tags", "dims", "elements", "lightCount", "unrecognized"],
     properties: {
       name: { type: "string" },
       lightCount: { type: "integer" },
@@ -306,6 +334,18 @@ Return ONLY JSON matching the provided schema.`;
         properties: {
           eventType: enumArr(tax.eventType), venueType: enumArr(tax.venueType), areasElements: enumArr(tax.areasElements),
           colorPalette: enumArr(colorVals), categoryTier: enumArr(tax.categoryTier), designStyle: enumArr(tax.designStyle), timeSetting: enumArr(tax.timeSetting),
+        },
+      },
+      // Mirrors the client aiTagImage's dims schema — previously absent here, so nightly-tagged
+      // photos got NO Zone Structure Cost data at all regardless of what the prompt said.
+      dims: {
+        type: "object", additionalProperties: false,
+        required: ["trussL", "trussW", "trussH", "floorL", "floorW", "plH", "mkT", "mkWalls"],
+        properties: {
+          trussL: { type: "number" }, trussW: { type: "number" }, trussH: { type: "number" },
+          floorL: { type: "number" }, floorW: { type: "number" },
+          plH: { type: "string" }, mkT: { type: "string", enum: ["fabric", "acrylic", "flex", "vinyl", ""] },
+          mkWalls: { type: "object", additionalProperties: false, required: ["back", "left", "right"], properties: { back: { type: "boolean" }, left: { type: "boolean" }, right: { type: "boolean" } } },
         },
       },
       elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "cat", "subCat", "qty"], properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, new: { type: "boolean" }, attachedTo: { type: "string" } } } },
@@ -354,7 +394,7 @@ Return ONLY JSON matching the provided schema.`;
       // matchInventory/dropStructural passes below (those build new arrays) — so r itself, minus the
       // separately-tracked _aiThinking, IS the pristine pre-processing snapshot.
       const { _aiThinking: aiThinking, ...aiRawResponse } = r;
-      const taggedEls = dropStructural(matchInventory(dropArtificialFloral(r.elements)));
+      const taggedEls = dropStructural(matchInventory(sanitizeArtificialFloral(r.elements)));
       // An unmatched ("new") proposal has no real inventory item behind it — it never prices, never
       // blocks stock, and just sits in the Element Breakdown as an inert $0 placeholder row. Fold its
       // name into "unrecognized" instead (the existing review-backlog list) so a reviewer still sees
@@ -366,7 +406,7 @@ Return ONLY JSON matching the provided schema.`;
         newNames.forEach((n: string) => { if (!seenUnrec.has(n.toLowerCase())) { mergedUnrec.push(n); seenUnrec.add(n.toLowerCase()); } });
       }
       const finalEls = taggedEls.filter((el: any) => !(el && el.new));
-      const patch = { tags: r.tags || {}, elements: finalEls, lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: mergedUnrec, _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      const patch = { tags: r.tags || {}, dims: (r.dims && typeof r.dims === "object") ? r.dims : {}, elements: finalEls, lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: mergedUnrec, _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.

@@ -1287,6 +1287,10 @@ export default function StudioApp() {
   const [imsPaletteCatalogue, setImsPaletteCatalogue] = useState([]);
   const [imsPaintableCategories, setImsPaintableCategories] = useState(["Props", "Arches", "Panels", "Pillars", "Glass", "Structural", "Furniture", "Stage", "Consumable", "Arches & Props", "Wall Masking"]);
   const [imsDefaultPaintCost, setImsDefaultPaintCost] = useState(400);
+  // AI Synonym Dictionary (IMS Admin → Settings → 🔤 AI Synonyms, e.g. Jali/Lattice/Mesh/Screen) —
+  // lets ops teach the AI tagger that two different words mean the same physical thing, without a
+  // code change every time a naming mismatch turns up. Fed into aiTagImage's keyword-overlap scoring.
+  const [imsSynonymDictionary, setImsSynonymDictionary] = useState([]);
   // Save colour + palette catalogues to Studio-owned PALETTE_SK
   const savePaletteData = useCallback((colours, palettes) => {
     const data = { colourCatalogue: colours || imsColourCatalogue, paletteCatalogue: palettes || imsPaletteCatalogue };
@@ -1884,6 +1888,9 @@ export default function StudioApp() {
         const sv = await kvGet(IMS_SETTINGS_SK);
         if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
       } catch {}
+      // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
+      // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
+      try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {}
       // Deal Check boot loaders
       try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
       // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
@@ -4672,14 +4679,35 @@ Return ONLY JSON:
         // response, so that name must survive even after this element's own "name" gets overwritten
         // with its matched inventory name.
         parsed.elements.forEach(el => { if (el) el._origName = el.name; });
-        // Real-vs-artificial flower content is a %-blend the pricing engine (el.realPct) applies
-        // automatically to the matched floral item — it's never its own physical inventory item, so
-        // an "artificial flower bunch"-style proposal is always noise. Drop before matching runs.
         const ARTIFICIAL_KW = /\b(artificial|faux|fake)\b/i;
         const FLORAL_KW = /\b(flower|floral|greenery|leaves|leaf|petal|bouquet|garland|bunch|foliage|plant)\b/i;
-        parsed.elements = (parsed.elements || []).filter(el => !(ARTIFICIAL_KW.test(el?.name || "") && FLORAL_KW.test(el?.name || "")));
+        // House rule: real-vs-artificial is a %-blend the pricing engine (el.realPct) applies
+        // automatically to the matched floral item — never its own physical item. This used to DELETE
+        // the whole element if the model said "artificial
+        // X" — silently undercounting a real, visible floral arrangement whenever the model's naming
+        // didn't perfectly follow the "don't say artificial" instruction (the same instruction-
+        // following unreliability behind the console/accessory bug). Now it just strips the
+        // artificial/faux/fake word and lets the cleaned name continue through normal matching below.
+        parsed.elements = (parsed.elements || []).map(el => {
+          if (!el || !el.name || !(ARTIFICIAL_KW.test(el.name) && FLORAL_KW.test(el.name))) return el;
+          const cleanName = el.name.replace(/\b(artificial|faux|fake)\b/gi, "").replace(/\s+/g, " ").trim();
+          return cleanName ? { ...el, name: cleanName } : el;
+        });
         const sizeHints = { heavy: "B", large: "B", big: "B", tall: "B", medium: "M", mid: "M", regular: "M", small: "S", mini: "S", light: "S", short: "S" };
         const normalize = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+        // AI Synonym Dictionary (IMS Admin → Settings → 🔤 AI Synonyms) — ops-editable groups of words
+        // that mean the same physical thing (e.g. "Jali"/"Lattice"/"Mesh"/"Screen"). Maps every word in
+        // a group to that group's first word, so two synonym-equivalent words normalize to the same
+        // token before keyword-overlap scoring — letting ops teach the matcher new equivalences without
+        // a code/prompt change every time a naming mismatch turns up.
+        const synonymOf = {};
+        (imsSynonymDictionary || []).forEach(g => {
+          const words = Array.isArray(g?.words) ? g.words : [];
+          if (words.length < 2) return;
+          const canon = normalize(words[0]);
+          words.forEach(w => { synonymOf[normalize(w)] = canon; });
+        });
+        const canonWord = (w) => synonymOf[w] || w;
         // Generic words that inflate keyword-overlap scores between UNRELATED items (colors/sizes/
         // filler adjectives shared across many catalog names) — excluded so overlap only counts
         // words that actually identify what the thing IS.
@@ -4690,7 +4718,7 @@ Return ONLY JSON:
           "medium", "huge", "giant", "tiny", "gold", "golden", "white", "silver", "black", "red", "pink",
           "green", "blue", "ivory", "cream", "rose", "peach", "purple", "yellow", "orange", "maroon", "copper",
         ]);
-        const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1);
+        const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1).map(canonWord);
         // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
         // keyword-overlap ≥40%). Shared by both the sub-cat-scoped and full-catalog passes below.
         // Returns { item, method, score } (method: "exact"|"substring"|"overlap") so the caller can
