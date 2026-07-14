@@ -224,7 +224,14 @@ Deno.serve(async (req) => {
     // matched one of THAT kit's sub-items so the same physical object isn't tagged twice.
     const suppressedCompIds = new Set<string>();
     mapped.forEach((el: any) => { if (el && el.invId && kitOf[el.invId]) kitOf[el.invId].forEach((id) => suppressedCompIds.add(id)); });
-    const deduped = suppressedCompIds.size ? mapped.filter((el: any) => !(el && el.invId && suppressedCompIds.has(el.invId))) : mapped;
+    const idDeduped = suppressedCompIds.size ? mapped.filter((el: any) => !(el && el.invId && suppressedCompIds.has(el.invId))) : mapped;
+    // Harden that dedup for NAME-similar components too — mirrors the client aiTagImage's rule: an
+    // element that didn't resolve to the kit's own component id (e.g. it overlap-matched a different,
+    // merely similar-looking item) still slips through the id-only check above. Re-run the name
+    // matcher against just this kit's component names and drop anything that matches.
+    const kitCompNames: any[] = [];
+    idDeduped.forEach((el: any) => { if (el && el.invId && kitOf[el.invId]) kitOf[el.invId].forEach((id: string) => { const ci = inv.find((i: any) => i.id === id); if (ci) kitCompNames.push(ci); }); });
+    const deduped = kitCompNames.length ? idDeduped.filter((el: any) => (el && el.invId && kitOf[el.invId]) || !bestOf(el?.name || "", kitCompNames, (c) => c.name)) : idDeduped;
     // Backstop for the artificial-flower rule: an unmatched ("new") proposal has no resolved
     // inventory sub-category to check, only the AI's own guessed el.subCat — drop it there too so a
     // name that doesn't literally say "artificial" still can't sneak through as an unreviewed element.

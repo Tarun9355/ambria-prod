@@ -4740,6 +4740,17 @@ Return ONLY JSON:
         const suppressedCompIds = new Set();
         parsed.elements.forEach(el => { if (el.invId && kitOf[el.invId]) kitOf[el.invId].forEach(id => suppressedCompIds.add(id)); });
         if (suppressedCompIds.size) parsed.elements = parsed.elements.filter(el => !(el.invId && suppressedCompIds.has(el.invId)));
+        // Harden that dedup for NAME-similar components too, not just exact-id ones: if the AI's own
+        // phrasing didn't resolve to the kit's own component id (e.g. it overlap-matched a different,
+        // merely similar-looking pot instead of the kit's actual "Round Fibre Pot"), the element still
+        // slips through the id-only check above. Re-run the same name matcher against just this kit's
+        // component names and drop anything that matches — a kit's known components should never
+        // reappear as their own element just because the AI phrased/matched them slightly differently.
+        const kitCompNames = [];
+        parsed.elements.forEach(el => { if (el.invId && kitOf[el.invId]) kitOf[el.invId].forEach(id => { const ci = imsInventory.find(i => i.id === id); if (ci) kitCompNames.push(ci); }); });
+        if (kitCompNames.length) {
+          parsed.elements = parsed.elements.filter(el => (el.invId && kitOf[el.invId]) || !bestOf(el.name, kitCompNames, c => c.name));
+        }
         // Drop structural items (truss / floor-carpet / masking) from the element breakdown — they're
         // captured in the dedicated Zone-Dimensions/Masking sections, so listing them as elements too
         // double-counts cost AND double-blocks inventory.
