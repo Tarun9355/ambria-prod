@@ -7,6 +7,7 @@ import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import RateCardPanel from "./RateCardPanel.jsx";
 import { getFloralMode } from "../../lib/rateCard";
+import { RC_UNITS } from "../../lib/studio/constants";
 
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
@@ -65,6 +66,14 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [sMandiCatNew, setSMandiCatNew] = useState("");
   const [sMandiExpanded, setSMandiExpanded] = useState(() => new Set());
   const [sMandiUploading, setSMandiUploading] = useState({});
+
+  // Recipes panel (patterns) — add/rename/delete state for the underlying Rate Card Florals item
+  // a recipe card is attached to. Recipe (flower-line) CRUD itself lives inline in each card
+  // (renderSizeColumn) and needs no extra state.
+  const [recipeAddSub, setRecipeAddSub] = useState(null); // sub-category currently showing the add-item form, or null
+  const [recipeAddForm, setRecipeAddForm] = useState({ name: "", unit: "pc" });
+  const [recipeRenameId, setRecipeRenameId] = useState(null); // studioItem name currently being renamed
+  const [recipeRenameVal, setRecipeRenameVal] = useState("");
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
@@ -1034,6 +1043,39 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           return new Date(ts).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" });
         };
 
+        // Recipe = a Studio Rate Card Florals item (found here by exact name) + the flowerPattern
+        // attached to it by name match. Add/rename/delete act on the underlying Rate Card item —
+        // rcItems/onSaveRateCardItems come from the same write path as Admin → Rate Card, so an item
+        // added/renamed/deleted here is immediately consistent there too.
+        const normName = (n) => (n || "").toLowerCase().trim();
+        const findRcItem = (nm) => (rcItems || []).find((it) => normName(it.name) === normName(nm) && normName(it.cat) === "florals");
+        const addRecipeItem = (sub) => {
+          const nm = (recipeAddForm.name || "").trim();
+          if (!nm) { alert("Item needs a name"); return; }
+          if (findRcItem(nm)) { alert(`An item named "${nm}" already exists.`); return; }
+          const item = { id: "RC" + Date.now().toString(36), cat: "florals", sub, name: nm, unit: recipeAddForm.unit || "pc", inhouseMode: "flat", inhouseFlat: 0, inhouseS: 0, inhouseM: 0, inhouseB: 0, outEnabled: false, outS: 0, outM: 0, outB: 0, notes: "", artificialFlat: 0, artificialS: 0, artificialM: 0, artificialB: 0, defaultRealPct: 100, floralMode: "ratio" };
+          onSaveRateCardItems?.([...(rcItems || []), item]);
+          setRecipeAddSub(null);
+          setRecipeAddForm({ name: "", unit: "pc" });
+        };
+        const renameRecipeItem = (studioItem, newName) => {
+          const nn = (newName || "").trim();
+          if (!nn || nn === studioItem.name) { setRecipeRenameId(null); return; }
+          if (findRcItem(nn)) { alert(`An item named "${nn}" already exists.`); return; }
+          const rc = findRcItem(studioItem.name);
+          if (!rc) { alert("Couldn't find the underlying Rate Card item to rename."); setRecipeRenameId(null); return; }
+          onSaveRateCardItems?.((rcItems || []).map((it) => (it.id === rc.id ? { ...it, name: nn } : it)));
+          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).map((p) => (normName(p.name) === normName(studioItem.name) ? { ...p, name: nn } : p)) }));
+          setRecipeRenameId(null);
+        };
+        const deleteRecipeItem = (studioItem) => {
+          const rc = findRcItem(studioItem.name);
+          if (!rc) { alert("Couldn't find the underlying Rate Card item to delete."); return; }
+          if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This removes it from the Rate Card entirely and cannot be undone.`)) return;
+          onSaveRateCardItems?.((rcItems || []).filter((it) => it.id !== rc.id), [rc.id]);
+          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => normName(p.name) !== normName(studioItem.name)) }));
+        };
+
         return (
           <div className="space-y-4">
             <div>
@@ -1091,15 +1133,48 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
             {sortedSubs.map((sub) => (
               <div key={sub} className="space-y-2">
-                <div className="flex items-center gap-2 mt-2"><h5 className="text-sm font-semibold text-gray-700">🌸 {sub}</h5><span className="text-xs text-gray-400">({groupedBySub[sub].length})</span></div>
+                <div className="flex items-center gap-2 mt-2">
+                  <h5 className="text-sm font-semibold text-gray-700">🌸 {sub}</h5>
+                  <span className="text-xs text-gray-400">({groupedBySub[sub].length})</span>
+                  <button onClick={() => { setRecipeAddSub(recipeAddSub === sub ? null : sub); setRecipeAddForm({ name: "", unit: "pc" }); }}
+                    className="ml-auto text-[11px] font-semibold px-2 py-1 rounded-lg border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50">+ Add Item</button>
+                </div>
+                {recipeAddSub === sub && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-center gap-2 flex-wrap">
+                    <input autoFocus value={recipeAddForm.name} onChange={(e) => setRecipeAddForm((f) => ({ ...f, name: e.target.value }))}
+                      placeholder="New item name…" onKeyDown={(e) => { if (e.key === "Enter") addRecipeItem(sub); if (e.key === "Escape") setRecipeAddSub(null); }}
+                      className="flex-1 min-w-[160px] border border-indigo-300 rounded-lg px-2 py-1.5 text-sm" />
+                    <select value={recipeAddForm.unit} onChange={(e) => setRecipeAddForm((f) => ({ ...f, unit: e.target.value }))} className="border border-indigo-300 rounded-lg px-2 py-1.5 text-sm">
+                      {RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}
+                    </select>
+                    <button onClick={() => setRecipeAddSub(null)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600">Cancel</button>
+                    <button onClick={() => addRecipeItem(sub)} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold">✓ Add</button>
+                  </div>
+                )}
                 {groupedBySub[sub].map((studioItem) => {
                   const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                   const m = pat?.mode === "smb" ? "smb" : pat?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
                   const hasRecipe = !!pat && Object.values(pat.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
+                  const isPlaceholder = String(studioItem.id || "").startsWith("SUB::");
                   return (
                     <div key={studioItem.id} className="bg-white border rounded-xl overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b flex-wrap">
-                        <span className="text-sm font-semibold text-gray-800">{studioItem.name}</span>
+                        {isPlaceholder ? (
+                          <span className="text-sm font-semibold text-gray-800">{studioItem.name}</span>
+                        ) : recipeRenameId === studioItem.name ? (
+                          <span className="flex items-center gap-1">
+                            <input autoFocus value={recipeRenameVal} onChange={(e) => setRecipeRenameVal(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") renameRecipeItem(studioItem, recipeRenameVal); if (e.key === "Escape") setRecipeRenameId(null); }}
+                              className="border border-indigo-300 rounded px-2 py-0.5 text-sm font-semibold" />
+                            <button onClick={() => renameRecipeItem(studioItem, recipeRenameVal)} title="Save" className="text-emerald-600 hover:text-emerald-800 text-xs">✓</button>
+                            <button onClick={() => setRecipeRenameId(null)} title="Cancel" className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <span className="text-sm font-semibold text-gray-800">{studioItem.name}</span>
+                            <button onClick={() => { setRecipeRenameId(studioItem.name); setRecipeRenameVal(studioItem.name); }} title="Rename" className="text-gray-300 hover:text-indigo-500 text-xs">✏️</button>
+                          </span>
+                        )}
                         <div className="flex rounded-full overflow-hidden border border-gray-300">
                           {["flat", "smb"].map((mm) => (
                             <button key={mm} onClick={() => {
@@ -1124,8 +1199,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             placeholder={String(settings.defaultStudioMarkup ?? 3)} className="w-12 border border-emerald-300 rounded px-1 py-0.5 text-[11px] font-bold text-center text-emerald-900" />
                           <span className="text-[9px] text-emerald-700">×</span>
                         </div>
-                        {!hasRecipe && <span className="ml-auto text-[10px] text-amber-600 italic">Empty recipe</span>}
-                        {hasRecipe && <span className="ml-auto flex items-center gap-1.5"><span className="text-[10px] text-green-600">✓ Recipe set</span></span>}
+                        <span className="ml-auto flex items-center gap-2">
+                          {!hasRecipe && <span className="text-[10px] text-amber-600 italic">Empty recipe</span>}
+                          {hasRecipe && <span className="text-[10px] text-green-600">✓ Recipe set</span>}
+                          {!isPlaceholder && <button onClick={() => deleteRecipeItem(studioItem)} title="Delete item + recipe" className="text-red-300 hover:text-red-600 text-xs">🗑️</button>}
+                        </span>
                       </div>
                       {m === "smb" ? (
                         <div className="grid grid-cols-3 divide-x">

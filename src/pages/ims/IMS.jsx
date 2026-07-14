@@ -1217,6 +1217,7 @@ export default function IMS() {
             studio={studio} authUser={user}
             syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing}
             inventory={items} rateCardCategories={rateCardCategories}
+            rcItems={studioRcItems} onSaveRateCardItems={saveRateCardItems}
           />
         ) : tab === "approvals" ? (
           <ApprovalsTab
