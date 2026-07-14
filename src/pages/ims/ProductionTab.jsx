@@ -734,7 +734,7 @@ Compare the two and return ONLY JSON:
                           className="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="Qty" />
                         <select value={line.unit} onChange={e => updateMaterialLine(i, "unit", e.target.value)}
                           className="border rounded-lg px-2 py-2 text-sm bg-white w-24">
-                          {["Piece", "Kg", "Metre", "Roll", "Set", "Litre", "Bundle", "Sq ft", "Box"].map(u => <option key={u}>{u}</option>)}
+                          {["Piece", "Kg", "Metre", "Roll", "Set", "Litre", "Bundle", "Sq ft", "Rft", "Box"].map(u => <option key={u}>{u}</option>)}
                         </select>
                       </div>
                       <input type="number" value={line.estimatedCost} onChange={e => updateMaterialLine(i, "estimatedCost", e.target.value)}

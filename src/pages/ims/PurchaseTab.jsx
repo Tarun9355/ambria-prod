@@ -173,7 +173,7 @@ export default function PurchaseTab({ purchase, setPurchase, inventory, setInven
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-xs text-gray-500">Unit</label>
               <select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className="mt-1 w-full border rounded-lg px-3 py-1.5 text-sm">
-                {["Piece", "Kg", "Metre", "Bundle", "Roll", "Set", "Box"].map((u) => <option key={u}>{u}</option>)}
+                {["Piece", "Kg", "Metre", "Bundle", "Roll", "Rft", "Set", "Box"].map((u) => <option key={u}>{u}</option>)}
               </select></div>
             <div><label className="text-xs text-gray-500">Category</label>
               <select value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })} className="mt-1 w-full border rounded-lg px-3 py-1.5 text-sm">
