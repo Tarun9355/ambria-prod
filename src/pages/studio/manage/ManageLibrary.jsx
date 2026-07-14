@@ -639,6 +639,7 @@ export default function ManageLibrary({ ctx }) {
                           if(Array.isArray(result.unrecognized))updated.unrecognized=result.unrecognized;
                           if(result.tags&&typeof result.tags==="object")updated._aiTags=result.tags; // snapshot AI suggestion for the corrections diff
                           if(result._aiThinking)updated._aiThinking=result._aiThinking; // model's own reasoning, shown in the panel below
+                          if(result._aiRawResponse)updated._aiRawResponse=result._aiRawResponse; // pristine JSON Claude returned, before matching
                           updated._aiTagged=true;
                           updated._aiTaggedAt=Date.now(); // so Needs-review sorts by most-recently-tagged
                           // Handle dims
@@ -710,6 +711,15 @@ export default function ManageLibrary({ ctx }) {
                   <details style={{ marginBottom: 8 }}>
                     <summary style={{ cursor: "pointer", fontSize: 10, fontWeight: 700, color: accent }}>🧠 Why the AI tagged this photo this way</summary>
                     <div style={{ marginTop: 4, fontSize: 10, color: textS, whiteSpace: "pre-wrap", maxHeight: 180, overflowY: "auto", padding: 8, borderRadius: 6, background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", border: `1px solid ${border}` }}>{libEditImg._aiThinking}</div>
+                  </details>
+                )}
+                {/* Raw model output — exactly what Claude returned before element-matching mutated
+                    names/sizes/invId onto them. Useful for telling apart "the AI guessed wrong" from
+                    "the AI was right but our matching picked the wrong inventory item". */}
+                {libEditImg._aiRawResponse && (
+                  <details style={{ marginBottom: 8 }}>
+                    <summary style={{ cursor: "pointer", fontSize: 10, fontWeight: 700, color: accent }}>📄 Raw AI response (before matching)</summary>
+                    <pre style={{ marginTop: 4, fontSize: 9, color: textS, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflowY: "auto", padding: 8, borderRadius: 6, background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", border: `1px solid ${border}`, fontFamily: "monospace" }}>{JSON.stringify(libEditImg._aiRawResponse, null, 2)}</pre>
                   </details>
                 )}
                 {/* Venue tag (2-level chip picker — mirrors Browse page) */}

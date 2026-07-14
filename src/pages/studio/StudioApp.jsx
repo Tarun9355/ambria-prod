@@ -4653,6 +4653,10 @@ Return ONLY JSON:
       if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
+      // Pristine snapshot of exactly what Claude returned, taken before the matching/filtering below
+      // mutates parsed.elements in place — lets a reviewer see the raw name/qty/size Claude proposed
+      // vs. what it ended up matched to.
+      const aiRawResponse = JSON.parse(JSON.stringify(parsed));
       if (aiThinking) parsed._aiThinking = aiThinking;
       if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         // Real-vs-artificial flower content is a %-blend the pricing engine (el.realPct) applies
@@ -4748,6 +4752,7 @@ Return ONLY JSON:
         // Foliage Bundle") still can't sneak through as a brand-new/unreviewed element.
         parsed.elements = parsed.elements.filter(el => !ARTIFICIAL_SUBCAT.test(el.subCat || ""));
       }
+      parsed._aiRawResponse = aiRawResponse;
       return parsed;
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
   };
@@ -4794,6 +4799,7 @@ Return ONLY JSON:
           if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
           if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags;
           if (result._aiThinking) upd._aiThinking = result._aiThinking;
+          if (result._aiRawResponse) upd._aiRawResponse = result._aiRawResponse;
           const d = result.dims || {};
           if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
         }
@@ -4868,6 +4874,7 @@ Return ONLY JSON:
           if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
           if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags; // snapshot for the corrections diff at review time
           if (result._aiThinking) upd._aiThinking = result._aiThinking;
+          if (result._aiRawResponse) upd._aiRawResponse = result._aiRawResponse;
           const d = result.dims || {};
           if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
         }

@@ -313,7 +313,11 @@ Return ONLY JSON matching the provided schema.`;
     if (Date.now() - runStart > RUN_TIME_BUDGET_MS) { skipped = targets.length - ok - fail; break; }
     try {
       const r = await tagOne(img);
-      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(dropArtificialFloral(r.elements))), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiThinking: r._aiThinking || undefined, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      // r.elements/tags/etc are exactly what tagOne parsed from Claude, untouched by the
+      // matchInventory/dropStructural passes below (those build new arrays) — so r itself, minus the
+      // separately-tracked _aiThinking, IS the pristine pre-processing snapshot.
+      const { _aiThinking: aiThinking, ...aiRawResponse } = r;
+      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(dropArtificialFloral(r.elements))), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.
