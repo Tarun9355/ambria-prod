@@ -354,7 +354,19 @@ Return ONLY JSON matching the provided schema.`;
       // matchInventory/dropStructural passes below (those build new arrays) — so r itself, minus the
       // separately-tracked _aiThinking, IS the pristine pre-processing snapshot.
       const { _aiThinking: aiThinking, ...aiRawResponse } = r;
-      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(dropArtificialFloral(r.elements))), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      const taggedEls = dropStructural(matchInventory(dropArtificialFloral(r.elements)));
+      // An unmatched ("new") proposal has no real inventory item behind it — it never prices, never
+      // blocks stock, and just sits in the Element Breakdown as an inert $0 placeholder row. Fold its
+      // name into "unrecognized" instead (the existing review-backlog list) so a reviewer still sees
+      // it was spotted, without it cluttering the actual priced element list. Mirrors the client.
+      const newNames = taggedEls.filter((el: any) => el && el.new).map((el: any) => el.name).filter(Boolean);
+      const mergedUnrec = Array.isArray(r.unrecognized) ? [...r.unrecognized] : [];
+      if (newNames.length) {
+        const seenUnrec = new Set(mergedUnrec.map((s: any) => String(s).toLowerCase()));
+        newNames.forEach((n: string) => { if (!seenUnrec.has(n.toLowerCase())) { mergedUnrec.push(n); seenUnrec.add(n.toLowerCase()); } });
+      }
+      const finalEls = taggedEls.filter((el: any) => !(el && el.new));
+      const patch = { tags: r.tags || {}, elements: finalEls, lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: mergedUnrec, _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.

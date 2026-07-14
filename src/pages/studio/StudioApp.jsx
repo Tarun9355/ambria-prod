@@ -4789,6 +4789,17 @@ Return ONLY JSON:
         // drop it there too so a name that doesn't literally say "artificial" (e.g. "Mixed Green
         // Foliage Bundle") still can't sneak through as a brand-new/unreviewed element.
         parsed.elements = parsed.elements.filter(el => !ARTIFICIAL_SUBCAT.test(el.subCat || ""));
+        // An unmatched ("new") proposal has no real inventory item behind it — it never prices,
+        // never blocks stock, and just sits in the Element Breakdown as an inert $0 placeholder row.
+        // Fold its name into "unrecognized" instead (the existing review-backlog list, already shown
+        // in the "⚠ Needs attention" banner) so a reviewer still sees it was spotted, without it
+        // cluttering the actual priced element list.
+        const newNames = parsed.elements.filter(el => el.new).map(el => el.name).filter(Boolean);
+        if (newNames.length) {
+          const seenUnrec = new Set((parsed.unrecognized || []).map(s => String(s).toLowerCase()));
+          newNames.forEach(n => { if (!seenUnrec.has(n.toLowerCase())) { parsed.unrecognized = [...(parsed.unrecognized || []), n]; seenUnrec.add(n.toLowerCase()); } });
+        }
+        parsed.elements = parsed.elements.filter(el => !el.new);
         // Scratch fields used only for the matching/dedup above — don't persist them onto the saved
         // element objects.
         parsed.elements.forEach(el => { delete el._origName; delete el.attachedTo; });
