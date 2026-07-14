@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
 // a kit shows the same count-customizable breakdown Deal Check already has (DealCheckOverlay.jsx's
@@ -10,6 +12,10 @@
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
 export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, qtyMultiplier = 1, textP, textS, border, cardBg, accent, isDark, fmt }) {
+  // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
+  // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
+  // since every caller renders its own independent instance.
+  const [hoverImg, setHoverImg] = useState(null); // { idx, top, bottom, left }
   if (!item) return null;
   const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
@@ -32,7 +38,22 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cRate = cItem ? (Number(cItem.price ?? cItem.rentalCost) || 0) : 0;
           return (
             <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-              {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>📦</span>}
+              <div style={{ position: "relative", flexShrink: 0 }}
+                onMouseEnter={(e) => {
+                  if (!cSrc) return;
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const POP = 164;
+                  const openUp = window.innerHeight - r.bottom < POP + 8 && r.top > POP + 8;
+                  setHoverImg({ idx: ci, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
+                }}
+                onMouseLeave={() => setHoverImg(null)}>
+                {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>📦</span>}
+                {hoverImg?.idx === ci && cSrc && (
+                  <div style={{ position: "fixed", top: hoverImg.top, bottom: hoverImg.bottom, left: hoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
+                    <img src={cSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  </div>
+                )}
+              </div>
               <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
               <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
                 <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>

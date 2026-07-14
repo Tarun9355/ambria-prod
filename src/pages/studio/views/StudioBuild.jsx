@@ -112,6 +112,10 @@ export default function StudioBuild({ ctx }) {
   // with the FREE count on the event date (owned − blocked). Picking one + Save pins it on the element
   // (deal-local) → Deal Check auto-match honors the pin. No costs shown — availability only.
   const [availModal, setAvailModal] = useState(null); // { zoneKey, idx, elName, subcat, loading, items, selectedId }
+  // Hover-to-zoom on an element's thumbnail — same fixed-position enlarged-preview pattern as
+  // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
+  // blocks in this file can both be on screen at once.
+  const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
   const openAvailModal = async (zoneKey, idx, el, rc) => {
     // Inventory-sourced elements (el.invId) already know their exact real sub-category — no
     // Rate-Card→IMS alias lookup needed, unlike the legacy rc path below.
@@ -765,11 +769,30 @@ export default function StudioBuild({ ctx }) {
                     : (el.qty||0) * adjUp;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
                   const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length>0);
+                  const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
+                  const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
+                  const thumbKey = `${k}:${idx}`;
                   return (
                   <div key={idx} style={{display:"flex",flexDirection:"column",padding:"6px 0",borderBottom:`1px solid ${border}`}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <div style={{position:"relative",flexShrink:0}}
+                          onMouseEnter={(e)=>{
+                            if(!thumbSrc) return;
+                            const r=e.currentTarget.getBoundingClientRect();
+                            const POP=164;
+                            const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                            setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
+                          }}
+                          onMouseLeave={()=>setElThumbHover(null)}>
+                          {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📦</div>}
+                          {elThumbHover?.key===thumbKey && thumbSrc && (
+                            <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
+                              <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                            </div>
+                          )}
+                        </div>
                         <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{el.name}</span>
                         {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>📦 KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
@@ -1256,11 +1279,30 @@ export default function StudioBuild({ ctx }) {
                   : (el.qty||0) * adjUp;
                 const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
                 const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length>0);
+                const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
+                const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
+                const thumbKey = `${k}:${idx}`;
                 return (
                 <div key={idx} style={{display:"flex",flexDirection:"column",padding:"6px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <div style={{position:"relative",flexShrink:0}}
+                        onMouseEnter={(e)=>{
+                          if(!thumbSrc) return;
+                          const r=e.currentTarget.getBoundingClientRect();
+                          const POP=164;
+                          const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
+                          setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
+                        }}
+                        onMouseLeave={()=>setElThumbHover(null)}>
+                        {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📦</div>}
+                        {elThumbHover?.key===thumbKey && thumbSrc && (
+                          <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
+                            <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                          </div>
+                        )}
+                      </div>
                       <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{el.name}</span>
                       {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>📦 KIT</span>}
                       {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
