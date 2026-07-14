@@ -179,6 +179,10 @@ export default function ManageLibrary({ ctx }) {
   // panel scrolls via overflowY:auto, which clips any absolutely-positioned popover that extends
   // past its bounds; fixed positioning escapes that clipping since it's relative to the viewport.
   const [elHoverImg, setElHoverImg] = useState(null); // { idx, top, left }
+  // Row-hover highlight for the Element Breakdown grid — ops kept misclicking the × on the row
+  // above/below the one they meant, since with no wrapping row element a plain CSS :hover can't
+  // paint the whole row; track the hovered index in JS and tint every cell of that row instead.
+  const [hoveredElIdx, setHoveredElIdx] = useState(null);
 
   // `tagVenueGroup` defaults to "inhouse" (StudioApp.jsx) and is shared/sticky across whichever
   // photo is open, so without this it wins over the derived inhouse/outside group every time a
@@ -1002,14 +1006,18 @@ export default function ManageLibrary({ ctx }) {
               {(libEditImg.elements || []).length === 0 ? (
                 <div style={{ fontSize: 11, color: textS, padding: "12px 0", textAlign: "center" }}>No elements added yet — use dropdown above or AI tagging fills this automatically</div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 55px 50px 70px 24px", gap: "4px 5px", alignItems: "center", fontSize: 10 }}>
-                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>ELEMENT</div>
-                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>QTY</div>
-                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>SIZE</div>
-                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>UNIT</div>
-                  <div style={{ fontWeight: 600, color: textS, fontSize: 9, textAlign: "right" }}>COST</div>
-                  <div></div>
+                <div style={{ fontSize: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 55px 50px 70px 24px", gap: "4px 5px", alignItems: "center", padding: "0 4px" }}>
+                    <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>ELEMENT</div>
+                    <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>QTY</div>
+                    <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>SIZE</div>
+                    <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>UNIT</div>
+                    <div style={{ fontWeight: 600, color: textS, fontSize: 9, textAlign: "right" }}>COST</div>
+                    <div></div>
+                  </div>
                   {(libEditImg.elements || []).map((el, idx) => {
+                    const rowStyle = { display: "grid", gridTemplateColumns: "1fr 60px 55px 50px 70px 24px", gap: "4px 5px", alignItems: "center", padding: "3px 4px", borderRadius: 6, background: hoveredElIdx === idx ? (isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)") : "transparent" };
+                    const rowHover = { onMouseEnter: () => setHoveredElIdx(idx), onMouseLeave: () => setHoveredElIdx(null) };
                     if (el.invId) {
                       // IMS inventory-sourced element — priced via getElPriceFromInventory (StudioApp.jsx),
                       // no Rate Card lookup at all. Flat price, UNLESS the item matches a flower recipe
@@ -1020,7 +1028,7 @@ export default function ManageLibrary({ ctx }) {
                       const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromInventory(el);
                       const thumbSrc = invItem?.img || invItem?.photoUrls?.[0];
                       return (
-                        <Fragment key={idx}>
+                        <div key={idx} style={rowStyle} {...rowHover}>
                           <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                             <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center", cursor: thumbSrc ? "zoom-in" : "default" }}
                               onMouseEnter={(e) => {
@@ -1066,7 +1074,7 @@ export default function ManageLibrary({ ctx }) {
                               />
                             </div>
                           )}
-                        </Fragment>
+                        </div>
                       );
                     }
                     if (el.patternId) {
@@ -1076,7 +1084,7 @@ export default function ManageLibrary({ ctx }) {
                       const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromPattern(el);
                       const patternExists = (recipeOnlyPatterns || []).some(p => p.id === el.patternId);
                       return (
-                        <Fragment key={idx}>
+                        <div key={idx} style={rowStyle} {...rowHover}>
                           <div style={{ fontSize: 11, fontWeight: 500, color: textP, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                             <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
                               <span style={{ fontSize: 11, opacity: 0.5 }}>🌺</span>
@@ -1097,7 +1105,7 @@ export default function ManageLibrary({ ctx }) {
                           <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
                           <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : "₹0"}</div>
                           <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
-                        </Fragment>
+                        </div>
                       );
                     }
                     const rc = rcItems.find(i => i.name === el.name);
@@ -1107,7 +1115,7 @@ export default function ManageLibrary({ ctx }) {
                     if(rc){const sz=(el.size||"").toUpperCase();if(rcIsSMB(rc)){if(sz==="S")unitPrice=rc.inhouseS||0;else if(sz==="B")unitPrice=rc.inhouseB||0;else unitPrice=rc.inhouseM||0;}else{unitPrice=rc.inhouseFlat||0;}}
                     const lineCost=(el.qty||0)*unitPrice;
                     return (
-                    <Fragment key={idx}>
+                    <div key={idx} style={rowStyle} {...rowHover}>
                       <div style={{ fontSize: 11, fontWeight: 500, color: rc ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>{el.name}{(el.new || !rc) && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>NEW</span>}{sizes && <button onClick={() => { const elems = [...(libEditImg.elements || [])]; const used = new Set(elems.filter(e => e.name === el.name).map(e => e.size || "M")); const ns = ["B","M","S"].find(s => !used.has(s)) || "B"; elems.splice(idx + 1, 0, { ...el, size: ns, qty: 1 }); setLibEditImg({ ...libEditImg, elements: elems }); }} title="Split into another size (e.g. 3 Big + 2 Small)" style={{ padding: "0 5px", borderRadius: 3, border: `1px dashed ${border}`, fontSize: 8, fontWeight: 700, cursor: "pointer", background: "transparent", color: accent }}>＋ size</button>}</div>
                       {isTrussSqft ? (
                         <div title="Area-based — uses zone truss/floor sqft" style={{ fontSize: 11, fontWeight: 600, color: textS, padding: "3px 5px", borderRadius: 4, background: isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)", textAlign: "center" }}>area</div>
@@ -1122,7 +1130,7 @@ export default function ManageLibrary({ ctx }) {
                       <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
                       <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: (isTrussSqft ? unitPrice : lineCost) > 0 ? textP : textS }}>{isTrussSqft ? (unitPrice > 0 ? `₹${unitPrice.toLocaleString("en-IN")}/sqft` : "—") : (lineCost > 0 ? fmt(lineCost) : rc ? "₹0" : "—")}</div>
                       <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
-                    </Fragment>
+                    </div>
                   );})}
                 </div>
               )}
