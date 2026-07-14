@@ -4628,18 +4628,24 @@ Return ONLY JSON:
         maxTokens: 8000, // room for adaptive thinking + the JSON
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
-        thinking: { type: "adaptive" },
+        // display:"summarized" — without it the model still thinks (billed the same) but the
+        // thinking block's text comes back empty, so there'd be nothing to show a reviewer.
+        thinking: { type: "adaptive", display: "summarized" },
+        returnThinking: true,
       });
-      let txt;
+      let result;
       try {
-        txt = await callTag(buildContent(exemplars.length > 0));
+        result = await callTag(buildContent(exemplars.length > 0));
       } catch (eEx) {
         // A bad/unreachable exemplar image URL shouldn't break tagging — retry once without examples.
-        if (exemplars.length) txt = await callTag(buildContent(false)); else throw eEx;
+        if (exemplars.length) result = await callTag(buildContent(false)); else throw eEx;
       }
+      const txt = result?.text;
+      const aiThinking = (result?.thinking || "").trim();
       if (!txt || !txt.trim()) { showMsg("AI returned empty response", "red"); return null; }
       const clean = txt.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
+      if (aiThinking) parsed._aiThinking = aiThinking;
       if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         // Real-vs-artificial flower content is a %-blend the pricing engine (el.realPct) applies
         // automatically to the matched floral item — it's never its own physical inventory item, so
@@ -4703,7 +4709,7 @@ Return ONLY JSON:
           const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, it => it.name)) || bestOf(el.name, taggableInv, it => it.name);
           if (invMatch) {
             const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
-            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
           }
 
           // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
@@ -4711,7 +4717,7 @@ Return ONLY JSON:
           const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, recipeOnlyPatterns, p => p.name);
           if (patMatch) {
             const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
-            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
           }
 
           return { ...el, new: true };
@@ -4774,6 +4780,7 @@ Return ONLY JSON:
           if (typeof result.lightCount === "number") upd.lightCount = result.lightCount;
           if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
           if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags;
+          if (result._aiThinking) upd._aiThinking = result._aiThinking;
           const d = result.dims || {};
           if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
         }
@@ -4847,6 +4854,7 @@ Return ONLY JSON:
           if (typeof result.lightCount === "number") upd.lightCount = result.lightCount;
           if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
           if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags; // snapshot for the corrections diff at review time
+          if (result._aiThinking) upd._aiThinking = result._aiThinking;
           const d = result.dims || {};
           if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
         }

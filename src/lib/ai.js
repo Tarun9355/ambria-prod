@@ -10,7 +10,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const FN_URL = `${SUPABASE_URL}/functions/v1/anthropic`;
 
-export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku-4-5-20251001", maxTokens = 2000, system, outputConfig, thinking }) {
+export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku-4-5-20251001", maxTokens = 2000, system, outputConfig, thinking, returnThinking }) {
   const userContent = contentBlocks;
   try {
     const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: userContent }] };
@@ -31,6 +31,13 @@ export async function callClaudeStreaming({ contentBlocks, model = "claude-haiku
     if (!resp.ok || data.error) {
       const msg = data?.error?.message || data?.error || `HTTP ${resp.status}`;
       throw new Error(`API ${resp.status}: ${typeof msg === "string" ? msg : JSON.stringify(msg)}`);
+    }
+    // returnThinking: callers that want to surface the model's reasoning (e.g. AI-tagging's "why did
+    // it match this?") opt in — everyone else keeps the plain-string return shape unchanged.
+    if (returnThinking) {
+      let text = "", thinkingText = "";
+      (data.content || []).forEach((b) => { if (b.type === "thinking") thinkingText += b.thinking || ""; else if (b.text) text += b.text; });
+      return { text, thinking: thinkingText };
     }
     return (data.content || []).map((b) => b.text || "").join("");
   } catch (e) {

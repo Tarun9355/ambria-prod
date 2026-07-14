@@ -202,14 +202,14 @@ Deno.serve(async (req) => {
       const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
       if (invMatch) {
         const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
-        return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+        return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
       }
       // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
       const scopedPat = elSubKey ? recipeOnlyPatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
       const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, recipeOnlyPatterns, (p) => p.name);
       if (patMatch) {
         const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
-        return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined };
+        return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
       }
       return { ...el, new: true };
     });
@@ -275,14 +275,19 @@ Return ONLY JSON matching the provided schema.`;
       model: "claude-opus-4-8", max_tokens: 8000,
       system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON.",
       output_config: { format: { type: "json_schema", schema } },
-      thinking: { type: "adaptive" },
+      // display:"summarized" — mirrors the client aiTagImage — without it the thinking block still
+      // gets billed but comes back with empty text, so there'd be nothing to show a reviewer.
+      thinking: { type: "adaptive", display: "summarized" },
       messages: [{ role: "user", content: [...staticBlocks, { type: "image", source: { type: "url", url: img.url } }] }],
     };
     const resp = await fetch(ANTHROPIC_URL, { method: "POST", headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: JSON.stringify(body) });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data?.error?.message || `Anthropic ${resp.status}`);
-    const text = (data.content || []).map((b: any) => b.text || "").join("").replace(/```json|```/g, "").trim();
-    return JSON.parse(text);
+    let text = "", thinking = "";
+    (data.content || []).forEach((b: any) => { if (b.type === "thinking") thinking += b.thinking || ""; else if (b.text) text += b.text; });
+    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+    if (thinking.trim()) parsed._aiThinking = thinking.trim();
+    return parsed;
   };
 
   // Supabase's edge runtime kills a request that runs past its idle timeout (~150s). Each image is
@@ -297,7 +302,7 @@ Return ONLY JSON matching the provided schema.`;
     if (Date.now() - runStart > RUN_TIME_BUDGET_MS) { skipped = targets.length - ok - fail; break; }
     try {
       const r = await tagOne(img);
-      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(dropArtificialFloral(r.elements))), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      const patch = { tags: r.tags || {}, elements: dropStructural(matchInventory(dropArtificialFloral(r.elements))), lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: Array.isArray(r.unrecognized) ? r.unrecognized : [], _aiTags: r.tags || {}, _aiThinking: r._aiThinking || undefined, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.
