@@ -206,19 +206,24 @@ Deno.serve(async (req) => {
       // didn't narrow to anything, so a wrong/blank category guess never costs recall.
       const elSubKey = normName(el.subCat);
       const scopedInv = elSubKey ? taggableInv.filter((it: any) => normName(it.subCat) === elSubKey) : [];
+      // Preserve the ORIGINAL AI-proposed name (before it's overwritten below with the matched
+      // inventory name) as a new field rather than mutating `el` in place — `els`/`r.elements` are
+      // shared object references with the pristine `_aiRawResponse` snapshot taken by the caller, so
+      // mutating the original objects would leak this scratch field into that snapshot.
+      const origName = el.name;
       const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
       if (invMatch) {
         const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
-        return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
+        return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score), _origName: origName };
       }
       // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
       const scopedPat = elSubKey ? taggableRecipePatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
       const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, taggableRecipePatterns, (p) => p.name);
       if (patMatch) {
         const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
-        return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
+        return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score), _origName: origName };
       }
-      return { ...el, new: true };
+      return { ...el, new: true, _origName: origName };
     });
     // A matched kit already represents its own components' cost/stock — drop any OTHER element that
     // matched one of THAT kit's sub-items so the same physical object isn't tagged twice.
@@ -231,11 +236,20 @@ Deno.serve(async (req) => {
     // matcher against just this kit's component names and drop anything that matches.
     const kitCompNames: any[] = [];
     idDeduped.forEach((el: any) => { if (el && el.invId && kitOf[el.invId]) kitOf[el.invId].forEach((id: string) => { const ci = inv.find((i: any) => i.id === id); if (ci) kitCompNames.push(ci); }); });
-    const deduped = kitCompNames.length ? idDeduped.filter((el: any) => (el && el.invId && kitOf[el.invId]) || !bestOf(el?.name || "", kitCompNames, (c) => c.name)) : idDeduped;
+    const nameDeduped = kitCompNames.length ? idDeduped.filter((el: any) => (el && el.invId && kitOf[el.invId]) || !bestOf(el?.name || "", kitCompNames, (c) => c.name)) : idDeduped;
+    // Spatial dedup: Claude tags "attachedTo" with the ORIGINAL name of whatever element this one is
+    // resting on/part of. If that parent resolved to a KIT, drop this element outright — even if it
+    // doesn't match anything literally in the kit's own recipe. Mirrors the client aiTagImage's rule.
+    const withOrigName = nameDeduped.filter((el: any) => el && el._origName);
+    const deduped = nameDeduped.filter((el: any) => {
+      if (!el || !el.attachedTo) return true;
+      const parentMatch = bestOf(el.attachedTo, withOrigName.filter((x: any) => x !== el), (x: any) => x._origName);
+      return !(parentMatch && parentMatch.item.invId && kitOf[parentMatch.item.invId]);
+    });
     // Backstop for the artificial-flower rule: an unmatched ("new") proposal has no resolved
     // inventory sub-category to check, only the AI's own guessed el.subCat — drop it there too so a
     // name that doesn't literally say "artificial" still can't sneak through as an unreviewed element.
-    return deduped.filter((el: any) => !(el && isSubArtificial(el.subCat)));
+    return deduped.filter((el: any) => !(el && isSubArtificial(el.subCat))).map((el: any) => { const { _origName, attachedTo, ...rest } = el; return rest; });
   };
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";
 
@@ -257,7 +271,8 @@ Rules:
 6. MISSING — items you cannot match go in elements with "new":true AND a short note in "unrecognized" ([] if none).
 7. NEVER tag "artificial flower/faux flower/fake flower/greenery/bouquet/garland" as its own element — real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item; just tag the flower/floral item normally.
 8. KITS — if several pieces are sold and priced together as ONE bundled inventory item, tag it ONCE using that bundled item's exact name; do not also separately list its individual component pieces.
-9. NAMING — "name" must be a specific, human-scannable name (5-9 words) referencing the zone, dominant design style, and one hero element (e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier"). Never use generic filler alone like "Wedding Decor" or "Elegant Setup".
+9. ATTACHMENT — for EVERY element, decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle on a console table, a vase on a pedestal). If so, set "attachedTo" to the EXACT "name" you used for that other element (character-for-character); otherwise set it to "". Still tag the item normally even when it's attached to something else — do not skip it.
+10. NAMING — "name" must be a specific, human-scannable name (5-9 words) referencing the zone, dominant design style, and one hero element (e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier"). Never use generic filler alone like "Wedding Decor" or "Elegant Setup".
 Return ONLY JSON matching the provided schema.`;
 
   const promptText = [houseRules, corrText, kb?.promptText || "", subcatText, basePrompt].filter(Boolean).join("\n\n");
@@ -278,7 +293,7 @@ Return ONLY JSON matching the provided schema.`;
           colorPalette: enumArr(colorVals), categoryTier: enumArr(tax.categoryTier), designStyle: enumArr(tax.designStyle), timeSetting: enumArr(tax.timeSetting),
         },
       },
-      elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "cat", "subCat", "qty"], properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, new: { type: "boolean" } } } },
+      elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "cat", "subCat", "qty"], properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, new: { type: "boolean" }, attachedTo: { type: "string" } } } },
     },
   };
 
