@@ -2440,7 +2440,7 @@ export default function StudioApp() {
           // that toggle exists so a client can cut cost on plain flower-pot-style items with an
           // artificial mix, which doesn't apply to a fixed decorative kit. Price at the recipe's
           // full Studio rate (100% real) plus the kit's own rental × scaling factor.
-          const unitPrice = rates.realRate + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
+          const unitPrice = rates.realRate + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
           return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: pattern.mode === "smb" };
         }
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
@@ -2466,7 +2466,7 @@ export default function StudioApp() {
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null };
     }
-    const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory);
+    const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and

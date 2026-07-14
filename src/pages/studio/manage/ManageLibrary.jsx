@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
+import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
@@ -178,7 +179,6 @@ export default function ManageLibrary({ ctx }) {
   // panel scrolls via overflowY:auto, which clips any absolutely-positioned popover that extends
   // past its bounds; fixed positioning escapes that clipping since it's relative to the viewport.
   const [elHoverImg, setElHoverImg] = useState(null); // { idx, top, left }
-  const [elHoverKit, setElHoverKit] = useState(null); // { idx, top, left }
 
   // `tagVenueGroup` defaults to "inhouse" (StudioApp.jsx) and is shared/sticky across whichever
   // photo is open, so without this it wins over the derived inhouse/outside group every time a
@@ -935,10 +935,19 @@ export default function ManageLibrary({ ctx }) {
                       // candle wall" even though the words appear in a different order in the name.
                       const tokens = libElSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
                       const matchesTokens = (haystack) => tokens.every(t => haystack.includes(t));
+                      // A kit already sold/priced already covers its own components — don't also let
+                      // the search offer adding "Round Fibre Pot" separately when a "Molding Console"
+                      // kit containing that same pot is already on this photo (would double the item
+                      // and double its cost).
+                      const kitCoveredIds = new Set((libEditImg.elements || []).filter(el => el.invId).flatMap(el => {
+                        const it = (imsInventory || []).find(i => i.id === el.invId);
+                        const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (it?.subItems || []);
+                        return comps.map(c => c.itemId);
+                      }));
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
+                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
                       const patMatches = (recipeOnlyPatterns || []).filter(pt => !(libEditImg.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));
                       const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))];
                       // Thumbnail is sized to actually be readable inline — no hover step required to
@@ -1029,40 +1038,7 @@ export default function ManageLibrary({ ctx }) {
                                 <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                               </div>
                             )}
-                            <span style={{ cursor: isKit ? "help" : "default" }}
-                              onMouseEnter={(e) => {
-                                if (!isKit) return;
-                                const r = e.currentTarget.getBoundingClientRect();
-                                const rows = (invItem.subItems || []).length;
-                                const estH = Math.min(24 + rows * 34 + 16, 360);
-                                const spaceBelow = window.innerHeight - r.bottom;
-                                const spaceAbove = r.top;
-                                const openUp = spaceBelow < estH + 8 && spaceAbove > spaceBelow;
-                                const avail = (openUp ? spaceAbove : spaceBelow) - 12;
-                                setElHoverKit({ idx, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 288), maxHeight: Math.max(avail, 80) });
-                              }}
-                              onMouseLeave={() => setElHoverKit(null)}>
-                              {el.name}
-                            </span>
-                            {isKit && elHoverKit?.idx === idx && (
-                              <div style={{ position: "fixed", top: elHoverKit.top, bottom: elHoverKit.bottom, left: elHoverKit.left, zIndex: 10000, minWidth: 200, maxWidth: 280, maxHeight: elHoverKit.maxHeight, overflowY: "auto", background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
-                                <div style={{ fontSize: 9, fontWeight: 700, color: textS, marginBottom: 4 }}>📦 Kit contents</div>
-                                {(invItem.subItems || []).map((si, i) => {
-                                  const comp = (imsInventory || []).find(x => x.id === si.itemId);
-                                  if (!comp) return null;
-                                  const compSrc = comp.img || comp.photoUrls?.[0];
-                                  return (
-                                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
-                                      <div style={{ width: 28, height: 28, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                        {compSrc ? <img src={compSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
-                                      </div>
-                                      <div style={{ fontSize: 10, color: textP, flex: 1, whiteSpace: "nowrap" }}>{comp.name}</div>
-                                      <div style={{ fontSize: 9, color: textS, flexShrink: 0 }}>×{si.qty}</div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+                            <span>{el.name}</span>
                             {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}
                             {!invItem && <span title="This inventory item no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
                             {el.lowConfidence && <span title={`AI matched this by a ${el.matchScore ?? "?"}% keyword overlap, not an exact/near-exact name — please verify it's the right item`} style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700 }}>❓ VERIFY</span>}
@@ -1078,6 +1054,18 @@ export default function ManageLibrary({ ctx }) {
                           <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
                           <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : invItem ? "₹0" : "—"}</div>
                           <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
+                          {isKit && (
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <KitComponentsEditor
+                                item={invItem}
+                                overrides={el.kitOverrides}
+                                onChange={(next) => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setLibEditImg({ ...libEditImg, elements: elems }); }}
+                                imsInventory={imsInventory}
+                                qtyMultiplier={el.qty || 1}
+                                textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
+                              />
+                            </div>
+                          )}
                         </Fragment>
                       );
                     }

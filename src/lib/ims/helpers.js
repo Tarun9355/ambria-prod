@@ -91,9 +91,12 @@ export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? S
 // snapshot, written when someone last opened+saved THIS specific kit's Edit form, so it silently
 // goes stale the moment any component's own price changes elsewhere. Recomputing live means
 // Build/Deal Check and the Edit screen can never disagree again.
-function kitTotalFromInventory(item, allInventory) {
+// `overrideSubItems`, when given, replaces item.subItems for THIS specific element instance only —
+// e.g. a photo/zone that added an extra candle to one particular kit — without touching the kit's
+// own global recipe (every other use of that kit elsewhere is unaffected).
+function kitTotalFromInventory(item, allInventory, overrideSubItems) {
   const base = Number(item.kitBase) || 0;
-  const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+  const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
   if (!Array.isArray(allInventory)) return base;
   return subItems.reduce((sum, si) => {
     const c = allInventory.find((i) => i.id === si.itemId);
@@ -107,14 +110,14 @@ function kitTotalFromInventory(item, allInventory) {
 // → scaling_factor map the Rate Card → IMS migration's Phase 2 already builds from
 // `rate_card_categories`. `allInventory` (optional) enables the live kit-total recompute above;
 // pass it whenever available — omitting it only matters for kits, where it falls back to the
-// item's own (possibly stale) stored price.
-export function priceForInvItem(item, factorByKey, allInventory) {
+// item's own (possibly stale) stored price. `overrideSubItems` — see kitTotalFromInventory above.
+export function priceForInvItem(item, factorByKey, allInventory, overrideSubItems) {
   if (!item) return 0;
   const key = String(item.subCat || item.subcategory || "").trim().toLowerCase();
   const f = key ? factorByKey?.[key] : undefined;
   const factor = (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
   const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-  const base = isKit ? kitTotalFromInventory(item, allInventory) : (Number(item.price) || 0);
+  const base = isKit ? kitTotalFromInventory(item, allInventory, overrideSubItems) : (Number(item.price) || 0);
   return base * factor;
 }
 
