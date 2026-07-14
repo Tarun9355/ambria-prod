@@ -163,6 +163,8 @@ Deno.serve(async (req) => {
   taggableInv.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.subCat || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
   const subcatText = Object.keys(subByCat).length ? "Sub-category vocabulary by category:\n" + Object.entries(subByCat).map(([c, s]) => `- ${c}: ${[...s].join(", ")}`).join("\n") : "";
   const elemList = [...taggableInv.map((i: any) => `"${i.name}"`), ...taggableRecipePatterns.map((p: any) => `"${p.name}"`)].join(", ");
+  const nameEnumVals = [...new Set([...taggableInv.map((i: any) => i.name), ...taggableRecipePatterns.map((p: any) => p.name)])];
+  nameEnumVals.push("NOT_IN_CATALOG");
   // Names/keywords for structural items that must NEVER appear in the element breakdown (they're
   // captured in the dedicated truss/floor/masking sections — listing them too double-counts).
   const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
@@ -235,45 +237,45 @@ Deno.serve(async (req) => {
     }
     return bestScore >= 40 ? { item: best, method: "overlap", score: bestScore } : null;
   };
-  const LOW_CONFIDENCE_BELOW = 65;
   // Real-vs-artificial flower content is a %-blend the pricing engine applies automatically to the
-  // matched floral item — it's never its own physical inventory item, so an "artificial flower
-  // bunch"-style proposal should be tagged under its cleaned name, not deleted outright (deleting it
-  // would silently undercount a real, visible floral arrangement whenever the model's naming didn't
-  // perfectly follow the "don't say artificial" instruction). Mirrors the client aiTagImage's rule.
+  // matched floral item — it's never its own physical inventory item. "name" is now enum-locked to
+  // real catalog strings (or "NOT_IN_CATALOG"), so it can't itself say "artificial" unless a real IMS
+  // item is genuinely named that (a data problem to fix in IMS, not to silently rewrite here). The
+  // free-text "newItemName" (used only for NOT_IN_CATALOG proposals) is where this can still slip
+  // through, so sanitize that instead of deleting the element outright. Mirrors the client.
   const ARTIFICIAL_KW = /\b(artificial|faux|fake)\b/i;
   const FLORAL_KW = /\b(flower|floral|greenery|leaves|leaf|petal|bouquet|garland|bunch|foliage|plant)\b/i;
   const sanitizeArtificialFloral = (els: any[]) => (Array.isArray(els) ? els : []).map((e: any) => {
-    if (!e || !e.name || !(ARTIFICIAL_KW.test(e.name) && FLORAL_KW.test(e.name))) return e;
-    const cleanName = String(e.name).replace(/\b(artificial|faux|fake)\b/gi, "").replace(/\s+/g, " ").trim();
-    return cleanName ? { ...e, name: cleanName } : e;
+    if (!e || !e.newItemName || !(ARTIFICIAL_KW.test(e.newItemName) && FLORAL_KW.test(e.newItemName))) return e;
+    const cleanName = String(e.newItemName).replace(/\b(artificial|faux|fake)\b/gi, "").replace(/\s+/g, " ").trim();
+    return { ...e, newItemName: cleanName || e.newItemName };
   });
+  // "name" is enum-locked to the exact IMS Inventory list (or "NOT_IN_CATALOG") — a guaranteed exact
+  // lookup now, not a fuzzy search. bestOf/scoping is still used below for attachedTo resolution and
+  // the kit-component name-similarity backstop, just no longer for resolving the element's own
+  // primary name. Mirrors the client.
+  const invByName = new Map<string, any>();
+  taggableInv.forEach((i: any) => { const k = normName(i.name); if (!invByName.has(k)) invByName.set(k, i); });
+  const patByName = new Map<string, any>();
+  taggableRecipePatterns.forEach((p: any) => { const k = normName(p.name); if (!patByName.has(k)) patByName.set(k, p); });
   const matchInventory = (els: any[]) => {
     const mapped = (Array.isArray(els) ? els : []).map((el: any) => {
       if (!el || !el.name) return el;
-      // Scope the search to the model's own guessed sub-category first — routes the match to the
-      // right bucket instead of the whole catalog; falls back to the full catalog if the guess
-      // didn't narrow to anything, so a wrong/blank category guess never costs recall.
-      const elSubKey = normName(el.subCat);
-      const scopedInv = elSubKey ? taggableInv.filter((it: any) => normName(it.subCat) === elSubKey) : [];
       // Preserve the ORIGINAL AI-proposed name (before it's overwritten below with the matched
       // inventory name) as a new field rather than mutating `el` in place — `els`/`r.elements` are
       // shared object references with the pristine `_aiRawResponse` snapshot taken by the caller, so
-      // mutating the original objects would leak this scratch field into that snapshot.
-      const origName = el.name;
-      const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, (it) => it.name)) || bestOf(el.name, taggableInv, (it) => it.name);
-      if (invMatch) {
-        const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
-        return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score), _origName: origName };
+      // mutating the original objects would leak this scratch field into that snapshot. For
+      // "NOT_IN_CATALOG" elements, use "newItemName" instead — otherwise every unmatched element in a
+      // photo would share the same literal origName.
+      const origName = el.name === "NOT_IN_CATALOG" ? (el.newItemName || "NOT_IN_CATALOG") : el.name;
+      if (el.name !== "NOT_IN_CATALOG") {
+        const invItem = invByName.get(normName(el.name));
+        if (invItem) return { ...el, name: invItem.name, cat: invItem.cat || el.cat, subCat: invItem.subCat || el.subCat, unit: invItem.unit, invId: invItem.id, matchMethod: "exact", matchScore: 100, _origName: origName };
+        const patItem = patByName.get(normName(el.name));
+        if (patItem) return { ...el, name: patItem.name, cat: "Florals", subCat: patItem.sub || el.subCat, unit: patItem.unit, patternId: patItem.id, matchMethod: "exact", matchScore: 100, _origName: origName };
+        // Shouldn't happen given the enum constraint — safety net only.
       }
-      // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
-      const scopedPat = elSubKey ? taggableRecipePatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
-      const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, taggableRecipePatterns, (p) => p.name);
-      if (patMatch) {
-        const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
-        return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score), _origName: origName };
-      }
-      return { ...el, new: true, _origName: origName };
+      return { ...el, new: true, name: el.newItemName || el.name, _origName: origName };
     });
     // A matched kit already represents its own components' cost/stock — drop any OTHER element that
     // matched one of THAT kit's sub-items so the same physical object isn't tagged twice.
@@ -321,17 +323,19 @@ Design style: ${(tax.designStyle || []).join(", ")}
 Time/setting: ${(tax.timeSetting || []).join(", ")}
 
 Rules:
-1. Use EXACT IMS Inventory names for visible decor elements where possible: ${elemList}
-2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat" (from the sub-category vocabulary below) — this routes the exact-name match to the right bucket instead of the whole catalog, so pick the one that's visually true.
-3. For each element estimate quantity; mark items not in the list with "new":true (still fill "cat"/"subCat" with your best guess).
-4. Do NOT tag structural items (truss/platform/masking/carpet/flex) as elements.
-5. LIGHTS — count every light fixture; put the total in "lightCount" (0 if none).
-6. MISSING — items you cannot match go in elements with "new":true AND a short note in "unrecognized" ([] if none).
-7. NEVER tag "artificial flower/faux flower/fake flower/greenery/bouquet/garland" as its own element — real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item; just tag the flower/floral item normally.
-8. KITS — if several pieces are sold and priced together as ONE bundled inventory item, tag it ONCE using that bundled item's exact name; do not also separately list its individual component pieces.
-9. ATTACHMENT — for EVERY element, decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle on a console table, a vase on a pedestal). If so, set "attachedTo" to the EXACT "name" you used for that other element (character-for-character); otherwise set it to "". Still tag the item normally even when it's attached to something else — do not skip it.
-10. CRITICAL — NAMING IS MANDATORY: "name" must ALWAYS be a specific, human-scannable name (5-9 words) referencing the zone/area, the dominant design style, AND one standout hero element (e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier"). NEVER settle for generic filler alone like "Wedding Decor", "Elegant Setup", "Floral Arrangement", "Event Design", or a bare venue/zone label — every photo needs its own distinct, descriptive name, not a placeholder.
-11. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The "dims" fields (trussL/trussW/trussH/plH/mkT) capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss), regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT force a Jali into the Arch/Panel naming, it is its own shape). FIRST search the IMS Inventory list above for a SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic label. ONLY if no specific item matches, fall back to the generic sub-category combo name: MATERIAL (Wooden or Wrought Iron) + DEPTH (2D flat / 3D with visible depth) + SHAPE (Arch/Panel) from the sub-category vocabulary below. NEVER invent your own descriptive label for a structure element instead of matching it to the inventory list. Do NOT skip this element just because you already tagged the plain truss/platform.
+1. FIRST PRIORITY: "name" can ONLY be one of the exact items from this IMS Inventory list (enforced by the response schema — you cannot write anything else here): ${elemList}
+Pick whichever one is the closest visual match for each element you see.
+2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat" (from the sub-category vocabulary below) — pick the one that's visually true.
+3. For each visible element, estimate quantity and pick size if available.
+4. If NOTHING in the list is even a reasonable match for something you clearly see, set "name" to "NOT_IN_CATALOG" and put a short, professional description of what you saw in "newItemName" (leave "newItemName" as "" for every other element). Still fill "cat"/"subCat" with your best guess in that case.
+5. Do NOT tag structural items (truss/platform/masking/carpet/flex) as elements.
+6. LIGHTS — count every light fixture; put the total in "lightCount" (0 if none).
+7. MISSING — if you used "NOT_IN_CATALOG" for something, ALSO add a short note about it to "unrecognized" ([] if none).
+8. NEVER describe a "NOT_IN_CATALOG" item as "artificial flower/faux flower/fake flower/greenery/bouquet/garland" in "newItemName" — real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item; if what you see is a real inventory flower/pot item that merely looks artificial, still pick its normal matching name from the list.
+9. KITS — if several pieces are sold and priced together as ONE bundled inventory item, tag it ONCE using that bundled item's exact name; do not also separately list its individual component pieces.
+10. ATTACHMENT — for EVERY element, decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle on a console table, a vase on a pedestal). If so, set "attachedTo" to the EXACT "name" you used for that other element (character-for-character); otherwise set it to "". Still tag the item normally even when it's attached to something else — do not skip it.
+11. CRITICAL — NAMING IS MANDATORY: the top-level photo "name" must ALWAYS be a specific, human-scannable name (5-9 words) referencing the zone/area, the dominant design style, AND one standout hero element (e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier"). NEVER settle for generic filler alone like "Wedding Decor", "Elegant Setup", "Floral Arrangement", "Event Design", or a bare venue/zone label — every photo needs its own distinct, descriptive name, not a placeholder. (This is the photo's own "name", separate from each element's "name".)
+12. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The "dims" fields (trussL/trussW/trussH/plH/mkT) capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss), regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT force a Jali into the Arch/Panel naming, it is its own shape). Search the IMS Inventory list above for the SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic material+depth+shape combo name. Do NOT skip this element just because you already tagged the plain truss/platform.
 
 Dimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):
 - trussL: length of the main structure (front-to-back or stage width)
@@ -374,7 +378,10 @@ Return ONLY JSON matching the provided schema.`;
           mkWalls: { type: "object", additionalProperties: false, required: ["back", "left", "right"], properties: { back: { type: "boolean" }, left: { type: "boolean" }, right: { type: "boolean" } } },
         },
       },
-      elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "cat", "subCat", "qty"], properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, new: { type: "boolean" }, attachedTo: { type: "string" } } } },
+      // "name" is enum-locked to the exact IMS Inventory list (+ "NOT_IN_CATALOG") — guarantees the
+      // returned name is either a real catalog string or the explicit escape value; Claude can no
+      // longer invent a plausible-sounding description that then fails to fuzzy-match anything.
+      elements: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "cat", "subCat", "qty"], properties: { name: { type: "string", enum: nameEnumVals }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, size: { type: "string" }, detail: { type: "string" }, newItemName: { type: "string" }, attachedTo: { type: "string" } } } },
     },
   };
 
@@ -462,14 +469,13 @@ Return ONLY JSON matching the provided schema.`;
         const parts = [area, style, hero?.name].filter(Boolean);
         if (parts.length) resolvedName = parts.join(" — ");
       }
-      // Lightweight match-stats — no aggregate visibility existed into how often each dedup/match
-      // tier actually fires; without it, tuning LOW_CONFIDENCE_BELOW/the 40% overlap floor is pure
-      // guesswork. Persisted alongside _aiRawResponse so it can be queried/audited later. Mirrors client.
+      // Lightweight match-stats — no aggregate visibility existed into how often the AI actually
+      // finds a real catalog match vs. falls back to "NOT_IN_CATALOG"; without it, judging whether
+      // the enum-locked matching is working well is pure guesswork. Persisted alongside
+      // _aiRawResponse so it can be queried/audited later. Mirrors client.
       const matchStats = {
         exact: finalEls.filter((el: any) => el.matchMethod === "exact").length,
-        substring: finalEls.filter((el: any) => el.matchMethod === "substring").length,
-        overlap: finalEls.filter((el: any) => el.matchMethod === "overlap").length,
-        lowConfidence: finalEls.filter((el: any) => el.lowConfidence).length,
+        notInCatalog: newNames.length,
         unrecognized: mergedUnrec.length,
       };
       const patch = { tags: r.tags || {}, dims: (r.dims && typeof r.dims === "object") ? r.dims : {}, elements: finalEls, lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: mergedUnrec, _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _matchStats: matchStats, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: resolvedName };
