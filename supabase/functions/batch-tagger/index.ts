@@ -29,14 +29,15 @@ const ALLOWED_SOURCE_FOLDERS = ["ambria", "client-uploads", "inhouse venues", "O
 
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 const parse = (v: unknown) => { if (v == null) return null; if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } } return v; };
-// "structure" category holds BOTH raw scaffold/masking stock (Box Truss, Platform, Carpet, Masking —
-// captured only via the "dims" fields, never its own element) AND decorative structure items
-// (Wooden/Wrought Iron 2D/3D Arch/Panel — which the STRUCTURES house rule wants tagged as their own
-// element). Exclude only the raw-scaffold ones by NAME (STRUCT_KW below), not the whole category —
-// blanket-excluding the category meant material/shape structures could never be tagged no matter
-// what the prompt said. "tenting" has no such split, so it stays fully excluded.
+// "structure" AND "tenting" categories both hold BOTH raw scaffold/masking stock (Box Truss,
+// Platform, Carpet, Masking — captured only via the "dims" fields, never its own element) AND
+// specific decorative/structural items (Wooden/Wrought Iron 2D/3D Arch/Panel/Jali — which the
+// STRUCTURES house rule wants tagged as their own element, and which aren't always filed under
+// "structure"). Exclude only the raw-scaffold ones by NAME (STRUCT_KW below), not either whole
+// category — blanket-excluding by category meant specific structure items could never be tagged no
+// matter what the prompt said, regardless of which of these two categories they happened to live in.
 const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
-const STRUCTURAL = new Set(["tenting"]);
+const STRUCTURAL = new Set(["structure", "tenting"]);
 const enumArr = (vals: string[]) => ({ type: "array", items: { type: "string", enum: (vals || []).filter(Boolean) } });
 
 Deno.serve(async (req) => {
@@ -149,8 +150,7 @@ Deno.serve(async (req) => {
   const isSubArtificial = (subCat: any) => ARTIFICIAL_SUBCAT.test(String(subCat || ""));
   const taggableInv = inv.filter((i: any) => {
     const cat = String(i.cat || "").trim().toLowerCase();
-    if (STRUCTURAL.has(cat)) return false;
-    if (cat === "structure" && STRUCT_KW.test(String(i.name || ""))) return false;
+    if (STRUCTURAL.has(cat) && STRUCT_KW.test(String(i.name || ""))) return false;
     return !isSubHidden(i.subCat) && !isSubUnrecognized(i.subCat) && !isSubArtificial(i.subCat);
   });
   const taggableRecipePatterns = recipeOnlyPatterns.filter((p: any) => !isSubArtificial(p.sub));
@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
   const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
   const structuralNames = new Set(inv.filter((i: any) => {
     const cat = String(i.cat || "").trim().toLowerCase();
-    return STRUCTURAL.has(cat) || (cat === "structure" && STRUCT_KW.test(String(i.name || "")));
+    return STRUCTURAL.has(cat) && STRUCT_KW.test(String(i.name || ""));
   }).map((i: any) => normName(i.name)));
   const dropStructural = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => e && e.name && !structuralNames.has(normName(e.name)) && !STRUCT_KW.test(e.name));
   // Matches an AI-proposed element name against a real inventory item — mirrors StudioApp.jsx's
