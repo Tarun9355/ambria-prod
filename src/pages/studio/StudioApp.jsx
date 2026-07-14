@@ -4735,7 +4735,14 @@ Return ONLY JSON:
             if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return { item: c, method: "substring", score: 90 }; // near-certain, stop here
             const cKw = keywords(keyOf(c));
             const overlap = nameKw.filter(w => cKw.some(cw => cw.includes(w) || w.includes(cw))).length;
-            const score = overlap > 0 ? (overlap / Math.max(nameKw.length, cKw.length)) * 100 : 0;
+            // Denominator is the SMALLER keyword count, not the larger — a short, precise catalog
+            // name (e.g. "iron Jali", 2 keywords) fully contained inside a long AI-invented
+            // description (e.g. 7 keywords) should score as a strong match ("does this description
+            // contain everything that identifies this item?"), not get penalized to ~28% just
+            // because the AI's own phrasing was verbose. Using the larger count systematically
+            // under-scored short catalog names against wordy proposals — the exact failure mode that
+            // let the Jali structure fall through as unmatched.
+            const score = overlap > 0 ? (overlap / Math.min(nameKw.length, cKw.length)) * 100 : 0;
             if (score > bestScore) { bestScore = score; best = c; }
           }
           return bestScore >= 40 ? { item: best, method: "overlap", score: bestScore } : null;
@@ -4787,10 +4794,19 @@ Return ONLY JSON:
         // slips through the id-only check above. Re-run the same name matcher against just this kit's
         // component names and drop anything that matches — a kit's known components should never
         // reappear as their own element just because the AI phrased/matched them slightly differently.
+        // Require an EXACT or SUBSTRING match here (not the loose ≥40% overlap tier) — this pools
+        // component names across every kit matched in the photo, so a lenient overlap match could
+        // wrongly suppress a genuinely separate standalone item that just happens to share a couple
+        // of generic words with some OTHER kit's recipe. An exact/near-exact name match to a specific
+        // known component is a much safer bar for an irreversible drop.
         const kitCompNames = [];
         parsed.elements.forEach(el => { if (el.invId && kitOf[el.invId]) kitOf[el.invId].forEach(id => { const ci = imsInventory.find(i => i.id === id); if (ci) kitCompNames.push(ci); }); });
         if (kitCompNames.length) {
-          parsed.elements = parsed.elements.filter(el => (el.invId && kitOf[el.invId]) || !bestOf(el.name, kitCompNames, c => c.name));
+          parsed.elements = parsed.elements.filter(el => {
+            if (el.invId && kitOf[el.invId]) return true;
+            const m = bestOf(el.name, kitCompNames, c => c.name);
+            return !(m && m.method !== "overlap");
+          });
         }
         // Spatial dedup: Claude tags "attachedTo" with the ORIGINAL name of whatever element this one
         // is resting on/part of. If that parent resolved to a KIT, drop this element outright — even
@@ -4811,26 +4827,80 @@ Return ONLY JSON:
           const cat = String(i.cat || i.category || "").trim().toLowerCase();
           return RAW_SCAFFOLD_CATS.has(cat) && STRUCT_KW.test(String(i.name || ""));
         }).map(i => normalize(i.name)));
-        parsed.elements = parsed.elements.filter(el => !structuralNames.has(normalize(el.name)) && !STRUCT_KW.test(el.name || ""));
+        parsed.elements = parsed.elements.filter(el => {
+          if (structuralNames.has(normalize(el.name))) return false;
+          if (el.invId) {
+            // Matched to a real inventory item — trust its ACTUAL resolved category. A legitimate
+            // item from an unrelated category shouldn't be deleted just because its name happens to
+            // contain a raw-scaffold keyword (e.g. a Furniture item literally named "...Platform...").
+            const item = imsInventory.find(i => i.id === el.invId);
+            const cat = String(item?.cat || item?.category || "").trim().toLowerCase();
+            return !(RAW_SCAFFOLD_CATS.has(cat) && STRUCT_KW.test(el.name || ""));
+          }
+          // Unmatched/new proposal — no resolved category to check, so the name-keyword test is the
+          // only signal available; keep it as a conservative backstop.
+          return !STRUCT_KW.test(el.name || "");
+        });
         // Backstop for the artificial-flower rule: an unmatched ("new") proposal has no resolved
         // inventory sub-category to check against taggableInv, only the AI's own guessed el.subCat —
         // drop it there too so a name that doesn't literally say "artificial" (e.g. "Mixed Green
         // Foliage Bundle") still can't sneak through as a brand-new/unreviewed element.
         parsed.elements = parsed.elements.filter(el => !ARTIFICIAL_SUBCAT.test(el.subCat || ""));
+        // Merge duplicate elements that resolved to the SAME real inventory item/pattern (and same
+        // size) — if Claude's own response lists the same physical item twice under different
+        // phrasing (e.g. two separate "Pillar Candle" entries), both independently match and would
+        // otherwise double-count qty with no warning. Keyed by invId/patternId + size so genuinely
+        // different size variants of the same base item (e.g. a Small AND a Big flower pot) are NOT
+        // collapsed together.
+        if (parsed.elements.length > 1) {
+          const mergedEls = [];
+          const keyIndex = new Map();
+          parsed.elements.forEach(el => {
+            const key = (el.invId || el.patternId) ? `${el.invId || el.patternId}|${el.size || ""}` : null;
+            if (key && keyIndex.has(key)) { mergedEls[keyIndex.get(key)].qty = (Number(mergedEls[keyIndex.get(key)].qty) || 0) + (Number(el.qty) || 0); return; }
+            if (key) keyIndex.set(key, mergedEls.length);
+            mergedEls.push({ ...el });
+          });
+          parsed.elements = mergedEls;
+        }
         // An unmatched ("new") proposal has no real inventory item behind it — it never prices,
         // never blocks stock, and just sits in the Element Breakdown as an inert $0 placeholder row.
-        // Fold its name into "unrecognized" instead (the existing review-backlog list, already shown
-        // in the "⚠ Needs attention" banner) so a reviewer still sees it was spotted, without it
-        // cluttering the actual priced element list.
-        const newNames = parsed.elements.filter(el => el.new).map(el => el.name).filter(Boolean);
+        // Fold it into "unrecognized" instead (the existing review-backlog list, already shown in the
+        // "⚠ Needs attention" banner) so a reviewer still sees it was spotted (WITH its estimated qty,
+        // so the count signal isn't lost), without it cluttering the actual priced element list.
+        const newNames = parsed.elements.filter(el => el.new && el.name).map(el => el.qty > 1 ? `${el.name} (qty ~${el.qty})` : el.name);
         if (newNames.length) {
           const seenUnrec = new Set((parsed.unrecognized || []).map(s => String(s).toLowerCase()));
           newNames.forEach(n => { if (!seenUnrec.has(n.toLowerCase())) { parsed.unrecognized = [...(parsed.unrecognized || []), n]; seenUnrec.add(n.toLowerCase()); } });
         }
         parsed.elements = parsed.elements.filter(el => !el.new);
+        // Lightweight match-stats — no aggregate visibility existed into how often each dedup/match
+        // tier actually fires; without it, tuning LOW_CONFIDENCE_BELOW/the 40% overlap floor is pure
+        // guesswork. Persisted alongside _aiRawResponse so it can be queried/audited later.
+        parsed._matchStats = {
+          exact: parsed.elements.filter(el => el.matchMethod === "exact").length,
+          substring: parsed.elements.filter(el => el.matchMethod === "substring").length,
+          overlap: parsed.elements.filter(el => el.matchMethod === "overlap").length,
+          lowConfidence: parsed.elements.filter(el => el.lowConfidence).length,
+          unrecognized: (parsed.unrecognized || []).length,
+        };
         // Scratch fields used only for the matching/dedup above — don't persist them onto the saved
         // element objects.
         parsed.elements.forEach(el => { delete el._origName; delete el.attachedTo; });
+      }
+      // Naming backstop — rule #11 (NAMING IS MANDATORY) is a written instruction, and instruction-
+      // following isn't reliable (the whole reason several other fixes here moved to code instead of
+      // prompt wording). If Claude still returns a blank/generic placeholder name, deterministically
+      // build one from the tagged zone/style/hero-element data instead of letting the placeholder
+      // through — strictly better than nothing, even though it can't match Claude's own visual judgment.
+      const GENERIC_NAME_RE = /^(wedding decor|elegant setup|floral arrangement|event design|decor setup|event decor|décor)$/i;
+      const isGenericName = (n) => !n || !String(n).trim() || GENERIC_NAME_RE.test(String(n).trim()) || String(n).trim().split(/\s+/).length < 3;
+      if (isGenericName(parsed.name)) {
+        const area = (parsed.tags?.areasElements || [])[0] || "";
+        const style = (parsed.tags?.designStyle || [])[0] || "";
+        const hero = (parsed.elements || []).filter(e => e && e.name && (e.invId || e.patternId)).sort((a, b) => (Number(b.qty) || 0) - (Number(a.qty) || 0))[0];
+        const parts = [area, style, hero?.name].filter(Boolean);
+        if (parts.length) parsed.name = parts.join(" — ");
       }
       parsed._aiRawResponse = aiRawResponse;
       return parsed;

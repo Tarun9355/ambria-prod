@@ -170,7 +170,21 @@ Deno.serve(async (req) => {
     const cat = String(i.cat || "").trim().toLowerCase();
     return STRUCTURAL.has(cat) && STRUCT_KW.test(String(i.name || ""));
   }).map((i: any) => normName(i.name)));
-  const dropStructural = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => e && e.name && !structuralNames.has(normName(e.name)) && !STRUCT_KW.test(e.name));
+  const dropStructural = (els: any[]) => (Array.isArray(els) ? els : []).filter((e: any) => {
+    if (!e || !e.name) return false;
+    if (structuralNames.has(normName(e.name))) return false;
+    if (e.invId) {
+      // Matched to a real inventory item — trust its ACTUAL resolved category. A legitimate item
+      // from an unrelated category shouldn't be deleted just because its name happens to contain a
+      // raw-scaffold keyword (e.g. a Furniture item literally named "...Platform...").
+      const item = inv.find((i: any) => i.id === e.invId);
+      const cat = String(item?.cat || "").trim().toLowerCase();
+      return !(STRUCTURAL.has(cat) && STRUCT_KW.test(e.name));
+    }
+    // Unmatched/new proposal — no resolved category to check, so the name-keyword test is the only
+    // signal available; keep it as a conservative backstop.
+    return !STRUCT_KW.test(e.name);
+  });
   // Matches an AI-proposed element name against a real inventory item — mirrors StudioApp.jsx's
   // aiTagImage matching exactly (exact normalized match → substring → keyword-overlap ≥40 score),
   // so both tagging paths resolve to the same invId given the same name.
@@ -212,7 +226,11 @@ Deno.serve(async (req) => {
       if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return { item: c, method: "substring", score: 90 };
       const cKw = keywords(keyOf(c));
       const overlap = nameKw.filter((w: string) => cKw.some((cw: string) => cw.includes(w) || w.includes(cw))).length;
-      const score = overlap > 0 ? (overlap / Math.max(nameKw.length, cKw.length)) * 100 : 0;
+      // Denominator is the SMALLER keyword count, not the larger — mirrors the client aiTagImage's
+      // fix: a short, precise catalog name fully contained inside a long AI-invented description
+      // should score as a strong match, not get penalized just because the AI's own phrasing was
+      // verbose. Using the larger count systematically under-scored short catalog names.
+      const score = overlap > 0 ? (overlap / Math.min(nameKw.length, cKw.length)) * 100 : 0;
       if (score > bestScore) { bestScore = score; best = c; }
     }
     return bestScore >= 40 ? { item: best, method: "overlap", score: bestScore } : null;
@@ -265,10 +283,18 @@ Deno.serve(async (req) => {
     // Harden that dedup for NAME-similar components too — mirrors the client aiTagImage's rule: an
     // element that didn't resolve to the kit's own component id (e.g. it overlap-matched a different,
     // merely similar-looking item) still slips through the id-only check above. Re-run the name
-    // matcher against just this kit's component names and drop anything that matches.
+    // matcher against just this kit's component names and drop anything that matches. Require an
+    // EXACT or SUBSTRING match (not the loose ≥40% overlap tier) — this pools component names across
+    // every kit matched in the photo, so a lenient overlap match could wrongly suppress a genuinely
+    // separate standalone item that just happens to share a couple of generic words with some OTHER
+    // kit's recipe. An exact/near-exact match to a specific known component is a safer bar to drop on.
     const kitCompNames: any[] = [];
     idDeduped.forEach((el: any) => { if (el && el.invId && kitOf[el.invId]) kitOf[el.invId].forEach((id: string) => { const ci = inv.find((i: any) => i.id === id); if (ci) kitCompNames.push(ci); }); });
-    const nameDeduped = kitCompNames.length ? idDeduped.filter((el: any) => (el && el.invId && kitOf[el.invId]) || !bestOf(el?.name || "", kitCompNames, (c) => c.name)) : idDeduped;
+    const nameDeduped = kitCompNames.length ? idDeduped.filter((el: any) => {
+      if (el && el.invId && kitOf[el.invId]) return true;
+      const m = bestOf(el?.name || "", kitCompNames, (c) => c.name);
+      return !(m && m.method !== "overlap");
+    }) : idDeduped;
     // Spatial dedup: Claude tags "attachedTo" with the ORIGINAL name of whatever element this one is
     // resting on/part of. If that parent resolved to a KIT, drop this element outright — even if it
     // doesn't match anything literally in the kit's own recipe. Mirrors the client aiTagImage's rule.
@@ -394,19 +420,59 @@ Return ONLY JSON matching the provided schema.`;
       // matchInventory/dropStructural passes below (those build new arrays) — so r itself, minus the
       // separately-tracked _aiThinking, IS the pristine pre-processing snapshot.
       const { _aiThinking: aiThinking, ...aiRawResponse } = r;
-      const taggedEls = dropStructural(matchInventory(sanitizeArtificialFloral(r.elements)));
+      let taggedEls = dropStructural(matchInventory(sanitizeArtificialFloral(r.elements)));
+      // Merge duplicate elements that resolved to the SAME real inventory item/pattern (and same
+      // size) — if Claude's own response lists the same physical item twice under different
+      // phrasing, both independently match and would otherwise double-count qty with no warning.
+      // Keyed by invId/patternId + size so genuinely different size variants of the same base item
+      // are NOT collapsed together. Mirrors the client.
+      if (taggedEls.length > 1) {
+        const mergedEls: any[] = [];
+        const keyIndex = new Map<string, number>();
+        taggedEls.forEach((el: any) => {
+          const key = (el.invId || el.patternId) ? `${el.invId || el.patternId}|${el.size || ""}` : null;
+          if (key && keyIndex.has(key)) { const idx = keyIndex.get(key)!; mergedEls[idx].qty = (Number(mergedEls[idx].qty) || 0) + (Number(el.qty) || 0); return; }
+          if (key) keyIndex.set(key, mergedEls.length);
+          mergedEls.push({ ...el });
+        });
+        taggedEls = mergedEls;
+      }
       // An unmatched ("new") proposal has no real inventory item behind it — it never prices, never
-      // blocks stock, and just sits in the Element Breakdown as an inert $0 placeholder row. Fold its
-      // name into "unrecognized" instead (the existing review-backlog list) so a reviewer still sees
-      // it was spotted, without it cluttering the actual priced element list. Mirrors the client.
-      const newNames = taggedEls.filter((el: any) => el && el.new).map((el: any) => el.name).filter(Boolean);
+      // blocks stock, and just sits in the Element Breakdown as an inert $0 placeholder row. Fold it
+      // into "unrecognized" instead (the existing review-backlog list) so a reviewer still sees it
+      // was spotted (WITH its estimated qty, so the count signal isn't lost), without it cluttering
+      // the actual priced element list. Mirrors the client.
+      const newNames = taggedEls.filter((el: any) => el && el.new && el.name).map((el: any) => el.qty > 1 ? `${el.name} (qty ~${el.qty})` : el.name);
       const mergedUnrec = Array.isArray(r.unrecognized) ? [...r.unrecognized] : [];
       if (newNames.length) {
         const seenUnrec = new Set(mergedUnrec.map((s: any) => String(s).toLowerCase()));
         newNames.forEach((n: string) => { if (!seenUnrec.has(n.toLowerCase())) { mergedUnrec.push(n); seenUnrec.add(n.toLowerCase()); } });
       }
       const finalEls = taggedEls.filter((el: any) => !(el && el.new));
-      const patch = { tags: r.tags || {}, dims: (r.dims && typeof r.dims === "object") ? r.dims : {}, elements: finalEls, lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: mergedUnrec, _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name) };
+      // Naming backstop — instruction-following isn't reliable, so if Claude still returns a
+      // blank/generic placeholder name, deterministically build one from the tagged zone/style/hero-
+      // element data instead of letting the placeholder through. Mirrors the client.
+      const GENERIC_NAME_RE = /^(wedding decor|elegant setup|floral arrangement|event design|decor setup|event decor|décor)$/i;
+      const isGenericName = (n: any) => !n || !String(n).trim() || GENERIC_NAME_RE.test(String(n).trim()) || String(n).trim().split(/\s+/).length < 3;
+      let resolvedName = (img.name && !String(img.name).startsWith("img ")) ? img.name : (r.name || img.name);
+      if (isGenericName(resolvedName)) {
+        const area = (r.tags?.areasElements || [])[0] || "";
+        const style = (r.tags?.designStyle || [])[0] || "";
+        const hero = finalEls.filter((e: any) => e && e.name && (e.invId || e.patternId)).sort((a: any, b: any) => (Number(b.qty) || 0) - (Number(a.qty) || 0))[0];
+        const parts = [area, style, hero?.name].filter(Boolean);
+        if (parts.length) resolvedName = parts.join(" — ");
+      }
+      // Lightweight match-stats — no aggregate visibility existed into how often each dedup/match
+      // tier actually fires; without it, tuning LOW_CONFIDENCE_BELOW/the 40% overlap floor is pure
+      // guesswork. Persisted alongside _aiRawResponse so it can be queried/audited later. Mirrors client.
+      const matchStats = {
+        exact: finalEls.filter((el: any) => el.matchMethod === "exact").length,
+        substring: finalEls.filter((el: any) => el.matchMethod === "substring").length,
+        overlap: finalEls.filter((el: any) => el.matchMethod === "overlap").length,
+        lowConfidence: finalEls.filter((el: any) => el.lowConfidence).length,
+        unrecognized: mergedUnrec.length,
+      };
+      const patch = { tags: r.tags || {}, dims: (r.dims && typeof r.dims === "object") ? r.dims : {}, elements: finalEls, lightCount: typeof r.lightCount === "number" ? r.lightCount : undefined, unrecognized: mergedUnrec, _aiTags: r.tags || {}, _aiThinking: aiThinking || undefined, _aiRawResponse: aiRawResponse, _matchStats: matchStats, _aiTagged: true, _aiTaggedAt: Date.now(), tagSource: "nightly", name: resolvedName };
       const item = { ...img, ...patch };
       // Target was either status='untagged' or an unverified 'review' backlog photo being
       // retagged under the current rules — either way it lands on 'review', never verified.
