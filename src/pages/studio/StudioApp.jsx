@@ -4481,14 +4481,22 @@ Return ONLY JSON:
     // excluded from tagging vocabulary too — same "only recognized sub-cats" rule as the Inventory
     // tab's filter pills. Items with NO sub-category at all are unaffected (nothing to recognize).
     const rcSubIds = new Set((rcSubcatFactors || []).map(r => r.id));
+    // House rule: never tag artificial flowers/foliage — a keyword filter on the AI's own proposed
+    // name catches "artificial flower"-style text, but not a plausible name (e.g. "Mixed Green
+    // Foliage Bundle") that happens to match a real inventory item filed under a sub-category whose
+    // NAME itself says it's artificial (e.g. "Artificial Foliage"). Exclude those sub-categories from
+    // the AI-tagging vocabulary/matching pool entirely, same mechanism as tag_hidden above.
+    const ARTIFICIAL_SUBCAT = /artificial/i;
     const taggableInv = imsInventory.filter(i => {
       const cat = String(i.cat || i.category || "").trim().toLowerCase();
       if (STRUCTURAL_INV_CATS.has(cat)) return false;
       const subKey = String(i.subCat || i.subcategory || "").trim().toLowerCase();
       if (subKey && invTagHiddenByKey[subKey]) return false;
       if (subKey && !rcSubIds.has(subKey)) return false;
+      if (subKey && ARTIFICIAL_SUBCAT.test(subKey)) return false;
       return true;
     });
+    const taggableRecipePatterns = recipeOnlyPatterns.filter(p => !ARTIFICIAL_SUBCAT.test(p.sub || ""));
     // Kit (bundle) items → the itemIds of their own components, so a photo that matches the kit
     // itself doesn't ALSO get its individual sub-items tagged as separate elements (double-counts
     // cost and double-blocks inventory for the same physical objects).
@@ -4496,7 +4504,7 @@ Return ONLY JSON:
     taggableInv.forEach(i => { if (Array.isArray(i.subItems) && i.subItems.length) kitOf[i.id] = i.subItems.map(s => s.itemId); });
     // Pure flower-recipe patterns with no inventory backing (e.g. "Flower Garden") join the same
     // vocabulary so they can be tagged/matched exactly like an inventory item.
-    const elemList = [...taggableInv.map(i => `"${i.name}" (${i.unit})`), ...recipeOnlyPatterns.map(p => `"${p.name}" (${p.unit})`)].join(", ");
+    const elemList = [...taggableInv.map(i => `"${i.name}" (${i.unit})`), ...taggableRecipePatterns.map(p => `"${p.name}" (${p.unit})`)].join(", ");
     // Sub-category vocabulary by top-level category (grounds element naming + routing).
     const subByCat = {}; taggableInv.forEach(i => { const c = String(i.cat || i.category || "").trim(); const s = String(i.subCat || i.subcategory || "").trim(); if (!c || !s) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
     const subcatText = Object.keys(subByCat).length ? ("Sub-category vocabulary by category (use these names and route each element to the right one):\n" + Object.entries(subByCat).map(([c, set]) => `- ${c}: ${[...set].join(", ")}`).join("\n")) : "";
@@ -4713,8 +4721,8 @@ Return ONLY JSON:
           }
 
           // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
-          const scopedPat = elSubKey ? recipeOnlyPatterns.filter(p => normalize(p.sub) === elSubKey) : [];
-          const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, recipeOnlyPatterns, p => p.name);
+          const scopedPat = elSubKey ? taggableRecipePatterns.filter(p => normalize(p.sub) === elSubKey) : [];
+          const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, taggableRecipePatterns, p => p.name);
           if (patMatch) {
             const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
             return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
@@ -4734,6 +4742,11 @@ Return ONLY JSON:
         const structuralNames = new Set(imsInventory.filter(i => STRUCTURAL_INV_CATS.has(String(i.cat || i.category || "").trim().toLowerCase())).map(i => normalize(i.name)));
         const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
         parsed.elements = parsed.elements.filter(el => !structuralNames.has(normalize(el.name)) && !STRUCT_KW.test(el.name || ""));
+        // Backstop for the artificial-flower rule: an unmatched ("new") proposal has no resolved
+        // inventory sub-category to check against taggableInv, only the AI's own guessed el.subCat —
+        // drop it there too so a name that doesn't literally say "artificial" (e.g. "Mixed Green
+        // Foliage Bundle") still can't sneak through as a brand-new/unreviewed element.
+        parsed.elements = parsed.elements.filter(el => !ARTIFICIAL_SUBCAT.test(el.subCat || ""));
       }
       return parsed;
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }

@@ -134,7 +134,14 @@ Deno.serve(async (req) => {
   // is dropped the same way — mirrors the client aiTagImage's same rule.
   const isSubHidden = (subCat: any) => tagHiddenSubIds.has(String(subCat || "").trim().toLowerCase());
   const isSubUnrecognized = (subCat: any) => { const k = String(subCat || "").trim().toLowerCase(); return !!k && !rcSubIds.has(k); };
-  const taggableInv = inv.filter((i: any) => !STRUCTURAL.has(String(i.cat || "").trim().toLowerCase()) && !isSubHidden(i.subCat) && !isSubUnrecognized(i.subCat));
+  // House rule: never tag artificial flowers/foliage. A keyword filter on the AI's own proposed name
+  // (below) catches "artificial flower"-style text, but not a plausible name (e.g. "Mixed Green
+  // Foliage Bundle") that happens to match a real item filed under a sub-category whose NAME itself
+  // says it's artificial (e.g. "Artificial Foliage") — mirrors the client aiTagImage's same rule.
+  const ARTIFICIAL_SUBCAT = /artificial/i;
+  const isSubArtificial = (subCat: any) => ARTIFICIAL_SUBCAT.test(String(subCat || ""));
+  const taggableInv = inv.filter((i: any) => !STRUCTURAL.has(String(i.cat || "").trim().toLowerCase()) && !isSubHidden(i.subCat) && !isSubUnrecognized(i.subCat) && !isSubArtificial(i.subCat));
+  const taggableRecipePatterns = recipeOnlyPatterns.filter((p: any) => !isSubArtificial(p.sub));
   // Kit (bundle) items → their own components' itemIds, so a photo matching the kit itself doesn't
   // ALSO get its individual sub-items tagged separately — mirrors the client aiTagImage's rule.
   const kitOf: Record<string, string[]> = {};
@@ -143,7 +150,7 @@ Deno.serve(async (req) => {
   const subByCat: Record<string, Set<string>> = {};
   taggableInv.forEach((i: any) => { const c = String(i.cat || "").trim(), s = String(i.subCat || "").trim(); if (c && s) (subByCat[c] = subByCat[c] || new Set()).add(s); });
   const subcatText = Object.keys(subByCat).length ? "Sub-category vocabulary by category:\n" + Object.entries(subByCat).map(([c, s]) => `- ${c}: ${[...s].join(", ")}`).join("\n") : "";
-  const elemList = [...taggableInv.map((i: any) => `"${i.name}"`), ...recipeOnlyPatterns.map((p: any) => `"${p.name}"`)].join(", ");
+  const elemList = [...taggableInv.map((i: any) => `"${i.name}"`), ...taggableRecipePatterns.map((p: any) => `"${p.name}"`)].join(", ");
   // Names/keywords for structural items that must NEVER appear in the element breakdown (they're
   // captured in the dedicated truss/floor/masking sections — listing them too double-counts).
   const normName = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
@@ -205,8 +212,8 @@ Deno.serve(async (req) => {
         return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
       }
       // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
-      const scopedPat = elSubKey ? recipeOnlyPatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
-      const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, recipeOnlyPatterns, (p) => p.name);
+      const scopedPat = elSubKey ? taggableRecipePatterns.filter((p: any) => normName(p.sub) === elSubKey) : [];
+      const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, (p) => p.name)) || bestOf(el.name, taggableRecipePatterns, (p) => p.name);
       if (patMatch) {
         const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
         return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
@@ -217,7 +224,11 @@ Deno.serve(async (req) => {
     // matched one of THAT kit's sub-items so the same physical object isn't tagged twice.
     const suppressedCompIds = new Set<string>();
     mapped.forEach((el: any) => { if (el && el.invId && kitOf[el.invId]) kitOf[el.invId].forEach((id) => suppressedCompIds.add(id)); });
-    return suppressedCompIds.size ? mapped.filter((el: any) => !(el && el.invId && suppressedCompIds.has(el.invId))) : mapped;
+    const deduped = suppressedCompIds.size ? mapped.filter((el: any) => !(el && el.invId && suppressedCompIds.has(el.invId))) : mapped;
+    // Backstop for the artificial-flower rule: an unmatched ("new") proposal has no resolved
+    // inventory sub-category to check, only the AI's own guessed el.subCat — drop it there too so a
+    // name that doesn't literally say "artificial" still can't sneak through as an unreviewed element.
+    return deduped.filter((el: any) => !(el && isSubArtificial(el.subCat)));
   };
   const houseRules = (tax.taggingStandards || "").trim() ? "HOUSE TAGGING RULES (follow strictly):\n" + String(tax.taggingStandards).trim() : "";
 
