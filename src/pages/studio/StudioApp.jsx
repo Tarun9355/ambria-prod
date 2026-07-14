@@ -4472,7 +4472,14 @@ Return ONLY JSON:
     // the manual "+Add element" pickers), not Rate Card — so a tagged element resolves to a real
     // invId and prices/blends via getElPriceFromInventory (floral-recipe Studio rate, SMB toggle,
     // sub-category scaling factor) exactly like a manually-added element.
-    const STRUCTURAL_INV_CATS = new Set(["structure", "tenting"]);
+    // "structure" category holds BOTH raw scaffold/masking stock (Box Truss, Platform, Carpet,
+    // Masking — captured only via the "dims" fields, never its own element) AND decorative structure
+    // items (Wooden/Wrought Iron 2D/3D Arch/Panel — which the STRUCTURES house rule wants tagged as
+    // their own element). Exclude only the raw-scaffold ones by NAME (below), not the whole category
+    // — blanket-excluding the category meant material/shape structures could never be tagged no
+    // matter what the prompt said. "tenting" has no such split, so it stays fully excluded.
+    const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
+    const STRUCTURAL_INV_CATS = new Set(["tenting"]);
     // Sub-categories flagged "hidden from AI tagging" (rate_card_categories.tag_hidden, set in IMS's
     // Sub-Categories admin panel) — replaces the old Rate-Card-only "not taggable in Pricing" flag.
     const invTagHiddenByKey = {};
@@ -4490,6 +4497,7 @@ Return ONLY JSON:
     const taggableInv = imsInventory.filter(i => {
       const cat = String(i.cat || i.category || "").trim().toLowerCase();
       if (STRUCTURAL_INV_CATS.has(cat)) return false;
+      if (cat === "structure" && STRUCT_KW.test(String(i.name || ""))) return false;
       const subKey = String(i.subCat || i.subcategory || "").trim().toLowerCase();
       if (subKey && invTagHiddenByKey[subKey]) return false;
       if (subKey && !rcSubIds.has(subKey)) return false;
@@ -4771,8 +4779,10 @@ Return ONLY JSON:
         // Drop structural items (truss / floor-carpet / masking) from the element breakdown — they're
         // captured in the dedicated Zone-Dimensions/Masking sections, so listing them as elements too
         // double-counts cost AND double-blocks inventory.
-        const structuralNames = new Set(imsInventory.filter(i => STRUCTURAL_INV_CATS.has(String(i.cat || i.category || "").trim().toLowerCase())).map(i => normalize(i.name)));
-        const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
+        const structuralNames = new Set(imsInventory.filter(i => {
+          const cat = String(i.cat || i.category || "").trim().toLowerCase();
+          return STRUCTURAL_INV_CATS.has(cat) || (cat === "structure" && STRUCT_KW.test(String(i.name || "")));
+        }).map(i => normalize(i.name)));
         parsed.elements = parsed.elements.filter(el => !structuralNames.has(normalize(el.name)) && !STRUCT_KW.test(el.name || ""));
         // Backstop for the artificial-flower rule: an unmatched ("new") proposal has no resolved
         // inventory sub-category to check against taggableInv, only the AI's own guessed el.subCat —
