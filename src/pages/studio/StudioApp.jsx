@@ -5915,7 +5915,7 @@ Return ONLY JSON:
   const applyZoneUpload = () => {
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, addedAt: Date.now(), source: "client-upload" };
+    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: "build", _aiTagged: true, _aiTaggedAt: Date.now() };
     mergeLibItems([libImg]); saveLib([libImg]);
     logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
@@ -5923,7 +5923,7 @@ Return ONLY JSON:
     if (r.dims) {
       const cfg = buildZoneConfig(r.elKey, r.dims);
       if (cfg) {
-        setZoneConfig(p => ({ ...p, [r.elKey]: cfg }));
+        setZoneConfig(p => ({ ...p, [r.elKey]: { ...cfg, prints: r.prints || [] } }));
         setEnabledEls(p => ({ ...p, [r.elKey]: true }));
       }
     }

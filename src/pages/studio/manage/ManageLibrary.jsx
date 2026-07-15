@@ -13,7 +13,7 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   const [cursor, setCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, nightly: 0, manual: 0 });
+  const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, nightly: 0, manual: 0, build: 0 });
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const reqIdRef = useRef(0);
 
@@ -22,8 +22,8 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
     return () => clearTimeout(t);
   }, [search]);
 
-  const status = (libStatus === "nightly" || libStatus === "manual") ? undefined : libStatus;
-  const tagSource = libStatus === "nightly" ? "nightly" : libStatus === "manual" ? "manual" : undefined;
+  const status = (libStatus === "nightly" || libStatus === "manual" || libStatus === "build") ? undefined : libStatus;
+  const tagSource = libStatus === "nightly" ? "nightly" : libStatus === "manual" ? "manual" : libStatus === "build" ? "build" : undefined;
   const filterKey = JSON.stringify(filters);
   const venueKey = `${venueGroup}|${venueNames.join(",")}`;
 
@@ -499,6 +499,7 @@ export default function ManageLibrary({ ctx }) {
             ["untagged", "❓", "Untagged", "no tags yet", libPage.counts.untagged, "#9CA3AF"],
             ["nightly", "🌙", "Nightly Tagged", "tagged by nightly cron", libPage.counts.nightly, "#0EA5E9"],
             ["manual", "✋", "Manual Tagged", "tagged via manual selection", libPage.counts.manual, "#F59E0B"],
+            ["build", "🏗️", "Build Added", "uploaded from Build — cross-check before verifying", libPage.counts.build, "#EC4899"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
             return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>

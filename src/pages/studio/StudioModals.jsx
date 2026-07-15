@@ -5,9 +5,10 @@
 // them. These blocks live at the END of AmbriStudioInner's return in the
 // reference (App_latest.jsx). Transcribed VERBATIM here and driven off `ctx`.
 // ═══════════════════════════════════════════════════════════════
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
+import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import { getCat } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 
@@ -23,6 +24,10 @@ export default function StudioModals({ ctx }) {
     // zoneUploadReview
     zoneUploadReview, setZoneUploadReview, zoneLabelsD, accent, cardBg, S,
     rcIsSMB, calcElsCost, zurElSearch, setZurElSearch, applyZoneUpload,
+    // Element Breakdown + Print — same IMS-inventory-driven pricing/search the Library editor and
+    // Build's zone editor use, so the upload-review modal reflects the same live system instead of
+    // its own smaller Rate-Card-only copy.
+    getElPriceFromInventory, getElPriceFromPattern, recipeOnlyPatterns, imsPrintMaterials,
     // previewImg
     previewImg, setPreviewImg,
     // element gallery (zone photo viewer — grid + full-screen)
@@ -42,6 +47,9 @@ export default function StudioModals({ ctx }) {
   // element" search come from the matching IMS inventory item by name (best-effort; falls back to
   // the generic 📦 icon when nothing matches, same as every other add-element search in the app).
   const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || [];
+  const [zurHoveredElIdx, setZurHoveredElIdx] = useState(null);
+  const [zurElHoverImg, setZurElHoverImg] = useState(null);
+  const [zurPrintSearch, setZurPrintSearch] = useState("");
 
   return (<>
       {/* ═══ §26.13 — 🏭/🛒 Production/Buying Custom Item Modal (31 May 2026) ═══ */}
@@ -113,93 +121,424 @@ export default function StudioModals({ ctx }) {
                 </div>
               </div>
             </div>
-            {/* Dimensions */}
+            {/* ── Zone Dimensions (full parity with Build's zone editor) ── */}
             <div style={{marginBottom:16,padding:12,background:isDark?"#0F0F1A":"#F9FAFB",borderRadius:10,border:`1px solid ${border}`}}>
-              <div style={{fontSize:11,fontWeight:700,color:accent,marginBottom:8}}>📐 Estimated Dimensions (ft)</div>
-              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                {[["Truss Width","trussW"],["Truss Depth","trussL"],["Truss Height","trussH"],["Floor Width","floorW"],["Floor Depth","floorL"]].map(([l,f])=>
-                  <div key={f} style={{minWidth:70}}>
-                    <div style={{fontSize:9,color:textS,fontWeight:600}}>{l}</div>
-                    <input type="number" defaultValue={zoneUploadReview.dims?.[f]||0} onBlur={e=>setZoneUploadReview(p=>({...p,dims:{...p.dims,[f]:Number(e.target.value)||0}}))} key={"zur-"+f} style={{width:65,padding:"5px 8px",borderRadius:6,border:`1px solid ${border}`,background:isDark?"#0A0A14":"#fff",color:textP,fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/>
+              <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>📐 Zone Dimensions</div>
+              {(() => {
+                const d = zoneUploadReview.dims || {};
+                const isBox = !!(d.trussL && d.trussW && d.trussH);
+                const setD = (patch) => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), ...patch } });
+                const cell = { fontSize: 9, color: textS, marginBottom: 2 };
+                const inp = { ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 };
+                return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 6, marginBottom: 8 }}>
+                  <div><div style={cell}>Truss Depth (ft)</div><input type="number" value={d.trussL || ""} onChange={e => setD({ trussL: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                  <div><div style={cell}>Truss Width (ft)</div><input type="number" value={d.trussW || ""} onChange={e => setD({ trussW: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                  <div><div style={cell}>Truss Height (ft)</div><input type="number" value={d.trussH || ""} onChange={e => setD({ trussH: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                  <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={d.trussQty || ""} placeholder="1" onChange={e => setD({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
+                  {isBox && <div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={d.trussFrontExt || ""} placeholder="0" onChange={e => setD({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                  {isBox && (Number(d.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                </div>;
+              })()}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={zoneUploadReview.dims?.floorL || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), floorL: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={zoneUploadReview.dims?.floorW || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), floorW: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Platform</div>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
+                      const sel=(zoneUploadReview.dims?.plH||"")=== o.v;
+                      return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),plH:o.v}})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{o.l}</span>;
+                    })}
                   </div>
-                )}
-                <div style={{minWidth:70}}>
-                  <div style={{fontSize:9,color:textS,fontWeight:600}}>Platform</div>
-                  <select defaultValue={zoneUploadReview.dims?.plH||""} onChange={e=>setZoneUploadReview(p=>({...p,dims:{...p.dims,plH:e.target.value||null}}))} style={S.select}>
-                    <option value="">None</option><option value="4in">4 inch</option><option value="1ft">1ft</option>
-                  </select>
-                </div>
-                <div style={{minWidth:70}}>
-                  <div style={{fontSize:9,color:textS,fontWeight:600}}>Masking</div>
-                  <select defaultValue={zoneUploadReview.dims?.mkT||""} onChange={e=>setZoneUploadReview(p=>({...p,dims:{...p.dims,mkT:e.target.value||null}}))} style={S.select}>
-                    <option value="">None</option><option value="fabric">Fabric</option><option value="acrylic">Acrylic</option><option value="flex">Flex</option><option value="vinyl">Vinyl</option>
-                  </select>
                 </div>
               </div>
+              {(() => {
+                const d = zoneUploadReview.dims || {};
+                const isFullBox = !!(d.trussL && d.trussW && d.trussH);
+                const hasDensity = !!d.drapeDensity;
+                const missing = isFullBox && !hasDensity;
+                const borderC  = missing ? "rgba(239,68,68,0.55)" : "rgba(244,114,182,0.25)";
+                const bgC      = missing ? (isDark?"rgba(239,68,68,0.10)":"#FEF2F2") : (isDark?"rgba(244,114,182,0.06)":"#FDF2F8");
+                const labelC   = missing ? "#B91C1C" : "#9D174D";
+                return (
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:8, padding:"6px 10px", borderRadius:8, background:bgC, border:`1px solid ${borderC}` }}>
+                    <span style={{ fontSize:11, fontWeight:600, color:labelC }}>🪡 Drape Density {isFullBox && <span style={{ color: missing?"#B91C1C":"#059669", fontWeight:700, marginLeft:4 }}>{missing ? "* Required" : "✓"}</span>}</span>
+                    <span style={{ fontSize:9, color:textS, flex:1 }}>{isFullBox ? "Required for Full Box (ceiling drape)" : "Optional — only used when Full Box truss"}</span>
+                    <div style={{ display:"flex", gap:4 }}>
+                      {[{v:"",l:"—"},{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
+                        const sel = (zoneUploadReview.dims?.drapeDensity || "") === o.v;
+                        if (isFullBox && o.v === "") return null;
+                        return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), drapeDensity: o.v}})}
+                          style={{ padding:"4px 10px", borderRadius:6, fontSize:10, fontWeight:sel?700:500, textAlign:"center", cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+              <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 10, color: textS }}>
+                <span>{(zoneUploadReview.dims?.trussL && zoneUploadReview.dims?.trussW && zoneUploadReview.dims?.trussH) ? <span style={{ color: "#C9A96E", fontWeight: 600 }}>{"🔩"} Box Truss</span> : (zoneUploadReview.dims?.trussW && zoneUploadReview.dims?.trussH) ? <span style={{ color: "#7C3AED", fontWeight: 600 }}>{"🔩"} Single U</span> : "Fill truss dims"}</span>
+                {(zoneUploadReview.dims?.floorL && zoneUploadReview.dims?.floorW) ? <span>{"🧹"} Floor: {zoneUploadReview.dims.floorL}×{zoneUploadReview.dims.floorW} = {zoneUploadReview.dims.floorL * zoneUploadReview.dims.floorW} sqft</span> : null}
+                {zoneUploadReview.dims?.plH ? <span style={{ color: "#059669", fontWeight: 600 }}>{"🔨"} {zoneUploadReview.dims.plH === "4in" ? "4 inch" : "1ft-3ft raise"}</span> : null}
+              </div>
+              {/* ── Masking walls ── */}
+              {(zoneUploadReview.dims?.trussW || zoneUploadReview.dims?.trussH) && (() => {
+                const dL=zoneUploadReview.dims?.trussL||0, dW=zoneUploadReview.dims?.trussW||0, dH=zoneUploadReview.dims?.trussH||0;
+                const isBoxW=dL&&dW&&dH;
+                const mw=zoneUploadReview.dims?.mkWalls||{};
+                const mkT=zoneUploadReview.dims?.mkT||"";
+                const anyWall=mw.back||mw.left||mw.right;
+                const toggleW=(wall)=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),mkWalls:{...mw,[wall]:!mw[wall]}}});
+                const setMkT=(t)=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),mkT:t}});
+                const walls=isBoxW?[
+                  {id:"back",label:"Back wall",dim:`${dL} × ${dH} ft`},
+                  {id:"left",label:"Left wall",dim:`${dW} × ${dH} ft`},
+                  {id:"right",label:"Right wall",dim:`${dW} × ${dH} ft`}
+                ]:[
+                  {id:"left",label:"Left wall",dim:`${dW} × ${dH} ft`},
+                  {id:"right",label:"Right wall",dim:`${dW} × ${dH} ft`}
+                ];
+                return <div style={{ marginTop: 10, background: anyWall ? (isDark ? "rgba(201,169,110,0.08)" : "rgba(201,169,110,0.06)") : (isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"), borderRadius: 10, padding: "12px 14px", border: `1px solid ${anyWall ? accent+"40" : border}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
+                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Material type</div>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                    {[{id:"fabric",l:"Fabric ₹20"},{id:"acrylic",l:"Acrylic ₹100"},{id:"flex",l:"Flex ₹45"},{id:"vinyl",l:"Vinyl ₹90"}].map(o=>{
+                      const sel=mkT===o.id;
+                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l}</span>;
+                    })}
+                  </div>
+                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Select walls to mask</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {walls.map(w=>{const on=mw[w.id];return <div key={w.id} onClick={()=>toggleW(w.id)} style={{flex:1,minWidth:90,padding:"10px 12px",borderRadius:10,cursor:"pointer",border:`2px solid ${on?accent:border}`,background:on?(isDark?"rgba(201,169,110,0.12)":"rgba(201,169,110,0.08)"):"transparent",textAlign:"center"}}>
+                      <div style={{fontSize:14,fontWeight:600,color:on?accent:textS,marginBottom:2}}>{on?"✓ ":""}{w.label}</div>
+                      <div style={{fontSize:11,color:on?accent:textS}}>{w.dim}</div>
+                    </div>;})}
+                  </div>
+                </div>;
+              })()}
+              {/* ── Zone Structure Cost ── */}
+              {(() => {
+                const d=zoneUploadReview.dims||{};
+                const dL=d.trussL||0, dW=d.trussW||0, dH=d.trussH||0, fL=d.floorL||0, fW=d.floorW||0;
+                const isBox=dL&&dW&&dH;
+                const isSingleU=!isBox&&dW&&dH;
+                const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
+                const trussRate=isBox?50:30;
+                const trussCost=trussSqft*trussRate;
+                const mw=d.mkWalls||{};const mkT=d.mkT||"";
+                const mkRates={fabric:20,acrylic:100,flex:45,vinyl:90};
+                const mkRate=mkRates[mkT]||0;
+                let maskSqft=0;const maskWalls=[];
+                if(mw.back&&isBox){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dL}×${dH}`,sqft:a});}
+                if(mw.left){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dW}×${dH}`,sqft:a});}
+                if(mw.right){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dW}×${dH}`,sqft:a});}
+                const maskCost=maskSqft*mkRate;
+                const flSqft=fL*fW;
+                const plRate=d.plH==="4in"?30:d.plH==="1ft"?45:0;
+                const plCost=flSqft*plRate;
+                const cpRate=15;const cpCost=flSqft*cpRate;
+                const structTotal=trussCost+maskCost+plCost+cpCost;
+                if(!trussSqft&&!flSqft)return null;
+                return <div style={{marginTop:14,borderTop:`1px solid ${border}`,paddingTop:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <div style={{fontSize:12,fontWeight:600,color:accent}}>{"🏗️"} Zone Structure Cost</div>
+                    <div style={{fontSize:13,fontWeight:600,color:accent}}>{fmt(structTotal)}</div>
+                  </div>
+                  {trussSqft>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
+                    <div><span style={{fontWeight:600}}>{isBox?"Box Truss":"Single U"}</span><br/><span style={{fontSize:10,color:textS}}>{isBox?`Top 2: ${[dL,dW,dH].sort((a,b)=>b-a).slice(0,2).join("×")} = ${trussSqft} sqft × ₹${trussRate}`:`${dW}×${dH} = ${trussSqft} sqft × ₹${trussRate}`}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(trussCost)}</span>
+                  </div>}
+                  {maskCost>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
+                    <div><span style={{fontWeight:600}}>{mkT.charAt(0).toUpperCase()+mkT.slice(1)} Masking</span><br/><span style={{fontSize:10,color:textS}}>{maskWalls.map(w=>`${w.label} ${w.dim}=${w.sqft}`).join(" + ")} = {maskSqft} sqft × ₹{mkRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(maskCost)}</span>
+                  </div>}
+                  {plCost>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
+                    <div><span style={{fontWeight:600}}>Platform ({d.plH==="4in"?"4 inch":"1ft-3ft"})</span><br/><span style={{fontSize:10,color:textS}}>{fL}×{fW} = {flSqft} sqft × ₹{plRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(plCost)}</span>
+                  </div>}
+                  {flSqft>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11}}>
+                    <div><span style={{fontWeight:600}}>Carpet (New)</span><br/><span style={{fontSize:10,color:textS}}>{fL}×{fW} = {flSqft} sqft × ₹{cpRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(cpCost)}</span>
+                  </div>}
+                </div>;
+              })()}
             </div>
-            {/* Element Card — matches Library editor */}
+            {/* ── Element Breakdown Card — same IMS-inventory-driven search/pricing as Library/Build ── */}
             <div style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#7C3AED"}}>📋 Element Breakdown ({(zoneUploadReview.elements||[]).length} items)</div>
-                <div style={{position:"relative"}}>
-                  <input value={zurElSearch} onChange={e=>setZurElSearch(e.target.value)} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:160,marginBottom:0}} onFocus={()=>setZurElSearch("")}/>
-                  {zurElSearch.length>=1&&(()=>{
-                    const q=zurElSearch.toLowerCase();
-                    const matches=rcItems.filter(rc=>!(zoneUploadReview.elements||[]).find(el=>el.name===rc.name)&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
-                    return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:240,overflowY:"auto"}}>
-                      {matches.map(rc=>{
-                        const invMatch=imsInventory.find(i=>(i.name||"").toLowerCase().trim()===rc.name.toLowerCase().trim());
-                        const src=invMatch?.img||invMatch?.photoUrls?.[0];
-                        return <div key={rc.id} onClick={()=>{
-                        if(!(zoneUploadReview.elements||[]).find(el=>el.name===rc.name)){setZoneUploadReview(p=>({...p,elements:[...(p.elements||[]),{name:rc.name,qty:1,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
-                        setZurElSearch("");
-                      }} style={{padding:"6px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{width:28,height:28,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:13,opacity:0.3}}>📦</span>}
-                        </div>
-                        <div style={{flex:1,minWidth:0,display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
-                          <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rc.name}</span>
-                          <span style={{fontSize:9,color:textS,whiteSpace:"nowrap",flexShrink:0}}>{rc.sub?rc.sub+" › ":""}{rcCats.find(c=>c.id===rc.cat)?.l||rc.cat}</span>
-                        </div>
-                      </div>;})}
-                    </div>:<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS}}>No matches</div>;
-                  })()}
+                <div style={{ display: "flex", gap: 6 }}>
+                  {libItems.filter(i => (i.elements || []).length > 0).length > 0 && (
+                    <select onChange={e => { if (!e.target.value) return; const src = libItems.find(i => i.id === e.target.value); if (src) setZoneUploadReview({ ...zoneUploadReview, elements: JSON.parse(JSON.stringify(src.elements)) }); e.target.value = ""; }} style={{ ...S.select, fontSize: 10, padding: "3px 6px", width: "auto" }}>
+                      <option value="">Copy from...</option>
+                      {libItems.filter(i => (i.elements || []).length > 0).map(i => <option key={i.id} value={i.id}>{i.name} ({i.elements.length} items)</option>)}
+                    </select>
+                  )}
+                  <div style={{position:"relative"}}>
+                    <input value={zurElSearch} onChange={e=>setZurElSearch(e.target.value)} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:160,marginBottom:0}} onFocus={()=>setZurElSearch("")}/>
+                    {zurElSearch.length>=1&&(()=>{
+                      const tokens = zurElSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                      const matchesTokens = (haystack) => tokens.every(t => haystack.includes(t));
+                      const kitCoveredIds = new Set((zoneUploadReview.elements || []).filter(el => el.invId).flatMap(el => {
+                        const it = (imsInventory || []).find(i => i.id === el.invId);
+                        const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (it?.subItems || []);
+                        return comps.map(c => c.itemId);
+                      }));
+                      const invMatches = (imsInventory || []).filter(it => !(zoneUploadReview.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
+                      const patMatches = (recipeOnlyPatterns || []).filter(pt => !(zoneUploadReview.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));
+                      const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))];
+                      return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 340, overflowY: "auto", width: 320 }}>
+                        {matches.map(m => {
+                          if (m.kind === "pat") { const pt = m.pt; return <div key={"pat:" + pt.id}
+                            onClick={() => {
+                              if (!(zoneUploadReview.elements || []).find(el => el.patternId === pt.id)) {
+                                setZoneUploadReview({ ...zoneUploadReview, elements: [...(zoneUploadReview.elements || []), { name: pt.name, qty: 1, unit: pt.unit, size: "", patternId: pt.id }] });
+                              }
+                              setZurElSearch("");
+                            }}
+                            style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <span style={{ fontSize: 22, opacity: 0.5 }}>🌺</span>
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pt.name}</span>
+                                <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(236,72,153,0.15)", color: "#EC4899", fontWeight: 700, flexShrink: 0 }}>🌺 RECIPE</span>
+                              </div>
+                              <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{pt.sub ? pt.sub + " › " : ""}Flower recipe — no inventory item</div>
+                            </div>
+                          </div>; }
+                          const it = m.it; const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; const src = it.img || it.photoUrls?.[0]; return <div key={"inv:" + it.id}
+                            onClick={() => {
+                              if (!(zoneUploadReview.elements || []).find(el => el.invId === it.id)) {
+                                setZoneUploadReview({ ...zoneUploadReview, elements: [...(zoneUploadReview.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
+                              }
+                              setZurElSearch("");
+                            }}
+                            style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+                                {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700, flexShrink: 0 }}>📦 KIT</span>}
+                              </div>
+                              <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</div>
+                            </div>
+                          </div>;
+                        })}
+                      </div> : <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, padding: "8px 10px", fontSize: 10, color: textS, width: 320 }}>No matches</div>;
+                    })()}
+                  </div>
                 </div>
               </div>
               {(zoneUploadReview.elements||[]).length===0?<div style={{fontSize:11,color:textS,padding:12,textAlign:"center"}}>No elements detected — search and add above or re-run AI</div>:
-              <div style={{display:"grid",gridTemplateColumns:"1fr 60px 55px 50px 70px 24px",gap:"4px 5px",alignItems:"center",fontSize:10}}>
-                <div style={{fontWeight:600,color:textS,fontSize:9}}>ELEMENT</div>
-                <div style={{fontWeight:600,color:textS,fontSize:9}}>QTY</div>
-                <div style={{fontWeight:600,color:textS,fontSize:9}}>SIZE</div>
-                <div style={{fontWeight:600,color:textS,fontSize:9}}>UNIT</div>
-                <div style={{fontWeight:600,color:textS,fontSize:9,textAlign:"right"}}>COST</div>
-                <div/>
-                {(zoneUploadReview.elements||[]).map((el,idx)=>{
-                  const rc=rcItems.find(i=>i.name.toLowerCase()===(el.name||"").toLowerCase());
-                  const sizes=rcIsSMB(rc)?["S","M","B"]:null;
+              <div style={{ fontSize: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 55px 50px 70px 24px", gap: "4px 5px", alignItems: "center", padding: "0 4px" }}>
+                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>ELEMENT</div>
+                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>QTY</div>
+                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>SIZE</div>
+                  <div style={{ fontWeight: 600, color: textS, fontSize: 9 }}>UNIT</div>
+                  <div style={{ fontWeight: 600, color: textS, fontSize: 9, textAlign: "right" }}>COST</div>
+                  <div></div>
+                </div>
+                {(zoneUploadReview.elements || []).map((el, idx) => {
+                  const rowStyle = { display: "grid", gridTemplateColumns: "1fr 60px 55px 50px 70px 24px", gap: "4px 5px", alignItems: "center", padding: "3px 4px", borderRadius: 6, background: zurHoveredElIdx === idx ? (isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)") : "transparent" };
+                  const rowHover = { onMouseEnter: () => setZurHoveredElIdx(idx), onMouseLeave: () => setZurHoveredElIdx(null) };
+                  if (el.invId) {
+                    const invItem = (imsInventory || []).find(i => i.id === el.invId);
+                    const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length > 0);
+                    const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromInventory(el);
+                    const thumbSrc = invItem?.img || invItem?.photoUrls?.[0];
+                    return (
+                      <div key={idx} style={rowStyle} {...rowHover}>
+                        <div style={{ fontSize: 11, fontWeight: 500, color: invItem ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center", cursor: thumbSrc ? "zoom-in" : "default" }}
+                            onMouseEnter={(e) => {
+                              if (!thumbSrc) return;
+                              const r = e.currentTarget.getBoundingClientRect();
+                              const POP = 164;
+                              const openUp = window.innerHeight - r.bottom < POP + 8 && r.top > POP + 8;
+                              setZurElHoverImg({ idx, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
+                            }}
+                            onMouseLeave={() => setZurElHoverImg(null)}>
+                            {thumbSrc ? <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 10, opacity: 0.3 }}>📦</span>}
+                          </div>
+                          {zurElHoverImg?.idx === idx && thumbSrc && (
+                            <div style={{ position: "fixed", top: zurElHoverImg.top, bottom: zurElHoverImg.bottom, left: zurElHoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
+                              <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            </div>
+                          )}
+                          <span>{el.name}</span>
+                          {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700 }}>📦 KIT</span>}
+                          {!invItem && <span title="This inventory item no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
+                          {el.lowConfidence && <span title={`AI matched this by a ${el.matchScore ?? "?"}% keyword overlap, not an exact/near-exact name — please verify it's the right item`} style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700 }}>❓ VERIFY</span>}
+                          {el.matchMethod && !el.lowConfidence && <span title={el.matchMethod === "exact" ? "AI matched this by an exact name match" : el.matchMethod === "substring" ? "AI matched this by a name substring match" : `AI matched this by a ${el.matchScore}% keyword overlap`} style={{ fontSize: 8, opacity: 0.4, cursor: "help" }}>ⓘ</span>}
+                          {isFloralBlend && <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>🌸<button onClick={() => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], realPct: undefined }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} title="Use this sub-category's default real/artificial ratio" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof el.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof el.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button><button onClick={() => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], realPct: 100 }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} title="Price this element at 100% the recipe's Studio rate, overriding the sub-category's default" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: el.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: el.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button><input type="number" min="0" max="100" value={el.realPct ?? ""} placeholder={String(realPct ?? "")} onChange={(e) => { const v = e.target.value; const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} title="Manually set the exact % real — overrides Ratio/100%" style={{ width: 42, padding: "1px 4px", borderRadius: 3, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 9, textAlign: "center" }} /></span>}
+                        </div>
+                        <input type="number" value={el.qty || ""} onChange={e => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], qty: parseFloat(e.target.value) || 0 }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ ...S.input, fontSize: 11, padding: "3px 5px", textAlign: "center" }} placeholder="0" />
+                        {patternSMB ? (
+                          <select value={el.size || "B"} onChange={e => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], size: e.target.value }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ ...S.select, fontSize: 10, padding: "2px 3px" }}>
+                            {["S", "M", "B"].map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
+                        <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                        <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : invItem ? "₹0" : "—"}</div>
+                        <span onClick={() => { const elems = (zoneUploadReview.elements || []).filter((_, i) => i !== idx); setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
+                        {isKit && (
+                          <div style={{ gridColumn: "1 / -1" }}>
+                            <KitComponentsEditor
+                              item={invItem}
+                              overrides={el.kitOverrides}
+                              onChange={(next) => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }}
+                              imsInventory={imsInventory}
+                              qtyMultiplier={el.qty || 1}
+                              textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  if (el.patternId) {
+                    const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromPattern(el);
+                    const patternExists = (recipeOnlyPatterns || []).some(p => p.id === el.patternId);
+                    return (
+                      <div key={idx} style={rowStyle} {...rowHover}>
+                        <div style={{ fontSize: 11, fontWeight: 500, color: textP, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <span style={{ fontSize: 11, opacity: 0.5 }}>🌺</span>
+                          </div>
+                          {el.name}
+                          <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(236,72,153,0.15)", color: "#EC4899", fontWeight: 700 }}>🌺 RECIPE</span>
+                          {!patternExists && <span title="This flower recipe no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
+                          {el.lowConfidence && <span title={`AI matched this by a ${el.matchScore ?? "?"}% keyword overlap, not an exact/near-exact name — please verify it's the right recipe`} style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700 }}>❓ VERIFY</span>}
+                          {el.matchMethod && !el.lowConfidence && <span title={el.matchMethod === "exact" ? "AI matched this by an exact name match" : el.matchMethod === "substring" ? "AI matched this by a name substring match" : `AI matched this by a ${el.matchScore}% keyword overlap`} style={{ fontSize: 8, opacity: 0.4, cursor: "help" }}>ⓘ</span>}
+                          {isFloralBlend && <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>🌸<button onClick={() => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], realPct: undefined }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} title="Use this sub-category's default real/artificial ratio" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof el.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof el.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button><button onClick={() => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], realPct: 100 }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} title="Price this element at 100% the recipe's Studio rate, overriding the sub-category's default" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: el.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: el.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button><input type="number" min="0" max="100" value={el.realPct ?? ""} placeholder={String(realPct ?? "")} onChange={(e) => { const v = e.target.value; const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} title="Manually set the exact % real — overrides Ratio/100%" style={{ width: 42, padding: "1px 4px", borderRadius: 3, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 9, textAlign: "center" }} /></span>}
+                        </div>
+                        <input type="number" value={el.qty || ""} onChange={e => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], qty: parseFloat(e.target.value) || 0 }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ ...S.input, fontSize: 11, padding: "3px 5px", textAlign: "center" }} placeholder="0" />
+                        {patternSMB ? (
+                          <select value={el.size || "B"} onChange={e => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], size: e.target.value }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ ...S.select, fontSize: 10, padding: "2px 3px" }}>
+                            {["S", "M", "B"].map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
+                        <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                        <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : "₹0"}</div>
+                        <span onClick={() => { const elems = (zoneUploadReview.elements || []).filter((_, i) => i !== idx); setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
+                      </div>
+                    );
+                  }
+                  const rc = rcItems.find(i => i.name === el.name);
+                  const sizes = rcIsSMB(rc) ? ["S","M","B"] : null;
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
                   let unitPrice=0;
                   if(rc){const sz=(el.size||"").toUpperCase();if(rcIsSMB(rc)){if(sz==="S")unitPrice=rc.inhouseS||0;else if(sz==="B")unitPrice=rc.inhouseB||0;else unitPrice=rc.inhouseM||0;}else{unitPrice=rc.inhouseFlat||0;}}
                   const lineCost=(el.qty||0)*unitPrice;
-                  return <Fragment key={idx}>
-                    <div style={{fontSize:11,fontWeight:500,color:rc?textP:"#F59E0B",display:"flex",alignItems:"center",gap:4}}>{el.name}{(el.new||!rc)&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}</div>
+                  return (
+                  <div key={idx} style={rowStyle} {...rowHover}>
+                    <div style={{ fontSize: 11, fontWeight: 500, color: rc ? textP : "#F59E0B", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>{el.name}{(el.new || !rc) && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>NEW</span>}</div>
                     {isTrussSqft ? (
-                      <div title="Area-based — uses zone truss/floor sqft" style={{fontSize:11,fontWeight:600,color:textS,padding:"3px 5px",borderRadius:4,background:isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)",textAlign:"center"}}>area</div>
+                      <div title="Area-based — uses zone truss/floor sqft" style={{ fontSize: 11, fontWeight: 600, color: textS, padding: "3px 5px", borderRadius: 4, background: isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)", textAlign: "center" }}>area</div>
                     ) : (
-                      <input type="number" defaultValue={el.qty||0} onBlur={e=>{const v=Number(e.target.value)||0;setZoneUploadReview(p=>({...p,elements:p.elements.map((x,i)=>i===idx?{...x,qty:v}:x)}));}} key={"zur-q"+idx} style={{...S.input,fontSize:11,padding:"3px 5px",textAlign:"center"}} placeholder="0"/>
+                      <input type="number" value={el.qty || ""} onChange={e => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], qty: parseFloat(e.target.value) || 0 }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ ...S.input, fontSize: 11, padding: "3px 5px", textAlign: "center" }} placeholder="0" />
                     )}
-                    {sizes?<select defaultValue={el.size||sizes[0]} onChange={e=>{const v=e.target.value;setZoneUploadReview(p=>({...p,elements:p.elements.map((x,i)=>i===idx?{...x,size:v}:x)}));}} style={{...S.select,fontSize:10,padding:"2px 3px"}}>{sizes.map(s=><option key={s} value={s}>{s}</option>)}</select>:<div style={{fontSize:10,color:textS,textAlign:"center"}}>—</div>}
-                    <div style={{fontSize:10,color:textS}}>{el.unit||"pc"}</div>
-                    <div style={{fontSize:11,fontWeight:500,textAlign:"right",color:(isTrussSqft?unitPrice:lineCost)>0?textP:textS}}>{isTrussSqft?(unitPrice>0?`₹${unitPrice.toLocaleString("en-IN")}/sqft`:"—"):(lineCost>0?fmt(lineCost):rc?"₹0":"—")}</div>
-                    <span onClick={()=>setZoneUploadReview(p=>({...p,elements:p.elements.filter((_,i)=>i!==idx)}))} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12,textAlign:"center"}}>×</span>
-                  </Fragment>;
-                })}
+                    {sizes ? (
+                      <select value={el.size || sizes[0]} onChange={e => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], size: e.target.value }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ ...S.select, fontSize: 10, padding: "2px 3px" }}>
+                        {sizes.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
+                    <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                    <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: (isTrussSqft ? unitPrice : lineCost) > 0 ? textP : textS }}>{isTrussSqft ? (unitPrice > 0 ? `₹${unitPrice.toLocaleString("en-IN")}/sqft` : "—") : (lineCost > 0 ? fmt(lineCost) : rc ? "₹0" : "—")}</div>
+                    <span onClick={() => { const elems = (zoneUploadReview.elements || []).filter((_, i) => i !== idx); setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
+                  </div>
+                  );})}
               </div>}
               {(zoneUploadReview.elements||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",paddingTop:8,borderTop:`1px solid ${border}`,marginTop:6}}>
                 <div style={{fontSize:11,fontWeight:700,color:textP}}>Element Total</div>
                 <div style={{fontSize:13,fontWeight:700,color:accent}}>{fmt(calcElsCost(zoneUploadReview.elements,false))}</div>
               </div>}
-              <div style={{marginTop:8,fontSize:10,color:textS}}>Only Rate Card items can be added manually. Items tagged <span style={{color:"#F59E0B",fontWeight:600}}>NEW</span> were AI-detected but not in Rate Card — add them to Rate Card for pricing, or remove.</div>
+              <div style={{ marginTop: 8, fontSize: 10, color: textS }}>Manually-added elements come from IMS inventory (📦 KIT items price as one line at the kit's own rate). Items tagged <span style={{color:"#F59E0B",fontWeight:600}}>NEW</span> were AI-detected but have no matching IMS inventory item — add the item to Inventory, or remove. Items tagged <span style={{color:"#EF4444",fontWeight:600}}>❓ VERIFY</span> were matched by a weak keyword guess, not an exact name — double-check they're the right item.</div>
+            </div>
+            {/* ── Print — a print job (Flex/Vinyl/Sunboard etc.) placed on a specific element ── */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#0EA5E9" }}>🖨️ Print</div>
+                <div style={{ position: "relative" }}>
+                  <input value={zurPrintSearch} onChange={e => setZurPrintSearch(e.target.value)} placeholder="+ Add print..." style={{ ...S.input, fontSize: 10, padding: "3px 8px", width: 160, marginBottom: 0 }} onFocus={() => setZurPrintSearch("")} />
+                  {zurPrintSearch.trim() && (() => {
+                    const tokens = zurPrintSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                    const matches = (imsInventory || []).filter(it => tokens.every(t => (it.name + " " + (it.subCat || it.subcategory || "") + " " + (it.cat || "")).toLowerCase().includes(t))).slice(0, 40);
+                    return (
+                      <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 300, overflowY: "auto", width: 300 }}>
+                        {matches.length === 0 && <div style={{ padding: "8px 10px", fontSize: 10, color: textS }}>No matches</div>}
+                        {matches.map(it => {
+                          const src = it.img || it.photoUrls?.[0];
+                          return (
+                            <div key={it.id} onClick={() => {
+                              const toFt = (v, u) => (Number(v) || 0) * ({ Feet: 1, Inches: 1 / 12, Cm: 1 / 30.48, Metre: 3.28084 }[u] || 1);
+                              const areaW = it.printW ? toFt(it.printW, it.printUnit) : 0;
+                              const areaD = it.printL ? toFt(it.printL, it.printUnit) : 0;
+                              const entry = { id: "PR" + Date.now() + Math.floor(Math.random() * 1000), invId: it.id, name: it.name, material: (imsPrintMaterials || [])[0]?.id || "", areaW, areaD, refImageUrl: "" };
+                              setZoneUploadReview({ ...zoneUploadReview, prints: [...(zoneUploadReview.prints || []), entry] });
+                              setZurPrintSearch("");
+                            }} style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                              <div style={{ width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 16, opacity: 0.3 }}>📦</span>}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{it.name}</div>
+                                <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}{it.printW ? " · print area on file" : ""}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+              {(zoneUploadReview.prints || []).length === 0 ? (
+                <div style={{ fontSize: 11, color: textS, padding: "10px 0", textAlign: "center" }}>No prints added — search an element above to add a print job on it</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(zoneUploadReview.prints || []).map((p, pi) => {
+                    const invItem = (imsInventory || []).find(i => i.id === p.invId);
+                    const thumbSrc = invItem?.img || invItem?.photoUrls?.[0];
+                    const mat = (imsPrintMaterials || []).find(m => m.id === p.material);
+                    const sqft = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
+                    const rate = mat?.ratePerSqft || 0;
+                    const cost = sqft * rate;
+                    const setPrint = (patch) => setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.map((x, i) => (i === pi ? { ...x, ...patch } : x)) });
+                    return (
+                      <div key={p.id} style={{ padding: "8px 10px", borderRadius: 8, background: isDark ? "rgba(14,165,233,0.06)" : "rgba(14,165,233,0.05)", border: "1px solid rgba(14,165,233,0.25)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                          <div style={{ width: 24, height: 24, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {thumbSrc ? <img src={thumbSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 12, opacity: 0.3 }}>📦</span>}
+                          </div>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: invItem ? textP : "#F59E0B", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{invItem ? invItem.name : `⚠ ${p.name || p.invId} not in IMS`}</span>
+                          <span onClick={() => setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.filter((_, i) => i !== pi) })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <select value={p.material || ""} onChange={e => setPrint({ material: e.target.value })} style={{ ...S.select, fontSize: 10, padding: "3px 6px", width: "auto" }}>
+                            <option value="">Material…</option>
+                            {(imsPrintMaterials || []).map(m => <option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                          </select>
+                          <input type="number" min="0" step="0.1" value={p.areaW || ""} onChange={e => setPrint({ areaW: parseFloat(e.target.value) || 0 })} placeholder="W ft" style={{ ...S.input, fontSize: 10, padding: "3px 6px", width: 56, marginBottom: 0, textAlign: "center" }} />
+                          <span style={{ fontSize: 10, color: textS }}>×</span>
+                          <input type="number" min="0" step="0.1" value={p.areaD || ""} onChange={e => setPrint({ areaD: parseFloat(e.target.value) || 0 })} placeholder="D ft" style={{ ...S.input, fontSize: 10, padding: "3px 6px", width: 56, marginBottom: 0, textAlign: "center" }} />
+                          <span style={{ fontSize: 10, color: textS }}>ft = {sqft ? sqft.toFixed(1) : 0} sqft</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#0EA5E9", marginLeft: "auto" }}>{rate > 0 ? fmt(cost) : "— pick material"}</span>
+                        </div>
+                        <input value={p.refImageUrl || ""} onChange={e => setPrint({ refImageUrl: e.target.value })} placeholder="Reference image URL (optional)" style={{ ...S.input, fontSize: 10, padding: "3px 8px", marginTop: 6, marginBottom: 0, width: "100%" }} />
+                        {p.refImageUrl && <img src={p.refImageUrl} alt="" style={{ marginTop: 6, width: "100%", maxHeight: 100, objectFit: "cover", borderRadius: 6 }} onError={e => { e.target.style.display = "none"; }} />}
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700, paddingTop: 4 }}>
+                    <span style={{ color: textP }}>Print Total</span>
+                    <span style={{ color: "#0EA5E9" }}>{fmt((zoneUploadReview.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); return sum + s * (m?.ratePerSqft || 0); }, 0))}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div style={{padding:"14px 20px",borderTop:`1px solid ${border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
