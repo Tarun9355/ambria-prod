@@ -51,6 +51,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     ...Object.keys(settings?.venueDumping || {}),
   ])].sort((a, b) => a.localeCompare(b));
   const [synNewWords, setSynNewWords] = useState("");
+  const [printMatNew, setPrintMatNew] = useState("");
+  const addPrintMaterial = () => {
+    const name = printMatNew.trim();
+    if (!name) return;
+    setSettings((s) => ({ ...s, printMaterials: [...(s.printMaterials || []), { id: "PM" + Date.now(), name, ratePerSqft: 0 }] }));
+    setPrintMatNew("");
+  };
   const [newVenueInput, setNewVenueInput] = useState("");
   const addVenueMin = () => {
     const name = newVenueInput.trim();
@@ -88,6 +95,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "ratecard", label: "💰 Rate Card" },
     { id: "subcats", label: "📂 Sub-Categories" },
     { id: "synonyms", label: "🔤 AI Synonyms" },
+    { id: "printmaterials", label: "🖨️ Print Materials" },
   ];
 
   function addSupervisor() {
@@ -1804,6 +1812,39 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               </div>
             ))}
             {(settings.synonymDictionary || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No synonym groups yet. Add one above.</p>}
+          </div>
+        </div>
+      )}
+      {activePanel === "printmaterials" && (
+        <div className="space-y-4">
+          <div>
+            <p className="font-bold text-gray-900 mb-1">🖨️ Print Materials</p>
+            <p className="text-xs text-gray-500">₹/sqft rates for print jobs placed on a specific inventory element (Studio Library's per-element 🖨️ Print section). Studio reads these live.</p>
+          </div>
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <label className="text-xs text-gray-500">Material name</label>
+              <input value={printMatNew} onChange={(e) => setPrintMatNew(e.target.value)} placeholder="e.g. Sunboard"
+                className="w-full border rounded-lg px-3 py-2 text-sm" onKeyDown={(e) => { if (e.key === "Enter") addPrintMaterial(); }} />
+            </div>
+            <button onClick={addPrintMaterial} className="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">+ Add Material</button>
+          </div>
+          <div className="space-y-2">
+            {(settings.printMaterials || []).map((m) => (
+              <div key={m.id} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
+                <input value={m.name} onChange={(e) => setSettings((s) => ({ ...s, printMaterials: s.printMaterials.map((x) => (x.id === m.id ? { ...x, name: e.target.value } : x)) }))}
+                  className="flex-1 border rounded-lg px-2 py-1 text-sm font-medium" />
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">₹</span>
+                  <input type="number" min="0" value={m.ratePerSqft ?? 0} onChange={(e) => setSettings((s) => ({ ...s, printMaterials: s.printMaterials.map((x) => (x.id === m.id ? { ...x, ratePerSqft: parseFloat(e.target.value) || 0 } : x)) }))}
+                    className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                  <span className="text-xs text-gray-400">/sqft</span>
+                </div>
+                <button onClick={() => { if (!window.confirm(`Delete "${m.name}"?`)) return; setSettings((s) => ({ ...s, printMaterials: s.printMaterials.filter((x) => x.id !== m.id) })); }}
+                  className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
+              </div>
+            ))}
+            {(settings.printMaterials || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No print materials yet — add one above (e.g. Flex, Vinyl, Sunboard).</p>}
           </div>
         </div>
       )}

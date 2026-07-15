@@ -1100,6 +1100,7 @@ export default function StudioApp() {
   const [libAiLoading, setLibAiLoading] = useState(false);
   const [zoneAiFilling, setZoneAiFilling] = useState({});
   const [zoneElSearch, setZoneElSearch] = useState({});
+  const [zonePrintSearch, setZonePrintSearch] = useState({}); // "+ Add print" search text, per zone key
   const [taxEditCat, setTaxEditCat] = useState(null);
   const [taxNewTag, setTaxNewTag] = useState("");
   const [taxNewCat, setTaxNewCat] = useState("");
@@ -1291,6 +1292,9 @@ export default function StudioApp() {
   // lets ops teach the AI tagger that two different words mean the same physical thing, without a
   // code change every time a naming mismatch turns up. Fed into aiTagImage's keyword-overlap scoring.
   const [imsSynonymDictionary, setImsSynonymDictionary] = useState([]);
+  // Print material rates (IMS Admin → Settings → 🖨️ Print Materials, e.g. Flex/Vinyl/Sunboard
+  // ₹/sqft) — read by Library's per-element Print section to price a print job.
+  const [imsPrintMaterials, setImsPrintMaterials] = useState([]);
   // Save colour + palette catalogues to Studio-owned PALETTE_SK
   const savePaletteData = useCallback((colours, palettes) => {
     const data = { colourCatalogue: colours || imsColourCatalogue, paletteCatalogue: palettes || imsPaletteCatalogue };
@@ -1891,6 +1895,8 @@ export default function StudioApp() {
       // AI Synonym Dictionary — IMS persists each settings field as its OWN row keyed by field name
       // (IMS.jsx's setSettings), not nested under IMS_SETTINGS_SK, so it's fetched by its own key.
       try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {}
+      // Print Materials — same per-field kv row pattern as synonymDictionary above.
+      try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {}
       // Deal Check boot loaders
       try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
       // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
@@ -5960,6 +5966,7 @@ Return ONLY JSON:
     taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch,
+    zonePrintSearch, setZonePrintSearch,
     taxEditCat, setTaxEditCat, taxNewTag, setTaxNewTag, taxNewCat, setTaxNewCat, libElSearch, setLibElSearch,
     addTagWithAreaZoneSync, addZoneWithAreaSync,
     // venues
@@ -6004,6 +6011,8 @@ Return ONLY JSON:
     RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
+    // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — Library's per-element Print section
+    imsPrintMaterials,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern,

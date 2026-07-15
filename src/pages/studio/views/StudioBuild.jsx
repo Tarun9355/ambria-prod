@@ -44,13 +44,15 @@ export default function StudioBuild({ ctx }) {
     newCzName, setNewCzName,
     // uploads / ai
     zoneUploading, handleZoneUpload, zoneAiFilling, setZoneAiFilling, aiTagImage,
-    zoneElSearch, setZoneElSearch,
+    zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto,
     // rate card — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // IMS inventory — "+Add element" sources from here now, not the Rate Card
     imsInventory,
+    // Print material rates (IMS Admin → Settings → 🖨️ Print Materials)
+    imsPrintMaterials,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items in the "+Add element" search
     recipeOnlyPatterns,
@@ -931,6 +933,86 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:11,color:textS}}>Pick a library photo with an element card — items, quantities, and Rate Card pricing will load automatically</div>
             </div>
           )}
+
+          {/* Print — a print job (Flex/Vinyl/Sunboard etc.) placed on a specific element. Stored on
+              zoneConfig[k].prints so it free-rides every existing zoneConfig save/load/copy path
+              without needing its own persistence plumbing (mirrors Library's ManageLibrary.jsx). */}
+          <div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:600,color:"#0EA5E9"}}>{"🖨️"} Print</div>
+              <div style={{position:"relative"}}>
+                <input value={zonePrintSearch[k]||""} onChange={e=>setZonePrintSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add print..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZonePrintSearch(p=>({...p,[k]:""}))} />
+                {(zonePrintSearch[k]||"").trim() && (()=>{
+                  const tokens=(zonePrintSearch[k]||"").toLowerCase().trim().split(/\s+/).filter(Boolean);
+                  const matches=(imsInventory||[]).filter(it=>tokens.every(t=>(it.name+" "+(it.subCat||it.subcategory||"")+" "+(it.cat||"")).toLowerCase().includes(t))).slice(0,40);
+                  return <div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:300,overflowY:"auto",width:300}}>
+                    {matches.length===0&&<div style={{padding:"8px 10px",fontSize:10,color:textS}}>No matches</div>}
+                    {matches.map(it=>{
+                      const src=it.img||it.photoUrls?.[0];
+                      return <div key={it.id} onClick={()=>{
+                        const toFt=(v,u)=>(Number(v)||0)*({Feet:1,Inches:1/12,Cm:1/30.48,Metre:3.28084}[u]||1);
+                        const areaW=it.printW?toFt(it.printW,it.printUnit):0;
+                        const areaD=it.printL?toFt(it.printL,it.printUnit):0;
+                        const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),invId:it.id,name:it.name,material:(imsPrintMaterials||[])[0]?.id||"",areaW,areaD,refImageUrl:""};
+                        setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
+                        setZonePrintSearch(p=>({...p,[k]:""}));
+                      }} style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:36,height:36,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:16,opacity:0.3}}>📦</span>}
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{it.name}</div>
+                          <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{it.printW?" · print area on file":""}</div>
+                        </div>
+                      </div>;
+                    })}
+                  </div>;
+                })()}
+              </div>
+            </div>
+            {((zoneConfig[k]||{}).prints||[]).length===0 ? (
+              <div style={{fontSize:11,color:textS,padding:"6px 0",textAlign:"center"}}>No prints added — search an element above to add a print job on it</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {((zoneConfig[k]||{}).prints||[]).map((p,pi)=>{
+                  const invItem=(imsInventory||[]).find(i=>i.id===p.invId);
+                  const thumbSrc=invItem?.img||invItem?.photoUrls?.[0];
+                  const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
+                  const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
+                  const rate=mat?.ratePerSqft||0;
+                  const cost=sqft*rate;
+                  const setPrint=(patch)=>setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}}));
+                  const removePrint=()=>setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).filter((_,i)=>i!==pi)}}));
+                  return <div key={p.id} style={{padding:"8px 10px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                      <div style={{width:24,height:24,borderRadius:4,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:12,opacity:0.3}}>📦</span>}
+                      </div>
+                      <span style={{fontSize:11,fontWeight:600,color:invItem?textP:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{invItem?invItem.name:`⚠ ${p.name||p.invId} not in IMS`}</span>
+                      <span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12}}>×</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:10,padding:"3px 6px",width:"auto"}}>
+                        <option value="">Material…</option>
+                        {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                      </select>
+                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:10,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:10,color:textS}}>×</span>
+                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:10,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:10,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
+                      {showCosts&&<span style={{fontSize:11,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
+                    </div>
+                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:10,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
+                    {p.refImageUrl&&<img src={p.refImageUrl} alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
+                  </div>;
+                })}
+                {showCosts&&<div style={{display:"flex",justifyContent:"space-between",fontSize:11,fontWeight:700,paddingTop:4}}>
+                  <span style={{color:textP}}>Print Total</span>
+                  <span style={{color:"#0EA5E9"}}>{fmt(((zoneConfig[k]||{}).prints||[]).reduce((sum,p)=>{const m=(imsPrintMaterials||[]).find(x=>x.id===p.material);const s=(Number(p.areaW)||0)*(Number(p.areaD)||0);return sum+s*(m?.ratePerSqft||0);},0))}</span>
+                </div>}
+              </div>
+            )}
+          </div>
 
           {/* Zone structure — always visible, costs hidden behind toggle */}
           {zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
