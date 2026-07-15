@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isHiddenSubcat } from "../../lib/rateCard";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -11,7 +12,7 @@ import { useState } from "react";
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, qtyMultiplier = 1, dealAwareness, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
@@ -73,7 +74,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           style={{ width: "100%", fontSize: 10, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
         {addSearch.trim() && (() => {
           const tokens = addSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
-          const matches = (imsInventory || []).filter((x) => x.id !== item.id && !comps.some((c) => c.itemId === x.id) && tokens.every((t) => (x.name + " " + (x.subCat || x.subcategory || "") + " " + (x.cat || x.category || "")).toLowerCase().includes(t))).slice(0, 40);
+          const matches = (imsInventory || []).filter((x) => x.id !== item.id && !comps.some((c) => c.itemId === x.id) && !isHiddenSubcat(x, rcSubcatFactors) && tokens.every((t) => (x.name + " " + (x.subCat || x.subcategory || "") + " " + (x.cat || x.category || "")).toLowerCase().includes(t))).slice(0, 40);
           return (
             <div style={{ position: "absolute", zIndex: 50, top: "100%", left: 0, right: 0, marginTop: 2, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
               {matches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 10, color: textS }}>No matches</div>}

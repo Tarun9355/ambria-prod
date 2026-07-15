@@ -5,6 +5,7 @@ import {
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
+import { isHiddenSubcat } from "../../../lib/rateCard";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemImsSubcat } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
@@ -25,7 +26,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
-    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData,
+    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
     // venues (for named-venue correction)
@@ -732,7 +733,7 @@ export default function StudioBuild({ ctx }) {
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
+                      const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
                       const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
                       return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
@@ -945,6 +946,7 @@ export default function StudioBuild({ ctx }) {
                       imsInventory={imsInventory}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
+                      rcSubcatFactors={rcSubcatFactors}
                       textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                     />}
                   </div>);
@@ -1350,7 +1352,7 @@ export default function StudioBuild({ ctx }) {
                   // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                   // (Rate Card is not consulted here — see getElPriceFromInventory /
                   // getElPriceFromPattern in StudioApp.jsx).
-                  const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
+                  const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
                   const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
                   const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
                   return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
@@ -1472,6 +1474,7 @@ export default function StudioBuild({ ctx }) {
                     imsInventory={imsInventory}
                     qtyMultiplier={el.qty||1}
                     dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
+                    rcSubcatFactors={rcSubcatFactors}
                     textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                   />}
                 </div>);

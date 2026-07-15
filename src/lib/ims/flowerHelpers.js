@@ -38,11 +38,18 @@ export const resolveMandiFlower = (id, mandi) => {
   return null;
 };
 
-// Σ(qty × mandi price) for one recipe size. null when empty.
-export const computePatternSizeCost = (sizeData, mandiCatalogue) => {
+// Σ(qty × mandi price) for one recipe size, plus Σ(qty × IMS rental) for any inventory-sourced
+// ingredient rows ({invItemId, qty} — added via the "Artificial included?" toggle). null when empty.
+export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory) => {
   if (!sizeData?.flowers?.length) return null;
   let total = 0;
   for (const fl of sizeData.flowers) {
+    if (fl?.invItemId) {
+      const item = (inventory || []).find((i) => i.id === fl.invItemId);
+      const price = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+      total += (Number(fl?.qty) || 0) * price;
+      continue;
+    }
     const res = resolveMandiFlower(fl?.flowerId, mandiCatalogue);
     const price = res ? res.price : 0;
     total += (Number(fl?.qty) || 0) * price;
@@ -93,13 +100,13 @@ export const matchFlowerPattern = (item, flowerPatterns) => {
 // asymmetry rather than "fixing" a formula used elsewhere. `extra` (pot/base) is returned
 // separately, uncombined — callers blend realRate/artRate by real% first, then add extra once,
 // matching getElPrice's existing composition order (extra is never itself blended).
-export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, settings) => {
+export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, settings, inventory) => {
   if (!pattern) return null;
   const sizes = pattern.sizes || {};
   const sizeData = sizes[resolveSizeKey(sizes, sizeKey)];
   if (!sizeData) return null;
   const markup = effectiveMarkup(pattern, settings);
-  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue) || 0) * markup);
+  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory) || 0) * markup);
   const afRate = Number(settings?.artificialFlowerRatePerKg ?? 50);
   const afBPK = Number(settings?.artificialFlowerBunchesPerKg ?? 16) || 16;
   const agRate = Number(settings?.artificialGreenRatePerKg ?? 40);
@@ -107,6 +114,7 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   const artMarkup = Number(settings?.defaultStudioMarkup ?? 3) || 3;
   let artCost = 0;
   (sizeData.flowers || []).forEach((fl) => {
+    if (fl?.invItemId) return; // inventory-sourced ingredient — already priced directly, not a bunches-per-kg estimate
     const parent = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent || null;
     const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
     if (ft === "real_only") return;

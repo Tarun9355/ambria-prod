@@ -262,7 +262,7 @@ export default function IMS() {
     const mandi = s.mandiCatalogue || [];
     const rateFor = (pat, markup, sizeKey) => {
       const sd = pat.sizes?.[sizeKey];
-      const c = sd ? computePatternSizeCost(sd, mandi) : null;
+      const c = sd ? computePatternSizeCost(sd, mandi, itemsRef.current) : null;
       return c == null ? null : Math.round(c * markup);
     };
     // Full-artificial rate for a size: the recipe's totalPieces (whole arrangement) → kg via

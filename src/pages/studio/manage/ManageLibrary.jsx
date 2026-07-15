@@ -4,6 +4,7 @@ import KitComponentsEditor from "../../../components/shared/KitComponentsEditor"
 import { libPhotoIsTagged } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
+import { isHiddenSubcat } from "../../../lib/rateCard";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
 // any sidebar filter, venue selection, or (debounced) search term changes; loadMore() appends.
@@ -140,7 +141,7 @@ export default function ManageLibrary({ ctx }) {
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub,
     setPreviewImg,
     // rate card (element breakdown) — kept for legacy/AI-tagged elements without invId
-    rcItems, rcCats, rcIsSMB, isSubTagHidden,
+    rcItems, rcCats, rcIsSMB, isSubTagHidden, rcSubcatFactors,
     // IMS inventory (element breakdown "+Add element" now sources from here, not the Rate Card)
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — per-element Print section
@@ -958,7 +959,7 @@ export default function ManageLibrary({ ctx }) {
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
+                      const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && !isHiddenSubcat(it, rcSubcatFactors) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
                       const patMatches = (recipeOnlyPatterns || []).filter(pt => !(libEditImg.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));
                       const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))];
                       // Thumbnail is sized to actually be readable inline — no hover step required to
@@ -1077,6 +1078,7 @@ export default function ManageLibrary({ ctx }) {
                                 onChange={(next) => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setLibEditImg({ ...libEditImg, elements: elems }); }}
                                 imsInventory={imsInventory}
                                 qtyMultiplier={el.qty || 1}
+                                rcSubcatFactors={rcSubcatFactors}
                                 textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                               />
                             </div>

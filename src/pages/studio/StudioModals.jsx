@@ -12,6 +12,7 @@ import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx
 import { getCat } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
+import { isHiddenSubcat } from "../../lib/rateCard";
 
 export default function StudioModals({ ctx }) {
   const {
@@ -39,7 +40,7 @@ export default function StudioModals({ ctx }) {
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
-    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate,
+    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -299,7 +300,7 @@ export default function StudioModals({ ctx }) {
                         const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (it?.subItems || []);
                         return comps.map(c => c.itemId);
                       }));
-                      const invMatches = (imsInventory || []).filter(it => !(zoneUploadReview.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
+                      const invMatches = (imsInventory || []).filter(it => !(zoneUploadReview.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && !isHiddenSubcat(it, rcSubcatFactors) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
                       const patMatches = (recipeOnlyPatterns || []).filter(pt => !(zoneUploadReview.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));
                       const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))];
                       return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 340, overflowY: "auto", width: 320 }}>
@@ -415,6 +416,7 @@ export default function StudioModals({ ctx }) {
                               imsInventory={imsInventory}
                               qtyMultiplier={el.qty || 1}
                               dealAwareness={{ getRemaining: (itemId) => zurRemainingForItem(itemId, idx) }}
+                              rcSubcatFactors={rcSubcatFactors}
                               textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                             />
                           </div>

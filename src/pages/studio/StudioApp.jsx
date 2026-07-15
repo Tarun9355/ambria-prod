@@ -2402,7 +2402,7 @@ export default function StudioApp() {
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
     const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
-    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc);
+    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
     if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const subKey = squeezeKey(pattern.sub);
     const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -2410,7 +2410,7 @@ export default function StudioApp() {
     const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
     const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
-  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio]);
+  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory]);
 
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
@@ -2446,7 +2446,7 @@ export default function StudioApp() {
       const floralSrc = dealCheckData || studioFloralData || {};
       const pattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
-      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc) : null;
+      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory) : null;
       if (rates) {
         if (isKit) {
           // Kit + recipe (e.g. a console table with a floral topper): no real/artificial blend —
@@ -2468,11 +2468,11 @@ export default function StudioApp() {
       }
     }
 
-    if (opts?.checkAvailability && !isKit) {
+    if (opts?.checkAvailability) {
       const available = getStudioAvailable(item, activeBlocksForDate);
       const ownedQty = Math.min(qty, available);
       const shortQty = Math.max(0, qty - available);
-      const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory);
+      const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       const shortRate = (Number(item.cost) || 0) * (rcCostPctForSub(item.subCat || item.subcategory) / 100);
       const lineCost = ownedQty * ownedRate + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;

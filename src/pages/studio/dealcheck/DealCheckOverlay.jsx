@@ -15,6 +15,7 @@ import { deptMpReconciled, itemImsSubcat } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
+import { isHiddenSubcat } from "../../../lib/rateCard";
 
 export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
@@ -1335,7 +1336,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 <input value={dcKitAddSearch[editKey]||""} onChange={e=>setDcKitAddSearch(prev=>({...prev,[editKey]:e.target.value}))} placeholder="🔍 Search by name or sub-category to add…" style={{width:"100%",fontSize:10,padding:"4px 8px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#fff"}} />
                                                 {(dcKitAddSearch[editKey]||"").trim() && (()=>{
                                                   const tokens = dcKitAddSearch[editKey].trim().toLowerCase().split(/\s+/).filter(Boolean);
-                                                  const matches = dcInventoryCache.filter(x=>x.id!==item.id && !comps.some(c=>c.itemId===x.id) && tokens.every(t=>(x.name+" "+(imsField.subcategory(x)||"")+" "+(x.cat||x.category||"")).toLowerCase().includes(t))).slice(0,40);
+                                                  const matches = dcInventoryCache.filter(x=>x.id!==item.id && !comps.some(c=>c.itemId===x.id) && !isHiddenSubcat(x,rcSubcatFactors) && tokens.every(t=>(x.name+" "+(imsField.subcategory(x)||"")+" "+(x.cat||x.category||"")).toLowerCase().includes(t))).slice(0,40);
                                                   return (
                                                     <div style={{position:"absolute",zIndex:50,top:"100%",left:0,right:0,marginTop:2,background:"#1a1a2e",border:`1px solid ${border}`,borderRadius:8,maxHeight:220,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
                                                       {matches.length===0 && <div style={{padding:"6px 8px",fontSize:10,color:textS}}>No matches</div>}
@@ -1590,6 +1591,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const lcSearch = searchText.toLowerCase().trim();
                                   const matches = showResults
                                     ? dealCheckInventory.filter(i => {
+                                        if (isHiddenSubcat(i, rcSubcatFactors)) return false;
                                         const n = String(i?.name || "").toLowerCase();
                                         const s = String(imsField.subcategory(i) || "").toLowerCase();
                                         return n.includes(lcSearch) || s.includes(lcSearch);

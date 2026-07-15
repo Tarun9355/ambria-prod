@@ -43,3 +43,14 @@ export function getFloralMode(rc, subFloralModeByKey) {
   const dp = typeof rc.defaultRealPct === "number" ? rc.defaultRealPct : (rc.unit === "truss_sqft" ? 0 : 100);
   return dp >= 50 ? "real" : "artificial";
 }
+
+// Is this inventory item's sub-category flagged tag_hidden (rate_card_categories.tag_hidden, set in
+// IMS Admin → Settings → Sub-Categories)? Mirrors the exact matching convention already used by
+// StudioApp.jsx's AI-tagging vocabulary filter (rcSubcatFactors rows keyed by lowercased sub-cat
+// string) — reused here so manual "+Add element" searches respect the same hidden flag.
+export function isHiddenSubcat(item, rcSubcatFactors) {
+  const subKey = String(item?.subCat || item?.subcategory || "").trim().toLowerCase();
+  if (!subKey) return false;
+  const row = (rcSubcatFactors || []).find((r) => r.id === subKey);
+  return !!row?.tag_hidden;
+}

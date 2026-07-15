@@ -961,15 +961,35 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <div key={sz} className="p-3">
               <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">{sizeEmoji} {sizeLabel}</p>
               {sizeData.flowers.map((fl, fi) => {
+                const setRow = (patch) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, ...patch } : x)) } } }));
+                if (fl.invItemId) {
+                  // Inventory-sourced ingredient (added via "Artificial included?") — plain qty in the
+                  // item's own unit, no gatthar/piece conversion (that math only applies to mandi flowers).
+                  const invItem = (inventory || []).find((i) => i.id === fl.invItemId);
+                  return (
+                    <div key={fi} className="flex items-center gap-1.5 mb-1.5">
+                      <FlowerPicker value={fl.invItemId} valueSource="inventory" catalogue={settings.mandiCatalogue || []}
+                        inventory={inventory}
+                        onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined } : { flowerId: cand.id, invItemId: undefined })} />
+                      <input type="number" min="0" step="1" value={fl.qty || ""} placeholder="qty"
+                        onChange={(e) => setRow({ qty: parseFloat(e.target.value) || 0 })}
+                        className="w-14 border rounded px-1 py-1 text-xs text-center" />
+                      <span className="text-[10px] text-gray-400 w-10 truncate">{invItem?.unit || "pcs"}</span>
+                      <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.filter((_, i) => i !== fi) } } }))}
+                        className="text-red-400 hover:text-red-600 text-xs leading-none">×</button>
+                    </div>
+                  );
+                }
                 const flower = resolveMandiFlower(fl.flowerId, settings.mandiCatalogue)?.parent;
                 return (
                   <div key={fi} className="flex items-center gap-1.5 mb-1.5">
-                    <FlowerPicker value={fl.flowerId} catalogue={settings.mandiCatalogue || []}
-                      onChange={(newId) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, flowerId: newId } : x)) } } }))} />
+                    <FlowerPicker value={fl.flowerId} valueSource="mandi" catalogue={settings.mandiCatalogue || []}
+                      inventory={pat?.artificialIncluded ? inventory : undefined}
+                      onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined, qty: 0 } : { flowerId: cand.id, invItemId: undefined })} />
                     {(() => {
                       const effGS = flower?.unit === "piece" ? 1 : (Number(flower?.gattharSize) || 0);
                       const isVariable = effGS === 0;
-                      const setQty = (newStored) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, qty: newStored } : x)) } } }));
+                      const setQty = (newStored) => setRow({ qty: newStored });
                       const fmtN = (n) => (n > 0 ? (n % 1 === 0 ? n.toString() : n.toFixed(1)) : "");
                       if (!isVariable) {
                         const pieces = (Number(fl.qty) || 0) * effGS;
@@ -1023,7 +1043,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               </div>
               {(() => {
-                const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue);
+                const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue, inventory);
                 if (cost === null) return <div className="mt-2 border-t border-dashed pt-2 text-[10px] text-gray-400 italic text-center">Empty — no cost</div>;
                 const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                 const markup = effectiveMarkup(pat, settings);
@@ -1207,6 +1227,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             placeholder={String(settings.defaultStudioMarkup ?? 3)} className="w-12 border border-emerald-300 rounded px-1 py-0.5 text-[11px] font-bold text-center text-emerald-900" />
                           <span className="text-[9px] text-emerald-700">×</span>
                         </div>
+                        <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, artificialIncluded: !p.artificialIncluded }))}
+                          title="When on, the + flower picker in every size column also searches IMS inventory for artificial-flower items, added as a priced ingredient alongside mandi flowers"
+                          className={"px-2 py-1 rounded-lg text-[10px] font-semibold border " + (pat?.artificialIncluded ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50")}>
+                          🧵 Artificial included?
+                        </button>
                         <span className="ml-auto flex items-center gap-2">
                           {!hasRecipe && <span className="text-[10px] text-amber-600 italic">Empty recipe</span>}
                           {hasRecipe && <span className="text-[10px] text-green-600">✓ Recipe set</span>}

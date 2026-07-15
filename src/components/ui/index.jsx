@@ -2,18 +2,25 @@ import { useState, useEffect, useRef } from "react";
 
 // ─── Shared UI primitives (faithful copies of the reference IMS app) ──────────
 
-// Searchable flower picker (position:fixed dropdown to escape overflow containers).
-export function FlowerPicker({ value, catalogue, onChange }) {
+// Searchable flower picker (position:fixed dropdown to escape overflow containers). `inventory`
+// is optional — when passed (e.g. a pattern's "Artificial included?" toggle is on), its items are
+// merged into the same searchable/pickable list as the mandi catalogue, each thumbnail-tagged with
+// its source so the caller (which writes either `flowerId` or `invItemId` onto the recipe row) can
+// tell them apart. `value`/`valueSource` together identify the current pick ({id, source}).
+export function FlowerPicker({ value, valueSource, catalogue, inventory, onChange }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef(null);
   const inputRef = useRef(null);
-  const selected = (catalogue || []).find((f) => f.id === value);
+  const mandiCands = (catalogue || []).map((f) => ({ source: "mandi", id: f.id, name: f.name, sub: f.flowerCat || "", price: f.currentPrice, unit: f.unit, img: f.photoUrl }));
+  const invCands = (inventory || []).map((it) => ({ source: "inventory", id: it.id, name: it.name, sub: it.subCat || it.subcategory || "", price: it.price ?? it.rentalCost, unit: it.unit, img: it.img || it.photoUrls?.[0] }));
+  const allCands = [...mandiCands, ...invCands];
+  const selected = allCands.find((c) => c.source === (valueSource || "mandi") && c.id === value);
   const term = search.toLowerCase();
   const filtered = term
-    ? (catalogue || []).filter((f) => (f.name || "").toLowerCase().includes(term) || (f.flowerCat || "").toLowerCase().includes(term))
-    : (catalogue || []);
+    ? allCands.filter((c) => (c.name || "").toLowerCase().includes(term) || (c.sub || "").toLowerCase().includes(term))
+    : allCands;
   useEffect(() => {
     if (!open) return;
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setSearch(""); } };
@@ -29,7 +36,7 @@ export function FlowerPicker({ value, catalogue, onChange }) {
     return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
   }, [open]);
   const handleFocus = () => { setOpen(true); setSearch(""); };
-  const handlePick = (id) => { onChange(id); setOpen(false); setSearch(""); if (inputRef.current) inputRef.current.blur(); };
+  const handlePick = (cand) => { onChange({ id: cand.id, source: cand.source }); setOpen(false); setSearch(""); if (inputRef.current) inputRef.current.blur(); };
   return (
     <div ref={ref} className="relative flex-1 min-w-0">
       <div className="flex items-center border rounded bg-white hover:border-indigo-300 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-200">
@@ -43,15 +50,21 @@ export function FlowerPicker({ value, catalogue, onChange }) {
         <div style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999, minWidth: "15rem", width: "max-content", maxWidth: "20rem" }} className="bg-white border border-gray-200 rounded-lg shadow-lg">
           <div style={{ maxHeight: "200px", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
             {filtered.length === 0 && <div className="px-3 py-2.5 text-xs text-gray-400 text-center">No match</div>}
-            {filtered.map((f) => (
-              <div key={f.id} onMouseDown={(e) => { e.preventDefault(); handlePick(f.id); }}
-                className={"px-3 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 transition-colors border-b border-gray-50 last:border-0" + (f.id === value ? " bg-indigo-50 font-semibold" : "")}>
-                <div className="text-gray-800">{f.name}</div>
-                <div className="text-[10px] text-gray-400 leading-tight">{f.flowerCat || ""}{f.currentPrice ? ` · ₹${f.currentPrice}/${f.unit || ""}` : ""}</div>
+            {filtered.map((c) => (
+              <div key={c.source + ":" + c.id} onMouseDown={(e) => { e.preventDefault(); handlePick(c); }}
+                className={"flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 transition-colors border-b border-gray-50 last:border-0" + (c.source === (valueSource || "mandi") && c.id === value ? " bg-indigo-50 font-semibold" : "")}>
+                {c.img ? <img src={c.img} alt="" className="w-6 h-6 rounded object-cover flex-shrink-0" /> : <span className="w-6 h-6 rounded bg-gray-100 flex items-center justify-center text-[10px] flex-shrink-0">{c.source === "inventory" ? "📦" : "🌸"}</span>}
+                <div className="min-w-0 flex-1">
+                  <div className="text-gray-800 truncate flex items-center gap-1">
+                    {c.name}
+                    {c.source === "inventory" && <span className="text-[8px] px-1 rounded bg-indigo-100 text-indigo-700 font-bold flex-shrink-0">IMS</span>}
+                  </div>
+                  <div className="text-[10px] text-gray-400 leading-tight truncate">{c.sub || ""}{c.price ? ` · ₹${c.price}${c.unit ? "/" + c.unit : ""}` : ""}</div>
+                </div>
               </div>
             ))}
           </div>
-          <div className="text-[9px] text-gray-300 text-center py-0.5 border-t bg-gray-50 rounded-b-lg">{filtered.length} flower{filtered.length !== 1 ? "s" : ""}</div>
+          <div className="text-[9px] text-gray-300 text-center py-0.5 border-t bg-gray-50 rounded-b-lg">{filtered.length} match{filtered.length !== 1 ? "es" : ""}</div>
         </div>
       )}
     </div>
