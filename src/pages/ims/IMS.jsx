@@ -95,7 +95,13 @@ export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   // Remember the last open IMS tab so toggling to Studio and back returns here (not Dashboard).
-  const [tab, setTab] = useState(() => sessionStorage.getItem("ambria-ims-tab") || "dashboard");
+  const [tab, setTab] = useState(() => {
+    const saved = sessionStorage.getItem("ambria-ims-tab");
+    // Guard against a stale value from a removed tab (e.g. the old "events" tab) — fall back to
+    // dashboard instead of landing on the dead "this tab is being rebuilt" placeholder.
+    // "approvals" is valid too even though it's added to the nav dynamically, not in TABS itself.
+    return saved && (saved === "approvals" || TABS.some((t) => t.id === saved)) ? saved : "dashboard";
+  });
   useEffect(() => { sessionStorage.setItem("ambria-ims-tab", tab); }, [tab]);
 
   const [items, setItems] = useState([]);
