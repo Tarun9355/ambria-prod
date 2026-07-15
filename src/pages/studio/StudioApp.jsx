@@ -6088,6 +6088,8 @@ Return ONLY JSON:
     // module helpers exposed for views
     imsField, fetchIMSData, searchLmsLeads, calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan,
     resolveMandiFlower,
+    // per-date "other events" block map for the active function's date — see getStudioAvailable
+    activeBlocksForDate,
     LABOUR, LABOUR_PRESETS, SEASON_MULT, TPL_DEFAULTS, PERM_LABELS, ROLE_DEFAULTS, ROLES, TAX_LABELS,
   };
   void ctx; // consumed by view slices in later commits

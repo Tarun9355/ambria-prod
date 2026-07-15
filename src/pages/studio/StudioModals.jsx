@@ -11,6 +11,7 @@ import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import { getCat } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
+import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 
 export default function StudioModals({ ctx }) {
   const {
@@ -37,6 +38,8 @@ export default function StudioModals({ ctx }) {
     paintPickerTarget, setPaintPickerTarget, zoneElements, setZoneElements,
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue,
+    // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
+    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -47,6 +50,20 @@ export default function StudioModals({ ctx }) {
   // element" search come from the matching IMS inventory item by name (best-effort; falls back to
   // the generic 📦 icon when nothing matches, same as every other add-element search in the app).
   const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || [];
+  // Live soft-blocking for the zone-upload-review modal — same logic as Build's own zone editor
+  // (StudioBuild.jsx's remainingForItem). The staged elements here haven't been written into
+  // zoneElements[elKey] yet, so exclude that zone key entirely.
+  const zurRemainingForItem = (itemId, elIdx) => {
+    const it = (imsInventory || []).find(i => i.id === itemId);
+    if (!it || !collectAllFunctionData) return null;
+    const fns = collectAllFunctionData();
+    const zoneKey = zoneUploadReview?.elKey;
+    const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
+    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, activeFnMeta?.date || clientDate);
+    if (usedElsewhere <= 0) return null;
+    const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
+    return Math.max(0, otherEventsAvail - usedElsewhere);
+  };
   const [zurHoveredElIdx, setZurHoveredElIdx] = useState(null);
   const [zurElHoverImg, setZurElHoverImg] = useState(null);
   const [zurPrintSearch, setZurPrintSearch] = useState({}); // per-print-row "link to inventory item" search text, keyed by print row id
@@ -306,14 +323,17 @@ export default function StudioModals({ ctx }) {
                               <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{pt.sub ? pt.sub + " › " : ""}Flower recipe — no inventory item</div>
                             </div>
                           </div>; }
-                          const it = m.it; const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; const src = it.img || it.photoUrls?.[0]; return <div key={"inv:" + it.id}
+                          const it = m.it; const isKit = Array.isArray(it.subItems) && it.subItems.length > 0; const src = it.img || it.photoUrls?.[0];
+                          const remaining = zurRemainingForItem(it.id); const isBlocked = remaining != null && remaining <= 0;
+                          return <div key={"inv:" + it.id}
                             onClick={() => {
+                              if (isBlocked) return;
                               if (!(zoneUploadReview.elements || []).find(el => el.invId === it.id)) {
                                 setZoneUploadReview({ ...zoneUploadReview, elements: [...(zoneUploadReview.elements || []), { name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id }] });
                               }
                               setZurElSearch("");
                             }}
-                            style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                            style={{ padding: "8px 10px", fontSize: 11, cursor: isBlocked ? "not-allowed" : "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10, opacity: isBlocked ? 0.45 : 1 }}>
                             <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
                               {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
                             </div>
@@ -321,6 +341,8 @@ export default function StudioModals({ ctx }) {
                               <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
                                 {isKit && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(99,102,241,0.15)", color: "#6366F1", fontWeight: 700, flexShrink: 0 }}>📦 KIT</span>}
+                                {isBlocked && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700, flexShrink: 0 }}>🚫 fully used in this event</span>}
+                                {!isBlocked && remaining != null && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700, flexShrink: 0 }}>{remaining} left for this event</span>}
                               </div>
                               <div style={{ fontSize: 9, color: textS, marginTop: 2 }}>{(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " : ""}{it.cat}</div>
                             </div>
@@ -392,6 +414,7 @@ export default function StudioModals({ ctx }) {
                               onChange={(next) => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }}
                               imsInventory={imsInventory}
                               qtyMultiplier={el.qty || 1}
+                              dealAwareness={{ getRemaining: (itemId) => zurRemainingForItem(itemId, idx) }}
                               textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                             />
                           </div>

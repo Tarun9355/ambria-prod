@@ -14,6 +14,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants
 import { deptMpReconciled, itemImsSubcat } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
+import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 
 export default function DealCheckOverlay({ ctx }) {
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
@@ -61,6 +62,23 @@ export default function DealCheckOverlay({ ctx }) {
       }
     }
     return r;
+  };
+
+  // Live soft-blocking: how much of an inventory item is left for THIS deal, netting out both
+  // other events' commitments (getStudioAvailable, per fnDate) and whatever sibling
+  // functions/zones/cards of this same deal have already used (qtyUsedElsewhereInDealCheck).
+  // exclude = { fnIdx, zoneKey? } for whole-zone exclusion, or { fnIdx, cardKey } / { fnIdx, manualId }
+  // to exclude just one row. Returns null when nothing else in the deal touches this item (no badge).
+  const dcRemainingForItem = (imsId, fnIdx, exclude, fnDate) => {
+    const it = (dcInventoryCache || []).find(i => i.id === imsId);
+    if (!it || !collectAllFunctionData) return null;
+    const fns = collectAllFunctionData();
+    const targetDate = fnDate || fns[fnIdx]?.fnDate || clientDate;
+    const usedElsewhere = qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, targetDate);
+    if (usedElsewhere <= 0) return null;
+    const fnBlocks = (dealCheckData?.blocksByDate || {})[targetDate] || {};
+    const otherEventsAvail = getStudioAvailable(it, fnBlocks);
+    return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
   // Pull the latest dept-head actuals (IMS) whenever Deal Check opens for this client.
@@ -1323,12 +1341,18 @@ export default function DealCheckOverlay({ ctx }) {
                                                       {matches.length===0 && <div style={{padding:"6px 8px",fontSize:10,color:textS}}>No matches</div>}
                                                       {matches.map(x=>{
                                                         const src = imsField.photos(x)[0];
+                                                        const remaining = dcRemainingForItem(x.id, fnIdx, { cardKey: editKey });
+                                                        const isBlocked = remaining != null && remaining <= 0;
                                                         return (
-                                                          <div key={x.id} onClick={()=>{ setComps(comps.some(c=>c.itemId===x.id)?comps:[...comps,{itemId:x.id,qty:1}]); setDcKitAddSearch(prev=>({...prev,[editKey]:""})); }}
-                                                            style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:"pointer",borderBottom:`1px solid ${border}`}}>
+                                                          <div key={x.id} onClick={()=>{ if(isBlocked) return; setComps(comps.some(c=>c.itemId===x.id)?comps:[...comps,{itemId:x.id,qty:1}]); setDcKitAddSearch(prev=>({...prev,[editKey]:""})); }}
+                                                            style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,opacity:isBlocked?0.45:1}}>
                                                             {src ? <img src={src} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>📦</span>}
                                                             <div style={{flex:1,minWidth:0}}>
-                                                              <div style={{fontSize:11,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</div>
+                                                              <div style={{fontSize:11,color:"#fff",display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                                                                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</span>
+                                                                {isBlocked && <span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
+                                                                {!isBlocked && remaining!=null && <span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
+                                                              </div>
                                                               <div style={{fontSize:9,color:textS}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}</div>
                                                             </div>
                                                           </div>
@@ -1593,10 +1617,14 @@ export default function DealCheckOverlay({ ctx }) {
                                             const itemQty = availableAtVenue(_fvCfg, _venueName, item); // venue-scoped total (locked stock at other venues excluded)
                                             const itemBlocked = Number(item?.blocked) || 0;
                                             const free = Math.max(0, itemQty - itemBlocked);
+                                            const usedElsewhereInDeal = qtyUsedElsewhereInDealCheck(item.id, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, zoneKey: zk }, (fns[fnIdx]||{}).fnDate || clientDate);
+                                            const remaining = Math.max(0, free - usedElsewhereInDeal);
+                                            const isBlocked = usedElsewhereInDeal > 0 && remaining <= 0;
                                             const _standing = isStandingAt(_fvCfg, _venueName, item.id);
                                             const _dims = item?.dims_LxWxH || item?.size || item?.dims?.lxwxh || item?.dims?.size || "";
                                             return (
                                               <div key={item.id} onClick={()=>{
+                                                if (isBlocked) return;
                                                 const newItem = {
                                                   manualId: `m-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
                                                   imsId: item.id,
@@ -1607,13 +1635,13 @@ export default function DealCheckOverlay({ ctx }) {
                                                 };
                                                 setDcManualItems(prev => [...prev, newItem]);
                                                 setDcManualSearch(prev => ({...prev, [searchKey]: ""}));
-                                              }} style={{display:"flex",gap:10,padding:"8px 10px",alignItems:"center",cursor:"pointer",borderBottom:`1px solid rgba(255,255,255,0.04)`}}
-                                              onMouseEnter={e=>e.currentTarget.style.background="rgba(193,154,107,0.10)"}
+                                              }} style={{display:"flex",gap:10,padding:"8px 10px",alignItems:"center",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid rgba(255,255,255,0.04)`,opacity:isBlocked?0.45:1}}
+                                              onMouseEnter={e=>{ if(!isBlocked) e.currentTarget.style.background="rgba(193,154,107,0.10)"; }}
                                               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                                                 {itemPhoto ? <img src={itemPhoto} alt="" style={{width:36,height:36,borderRadius:5,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:36,height:36,borderRadius:5,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:textS,flexShrink:0}}>?</div>}
                                                 <div style={{flex:1,minWidth:0}}>
-                                                  <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{_standing && <span style={{marginLeft:6,fontSize:8,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#10B981",fontWeight:700,letterSpacing:0.3}}>🏛️ INSTALLED HERE</span>}</div>
-                                                  <div style={{fontSize:9,color:textS,marginTop:1}}>{itemSub || "—"}{_dims ? ` · 📐 ${_dims}` : ""} · {free} free of {itemQty}</div>
+                                                  <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{_standing && <span style={{marginLeft:6,fontSize:8,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#10B981",fontWeight:700,letterSpacing:0.3}}>🏛️ INSTALLED HERE</span>}{isBlocked && <span style={{marginLeft:6,fontSize:8,padding:"1px 5px",borderRadius:3,background:"rgba(239,68,68,0.2)",color:"#EF4444",fontWeight:700,letterSpacing:0.3}}>🚫 fully used in this event</span>}</div>
+                                                  <div style={{fontSize:9,color:textS,marginTop:1}}>{itemSub || "—"}{_dims ? ` · 📐 ${_dims}` : ""} · {free} free of {itemQty}{usedElsewhereInDeal>0 ? ` · ${remaining} left for this event` : ""}</div>
                                                 </div>
                                                 <span style={{fontSize:10,color:"#C19A6B",fontWeight:700,letterSpacing:0.3}}>+ ADD</span>
                                               </div>
@@ -2152,10 +2180,14 @@ export default function DealCheckOverlay({ ctx }) {
                         const dims = imsField.sizeText(it);
                         const hold = getActiveSoftHold(softHolds, it.id, authUser?.name, Date.now());
                         const isCurrent = it.id === _mCurId;
-                        const avail = Math.max(0, Math.min(getStudioAvailable(it, _mBlocks), availableAtVenue(_mFvC, _mVenue, it)));
+                        const _mExclude = manualId ? { manualId } : { cardKey };
+                        const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
+                        const avail = Math.max(0, Math.min(getStudioAvailable(it, _mBlocks), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
+                        const isBlocked = !isCurrent && avail <= 0;
                         return (
                           <div key={it.id} onClick={()=>{
                             if (isCurrent) { setDcBrowseAllOpen(null); return; }
+                            if (isBlocked) return;
                             if (manualId) {
                               setDcManualItems(prev => prev.map(x => x.manualId === manualId ? { ...x, imsId: it.id } : x));
                             } else {
@@ -2165,14 +2197,14 @@ export default function DealCheckOverlay({ ctx }) {
                               }));
                             }
                             setDcBrowseAllOpen(null);
-                          }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":"pointer",background:"rgba(255,255,255,0.02)",opacity:hold?0.6:1}}>
+                          }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":isBlocked?"not-allowed":"pointer",background:"rgba(255,255,255,0.02)",opacity:hold?0.6:isBlocked?0.45:1}}>
                             {photo ? <img src={photo} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#0A0A14"}}/> : <div style={{width:"100%",height:110,background:"#0A0A14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>?</div>}
                             <div style={{padding:"8px 9px"}}>
                               <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                               <div style={{fontSize:10,color:textS,marginTop:2}}>₹{rental.toLocaleString("en-IN")}{dims&&" · "+dims}</div>
                             </div>
-                            {/* Free-on-date availability badge */}
-                            <div title="Free on the event date" style={{position:"absolute",bottom:38,right:5,fontSize:10,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#fff"}}>{avail}</div>
+                            {/* Free-on-date availability badge (nets out other zones/cards in this same deal too) */}
+                            <div title={isBlocked?"🚫 fully used in this event":"Free for this event"} style={{position:"absolute",bottom:38,right:5,fontSize:10,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#fff"}}>{avail}</div>
                             {hold && <div style={{position:"absolute",top:5,right:5,fontSize:9,background:"rgba(245,158,11,0.92)",borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>⏳ {hold.salesperson}</div>}
                             {isCurrent && <div style={{position:"absolute",top:5,left:5,fontSize:9,background:`${accent}ee`,borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>✓ current</div>}
                           </div>

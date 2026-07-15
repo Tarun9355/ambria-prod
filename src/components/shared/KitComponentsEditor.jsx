@@ -11,7 +11,7 @@ import { useState } from "react";
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, qtyMultiplier = 1, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, qtyMultiplier = 1, dealAwareness, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
@@ -79,12 +79,18 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
               {matches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 10, color: textS }}>No matches</div>}
               {matches.map((x) => {
                 const src = x.img || x.photoUrls?.[0];
+                const remaining = dealAwareness?.getRemaining ? dealAwareness.getRemaining(x.id) : null;
+                const isBlocked = remaining != null && remaining <= 0;
                 return (
-                  <div key={x.id} onClick={() => { setComps(comps.some((c) => c.itemId === x.id) ? comps : [...comps, { itemId: x.id, qty: 1 }]); setAddSearch(""); }}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: "pointer", borderBottom: `1px solid ${border}` }}>
+                  <div key={x.id} onClick={() => { if (isBlocked) return; setComps(comps.some((c) => c.itemId === x.id) ? comps : [...comps, { itemId: x.id, qty: 1 }]); setAddSearch(""); }}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: isBlocked ? "not-allowed" : "pointer", borderBottom: `1px solid ${border}`, opacity: isBlocked ? 0.45 : 1 }}>
                     {src ? <img src={src} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>📦</span>}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</div>
+                      <div style={{ fontSize: 11, color: textP, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</span>
+                        {isBlocked && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700, flexShrink: 0 }}>🚫 fully used in this event</span>}
+                        {!isBlocked && remaining != null && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700, flexShrink: 0 }}>{remaining} left for this event</span>}
+                      </div>
                       <div style={{ fontSize: 9, color: textS }}>{(x.subCat || x.subcategory) ? (x.subCat || x.subcategory) + " › " : ""}{x.cat || x.category || ""}</div>
                     </div>
                   </div>

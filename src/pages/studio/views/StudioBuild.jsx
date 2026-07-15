@@ -4,6 +4,7 @@ import {
   MASK_OPTS, PLAT_OPTS, CARP_OPTS,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemImsSubcat } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
@@ -23,8 +24,8 @@ export default function StudioBuild({ ctx }) {
     getFullCost, findTemplate, templates,
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
-    studioFloralData, venueParents, loadAvailability, getStudioAvailable,
-    clientPalette, setClientPalette, activeFnIdx,
+    studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
+    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
     // venues (for named-venue correction)
@@ -86,6 +87,24 @@ export default function StudioBuild({ ctx }) {
     venueParents: dealCheckData?.venueParents || venueParents || {},
   };
   const fixedVenueHere = fixedVenueFor(_fvCfg, activeFnMeta?.venue || venue);
+
+  // Live soft-blocking: how much of an inventory item is left for THIS event, after
+  // netting out both other events' commitments (getStudioAvailable) and whatever
+  // sibling zones/functions of this same deal have already used (qtyUsedElsewhereInBuild).
+  // exclude={fnIdx,zoneKey} → whole-zone exclusion; add elIdx to exclude just one row.
+  // Returns null when the item's stock isn't otherwise touched this deal (no badge needed) —
+  // only surfaces a signal once some OTHER zone/function has actually drawn on it.
+  const remainingForItem = (itemId, zoneKey, elIdx) => {
+    const it = (imsInventory || []).find(i => i.id === itemId);
+    if (!it) return null;
+    const fns = collectAllFunctionData ? collectAllFunctionData() : [];
+    const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
+    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, activeFnMeta?.date || clientDate);
+    if (usedElsewhere <= 0) return null;
+    const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
+    return Math.max(0, otherEventsAvail - usedElsewhere);
+  };
+
   const isRepeat = (k) => !!(zoneConfig[k] && zoneConfig[k].repeat);
   const toggleRepeat = (k) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeat: !(p[k] && p[k].repeat) } }));
 
@@ -735,12 +754,15 @@ export default function StudioBuild({ ctx }) {
                               <div style={{fontSize:9,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
                             </div>
                           </div>; }
-                          const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0]; return <div key={"inv:"+it.id}
+                          const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
+                          const remaining=remainingForItem(it.id,k); const isBlocked=remaining!=null&&remaining<=0;
+                          return <div key={"inv:"+it.id}
                             onClick={()=>{
+                              if(isBlocked) return;
                               if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
-                            style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                            style={{padding:"8px 10px",fontSize:11,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
                             <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
                               {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:22,opacity:0.3}}>📦</span>}
                             </div>
@@ -748,6 +770,8 @@ export default function StudioBuild({ ctx }) {
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                                 {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>📦 KIT</span>}
+                                {isBlocked&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
+                                {!isBlocked&&remaining!=null&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
                               </div>
                               <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}</div>
                             </div>
@@ -920,6 +944,7 @@ export default function StudioBuild({ ctx }) {
                       onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
                       imsInventory={imsInventory}
                       qtyMultiplier={el.qty||1}
+                      dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                       textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                     />}
                   </div>);
@@ -1347,12 +1372,15 @@ export default function StudioBuild({ ctx }) {
                           <div style={{fontSize:9,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
                         </div>
                       </div>; }
-                      const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0]; return <div key={"inv:"+it.id}
+                      const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
+                      const remaining=remainingForItem(it.id,k); const isBlocked=remaining!=null&&remaining<=0;
+                      return <div key={"inv:"+it.id}
                         onClick={()=>{
+                          if(isBlocked) return;
                           if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
                           setZoneElSearch(prev=>({...prev,[k]:""}));
                         }}
-                        style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                        style={{padding:"8px 10px",fontSize:11,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
                         <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
                           {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:22,opacity:0.3}}>📦</span>}
                         </div>
@@ -1360,6 +1388,8 @@ export default function StudioBuild({ ctx }) {
                           <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                             {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>📦 KIT</span>}
+                            {isBlocked&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
+                            {!isBlocked&&remaining!=null&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
                           </div>
                           <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}</div>
                         </div>
@@ -1441,6 +1471,7 @@ export default function StudioBuild({ ctx }) {
                     onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
                     imsInventory={imsInventory}
                     qtyMultiplier={el.qty||1}
+                    dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                     textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                   />}
                 </div>);
