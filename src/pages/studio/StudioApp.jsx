@@ -1100,7 +1100,7 @@ export default function StudioApp() {
   const [libAiLoading, setLibAiLoading] = useState(false);
   const [zoneAiFilling, setZoneAiFilling] = useState({});
   const [zoneElSearch, setZoneElSearch] = useState({});
-  const [zonePrintSearch, setZonePrintSearch] = useState({}); // "+ Add print" search text, per zone key
+  const [zonePrintSearch, setZonePrintSearch] = useState({}); // per-print-row "link to inventory item" search text, keyed by print row id
   const [taxEditCat, setTaxEditCat] = useState(null);
   const [taxNewTag, setTaxNewTag] = useState("");
   const [taxNewCat, setTaxNewCat] = useState("");
