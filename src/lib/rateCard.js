@@ -47,7 +47,10 @@ export function getFloralMode(rc, subFloralModeByKey) {
 // Is this inventory item's sub-category flagged tag_hidden (rate_card_categories.tag_hidden, set in
 // IMS Admin → Settings → Sub-Categories)? Mirrors the exact matching convention already used by
 // StudioApp.jsx's AI-tagging vocabulary filter (rcSubcatFactors rows keyed by lowercased sub-cat
-// string) — reused here so manual "+Add element" searches respect the same hidden flag.
+// string) — reused here so manual "+Add element" searches respect the same hidden flag. This always
+// hides the raw inventory item, with no recipe exemption — a hidden sub-category's item whose flower
+// recipe still needs to be addable surfaces instead as a pattern-only element (see
+// recipeOnlyPatterns in StudioApp.jsx), not by un-hiding the physical item itself.
 export function isHiddenSubcat(item, rcSubcatFactors) {
   const subKey = String(item?.subCat || item?.subcategory || "").trim().toLowerCase();
   if (!subKey) return false;

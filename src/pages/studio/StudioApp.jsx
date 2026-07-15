@@ -56,7 +56,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, priceForInvItem } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass } from "../../lib/ims/flowerHelpers";
-import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
+import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, isHiddenSubcat } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -2377,6 +2377,12 @@ export default function StudioApp() {
   // Inventory). These need their own addable-element path since getElPriceFromInventory requires a
   // real inventory row. A pattern whose sub-category DOES have inventory items keeps resolving via
   // that item's invId exactly as today — this only covers the ones that don't.
+  //
+  // A sub-category flagged tag_hidden counts as having NO (visible) inventory backing here too — its
+  // physical item stays hidden from every "+Add element" search (isHiddenSubcat), but its recipe must
+  // still be reachable, so it falls through to this pattern-only path instead of the hidden item
+  // itself (e.g. "Disco Ball" — a real inventory item under a hidden "Hanging Pattern" sub-cat — adds
+  // as its recipe/pattern element, never as the raw hidden item).
   const recipeOnlyPatterns = useMemo(() => {
     const floralSrc = dealCheckData || studioFloralData || {};
     const patterns = floralSrc.flowerPatterns || [];
@@ -2385,12 +2391,14 @@ export default function StudioApp() {
     (imsInventory || []).forEach((it) => {
       if (String(it.cat || it.category || "").trim().toLowerCase() !== "florals") return;
       const sub = it.subCat || it.subcategory;
-      if (sub) invFloralSubs.add(squeezeKey(sub));
+      if (!sub) return;
+      if (isHiddenSubcat(it, rcSubcatFactors)) return;
+      invFloralSubs.add(squeezeKey(sub));
     });
     return patterns
       .filter((p) => !invFloralSubs.has(squeezeKey(p?.sub)))
       .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
-  }, [dealCheckData, studioFloralData, imsInventory]);
+  }, [dealCheckData, studioFloralData, imsInventory, rcSubcatFactors]);
 
   // Price an element sourced directly from a flower-recipe pattern with no inventory backing
   // (el.patternId, sibling to el.invId's getElPriceFromInventory). Same formula as the floral branch

@@ -9,6 +9,15 @@ import RateCardPanel from "./RateCardPanel.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 
+// Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
+// descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
+// display label to — kept as options so existing rows' labels still render, not just new picks.
+const FLOWER_UNIT_LABELS = ["pcs", "piece", "bundle", "gatthar", "kg", "dozen", "kodi", "pair", "made"];
+// Options for a unit-label <select> — always includes FLOWER_UNIT_LABELS, plus the row's current
+// value prepended if it's some other string (e.g. an IMS inventory item's own unit) so it never
+// silently renders blank/wrong just because it isn't one of the canonical choices.
+const unitLabelOptions = (current) => (current && !FLOWER_UNIT_LABELS.includes(current)) ? [current, ...FLOWER_UNIT_LABELS] : FLOWER_UNIT_LABELS;
+
 // AdminSettingsTab — the keystone settings component (Admin → Settings, and via `mode`
 // the Flowers mandi/recipes + Planning truss/fabric config sub-tabs).
 //
@@ -976,9 +985,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <input type="number" min="0" step="1" value={fl.qty || ""} placeholder="qty"
                         onChange={(e) => setRow({ qty: parseFloat(e.target.value) || 0 })}
                         className="w-14 border rounded px-1 py-1 text-xs text-center" />
-                      <input value={fl.unitLabel ?? invItem?.unit ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
+                      <select value={fl.unitLabel ?? invItem?.unit ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                         title="Unit label — cosmetic only, doesn't change the qty or cost math"
-                        className="w-12 border rounded px-1 py-1 text-[10px] text-gray-500 text-center" />
+                        className="w-16 border rounded px-1 py-1 text-[10px] text-gray-500 text-center">
+                        {unitLabelOptions(fl.unitLabel ?? invItem?.unit).map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select>
                       <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.filter((_, i) => i !== fi) } } }))}
                         className="text-red-400 hover:text-red-600 text-xs leading-none">×</button>
                     </div>
@@ -1002,9 +1013,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <input type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
                               onChange={(e) => { const p = parseFloat(e.target.value) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
                               className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}`} />
-                            <input value={fl.unitLabel ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
+                            <select value={fl.unitLabel ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                               title={(effGS > 1 ? `${effGS} pcs/${flower?.unit} — ` : "per-piece flower — ") + "unit label is cosmetic only, doesn't change the qty or cost math"}
-                              className="w-10 border rounded px-1 py-1 text-[10px] text-gray-500 text-center" />
+                              className="w-16 border rounded px-1 py-1 text-[10px] text-gray-500 text-center">
+                              {unitLabelOptions(fl.unitLabel).map((u) => <option key={u} value={u}>{u}</option>)}
+                            </select>
                           </>
                         );
                       }
@@ -1016,9 +1029,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <input type="number" min="0" step="1" value={fmtN(patternsPerUnit)} placeholder="N"
                             onChange={(e) => { const n = parseFloat(e.target.value) || 0; setQty(n > 0 ? 1 / n : 0); }}
                             className="w-12 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${stored.toFixed(3)} ${flower?.unit || ""}/pattern`} />
-                          <input value={fl.unitLabel ?? "made"} onChange={(e) => setRow({ unitLabel: e.target.value })}
+                          <select value={fl.unitLabel ?? "made"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                             title="Unit label — cosmetic only, doesn't change the qty or cost math"
-                            className="w-12 border rounded px-1 py-1 text-[10px] text-gray-500 text-center" />
+                            className="w-16 border rounded px-1 py-1 text-[10px] text-gray-500 text-center">
+                            {unitLabelOptions(fl.unitLabel).map((u) => <option key={u} value={u}>{u}</option>)}
+                          </select>
                         </>
                       );
                     })()}
