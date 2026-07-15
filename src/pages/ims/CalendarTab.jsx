@@ -3,10 +3,13 @@ import DatePricingPanel from "./DatePricingPanel.jsx";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS } from "../../lib/ims/constants";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
+import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders }) {
+// Also the one place ops can cancel a Studio-booked event (releasing its held inventory) — the
+// old dedicated IMS "Events" tab is gone; that was its only manual control worth keeping.
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -51,6 +54,19 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   };
   const fmtAmt = (n) => "₹" + (Number(n) || 0).toLocaleString("en-IN");
 
+  // Cancel a Studio-booked event: releases every inventory item it's holding and marks the
+  // event_orders row cancelled. This is the only surviving manual control from the old Events tab.
+  function cancelStudioEvent(eoId, guestName) {
+    if (!eoId || !setEventOrders || !setBlocks) return;
+    if (!confirm(`Cancel booking for "${guestName}" and release all its held inventory?`)) return;
+    const newBlocks = releaseBlocks(blocks, eoId);
+    setBlocks(newBlocks);
+    saveBlocks?.(newBlocks);
+    const updated = (eventOrders || []).map((eo) => (eo.id === eoId ? { ...eo, status: "cancelled" } : eo));
+    setEventOrders(updated);
+    saveEventOrders?.(updated);
+  }
+
   const calEvents = useMemo(() => {
     const events = [];
     for (const c of (lmsContracts || [])) {
@@ -89,6 +105,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
           id: "eo-" + eo.id + "-" + fi, date,
           guestName: eo.clientName || "—", functionType: fn.type || "", venue,
           dept: "studio", totalAmt: eo.totalCost || 0, balance: 0, eoStatus: eo.status || "pending",
+          eoId: eo.id,
         });
       });
     }
@@ -219,7 +236,15 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                     {e.priority && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-yellow-50 text-yellow-700">{e.priority}</span>}
                     {e.matched && <span className="text-xs px-2 py-0.5 rounded-md font-bold bg-green-50 text-green-700">🔗 {e.matchType === "exact" ? "Exact" : "Fuzzy"}</span>}
                   </div>
-                  {e.entryNo && <span className="text-xs text-gray-400">#{e.entryNo}</span>}
+                  <div className="flex items-center gap-2">
+                    {e.entryNo && <span className="text-xs text-gray-400">#{e.entryNo}</span>}
+                    {e.dept === "studio" && e.eoStatus !== "cancelled" && (
+                      <button onClick={() => cancelStudioEvent(e.eoId, e.guestName)}
+                        className="text-xs px-2 py-1 rounded-md font-medium text-red-600 border border-red-200 hover:bg-red-50">
+                        ✕ Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex gap-3 flex-wrap text-sm text-gray-600 mt-1">
                   {e.brideName && e.groomName && <span>💑 {e.brideName.trim()} × {e.groomName.trim()}</span>}

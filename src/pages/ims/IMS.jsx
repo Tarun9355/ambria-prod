@@ -15,8 +15,8 @@ import PlanningTab from "./PlanningTab.jsx";
 import FinanceTab from "./FinanceTab.jsx";
 import CalendarTab from "./CalendarTab.jsx";
 import FlowersTab from "./FlowersTab.jsx";
-import EventsTab from "./EventsTab.jsx";
 import ApprovalsTab from "./ApprovalsTab.jsx";
+import { useEventOrderAutoConfirm } from "../../lib/ims/eventAutoConfirm";
 import { AMEND_SK, canApprove } from "../../lib/ims/amend";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories } from "../../lib/ims/lms";
@@ -36,7 +36,6 @@ const blocksRowsToMap = (rows) => Object.fromEntries((rows || []).map((r) => [r.
 // Exact tab set + labels from the reference IMS app.
 const TABS = [
   { id: "dashboard", label: "🏠 Dashboard" },
-  { id: "events", label: "📋 Events" },
   { id: "inventory", label: "📦 Inventory" },
   { id: "calendar", label: "📅 Calendar" },
   { id: "planning", label: "🔧 Planning" },
@@ -1111,6 +1110,17 @@ export default function IMS() {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
   }, []);
 
+  // Event Order auto-confirm engine — runs unconditionally regardless of which IMS tab is open
+  // (formerly only ran while the now-removed "Events" tab happened to be mounted). See
+  // src/lib/ims/eventAutoConfirm.js for what this does (matching, blocking, Project/Function
+  // creation, auto-POs). Cancelling an event + releasing its held inventory now lives in the
+  // Calendar tab instead of a dedicated Events screen.
+  useEventOrderAutoConfirm({
+    eventOrders, setEventOrders, inventory: items, blocks, setBlocks, saveBlocks, saveEventOrders,
+    projects, setProjects, functions, setFunctions, purchase, setPurchase,
+    settings, studio, trussInv, setTrussInv,
+  });
+
   const handleLogout = () => { logout(); navigate("/login", { replace: true }); };
 
   // Role-based tab filtering (faithful to reference).
@@ -1207,7 +1217,8 @@ export default function IMS() {
           <CalendarTab
             lmsContracts={lmsContracts} studioLmsCache={studioLmsCache}
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
-            eventOrders={eventOrders}
+            eventOrders={eventOrders} setEventOrders={setEventOrders} saveEventOrders={saveEventOrders}
+            blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
           />
         ) : tab === "flowers" ? (
           <FlowersTab
@@ -1224,17 +1235,6 @@ export default function IMS() {
             amendRequests={amendRequests} saveAmendRequests={saveAmendRequests}
             authUser={user} inventory={items}
             blocks={blocks} setBlocks={setBlocksState} saveBlocks={saveBlocks}
-          />
-        ) : tab === "events" ? (
-          <EventsTab
-            eventOrders={eventOrders} setEventOrders={setEventOrders}
-            inventory={items} blocks={blocks} setBlocks={setBlocks}
-            saveBlocks={saveBlocks} saveEventOrders={saveEventOrders}
-            projects={projects} setProjects={setProjects}
-            functions={functions} setFunctions={setFunctions}
-            purchase={purchase} setPurchase={setPurchase}
-            settings={settings} studio={studio}
-            trussInv={trussInv} setTrussInv={setTrussInv}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">
