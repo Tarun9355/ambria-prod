@@ -81,6 +81,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [recipeAddForm, setRecipeAddForm] = useState({ name: "", unit: "pc" });
   const [recipeRenameId, setRecipeRenameId] = useState(null); // studioItem name currently being renamed
   const [recipeRenameVal, setRecipeRenameVal] = useState("");
+  const [recipeSubSearch, setRecipeSubSearch] = useState(""); // find-a-sub-category search, Recipes panel
+  const [recipeSubOpen, setRecipeSubOpen] = useState({}); // { [sub]: true } — collapsed by default, click to expand
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
@@ -974,7 +976,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <input type="number" min="0" step="1" value={fl.qty || ""} placeholder="qty"
                         onChange={(e) => setRow({ qty: parseFloat(e.target.value) || 0 })}
                         className="w-14 border rounded px-1 py-1 text-xs text-center" />
-                      <span className="text-[10px] text-gray-400 w-10 truncate">{invItem?.unit || "pcs"}</span>
+                      <input value={fl.unitLabel ?? invItem?.unit ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
+                        title="Unit label — cosmetic only, doesn't change the qty or cost math"
+                        className="w-12 border rounded px-1 py-1 text-[10px] text-gray-500 text-center" />
                       <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.filter((_, i) => i !== fi) } } }))}
                         className="text-red-400 hover:text-red-600 text-xs leading-none">×</button>
                     </div>
@@ -998,7 +1002,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <input type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
                               onChange={(e) => { const p = parseFloat(e.target.value) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
                               className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}`} />
-                            <span className="text-[10px] text-gray-400 w-10 truncate" title={effGS > 1 ? `${effGS} pcs/${flower?.unit}` : "per-piece flower"}>pcs</span>
+                            <input value={fl.unitLabel ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
+                              title={(effGS > 1 ? `${effGS} pcs/${flower?.unit} — ` : "per-piece flower — ") + "unit label is cosmetic only, doesn't change the qty or cost math"}
+                              className="w-10 border rounded px-1 py-1 text-[10px] text-gray-500 text-center" />
                           </>
                         );
                       }
@@ -1010,7 +1016,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <input type="number" min="0" step="1" value={fmtN(patternsPerUnit)} placeholder="N"
                             onChange={(e) => { const n = parseFloat(e.target.value) || 0; setQty(n > 0 ? 1 / n : 0); }}
                             className="w-12 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${stored.toFixed(3)} ${flower?.unit || ""}/pattern`} />
-                          <span className="text-[10px] text-gray-400">made</span>
+                          <input value={fl.unitLabel ?? "made"} onChange={(e) => setRow({ unitLabel: e.target.value })}
+                            title="Unit label — cosmetic only, doesn't change the qty or cost math"
+                            className="w-12 border rounded px-1 py-1 text-[10px] text-gray-500 text-center" />
                         </>
                       );
                     })()}
@@ -1159,14 +1167,28 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <div className="text-center py-10 text-gray-400 text-sm border border-dashed rounded-xl">No patterns yet — tick a sub-category above to source patterns from Studio.</div>
             )}
 
-            {sortedSubs.map((sub) => (
-              <div key={sub} className="space-y-2">
-                <div className="flex items-center gap-2 mt-2">
+            {sortedSubs.length > 0 && (
+              <input value={recipeSubSearch} onChange={(e) => setRecipeSubSearch(e.target.value)} placeholder="🔍 Search sub-categories…"
+                className="w-full border rounded-lg px-3 py-2 text-sm mb-1" />
+            )}
+
+            {(() => {
+              const q = recipeSubSearch.trim().toLowerCase();
+              const visibleSubs = q ? sortedSubs.filter((sub) => sub.toLowerCase().includes(q)) : sortedSubs;
+              if (q && visibleSubs.length === 0) return <div className="text-center py-6 text-gray-400 text-xs italic">No sub-categories match "{recipeSubSearch}"</div>;
+              return visibleSubs.map((sub) => {
+              const subOpen = !!recipeSubOpen[sub];
+              const toggleOpen = () => setRecipeSubOpen((s) => ({ ...s, [sub]: !s[sub] }));
+              return (
+              <div key={sub} className="space-y-2 border rounded-xl overflow-hidden">
+                <div onClick={toggleOpen} className="flex items-center gap-2 px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100">
+                  <span className="text-gray-400 text-xs w-3">{subOpen ? "▾" : "▸"}</span>
                   <h5 className="text-sm font-semibold text-gray-700">🌸 {sub}</h5>
                   <span className="text-xs text-gray-400">({groupedBySub[sub].length})</span>
-                  <button onClick={() => { setRecipeAddSub(recipeAddSub === sub ? null : sub); setRecipeAddForm({ name: "", unit: "pc" }); }}
+                  <button onClick={(e) => { e.stopPropagation(); setRecipeAddSub(recipeAddSub === sub ? null : sub); setRecipeAddForm({ name: "", unit: "pc" }); if (!subOpen) toggleOpen(); }}
                     className="ml-auto text-[11px] font-semibold px-2 py-1 rounded-lg border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50">+ Add Item</button>
                 </div>
+                {!subOpen ? null : (<div className="px-3 pb-3 space-y-2">
                 {recipeAddSub === sub && (
                   <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-center gap-2 flex-wrap">
                     <input autoFocus value={recipeAddForm.name} onChange={(e) => setRecipeAddForm((f) => ({ ...f, name: e.target.value }))}
@@ -1250,8 +1272,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     </div>
                   );
                 })}
+                </div>)}
               </div>
-            ))}
+              );
+              });
+            })()}
 
             {legacyPatterns.length > 0 && (
               <div className="space-y-2">
