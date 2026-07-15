@@ -16,6 +16,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
   const [hoverImg, setHoverImg] = useState(null); // { idx, top, bottom, left }
+  const [addSearch, setAddSearch] = useState("");
   if (!item) return null;
   const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
@@ -67,11 +68,31 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           );
         })}
       </div>
-      <div style={{ marginTop: 5, display: "flex", gap: 6 }}>
-        <input list={`kit-add-${item.id}`} placeholder="+ add an item to this kit…" onChange={(e) => { const nm = e.target.value; const it = (imsInventory || []).find(x => x.name === nm); if (it) { setComps(comps.some(c => c.itemId === it.id) ? comps : [...comps, { itemId: it.id, qty: 1 }]); e.target.value = ""; } }} style={{ flex: 1, fontSize: 10, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
-        <datalist id={`kit-add-${item.id}`}>
-          {(imsInventory || []).filter(x => !comps.some(c => c.itemId === x.id)).slice(0, 400).map(x => <option key={x.id} value={x.name} />)}
-        </datalist>
+      <div style={{ marginTop: 5, position: "relative" }}>
+        <input value={addSearch} onChange={(e) => setAddSearch(e.target.value)} placeholder="🔍 Search by name or sub-category to add…"
+          style={{ width: "100%", fontSize: 10, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
+        {addSearch.trim() && (() => {
+          const tokens = addSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+          const matches = (imsInventory || []).filter((x) => x.id !== item.id && !comps.some((c) => c.itemId === x.id) && tokens.every((t) => (x.name + " " + (x.subCat || x.subcategory || "") + " " + (x.cat || x.category || "")).toLowerCase().includes(t))).slice(0, 40);
+          return (
+            <div style={{ position: "absolute", zIndex: 50, top: "100%", left: 0, right: 0, marginTop: 2, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
+              {matches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 10, color: textS }}>No matches</div>}
+              {matches.map((x) => {
+                const src = x.img || x.photoUrls?.[0];
+                return (
+                  <div key={x.id} onClick={() => { setComps(comps.some((c) => c.itemId === x.id) ? comps : [...comps, { itemId: x.id, qty: 1 }]); setAddSearch(""); }}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: "pointer", borderBottom: `1px solid ${border}` }}>
+                    {src ? <img src={src} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>📦</span>}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</div>
+                      <div style={{ fontSize: 9, color: textS }}>{(x.subCat || x.subcategory) ? (x.subCat || x.subcategory) + " › " : ""}{x.cat || x.category || ""}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
       <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 10 }}>
         <span style={{ color: textS }}>Kit rental = {kitBase > 0 ? `base ₹${kitBase.toLocaleString("en-IN")} + ` : ""}components ₹{componentsTotal.toLocaleString("en-IN")} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>

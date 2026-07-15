@@ -38,6 +38,10 @@ export default function StudioModals({ ctx }) {
     // premiaGate (👑 Sr. Designer / Platinum gate)
     premiaGate, setPremiaGate, premiaConfig,
   } = ctx;
+  // Rate-card items carry no photo of their own — thumbnails for the zone-upload-review "add
+  // element" search come from the matching IMS inventory item by name (best-effort; falls back to
+  // the generic 📦 icon when nothing matches, same as every other add-element search in the app).
+  const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || [];
 
   return (<>
       {/* ═══ §26.13 — 🏭/🛒 Production/Buying Custom Item Modal (31 May 2026) ═══ */}
@@ -142,14 +146,22 @@ export default function StudioModals({ ctx }) {
                   {zurElSearch.length>=1&&(()=>{
                     const q=zurElSearch.toLowerCase();
                     const matches=rcItems.filter(rc=>!(zoneUploadReview.elements||[]).find(el=>el.name===rc.name)&&(rc.name.toLowerCase().includes(q)||(rc.cat||"").toLowerCase().includes(q)||(rc.sub||"").toLowerCase().includes(q))).slice(0,8);
-                    return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:200,overflowY:"auto"}}>
-                      {matches.map(rc=><div key={rc.id} onClick={()=>{
+                    return matches.length>0?<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:240,overflowY:"auto"}}>
+                      {matches.map(rc=>{
+                        const invMatch=imsInventory.find(i=>(i.name||"").toLowerCase().trim()===rc.name.toLowerCase().trim());
+                        const src=invMatch?.img||invMatch?.photoUrls?.[0];
+                        return <div key={rc.id} onClick={()=>{
                         if(!(zoneUploadReview.elements||[]).find(el=>el.name===rc.name)){setZoneUploadReview(p=>({...p,elements:[...(p.elements||[]),{name:rc.name,qty:1,unit:rc.unit,size:rcIsSMB(rc)?"M":"",detail:""}]}));}
                         setZurElSearch("");
-                      }} style={{padding:"6px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <span style={{fontWeight:500}}>{rc.name}</span>
-                        <span style={{fontSize:9,color:textS}}>{rc.sub?rc.sub+" › ":""}{rcCats.find(c=>c.id===rc.cat)?.l||rc.cat}</span>
-                      </div>)}
+                      }} style={{padding:"6px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{width:28,height:28,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:13,opacity:0.3}}>📦</span>}
+                        </div>
+                        <div style={{flex:1,minWidth:0,display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
+                          <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rc.name}</span>
+                          <span style={{fontSize:9,color:textS,whiteSpace:"nowrap",flexShrink:0}}>{rc.sub?rc.sub+" › ":""}{rcCats.find(c=>c.id===rc.cat)?.l||rc.cat}</span>
+                        </div>
+                      </div>;})}
                     </div>:<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS}}>No matches</div>;
                   })()}
                 </div>
