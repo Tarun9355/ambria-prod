@@ -206,56 +206,81 @@ const FLORAL_HARDPROP_DEFAULT = {
   "F12": [{ propType: "console" }],
 };
 
-// ═══ STRUCTURAL COST (module scope, deterministic) — VERBATIM ═══
-function calcStructCost(zk, zc) {
-  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
-  const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
+// ═══ STRUCTURAL COST (module scope, deterministic) — VERBATIM (extracted per-row below to support
+// zoneConfig[k].extraTrussRows/extraPlatformRows — additional truss structures/platform footprints
+// in the same zone, beyond the zone's own single "row 0" scalar fields) ═══
+// One truss structure's own truss+masking cost. `row` is zc-shaped for row 0 ({dims, trT,
+// trussType, trussQty, trussFrontExt, trussFrontExtH, trussBackDepth, mkOn, mkT, mkWalls, mkS}) or
+// one entry of zc.extraTrussRows (same shape).
+function trussRowCost(row) {
+  const d = row.dims || {};
+  let truss = 0, masking = 0;
   // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at
   // the Single U rate (₹30) even if the toggle still reads Box (stale from a 3-dim state or an older
   // saved zone) — "2 dims ⇒ Single U, 3 dims ⇒ Box".
   const _trussDims = [d.L, (d.W || d.S), d.H].filter((x) => (Number(x) || 0) > 0).length;
-  const _trMode = (zc.trT === "box" && _trussDims < 3) ? "singleU" : zc.trT;
+  const _trMode = (row.trT === "box" && _trussDims < 3) ? "singleU" : row.trT;
   if (_trMode === "box") {
     const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
-    r.truss = v[0] * v[1] * 50;
+    truss = v[0] * v[1] * 50;
     // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
     // Single U rate (₹30/sqft) = extension length × extension height. Its own height (can differ from
     // the box). The shared box-corner pillar saves material/fabric, NOT cost — so the rupee cost is the
     // full Single U area for both sides.
-    const ext = Number(zc.trussFrontExt) || 0;
-    if (ext > 0) { const extH = Number(zc.trussFrontExtH) || (d.H || 0); r.truss += 2 * ext * extH * 30; }
+    const ext = Number(row.trussFrontExt) || 0;
+    if (ext > 0) { const extH = Number(row.trussFrontExtH) || (d.H || 0); truss += 2 * ext * extH * 30; }
   }
-  else if (_trMode === "singleU") { r.truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
-  // Multiple identical trusses in one zone/photo (e.g. 3× Single U) — cost scales by quantity.
-  r.truss *= Math.max(1, zc.trussQty || 1);
-  if (zc.mkOn && zc.mkT) {
-    const h = d.H || 0, rate = BASE_RATES.masking[zc.mkT] || 20; let w = 0;
+  else if (_trMode === "singleU") { truss = (d.W || d.S || d.L || 0) * (d.H || 0) * 30; }
+  // Multiple identical trusses in one row (e.g. 3× Single U) — cost scales by quantity.
+  truss *= Math.max(1, row.trussQty || 1);
+  if (row.mkOn && row.mkT) {
+    const h = d.H || 0, rate = BASE_RATES.masking[row.mkT] || 20; let w = 0;
     const dL = d.L || d.S || 0, dW = d.W || d.S || 0;
-    if (zc.mkWalls) {
-      const _trCfg = resolveTrussConfig(zc);
-      const _cfg = _trCfg?.config || (zc.trT === "box" ? "full_box" : "half_box");
+    if (row.mkWalls) {
+      const _trCfg = resolveTrussConfig({ dims: row.dims, trussType: row.trussType });
+      const _cfg = _trCfg?.config || (row.trT === "box" ? "full_box" : "half_box");
       const _spanL = _trCfg?.spanFt || dL || dW;
-      const _backDepth = zc.trussBackDepth || 4;
+      const _backDepth = row.trussBackDepth || 4;
       if (_cfg === "full_box") {
-        if (zc.mkWalls.back) w += dW * h;   // back wall spans the WIDTH
-        if (zc.mkWalls.left) w += dL * h;   // side walls span the DEPTH
-        if (zc.mkWalls.right) w += dL * h;
+        if (row.mkWalls.back) w += dW * h;   // back wall spans the WIDTH
+        if (row.mkWalls.left) w += dL * h;   // side walls span the DEPTH
+        if (row.mkWalls.right) w += dL * h;
       } else if (_cfg === "half_box") {
-        if (zc.mkWalls.back) w += _spanL * h;
-        if (zc.mkWalls.left) w += _backDepth * h;
-        if (zc.mkWalls.right) w += _backDepth * h;
+        if (row.mkWalls.back) w += _spanL * h;
+        if (row.mkWalls.left) w += _backDepth * h;
+        if (row.mkWalls.right) w += _backDepth * h;
       } else if (_cfg === "u_only") {
-        if (zc.mkWalls.back) w += _spanL * h;
+        if (row.mkWalls.back) w += _spanL * h;
       }
     } else {
-      const s = zc.mkS || 1;
-      if (zc.trT === "box") { const dd = [dL, dW].sort((a, b) => b - a); if (s >= 1) w += dd[0] * h; if (s >= 2) w += dd[1] * h; if (s >= 3) w += dd[0] * h; }
+      const s = row.mkS || 1;
+      if (row.trT === "box") { const dd = [dL, dW].sort((a, b) => b - a); if (s >= 1) w += dd[0] * h; if (s >= 2) w += dd[1] * h; if (s >= 3) w += dd[0] * h; }
       else { w = dW * h * s; }
     }
-    r.masking = w * rate * Math.max(1, zc.trussQty || 1);
+    masking = w * rate * Math.max(1, row.trussQty || 1);
   }
-  if (zc.plH) { const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0)); r.platform = a * (BASE_RATES.platform[zc.plH] || 45); }
-  if (zc.cpT) { const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0)); r.carpet = a * (BASE_RATES.carpet[zc.cpT] || 15); }
+  return { truss, masking };
+}
+// One platform footprint's platform+carpet cost. `row` is `{plH, floorDims}` for row 0 or one entry
+// of zc.extraPlatformRows. `cpT` (carpet type) stays a single zone-level choice — there's no per-row
+// carpet-type selector anywhere in the UI, so every footprint uses the zone's one carpet type.
+function platformRowCost(row, cpT) {
+  const fd = row.floorDims || {};
+  const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
+  const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
+  const carpet = cpT ? a * (BASE_RATES.carpet[cpT] || 15) : 0;
+  return { platform, carpet };
+}
+function calcStructCost(zk, zc) {
+  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
+  const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
+  const trussRows = [
+    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS },
+    ...(zc.extraTrussRows || []),
+  ];
+  trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row); r.truss += truss; r.masking += masking; });
+  const platformRows = [{ plH: zc.plH, floorDims: fd }, ...(zc.extraPlatformRows || [])];
+  platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, zc.cpT); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
   if (zc.glassOn && zc.glassT) { const gq = zc.glassQty || 0, gw = zc.glassW || 0, gh = zc.glassH || 0; r.glass = gq * gw * gh * (BASE_RATES.glass[zc.glassT] || 120); }
@@ -2500,6 +2525,26 @@ export default function StudioApp() {
   const buildZoneConfig = (zk, photoDims) => {
     const zm = zoneMeta[zk]; if (!zm || !zm.dimFields?.length) return null;
     const d = photoDims || {};
+    // Extra truss/platform rows (zoneUploadReview.dims.trussRows/platformRows, Library-shape) →
+    // zoneConfig-shape extraTrussRows/extraPlatformRows, same conversion "row 0" gets below.
+    const mapTrussRow = (row) => {
+      const rDims = {};
+      if (row.trussL) rDims.L = row.trussL;
+      if (row.trussW) rDims.W = row.trussW;
+      if (row.trussH) rDims.H = row.trussH;
+      const numRDims = [rDims.L, rDims.W, rDims.H].filter(v => (v || 0) > 0).length;
+      return {
+        id: row.id, dims: rDims, trT: numRDims >= 3 ? "box" : (zm.defaultTruss || "singleU"),
+        trussQty: Math.max(1, Number(row.trussQty) || 1),
+        trussFrontExt: Number(row.trussFrontExt) || 0,
+        trussFrontExtH: Number(row.trussFrontExtH) || 0,
+        mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
+      };
+    };
+    const mapPlatformRow = (row) => ({
+      id: row.id, plH: row.plH || null,
+      floorDims: (row.floorL || row.floorW) ? { L: row.floorL || 0, W: row.floorW || 0 } : {},
+    });
     const dims = {};
     if (d.trussL) dims.L = d.trussL;
     if (d.trussW) dims.W = d.trussW;
@@ -2521,6 +2566,8 @@ export default function StudioApp() {
       trussQty: Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
       trussFrontExtH: Number(d.trussFrontExtH) || 0,
+      extraTrussRows: (d.trussRows || []).map(mapTrussRow),
+      extraPlatformRows: (d.platformRows || []).map(mapPlatformRow),
     };
   };
 

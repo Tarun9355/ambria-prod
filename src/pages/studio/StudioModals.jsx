@@ -157,6 +157,46 @@ export default function StudioModals({ ctx }) {
                   {isBox && (Number(d.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
                 </div>;
               })()}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                <button onClick={() => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), trussRows: [...((zoneUploadReview.dims || {}).trussRows || []), { id: "TR" + Date.now() + Math.floor(Math.random() * 1000), trussL: 0, trussW: 0, trussH: 0, trussQty: 1, trussFrontExt: 0, trussFrontExtH: 0, mkOn: false, mkT: "", mkWalls: {} }] } })}
+                  style={{ fontSize: 10, fontWeight: 600, color: "#7C3AED", background: "transparent", border: `1px dashed #7C3AED80`, borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Truss</button>
+              </div>
+              {((zoneUploadReview.dims || {}).trussRows || []).map((row, ri) => {
+                const setRow = (patch) => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), trussRows: (zoneUploadReview.dims.trussRows || []).map((x, i) => (i === ri ? { ...x, ...patch } : x)) } });
+                const removeRow = () => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), trussRows: (zoneUploadReview.dims.trussRows || []).filter((_, i) => i !== ri) } });
+                const rIsBox = !!(row.trussL && row.trussW && row.trussH);
+                const cell = { fontSize: 9, color: textS, marginBottom: 2 };
+                const inp = { ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 };
+                const mw = row.mkWalls || {};
+                const walls = rIsBox ? [{ id: "back", label: "Back" }, { id: "left", label: "Left" }, { id: "right", label: "Right" }] : [{ id: "left", label: "Left" }, { id: "right", label: "Right" }];
+                return (
+                  <div key={row.id} style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: isDark ? "rgba(124,58,237,0.06)" : "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.25)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED" }}>Truss #{ri + 2}</span>
+                      <span onClick={removeRow} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 6, marginBottom: 8 }}>
+                      <div><div style={cell}>Truss Depth (ft)</div><input type="number" value={row.trussL || ""} onChange={e => setRow({ trussL: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                      <div><div style={cell}>Truss Width (ft)</div><input type="number" value={row.trussW || ""} onChange={e => setRow({ trussW: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                      <div><div style={cell}>Truss Height (ft)</div><input type="number" value={row.trussH || ""} onChange={e => setRow({ trussH: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
+                      <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={row.trussQty || ""} placeholder="1" onChange={e => setRow({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
+                    </div>
+                    {(row.trussW || row.trussH) && (
+                      <div>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                          {[{ id: "fabric", l: "Fabric" }, { id: "acrylic", l: "Acrylic" }, { id: "flex", l: "Flex" }, { id: "vinyl", l: "Vinyl" }].map(o => {
+                            const sel = row.mkT === o.id;
+                            return <span key={o.id} onClick={() => setRow({ mkT: sel ? "" : o.id, mkOn: !sel })} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${sel ? "#7C3AED" : border}`, background: sel ? "#7C3AED22" : "transparent", color: sel ? "#7C3AED" : textS, fontWeight: sel ? 600 : 400 }}>{o.l}</span>;
+                          })}
+                        </div>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {walls.map(w => { const on = mw[w.id]; return <span key={w.id} onClick={() => setRow({ mkWalls: { ...mw, [w.id]: !mw[w.id] } })} style={{ padding: "3px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${on ? "#7C3AED" : border}`, background: on ? "#7C3AED18" : "transparent", color: on ? "#7C3AED" : textS }}>{on ? "✓ " : ""}{w.label}</span>; })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                 <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={zoneUploadReview.dims?.floorL || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), floorL: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
                 <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={zoneUploadReview.dims?.floorW || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), floorW: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
@@ -169,6 +209,39 @@ export default function StudioModals({ ctx }) {
                   </div>
                 </div>
               </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", margin: "6px 0" }}>
+                <button onClick={() => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), platformRows: [...((zoneUploadReview.dims || {}).platformRows || []), { id: "PL" + Date.now() + Math.floor(Math.random() * 1000), plH: "", floorL: 0, floorW: 0 }] } })}
+                  style={{ fontSize: 10, fontWeight: 600, color: "#059669", background: "transparent", border: "1px dashed #05966980", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Platform</button>
+              </div>
+              {((zoneUploadReview.dims || {}).platformRows || []).map((row, ri) => {
+                const setRow = (patch) => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), platformRows: (zoneUploadReview.dims.platformRows || []).map((x, i) => (i === ri ? { ...x, ...patch } : x)) } });
+                const removeRow = () => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), platformRows: (zoneUploadReview.dims.platformRows || []).filter((_, i) => i !== ri) } });
+                return (
+                  <div key={row.id} style={{ marginBottom: 8, padding: 10, borderRadius: 8, background: isDark ? "rgba(5,150,105,0.06)" : "rgba(5,150,105,0.04)", border: "1px solid rgba(5,150,105,0.25)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#059669" }}>Platform #{ri + 2}</span>
+                      <span onClick={removeRow} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={row.floorL || ""} onChange={e => setRow({ floorL: parseFloat(e.target.value) || 0 })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={row.floorW || ""} onChange={e => setRow({ floorW: parseFloat(e.target.value) || 0 })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Platform</div>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
+                            const sel=(row.plH||"")=== o.v;
+                            return <span key={o.v} onClick={()=>setRow({plH:o.v})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?"#059669":border}`,background:sel?"#05966918":"transparent",color:sel?"#059669":textS}}>{o.l}</span>;
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {(((zoneUploadReview.dims||{}).trussRows||[]).length > 0 || ((zoneUploadReview.dims||{}).platformRows||[]).length > 0) && (
+                <div style={{ fontSize: 9, color: "#F59E0B", background: isDark?"rgba(245,158,11,0.08)":"rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6, padding: "5px 8px", marginBottom: 8 }}>
+                  ⚠ Extra truss/platform rows price correctly here and in Build — Deal Check doesn't reflect them yet (coming soon).
+                </div>
+              )}
               {(() => {
                 const d = zoneUploadReview.dims || {};
                 const isFullBox = !!(d.trussL && d.trussW && d.trussH);
@@ -232,50 +305,63 @@ export default function StudioModals({ ctx }) {
                   </div>
                 </div>;
               })()}
-              {/* ── Zone Structure Cost ── */}
+              {/* ── Zone Structure Cost — sums the primary row + any extra Truss/Platform rows ── */}
               {(() => {
                 const d=zoneUploadReview.dims||{};
-                const dL=d.trussL||0, dW=d.trussW||0, dH=d.trussH||0, fL=d.floorL||0, fW=d.floorW||0;
-                const isBox=dL&&dW&&dH;
-                const isSingleU=!isBox&&dW&&dH;
-                const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
-                const trussRate=isBox?50:30;
-                const trussCost=trussSqft*trussRate;
-                const mw=d.mkWalls||{};const mkT=d.mkT||"";
                 const mkRates={fabric:20,acrylic:100,flex:45,vinyl:90};
-                const mkRate=mkRates[mkT]||0;
-                let maskSqft=0;const maskWalls=[];
-                if(mw.back&&isBox){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dL}×${dH}`,sqft:a});}
-                if(mw.left){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dW}×${dH}`,sqft:a});}
-                if(mw.right){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dW}×${dH}`,sqft:a});}
-                const maskCost=maskSqft*mkRate;
-                const flSqft=fL*fW;
-                const plRate=d.plH==="4in"?30:d.plH==="1ft"?45:0;
-                const plCost=flSqft*plRate;
-                const cpRate=15;const cpCost=flSqft*cpRate;
-                const structTotal=trussCost+maskCost+plCost+cpCost;
-                if(!trussSqft&&!flSqft)return null;
+                const trussRowCalc=(row)=>{
+                  const dL=row.trussL||0, dW=row.trussW||0, dH=row.trussH||0;
+                  const isBox=dL&&dW&&dH;
+                  const isSingleU=!isBox&&dW&&dH;
+                  const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
+                  const trussRate=isBox?50:30;
+                  const qty=Math.max(1,Number(row.trussQty)||1);
+                  const trussCost=trussSqft*trussRate*qty;
+                  const mw=row.mkWalls||{};const mkT=row.mkT||"";
+                  const mkRate=mkRates[mkT]||0;
+                  let maskSqft=0;const maskWalls=[];
+                  if(mw.back&&isBox){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dL}×${dH}`,sqft:a});}
+                  if(mw.left){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dW}×${dH}`,sqft:a});}
+                  if(mw.right){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dW}×${dH}`,sqft:a});}
+                  const maskCost=maskSqft*mkRate*qty;
+                  return {isBox,trussSqft,trussRate,trussCost,mkT,mkRate,maskSqft,maskWalls,maskCost};
+                };
+                const platformRowCalc=(row)=>{
+                  const fL=row.floorL||0, fW=row.floorW||0;
+                  const flSqft=fL*fW;
+                  const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
+                  const plCost=flSqft*plRate;
+                  const cpRate=15;const cpCost=flSqft*cpRate;
+                  return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost};
+                };
+                const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls}, ...(d.trussRows||[])];
+                const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH}, ...(d.platformRows||[])];
+                const trussResults=trussRows.map(trussRowCalc);
+                const platformResults=platformRows.map(platformRowCalc);
+                const structTotal=trussResults.reduce((s,r)=>s+r.trussCost+r.maskCost,0)+platformResults.reduce((s,r)=>s+r.plCost+r.cpCost,0);
+                const anyTruss=trussResults.some(r=>r.trussSqft>0), anyFloor=platformResults.some(r=>r.flSqft>0);
+                if(!anyTruss&&!anyFloor)return null;
                 return <div style={{marginTop:14,borderTop:`1px solid ${border}`,paddingTop:12}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                     <div style={{fontSize:12,fontWeight:600,color:accent}}>{"🏗️"} Zone Structure Cost</div>
                     <div style={{fontSize:13,fontWeight:600,color:accent}}>{fmt(structTotal)}</div>
                   </div>
-                  {trussSqft>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
-                    <div><span style={{fontWeight:600}}>{isBox?"Box Truss":"Single U"}</span><br/><span style={{fontSize:10,color:textS}}>{isBox?`Top 2: ${[dL,dW,dH].sort((a,b)=>b-a).slice(0,2).join("×")} = ${trussSqft} sqft × ₹${trussRate}`:`${dW}×${dH} = ${trussSqft} sqft × ₹${trussRate}`}</span></div>
-                    <span style={{fontWeight:600}}>{fmt(trussCost)}</span>
-                  </div>}
-                  {maskCost>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
-                    <div><span style={{fontWeight:600}}>{mkT.charAt(0).toUpperCase()+mkT.slice(1)} Masking</span><br/><span style={{fontSize:10,color:textS}}>{maskWalls.map(w=>`${w.label} ${w.dim}=${w.sqft}`).join(" + ")} = {maskSqft} sqft × ₹{mkRate}</span></div>
-                    <span style={{fontWeight:600}}>{fmt(maskCost)}</span>
-                  </div>}
-                  {plCost>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
-                    <div><span style={{fontWeight:600}}>Platform ({d.plH==="4in"?"4 inch":"1ft-3ft"})</span><br/><span style={{fontSize:10,color:textS}}>{fL}×{fW} = {flSqft} sqft × ₹{plRate}</span></div>
-                    <span style={{fontWeight:600}}>{fmt(plCost)}</span>
-                  </div>}
-                  {flSqft>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11}}>
-                    <div><span style={{fontWeight:600}}>Carpet (New)</span><br/><span style={{fontSize:10,color:textS}}>{fL}×{fW} = {flSqft} sqft × ₹{cpRate}</span></div>
-                    <span style={{fontWeight:600}}>{fmt(cpCost)}</span>
-                  </div>}
+                  {trussResults.map((r,ri)=> r.trussSqft>0 && <div key={"tr"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Truss #${ri+1} — `:""}{r.isBox?"Box Truss":"Single U"}</span><br/><span style={{fontSize:10,color:textS}}>{r.trussSqft} sqft × ₹{r.trussRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(r.trussCost)}</span>
+                  </div>)}
+                  {trussResults.map((r,ri)=> r.maskCost>0 && <div key={"mk"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Truss #${ri+1} — `:""}{r.mkT.charAt(0).toUpperCase()+r.mkT.slice(1)} Masking</span><br/><span style={{fontSize:10,color:textS}}>{r.maskWalls.map(w=>`${w.label} ${w.dim}=${w.sqft}`).join(" + ")} = {r.maskSqft} sqft × ₹{r.mkRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(r.maskCost)}</span>
+                  </div>)}
+                  {platformResults.map((r,ri)=> r.plCost>0 && <div key={"pl"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Platform #${ri+1} — `:""}Platform ({r.plH==="4in"?"4 inch":"1ft-3ft"})</span><br/><span style={{fontSize:10,color:textS}}>{r.fL}×{r.fW} = {r.flSqft} sqft × ₹{r.plRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(r.plCost)}</span>
+                  </div>)}
+                  {platformResults.map((r,ri)=> r.cpCost>0 && <div key={"cp"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11}}>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Platform #${ri+1} — `:""}Carpet (New)</span><br/><span style={{fontSize:10,color:textS}}>{r.fL}×{r.fW} = {r.flSqft} sqft × ₹{r.cpRate}</span></div>
+                    <span style={{fontWeight:600}}>{fmt(r.cpCost)}</span>
+                  </div>)}
                 </div>;
               })()}
             </div>
