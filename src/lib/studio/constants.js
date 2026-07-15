@@ -1,7 +1,7 @@
 // Studio Rate Card seeds (faithful to the reference App: RC_UNITS / RC_CATS_DEFAULT / RC_D).
 export const RC_UNITS = [
   { id: "sqft", l: "/sqft" }, { id: "truss_sqft", l: "/truss sqft" }, { id: "rft", l: "/RFT" },
-  { id: "pc", l: "/pc" }, { id: "setup", l: "/setup" }, { id: "trip", l: "/trip" },
+  { id: "pc", l: "/pc" }, { id: "kg", l: "/kg" }, { id: "setup", l: "/setup" }, { id: "trip", l: "/trip" },
   { id: "event", l: "/event" }, { id: "string", l: "/string" }, { id: "included", l: "Included" }, { id: "multiplier", l: "× mult" },
 ];
 

@@ -1053,7 +1053,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, unitsPerFlowerist: v } } })); }}
                     placeholder="—"
                     className="flex-1 border rounded px-2 py-1 text-xs font-semibold text-blue-700 text-center" />
-                  <span className="text-[9px] text-gray-400 w-12 truncate">{studioUnitLabel(studioItem.unit) || "/unit"}</span>
+                  <span className="text-[9px] text-gray-400 w-12 truncate">{studioUnitLabel(pat?.unit ?? studioItem.unit) || "/unit"}</span>
                 </div>
               </div>
               {/* Fixed extra cost (e.g. the pot/base/frame) added ON TOP of the flower cost, AFTER markup:
@@ -1072,7 +1072,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 const markup = effectiveMarkup(pat, settings);
                 const extra = Number(sizeData.extraCost) || 0;
                 const studioRate = Math.round(cost * markup) + extra;
-                const unitLbl = studioUnitLabel(studioItem.unit);
+                const unitLbl = studioUnitLabel(pat?.unit ?? studioItem.unit);
                 return (
                   <div className="mt-2 border-t pt-2 space-y-0.5">
                     <div className="flex items-center justify-between text-[10px]"><span className="text-gray-500">💰 Mandi cost</span><span className="font-semibold text-gray-800">₹{cost.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
@@ -1256,7 +1256,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             }} className={"px-3 py-0.5 text-[10px] font-bold tracking-wide transition-colors " + (m === mm ? (mm === "smb" ? "bg-purple-600 text-white" : "bg-emerald-600 text-white") : "bg-white text-gray-500 hover:bg-gray-100")}>{mm === "flat" ? "FLAT" : "S/M/B"}</button>
                           ))}
                         </div>
-                        <span title="Unit sourced from Studio Rate Card" className="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-mono cursor-help">{studioUnitLabel(studioItem.unit) || "/pc"}</span>
+                        <select value={pat?.unit ?? studioItem.unit ?? "pc"} onChange={(e) => mutatePattern(studioItem, (p) => ({ ...p, unit: e.target.value }))}
+                          title="This recipe's own rate unit — overrides the Rate Card item's unit for how this recipe's cost is expressed"
+                          className="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-mono border-none">
+                          {RC_UNITS.map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}
+                        </select>
                         <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">
                           <span className="text-[9px] text-emerald-800 font-semibold">Markup:</span>
                           <input type="number" min="0" step="0.1" value={pat?.studioMarkup ?? ""}
