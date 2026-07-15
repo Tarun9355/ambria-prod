@@ -437,24 +437,29 @@ const buildSoftHoldEntry = ({ clientId, clientName, salesperson, fnList, trussIn
     Object.entries(zc).forEach(([zoneKey, z]) => {
       if (!z) return;
       if (en && Object.keys(en).length > 0 && !en[zoneKey]) return;
-      const layer0 = resolveTrussConfig(z);
-      if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
-      const eng = trussInv?.settings || {};
-      const L = parseFloat(z.dims?.L) || 0;
-      const W = parseFloat(z.dims?.W) || 0;
-      const H = parseFloat(z.dims?.H) || 0;
-      const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
-      const backDepth = z.trussBackDepth || eng.defaultBackDepthFt || 4;
-      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
-      if (!topology) return;
-      const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}`, topology, trussInv);
-      if (!alloc) return;
-      trusses.push({
-        fnIdx: fn.fnIdx ?? 0,
-        zoneKey,
-        trussConfig: layer0.config,
-        allocation: alloc,
-        shortage: !!alloc.shortage,
+      // A zone can carry more than one truss structure (row 0 = the zone's own scalar fields, plus
+      // any z.extraTrussRows added via "+ Add Truss") — reserve stock for each independently.
+      const rows = [z, ...(z.extraTrussRows || [])];
+      rows.forEach((row, rowIdx) => {
+        const layer0 = resolveTrussConfig(row);
+        if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
+        const eng = trussInv?.settings || {};
+        const L = parseFloat(row.dims?.L) || 0;
+        const W = parseFloat(row.dims?.W) || 0;
+        const H = parseFloat(row.dims?.H) || 0;
+        const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
+        const backDepth = row.trussBackDepth || eng.defaultBackDepthFt || 4;
+        const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
+        if (!topology) return;
+        const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}${rowIdx > 0 ? `-r${rowIdx}` : ""}`, topology, trussInv);
+        if (!alloc) return;
+        trusses.push({
+          fnIdx: fn.fnIdx ?? 0,
+          zoneKey: rowIdx > 0 ? `${zoneKey} (truss #${rowIdx + 1})` : zoneKey,
+          trussConfig: layer0.config,
+          allocation: alloc,
+          shortage: !!alloc.shortage,
+        });
       });
     });
   });

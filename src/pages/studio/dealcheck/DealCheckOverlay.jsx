@@ -282,22 +282,26 @@ export default function DealCheckOverlay({ ctx }) {
                 const anchors = pObj?.anchorColours || [];
                 Object.keys(zc).forEach(zk => {
                   if (!en[zk] || !zc[zk]) return;
-                  const pv = calcZoneTrussPreview(zc[zk], tInv);
-                  if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
-                  // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
-                  // Pushed per-zone here; the size-keyed names merge across all zones below.
-                  if (pv?.topology && deptInv["Tenting"]) {
-                    const pmap = {}, bmap = {};
-                    (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
-                    (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
-                    Object.entries(pmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
-                    Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
-                  }
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                  const fabCost = calcZoneFabricCost(zc[zk], tInv, anchors, density);
-                  truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
+                  // A zone can carry more than one truss structure (row 0 = the zone's own scalar
+                  // fields, plus any zc[zk].extraTrussRows added via "+ Add Truss") — sum cost per row.
+                  [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
+                    const pv = calcZoneTrussPreview(row, tInv);
+                    if (pv?.costs?.actual) { truss += pv.costs.actual; addD("Tenting", "truss", pv.costs.actual); } // truss steel → Tenting
+                    // Truss requirement → loadable line items grouped BY SIZE (e.g. "Truss pillar 15ft").
+                    // Pushed per-zone here; the size-keyed names merge across all zones below.
+                    if (pv?.topology && deptInv["Tenting"]) {
+                      const pmap = {}, bmap = {};
+                      (pv.topology.pillars || []).forEach(p => { const ft = Math.round(Number(p.H) || 0); if (ft > 0) pmap[ft] = (pmap[ft] || 0) + 1; });
+                      (pv.topology.beams || []).forEach(b => { const ft = Math.round(Number(b.lengthFt) || 0); if (ft > 0) bmap[ft] = (bmap[ft] || 0) + 1; });
+                      Object.entries(pmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
+                      Object.entries(bmap).forEach(([ft, n]) => deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: 0, total: 0, sub: "truss structure" }));
+                    }
+                    const fabCost = calcZoneFabricCost(row, tInv, anchors, density);
+                    truss += fabCost; addD("Fabric", "fabric", fabCost); // truss/masking fabric → Fabric
+                  });
                 });
               }
             } catch {}

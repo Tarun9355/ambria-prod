@@ -631,20 +631,26 @@ export function buildPlatformPlan(fns, dealCheckData) {
   const blocksByDate = dealCheckData.blocksByDate || {};
   const fattaItem = findIMSByCode(inv, PLATFORM_FATTA_CODE);
   const standItem = findIMSByCode(inv, PLATFORM_STAND_CODE);
-  // Step 1: collect raw per-zone draws in render order (fnIdx asc → zoneKey iteration order)
+  // Step 1: collect raw per-zone draws in render order (fnIdx asc → zoneKey iteration order).
+  // Each zone can carry more than one platform footprint (row 0 = the zone's own scalar plH/floorDims,
+  // plus any zc.extraPlatformRows added via "+ Add Platform") — draw one entry per row.
   const zoneDraws = [];
   fns.forEach((fn, fnIdx) => {
     if (!fn || !fn.zoneConfig || !fn.enabledEls) return;
     const enabledKeys = Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]);
     enabledKeys.forEach(zoneKey => {
       const zc = fn.zoneConfig[zoneKey];
-      if (!zc || !zc.plH) return;
-      const fd = zc.floorDims || zc.dims || {};
-      const L = Number(fd.L) || 0, W = Number(fd.W) || 0;
-      if (L <= 0 || W <= 0) return;
-      const comp = computePlatformComponents(L, W, zc.plH);
-      if (!comp) return;
-      zoneDraws.push({ fnIdx, zoneKey, plH: zc.plH, L, W, fattas: comp.fattas, stands: comp.stands, fnDate: fn.fnDate || "", fnVenue: fn.fnVenue || "" });
+      if (!zc) return;
+      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || zc.dims || {} }, ...(zc.extraPlatformRows || [])];
+      rows.forEach((row, rowIdx) => {
+        if (!row.plH) return;
+        const fd = row.floorDims || {};
+        const L = Number(fd.L) || 0, W = Number(fd.W) || 0;
+        if (L <= 0 || W <= 0) return;
+        const comp = computePlatformComponents(L, W, row.plH);
+        if (!comp) return;
+        zoneDraws.push({ fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, fattas: comp.fattas, stands: comp.stands, fnDate: fn.fnDate || "", fnVenue: fn.fnVenue || "" });
+      });
     });
   });
   // Step 2: assign free-before / free-after per zone, tracking running allocation per fnDate.
@@ -664,7 +670,11 @@ export function buildPlatformPlan(fns, dealCheckData) {
     const freeAfterStand = standTotalFree - priorStand - d.stands;
     allocByDate[date].fattaAlloc += d.fattas;
     allocByDate[date].standAlloc += d.stands;
-    perZone[`${d.fnIdx}|${d.zoneKey}`] = {
+    // Row 0 keeps the original 2-segment key (every existing single-lookup consumer targets this
+    // exact key); extra rows get a 3rd segment so they don't collide, picked up automatically by
+    // any Object.values(perZone) rollup without needing those consumers to change.
+    const key = d.rowIdx > 0 ? `${d.fnIdx}|${d.zoneKey}|${d.rowIdx}` : `${d.fnIdx}|${d.zoneKey}`;
+    perZone[key] = {
       ...d, fattaItem, standItem, fattaTotalFree, standTotalFree,
       freeBeforeFatta, freeBeforeStand, freeAfterFatta, freeAfterStand, priorFatta, priorStand
     };

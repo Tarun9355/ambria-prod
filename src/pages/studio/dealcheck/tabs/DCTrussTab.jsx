@@ -79,21 +79,27 @@ export default function DCTrussTab({ ctx }) {
                   let grandActual = 0, grandU = 0, grandBox = 0, grandPillarRft = 0, grandBeamRft = 0, grandBattaRft = 0, anyShortage = false, anyDefault = false;
                   const previewsByFn = fns.map(fn => {
                     const zones = zonesOf(fn);
-                    const previews = zones.map(zk => {
+                    // A zone can carry more than one truss structure (row 0 = the zone's own scalar
+                    // fields, plus any zCfg.extraTrussRows added via "+ Add Truss" in Build) — one
+                    // preview card per row, not per zone.
+                    const previews = zones.flatMap(zk => {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
-                      const pv = calcZoneTrussPreview(zCfg, trussInv);
-                      if (pv && pv.costs) {
-                        grandActual += pv.costs.actual;
-                        grandU      += pv.costs.uEquivalent;
-                        grandBox    += pv.costs.boxEquivalent;
-                        grandPillarRft += pv.costs.pillarRft;
-                        grandBeamRft   += pv.costs.beamRft;
-                        if (pv.batta?.rftWithBuffer) grandBattaRft += pv.batta.rftWithBuffer;
-                      }
-                      if (pv?.source === "default-on-forget") anyDefault = true;
-                      if (pv?.smartFlag === "red") anyShortage = true;
-                      return { zk, zLabel, pv };
+                      const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
+                      return rows.map((row, rowIdx) => {
+                        const pv = calcZoneTrussPreview(row, trussInv);
+                        if (pv && pv.costs) {
+                          grandActual += pv.costs.actual;
+                          grandU      += pv.costs.uEquivalent;
+                          grandBox    += pv.costs.boxEquivalent;
+                          grandPillarRft += pv.costs.pillarRft;
+                          grandBeamRft   += pv.costs.beamRft;
+                          if (pv.batta?.rftWithBuffer) grandBattaRft += pv.batta.rftWithBuffer;
+                        }
+                        if (pv?.source === "default-on-forget") anyDefault = true;
+                        if (pv?.smartFlag === "red") anyShortage = true;
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})` : zLabel, pv, row, rowIdx };
+                      });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
                   });
@@ -271,7 +277,7 @@ export default function DCTrussTab({ ctx }) {
                           <div style={{fontSize:11,fontWeight:600,color:textS,letterSpacing:0.4,textTransform:"uppercase",paddingLeft:4}}>
                             {fn?.fnType || `Function ${fi+1}`} · {fn?.fnDate || "—"} · {fn?.fnVenue || "—"}
                           </div>
-                          {previews.map(({ zk, zLabel, pv }) => {
+                          {previews.map(({ zk, zLabel, pv, row, rowIdx }) => {
                             const isInvalid = pv.smartFlag === "red";
                             const topo = pv.topology;
                             const costs = pv.costs;
@@ -280,7 +286,7 @@ export default function DCTrussTab({ ctx }) {
                                               : pv.config === "half_box" ? "Half Box"
                                               : pv.config === "full_box" ? "Full Box" : "—";
                             return (
-                              <div key={zk} style={{padding:"12px 14px",borderRadius:9,background:isInvalid?"rgba(239,68,68,0.04)":"rgba(99,102,241,0.04)",border:`1px solid ${isInvalid?"rgba(239,68,68,0.30)":border}`}}>
+                              <div key={zk + "-" + rowIdx} style={{padding:"12px 14px",borderRadius:9,background:isInvalid?"rgba(239,68,68,0.04)":"rgba(99,102,241,0.04)",border:`1px solid ${isInvalid?"rgba(239,68,68,0.30)":border}`}}>
                                 {/* Header line */}
                                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                                   <div>
@@ -307,10 +313,9 @@ export default function DCTrussTab({ ctx }) {
                                     {/* Dual dimensions */}
                                     <div style={{display:"flex",gap:12,marginBottom:8,fontSize:10}}>
                                       {(()=>{
-                                        const zCfg = (fn.zoneConfig || {})[zk] || {};
-                                        const dL = parseFloat(zCfg.dims?.L) || 0;
-                                        const dW = parseFloat(zCfg.dims?.W) || 0;
-                                        const dH = parseFloat(zCfg.dims?.H) || 0;
+                                        const dL = parseFloat(row.dims?.L) || 0;
+                                        const dW = parseFloat(row.dims?.W) || 0;
+                                        const dH = parseFloat(row.dims?.H) || 0;
                                         const demanded = pv.config === "u_only" || pv.config === "half_box"
                                           ? `${pv.spanFt || Math.max(dL, dW)}W × ${dH}H ft`
                                           : `${dW}W × ${dL}D × ${dH}H ft`;
@@ -361,8 +366,14 @@ export default function DCTrussTab({ ctx }) {
                                       </div>
                                     )}
 
-                                    {/* ── §23 Phase 2.9f — Fabric Allocation (Masking + Liza + Curtains) ── */}
-                                    {(() => {
+                                    {/* ── §23 Phase 2.9f — Fabric Allocation (Masking + Liza + Curtains) ──
+                                        Stays zone-level (rowIdx===0 only) — the allocation arrays this
+                                        writes (maskingAllocation/lizaAllocation/curtainAllocation) live
+                                        on the zone itself, not per truss row; rendering/writing this once
+                                        per extra row would duplicate the UI and repeatedly clobber the
+                                        same zone-level fields. Extra rows' fabric $ cost is still summed
+                                        correctly into the deal's total via calcZoneFabricCost elsewhere. */}
+                                    {rowIdx === 0 && (() => {
                                       const zCfg = (fn.zoneConfig || {})[zk] || {};
                                       // Resolve drape density from selected photo's library tag (Full Box only)
                                       const photoUrl = (fn.elSelectedPhoto || {})[zk];
