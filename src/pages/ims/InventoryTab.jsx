@@ -1564,7 +1564,7 @@ Rules:
               {/* §7.9.5 — Kit / Composite builder */}
               <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={!!editForm.isKit} onChange={(e) => setEditForm((f) => ({ ...f, isKit: e.target.checked, subItems: e.target.checked ? (f.subItems || []) : f.subItems }))} className="w-4 h-4 accent-indigo-600" />
+                  <input type="checkbox" checked={!!editForm.isKit} onChange={(e) => setEditForm((f) => ({ ...f, isKit: e.target.checked, subItems: e.target.checked ? (f.subItems || []) : f.subItems, kitBase: e.target.checked && !f.kitBase ? (f.price || 0) : f.kitBase }))} className="w-4 h-4 accent-indigo-600" />
                   <span className="text-xs font-bold text-indigo-800">📦 This item is a kit</span>
                   <span className="text-xs text-indigo-600">— blocking it auto-blocks the components below</span>
                 </label>
