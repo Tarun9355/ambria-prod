@@ -467,20 +467,28 @@ export default function StudioModals({ ctx }) {
                 <button onClick={() => {
                   const entry = { id: "PR" + Date.now() + Math.floor(Math.random() * 1000), material: (imsPrintMaterials || [])[0]?.id || "", areaW: 0, areaD: 0, refImageUrl: "", invId: null };
                   setZoneUploadReview({ ...zoneUploadReview, prints: [...(zoneUploadReview.prints || []), entry] });
-                }} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>+ Add Print Row</button>
+                }} style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #0EA5E9", background: "rgba(14,165,233,0.14)", color: "#0EA5E9", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>+ Add Print Row</button>
               </div>
-              {(zoneUploadReview.prints || []).length === 0 ? (
-                <div style={{ fontSize: 11, color: textS, padding: "10px 0", textAlign: "center" }}>No prints added — click "+ Add Print Row"</div>
-              ) : (
+              {(() => {
+                // Opens with one ready-to-edit blank row instead of a "no prints" empty state — purely
+                // visual (not written to zoneUploadReview.prints) until the user actually edits it.
+                const rows = (zoneUploadReview.prints || []).length === 0
+                  ? [{ id: "__phantom__", material: (imsPrintMaterials || [])[0]?.id || "", areaW: 0, areaD: 0, refImageUrl: "", invId: null }]
+                  : zoneUploadReview.prints;
+                return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {(zoneUploadReview.prints || []).map((p, pi) => {
+                  {rows.map((p, pi) => {
+                    const isPhantom = p.id === "__phantom__";
                     const invItem = p.invId ? (imsInventory || []).find(i => i.id === p.invId) : null;
                     const thumbSrc = invItem?.img || invItem?.photoUrls?.[0];
                     const mat = (imsPrintMaterials || []).find(m => m.id === p.material);
                     const sqft = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
                     const rate = mat?.ratePerSqft || 0;
                     const cost = sqft * rate;
-                    const setPrint = (patch) => setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.map((x, i) => (i === pi ? { ...x, ...patch } : x)) });
+                    const setPrint = (patch) => {
+                      if (isPhantom) { setZoneUploadReview({ ...zoneUploadReview, prints: [{ ...p, ...patch, id: "PR" + Date.now() + Math.floor(Math.random() * 1000) }] }); return; }
+                      setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.map((x, i) => (i === pi ? { ...x, ...patch } : x)) });
+                    };
                     const linkQ = zurPrintSearch[p.id] || "";
                     return (
                       <div key={p.id} style={{ padding: "8px 10px", borderRadius: 8, background: isDark ? "rgba(14,165,233,0.06)" : "rgba(14,165,233,0.05)", border: "1px solid rgba(14,165,233,0.25)" }}>
@@ -494,7 +502,7 @@ export default function StudioModals({ ctx }) {
                           <input type="number" min="0" step="0.1" value={p.areaD || ""} onChange={e => setPrint({ areaD: parseFloat(e.target.value) || 0 })} placeholder="D ft" style={{ ...S.input, fontSize: 10, padding: "3px 6px", width: 56, marginBottom: 0, textAlign: "center" }} />
                           <span style={{ fontSize: 10, color: textS }}>ft = {sqft ? sqft.toFixed(1) : 0} sqft</span>
                           <span style={{ fontSize: 11, fontWeight: 700, color: "#0EA5E9", marginLeft: "auto" }}>{rate > 0 ? fmt(cost) : "— pick material"}</span>
-                          <span onClick={() => setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.filter((_, i) => i !== pi) })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>
+                          {!isPhantom && <span onClick={() => setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.filter((_, i) => i !== pi) })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>}
                         </div>
                         <input value={p.refImageUrl || ""} onChange={e => setPrint({ refImageUrl: e.target.value })} placeholder="Reference image URL (optional)" style={{ ...S.input, fontSize: 10, padding: "3px 8px", marginTop: 6, marginBottom: 0, width: "100%" }} />
                         {p.refImageUrl && <img src={p.refImageUrl} alt="" style={{ marginTop: 6, width: "100%", maxHeight: 100, objectFit: "cover", borderRadius: 6 }} onError={e => { e.target.style.display = "none"; }} />}
@@ -544,12 +552,13 @@ export default function StudioModals({ ctx }) {
                       </div>
                     );
                   })}
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700, paddingTop: 4 }}>
+                  {(zoneUploadReview.prints || []).length > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700, paddingTop: 4 }}>
                     <span style={{ color: textP }}>Print Total</span>
                     <span style={{ color: "#0EA5E9" }}>{fmt((zoneUploadReview.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); return sum + s * (m?.ratePerSqft || 0); }, 0))}</span>
-                  </div>
+                  </div>}
                 </div>
-              )}
+                );
+              })()}
             </div>
           </div>
           <div style={{padding:"14px 20px",borderTop:`1px solid ${border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
