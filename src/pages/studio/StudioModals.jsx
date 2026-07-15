@@ -842,7 +842,7 @@ export default function StudioModals({ ctx }) {
 
       {/* §23 Phase 2.9f — Fabric AllocationPicker (Masking / Liza / Curtains, one at a time) */}
       {fabricPickerTarget && (() => {
-        const { fnIdx, zoneKey, fabricType } = fabricPickerTarget;
+        const { fnIdx, zoneKey, fabricType, rowIdx = 0 } = fabricPickerTarget;
         const trussInvLocal = dealCheckData?.trussInv;
         if (!trussInvLocal) { setFabricPickerTarget(null); return null; }
         // Read the relevant fn's data (active fn from flat state, others from fnBuilds)
@@ -850,13 +850,15 @@ export default function StudioModals({ ctx }) {
         const fnZC  = isActiveFn ? zoneConfig : (fnBuilds[fnIdx]?.zoneConfig || {});
         const fnEsp = isActiveFn ? elSelectedPhoto : (fnBuilds[fnIdx]?.elSelectedPhoto || {});
         const zCfg = fnZC[zoneKey] || {};
+        // Row 0 = the zone's own scalar fields; extra rows live on zCfg.extraTrussRows[rowIdx-1].
+        const row = rowIdx === 0 ? zCfg : ((zCfg.extraTrussRows || [])[rowIdx - 1] || {});
         const photoUrl = fnEsp[zoneKey];
         let density = "moderate";
         if (photoUrl) {
           const li = libItems.find(l => l.url === photoUrl);
           if (li?.dims?.drapeDensity) density = li.dims.drapeDensity;
         }
-        const fab = calcZoneFabric(zCfg, trussInvLocal, density);
+        const fab = calcZoneFabric(row, trussInvLocal, density);
         const fnPalette = isActiveFn ? clientPalette : (extraFunctions[fnIdx-1]?.palette || "Custom");
         // Pick the right config for this fabric type
         const cfg = fabricType === "masking" ? {
@@ -871,13 +873,27 @@ export default function StudioModals({ ctx }) {
         };
         const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
         const anchors = pObj?.anchorColours || [];
-        const existingAlloc = zCfg[cfg.allocField];
+        const existingAlloc = row[cfg.allocField];
         const initial = (Array.isArray(existingAlloc) && existingAlloc.length > 0)
           ? existingAlloc
           : autoFillFabricAllocation(cfg.totalQty, anchors, cfg.stockArr, cfg.qtyField);
         // Filter colour catalogue to only colours that exist in this fabric's stock array
         const stockColours = new Set((cfg.stockArr || []).map(s => s.colour));
         const filteredCat = (imsColourCatalogue || []).filter(c => stockColours.has(c.name));
+        // Write allocation to the correct row — row 0 sits directly on the zone, extra rows sit on
+        // zoneConfig[zoneKey].extraTrussRows[rowIdx-1].
+        const patchZone = (zoneObj, nextAlloc) => {
+          if (rowIdx === 0) {
+            const updated = { ...zoneObj };
+            if (nextAlloc) updated[cfg.allocField] = nextAlloc; else delete updated[cfg.allocField];
+            return updated;
+          }
+          const rows = [...(zoneObj.extraTrussRows || [])];
+          const target = { ...(rows[rowIdx - 1] || {}) };
+          if (nextAlloc) target[cfg.allocField] = nextAlloc; else delete target[cfg.allocField];
+          rows[rowIdx - 1] = target;
+          return { ...zoneObj, extraTrussRows: rows };
+        };
         return (
           <AllocationPicker
             open={true}
@@ -892,21 +908,15 @@ export default function StudioModals({ ctx }) {
             palette={fnPalette}
             onSave={(allocs) => {
               const cleaned = (Array.isArray(allocs) ? allocs : []).filter(a => (Number(a.qty)||0) > 0 && a.colour);
+              const nextAlloc = cleaned.length > 0 ? cleaned : null;
               if (isActiveFn) {
-                setZoneConfig(prev => {
-                  const cur = prev[zoneKey] || {};
-                  const updated = { ...cur };
-                  if (cleaned.length > 0) updated[cfg.allocField] = cleaned; else delete updated[cfg.allocField];
-                  return { ...prev, [zoneKey]: updated };
-                });
+                setZoneConfig(prev => ({ ...prev, [zoneKey]: patchZone(prev[zoneKey] || {}, nextAlloc) }));
               } else {
                 setFnBuilds(prev => {
                   const snap = prev[fnIdx] || {};
                   const curZc = snap.zoneConfig || {};
                   const curZone = curZc[zoneKey] || {};
-                  const nextZone = { ...curZone };
-                  if (cleaned.length > 0) nextZone[cfg.allocField] = cleaned; else delete nextZone[cfg.allocField];
-                  return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zoneKey]: nextZone } } };
+                  return { ...prev, [fnIdx]: { ...snap, zoneConfig: { ...curZc, [zoneKey]: patchZone(curZone, nextAlloc) } } };
                 });
               }
               setFabricPickerTarget(null);

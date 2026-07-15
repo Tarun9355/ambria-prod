@@ -309,17 +309,21 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         const zones = fn.zones || {};
         Object.values(zones).forEach(zc => {
           if (!zc) return;
-          (zc.maskingAllocation || []).forEach(a => {
-            if (!a || !a.colour || !a.qty) return;
-            required.masking[a.colour] = (required.masking[a.colour] || 0) + Number(a.qty);
-          });
-          (zc.lizaAllocation || []).forEach(a => {
-            if (!a || !a.colour || !a.qty) return;
-            required.liza[a.colour] = (required.liza[a.colour] || 0) + Number(a.qty);
-          });
-          (zc.curtainAllocation || []).forEach(a => {
-            if (!a || !a.colour || !a.qty) return;
-            required.curtain[a.colour] = (required.curtain[a.colour] || 0) + Number(a.qty);
+          // A zone can carry more than one truss row (row 0 = the zone itself, plus any
+          // zc.extraTrussRows) — each row's own fabric allocation counts toward the total.
+          [zc, ...(zc.extraTrussRows || [])].forEach(row => {
+            (row.maskingAllocation || []).forEach(a => {
+              if (!a || !a.colour || !a.qty) return;
+              required.masking[a.colour] = (required.masking[a.colour] || 0) + Number(a.qty);
+            });
+            (row.lizaAllocation || []).forEach(a => {
+              if (!a || !a.colour || !a.qty) return;
+              required.liza[a.colour] = (required.liza[a.colour] || 0) + Number(a.qty);
+            });
+            (row.curtainAllocation || []).forEach(a => {
+              if (!a || !a.colour || !a.qty) return;
+              required.curtain[a.colour] = (required.curtain[a.colour] || 0) + Number(a.qty);
+            });
           });
         });
       }

@@ -367,14 +367,11 @@ export default function DCTrussTab({ ctx }) {
                                     )}
 
                                     {/* ── §23 Phase 2.9f — Fabric Allocation (Masking + Liza + Curtains) ──
-                                        Stays zone-level (rowIdx===0 only) — the allocation arrays this
-                                        writes (maskingAllocation/lizaAllocation/curtainAllocation) live
-                                        on the zone itself, not per truss row; rendering/writing this once
-                                        per extra row would duplicate the UI and repeatedly clobber the
-                                        same zone-level fields. Extra rows' fabric $ cost is still summed
-                                        correctly into the deal's total via calcZoneFabricCost elsewhere. */}
-                                    {rowIdx === 0 && (() => {
-                                      const zCfg = (fn.zoneConfig || {})[zk] || {};
+                                        Each truss row gets its own allocation — row 0 lives directly on
+                                        the zone (zoneConfig[zk].maskingAllocation etc, unchanged), extra
+                                        rows live on zoneConfig[zk].extraTrussRows[rowIdx-1] so a different
+                                        truss row can pick a different fabric colour independently. */}
+                                    {(() => {
                                       // Resolve drape density from selected photo's library tag (Full Box only)
                                       const photoUrl = (fn.elSelectedPhoto || {})[zk];
                                       let density = "moderate";
@@ -382,7 +379,7 @@ export default function DCTrussTab({ ctx }) {
                                         const li = libItems.find(l => l.url === photoUrl);
                                         if (li?.dims?.drapeDensity) density = li.dims.drapeDensity;
                                       }
-                                      const fab = calcZoneFabric(zCfg, trussInv, density);
+                                      const fab = calcZoneFabric(row, trussInv, density);
                                       const showMasking = fab.maskingPieces > 0;
                                       const showLiza    = fab.lizaKg > 0;
                                       const showCurtain = fab.curtainPieces > 0;
@@ -393,9 +390,9 @@ export default function DCTrussTab({ ctx }) {
                                       const anchors = pObj?.anchorColours || [];
                                       const fmkup = trussInv.fabricFreshMarkup || { liza:40, masking:40, curtain:40 };
 
-                                      // Resolve allocations from zoneConfig — auto-fill if absent
+                                      // Resolve allocations from the row itself — auto-fill if absent
                                       const resolveAlloc = (allocField, totalQty, stockArr, qtyField) => {
-                                        const existing = zCfg[allocField];
+                                        const existing = row[allocField];
                                         if (Array.isArray(existing) && existing.length > 0) return existing;
                                         return autoFillFabricAllocation(totalQty, anchors, stockArr, qtyField);
                                       };
@@ -408,26 +405,33 @@ export default function DCTrussTab({ ctx }) {
                                       const lizaTotals    = calcFabricAllocationTotal(lizaAlloc,    trussInv.lizaStock,    "stockKg",     trussInv.rates?.lizaKgRate,       trussInv.rates?.lizaKgPurchase,       fmkup.liza,    trussInv.rates?.lizaKgRateNew);
                                       const curtainTotals = calcFabricAllocationTotal(curtainAlloc, trussInv.curtainStock, "stockPieces", trussInv.rates?.curtainPieceRate, trussInv.rates?.curtainPiecePurchase, fmkup.curtain, trussInv.rates?.curtainPieceRateNew);
 
+                                      // Write allocation to the correct row — row 0 sits directly on the zone,
+                                      // extra rows sit on zoneConfig[zk].extraTrussRows[rowIdx-1].
+                                      const patchZone = (zoneObj, allocField, nextAlloc) => {
+                                        if (rowIdx === 0) {
+                                          const updated = { ...zoneObj };
+                                          if (nextAlloc) updated[allocField] = nextAlloc; else delete updated[allocField];
+                                          return updated;
+                                        }
+                                        const rows = [...(zoneObj.extraTrussRows || [])];
+                                        const target = { ...(rows[rowIdx - 1] || {}) };
+                                        if (nextAlloc) target[allocField] = nextAlloc; else delete target[allocField];
+                                        rows[rowIdx - 1] = target;
+                                        return { ...zoneObj, extraTrussRows: rows };
+                                      };
                                       const updateAllocOnZone = (allocField, newAllocs) => {
                                         // §23 Phase 2.9f — write allocation to zoneConfig of the relevant fn
                                         const isActiveFn = fn.fnIdx === activeFnIdx;
                                         const nextAlloc = (Array.isArray(newAllocs) && newAllocs.length > 0) ? newAllocs : null;
                                         if (isActiveFn) {
-                                          setZoneConfig(prev => {
-                                            const cur = prev[zk] || {};
-                                            const updated = { ...cur };
-                                            if (nextAlloc) updated[allocField] = nextAlloc; else delete updated[allocField];
-                                            return { ...prev, [zk]: updated };
-                                          });
+                                          setZoneConfig(prev => ({ ...prev, [zk]: patchZone(prev[zk] || {}, allocField, nextAlloc) }));
                                         } else {
                                           // Inactive fn: update via fnBuilds snapshot
                                           setFnBuilds(prev => {
                                             const snap = prev[fn.fnIdx] || {};
                                             const curZc = snap.zoneConfig || {};
                                             const curZone = curZc[zk] || {};
-                                            const nextZone = { ...curZone };
-                                            if (nextAlloc) nextZone[allocField] = nextAlloc; else delete nextZone[allocField];
-                                            return { ...prev, [fn.fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: nextZone } } };
+                                            return { ...prev, [fn.fnIdx]: { ...snap, zoneConfig: { ...curZc, [zk]: patchZone(curZone, allocField, nextAlloc) } } };
                                           });
                                         }
                                       };
@@ -460,7 +464,7 @@ export default function DCTrussTab({ ctx }) {
                                                 {breakdown && <span style={{color:textS,fontSize:9,fontStyle:"italic"}}>({breakdown})</span>}
                                               </div>
                                               <button
-                                                onClick={() => setFabricPickerTarget({ fnIdx: fn.fnIdx, zoneKey: zk, fabricType })}
+                                                onClick={() => setFabricPickerTarget({ fnIdx: fn.fnIdx, zoneKey: zk, fabricType, rowIdx })}
                                                 style={{padding:"3px 8px",borderRadius:5,border:`1px solid ${border}`,background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:10,cursor:"pointer",fontWeight:600}}>
                                                 🎨 {allocs.length === 0 ? "Pick" : "Edit"}
                                               </button>
@@ -504,7 +508,7 @@ export default function DCTrussTab({ ctx }) {
                                           {showCurtain && <FabricRow
                                             emoji="🎀" label="Velvet Curtains" qty={fab.curtainPieces} unitLabel="pc"
                                             allocs={curtainAlloc} totals={curtainTotals} fabricType="curtain" allocField="curtainAllocation"
-                                            breakdown={`${fab.curtainPillarCount || fab.pillarCount} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${(zCfg.curtainsPerPillar || 4)} curtains/pillar`}
+                                            breakdown={`${fab.curtainPillarCount || fab.pillarCount} ${fab.curtainPillarCount && fab.curtainPillarCount < fab.pillarCount ? "front " : ""}pillars × ${(row.curtainsPerPillar || 4)} curtains/pillar`}
                                           />}
                                         </div>
                                       );
@@ -537,18 +541,17 @@ export default function DCTrussTab({ ctx }) {
                           const fnPalette = fn.fnPalette || "Custom";
                           const pObj = (imsPaletteCatalogue||[]).find(p => p.name === fnPalette);
                           const anchors = pObj?.anchorColours || [];
-                          previews.forEach(({ zk }) => {
-                            const zCfg = (fn.zoneConfig || {})[zk] || {};
+                          previews.forEach(({ zk, row }) => {
                             const photoUrl = (fn.elSelectedPhoto || {})[zk];
                             let density = "moderate";
                             if (photoUrl) {
                               const li = libItems.find(l => l.url === photoUrl);
                               if (li?.dims?.drapeDensity) density = li.dims.drapeDensity;
                             }
-                            const fab = calcZoneFabric(zCfg, trussInv, density);
+                            const fab = calcZoneFabric(row, trussInv, density);
                             const accumulate = (key, totalQty, stockArr, qtyField, allocField, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
                               if (!totalQty || totalQty <= 0) return;
-                              const existing = zCfg[allocField];
+                              const existing = row[allocField];
                               const allocs = (Array.isArray(existing) && existing.length > 0)
                                 ? existing
                                 : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);

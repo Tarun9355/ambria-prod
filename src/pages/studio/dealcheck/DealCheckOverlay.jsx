@@ -754,17 +754,20 @@ export default function DealCheckOverlay({ ctx }) {
                   let density = "moderate";
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                  const fab = calcZoneFabric(zc[zk], tInv, density);
-                  const add = (key, totalQty, stockArr, qtyField, allocField) => {
-                    if (!totalQty || totalQty <= 0) return;
-                    const existing = zc[zk][allocField];
-                    const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);
-                    if (allocs.length) allocs.forEach(a => { const c = a.colour || "(unassigned)"; agg[key][c] = (agg[key][c] || 0) + (Number(a.qty) || 0); });
-                    else agg[key]["(unassigned)"] = (agg[key]["(unassigned)"] || 0) + Math.ceil(totalQty);
-                  };
-                  add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
-                  add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
-                  add("curtain", fab.curtainPieces, tInv.curtainStock, "stockPieces", "curtainAllocation");
+                  // A zone can carry more than one truss row — each row's own allocation (or auto-fill).
+                  [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
+                    const fab = calcZoneFabric(row, tInv, density);
+                    const add = (key, totalQty, stockArr, qtyField, allocField) => {
+                      if (!totalQty || totalQty <= 0) return;
+                      const existing = row[allocField];
+                      const allocs = (Array.isArray(existing) && existing.length > 0) ? existing : autoFillFabricAllocation(Math.ceil(totalQty), anchors, stockArr, qtyField);
+                      if (allocs.length) allocs.forEach(a => { const c = a.colour || "(unassigned)"; agg[key][c] = (agg[key][c] || 0) + (Number(a.qty) || 0); });
+                      else agg[key]["(unassigned)"] = (agg[key]["(unassigned)"] || 0) + Math.ceil(totalQty);
+                    };
+                    add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
+                    add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
+                    add("curtain", fab.curtainPieces, tInv.curtainStock, "stockPieces", "curtainAllocation");
+                  });
                 });
               });
               const toRows = (o) => Object.entries(o).map(([colour, qty]) => ({ colour, qty: Math.ceil(qty) })).filter(r => r.qty > 0);
@@ -1025,12 +1028,17 @@ export default function DealCheckOverlay({ ctx }) {
                         const zoneCards = byZone[zk];
                         const matchedCount = zoneCards.filter(c => c.imsId).length;
                         const unmatchedCount = zoneCards.length - matchedCount;
-                        const pi = platformPlan?.perZone?.[`${fnIdx}|${zk}`];
-                        const hasPlatform = !!pi;
-                        const platformShort = hasPlatform && (pi.freeAfterFatta < 0 || (pi.stands > 0 && pi.freeAfterStand < 0));
+                        // A zone can carry more than one platform row (row 0 = `${fnIdx}|${zk}`, plus
+                        // any extraPlatformRows keyed `${fnIdx}|${zk}|${rowIdx}` by buildPlatformPlan).
+                        const platformEntriesForZone = Object.entries(platformPlan?.perZone || {})
+                          .filter(([k]) => k === `${fnIdx}|${zk}` || k.startsWith(`${fnIdx}|${zk}|`))
+                          .map(([k, pi]) => ({ k, pi, rowIdx: k === `${fnIdx}|${zk}` ? 0 : Number(k.split("|")[2]) }))
+                          .sort((a, b) => a.rowIdx - b.rowIdx);
+                        const hasPlatform = platformEntriesForZone.length > 0;
+                        const platformShort = platformEntriesForZone.some(({ pi }) => pi.freeAfterFatta < 0 || (pi.stands > 0 && pi.freeAfterStand < 0));
                         const recipeFlorals = recipeFloralsByZone[zk] || [];
                         const manualItemsInZone = dcManualItems.filter(mi => mi.fnIdx === fnIdx && mi.zoneKey === zk);
-                        const totalRowCount = zoneCards.length + (hasPlatform ? 1 : 0) + recipeFlorals.length + manualItemsInZone.length;
+                        const totalRowCount = zoneCards.length + platformEntriesForZone.length + recipeFlorals.length + manualItemsInZone.length;
                         const zonePhoto = fns[fnIdx]?.elSelectedPhoto?.[zk]?.src || null;
                         const zonePhotoName = fns[fnIdx]?.elSelectedPhoto?.[zk]?.eventName || "";
                         // Total rental of every matched item in this zone (kit rentals already equal the
@@ -1061,10 +1069,8 @@ export default function DealCheckOverlay({ ctx }) {
                             </div>
                             {!collapsed && (
                               <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:10}}>
-                                {/* Platform composite card (Deploy 2 §7.9 addendum) */}
-                                {(() => {
-                                  const pi = platformPlan?.perZone?.[`${fnIdx}|${zk}`];
-                                  if (!pi) return null;
+                                {/* Platform composite card(s) (Deploy 2 §7.9 addendum) — one per platform row */}
+                                {platformEntriesForZone.map(({ k: piKey, pi, rowIdx }) => {
                                   const sqft = pi.L * pi.W;
                                   const heightLabel = pi.plH === "4in" ? "4 inch raise" : "1ft–3ft";
                                   const fattaShort = pi.freeAfterFatta < 0;
@@ -1072,9 +1078,9 @@ export default function DealCheckOverlay({ ctx }) {
                                   const anyShort = fattaShort || standShort;
                                   const accentBorder = anyShort ? "#F59E0B" : "#10B981";
                                   return (
-                                    <div style={{padding:"11px 12px",borderRadius:9,background:"rgba(16,185,129,0.04)",border:`1px solid ${accentBorder}33`,display:"flex",flexDirection:"column",gap:8}}>
+                                    <div key={piKey} style={{padding:"11px 12px",borderRadius:9,background:"rgba(16,185,129,0.04)",border:`1px solid ${accentBorder}33`,display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                                        <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>🏗️ Platform ({heightLabel})</span>
+                                        <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
                                         <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#94A3B8",fontWeight:700,letterSpacing:0.4}}>STRUCTURAL</span>
                                         <span style={{fontSize:10,color:textS}}>{pi.L}×{pi.W} = {sqft} sqft</span>
                                       </div>
@@ -1135,7 +1141,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       })()}
                                     </div>
                                   );
-                                })()}
+                                })}
                                 {/* §26.18 + §26.19 — Carpet block with visual tile picker */}
                                 {(()=>{
                                   const zc = fns[fnIdx]?.zoneConfig?.[zk];
