@@ -4,6 +4,7 @@ import { DEFAULT_FILTER_PRIORITY, BATCH_TAGGER_LAST_RUN_SK } from "../../../lib/
 import { INV_CATS } from "../../../lib/inventory/constants";
 import { fetchCachedContracts, fetchSeason } from "../../../lib/ims/lms";
 import { kvGet } from "../../../lib/ims/kv";
+import TransportEditor from "../TransportEditor.jsx";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
 const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -523,12 +524,13 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"], ["tagger", "🌙 Library / Tagger"]];
+          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"], ["transport", "🚛 Transport & Power"], ["tagger", "🌙 Library / Tagger"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
         })()}
       </div>
+      {settingsView === "transport" && <TransportEditor ctx={ctx} />}
       {settingsView === "zones" && <div style={{maxWidth:800}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div><div style={{fontSize:16,fontWeight:700,color:accent}}>📐 Zone Types</div><div style={{fontSize:11,color:textS,marginTop:2}}>Define zone types used across Build, Templates, and Library. Use the ↑ ↓ arrows to set the order zones appear on the Build page. Changes sync to all devices via Redis.</div></div>

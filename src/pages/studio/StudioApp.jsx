@@ -13,10 +13,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
-import RateCard from "./RateCard.jsx";
 import ManageLibrary from "./manage/ManageLibrary.jsx";
 import ManageSettings from "./manage/ManageSettings.jsx";
-import PremiaEditor from "./manage/PremiaEditor.jsx";
 import StudioModals from "./StudioModals.jsx";
 import StudioEventInfo from "./views/StudioEventInfo.jsx";
 import StudioBrowse from "./views/StudioBrowse.jsx";
@@ -89,8 +87,8 @@ const fmt = (n) => `₹${(n || 0).toLocaleString("en-IN")}`;
 // ══ TEAM / USERS ══
 const TEAM = { tarun: { name: "Tarun", pw: "ambria@admin", role: "admin" } };
 const ROLES = ["admin", "manager", "sales"];
-const PERM_LABELS = { canViewPricing: "View pricing & costs", canManagePricing: "Manage pricing (Rate Card, Transport)", canEditEvents: "Add / edit events", canManageTemplates: "Manage templates", canManageLibrary: "Manage library", canExport: "Export data", canManageVenues: "Manage venues", canManageUsers: "Manage users" };
-const ROLE_DEFAULTS = { admin: { canViewPricing: true, canManagePricing: true, canEditEvents: true, canManageTemplates: true, canManageLibrary: true, canExport: true, canManageVenues: true, canManageUsers: true }, manager: { canViewPricing: true, canManagePricing: false, canEditEvents: true, canManageTemplates: false, canManageLibrary: true, canExport: false, canManageVenues: false, canManageUsers: false }, sales: { canViewPricing: false, canManagePricing: false, canEditEvents: false, canManageTemplates: false, canManageLibrary: false, canExport: false, canManageVenues: false, canManageUsers: false } };
+const PERM_LABELS = { canViewPricing: "View pricing & costs", canEditEvents: "Add / edit events", canManageTemplates: "Manage templates", canManageLibrary: "Manage library", canExport: "Export data", canManageVenues: "Manage venues", canManageUsers: "Manage users" };
+const ROLE_DEFAULTS = { admin: { canViewPricing: true, canEditEvents: true, canManageTemplates: true, canManageLibrary: true, canExport: true, canManageVenues: true, canManageUsers: true }, manager: { canViewPricing: true, canEditEvents: true, canManageTemplates: false, canManageLibrary: true, canExport: false, canManageVenues: false, canManageUsers: false }, sales: { canViewPricing: false, canEditEvents: false, canManageTemplates: false, canManageLibrary: false, canExport: false, canManageVenues: false, canManageUsers: false } };
 const DEFAULT_TEAM = Object.fromEntries(Object.entries(TEAM).map(([id, u]) => ([id, { ...u, active: true, perms: { ...(ROLE_DEFAULTS[u.role] || ROLE_DEFAULTS.sales) }, assignedVenues: [], venueScope: u.role === "admin" ? "all" : "outside", defaultVenue: "" }])));
 
 // ══ AMBRIA PREMIA (Platinum gate) — fully editable copy & CTA ══
@@ -1489,11 +1487,7 @@ export default function StudioApp() {
   // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
   const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
   const [rcCatEditMode, setRcCatEditMode] = useState(false);
-  const [rcCat, setRcCat] = useState("truss");
-  const [rcSearch, setRcSearch] = useState("");
   const [libElSearch, setLibElSearch] = useState("");
-  const [rcEditId, setRcEditId] = useState(null);
-  const [rcTab, setRcTab] = useState("ratecard");
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
   const [floralPerTruck, setFloralPerTruck] = useState(50000);
@@ -1656,7 +1650,6 @@ export default function StudioApp() {
       case "canExport": return studioSub("design", "export");
       case "canEditEvents":
       case "canManageLibrary": return hasStudioTab("library");
-      case "canManagePricing": return hasStudioTab("pricing");
       case "canManageTemplates": return hasStudioTab("settings");
       case "canManageVenues": return studioSub("settings", "venues");
       case "canManageUsers": return studioSub("settings", "users");
@@ -1675,20 +1668,16 @@ export default function StudioApp() {
 
   // Deal builder (studio mode) is always available to anyone with Studio access — it's the
   // base. Manage mode appears only if the role has a manage area (library/pricing/settings).
-  const canManageAny = isAdmin || hasStudioTab("library") || hasStudioTab("pricing") || hasStudioTab("settings");
+  const canManageAny = isAdmin || hasStudioTab("library") || hasStudioTab("settings");
   useEffect(() => { if (mode === "manage" && !canManageAny) setMode("studio"); }, [mode, canManageAny]);
 
   const toggleFilter = useCallback((arr, setArr, val) => {
     setArr(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
   }, []);
 
-  // ═══ AMBRIA PREMIA STATE ═══
+  // ═══ AMBRIA PREMIA STATE (Platinum-tier gate) — read-only now, editor removed ═══
   const [premiaConfig, setPremiaConfig] = useState(PREMIA_DEFAULTS);
   const [premiaGate, setPremiaGate] = useState(null);
-  const [premiaDraft, setPremiaDraft] = useState(PREMIA_DEFAULTS);
-  const [premiaEditorOpen, setPremiaEditorOpen] = useState(false);
-  const [premiaPreview, setPremiaPreview] = useState(false);
-  useEffect(() => { setPremiaDraft(premiaConfig); }, [premiaConfig]);
 
   // ═══ YOUTUBE BROWSER STATE ═══
   const [ytVideos, setYtVideos] = useState([]);
@@ -2254,7 +2243,6 @@ export default function StudioApp() {
     } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
-  const savePremiaConfig = useCallback(async (nc) => { const m = { ...PREMIA_DEFAULTS, ...nc }; setPremiaConfig(m); await reliableSave(PREMIA_CFG_SK, JSON.stringify(m), "Premia config"); }, []);
   // Submit a last-minute amendment request to the department head. Re-reads the
   // shared list first so a concurrent IMS-side decision isn't clobbered.
   const submitAmendRequest = useCallback(async (req) => {
@@ -6060,8 +6048,8 @@ Return ONLY JSON:
     pptLoading, setPptLoading, pptDone, setPptDone, savedInsps, setSavedInsps, copied, setCopied,
     pinResults, setPinResults, pinLoading, setPinLoading, pinQuery, setPinQuery, inspSource, setInspSource,
     // rate card / transport
-    rcItems, setRcItems, saveRC, rcCats, setRcCats, saveRcCats, rcCatEditMode, setRcCatEditMode, rcCat, setRcCat, rcSearch, setRcSearch,
-    rcEditId, setRcEditId, rcTab, setRcTab, rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen, rcNewForm, setRcNewForm,
+    rcItems, setRcItems, saveRC, rcCats, setRcCats, saveRcCats, rcCatEditMode, setRcCatEditMode,
+    rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen, rcNewForm, setRcNewForm,
     RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
@@ -6082,9 +6070,8 @@ Return ONLY JSON:
     templates, setTemplates, saveTpl, tplEdit, setTplEdit, tplTab, setTplTab,
     // zones
     zoneDefs, setZoneDefs, saveZD, zoneMeta, zoneKeys, zoneLabelsD, zdEditZone, setZdEditZone,
-    // premia
-    premiaConfig, setPremiaConfig, savePremiaConfig, premiaGate, setPremiaGate, premiaDraft, setPremiaDraft,
-    premiaEditorOpen, setPremiaEditorOpen, premiaPreview, setPremiaPreview, isPremiaPlatinum, PREMIA_DEFAULTS,
+    // premia (read-only gate — editor removed)
+    premiaConfig, premiaGate, setPremiaGate, isPremiaPlatinum, PREMIA_DEFAULTS,
     // youtube
     ytVideos, setYtVideos, ytPlaylists, setYtPlaylists, ytLoading, setYtLoading, ytSearch, setYtSearch, ytFilterPL, setYtFilterPL,
     loadAllYT, searchYT, fetchYTPlaylist, untaggedVideoCount, cldAdmin,
@@ -6216,7 +6203,6 @@ Return ONLY JSON:
           {/* Manage tabs */}
           {mode === "manage" && <div style={{ display: "flex", gap: 3 }}>
             {(hasPerm("canEditEvents") || hasPerm("canManageLibrary")) && <button onClick={() => setManageTab("library")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "library" ? 600 : 400, background: manageTab === "library" ? `${accent}22` : "transparent", color: manageTab === "library" ? accent : "#6B7280" }}>📚 Library & content</button>}
-            {hasPerm("canManagePricing") && <button onClick={() => setManageTab("pricing")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "pricing" ? 600 : 400, background: manageTab === "pricing" ? `${accent}22` : "transparent", color: manageTab === "pricing" ? accent : "#6B7280" }}>💰 Pricing</button>}
             {(isAdmin || hasStudioTab("settings")) && <button onClick={() => setManageTab("settings")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "settings" ? 600 : 400, background: manageTab === "settings" ? `${accent}22` : "transparent", color: manageTab === "settings" ? accent : "#6B7280" }}>⚙️ Settings</button>}
           </div>}
           {/* Live budget — only if canViewPricing */}
@@ -6261,18 +6247,12 @@ Return ONLY JSON:
       {mode === "manage" && authUser && (() => {
         // Resolve the active manage tab to one this role is permitted to see.
         const canLib = hasPerm("canEditEvents") || hasPerm("canManageLibrary");
-        const canPrice = hasPerm("canManagePricing");
         const canSettings = isAdmin || hasStudioTab("settings");
-        const okFor = (t) => (t === "library" && canLib) || (t === "pricing" && canPrice) || (t === "settings" && canSettings);
-        const effManageTab = okFor(manageTab) ? manageTab : (canLib ? "library" : canPrice ? "pricing" : canSettings ? "settings" : null);
+        const okFor = (t) => (t === "library" && canLib) || (t === "settings" && canSettings);
+        const effManageTab = okFor(manageTab) ? manageTab : (canLib ? "library" : canSettings ? "settings" : null);
         return <div style={S.main}>
           {effManageTab === "library" ? (
             <ManageLibrary ctx={ctx} />
-          ) : effManageTab === "pricing" ? (
-            <div>
-              <RateCard ctx={ctx} />
-              {rcTab !== "transport" && <PremiaEditor ctx={ctx} />}
-            </div>
           ) : effManageTab === "settings" ? (
             <ManageSettings ctx={ctx} />
           ) : (
