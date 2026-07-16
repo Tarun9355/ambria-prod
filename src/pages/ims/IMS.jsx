@@ -60,9 +60,6 @@ const vendorToRow = (v) => ({ id: v.id, name: v.name ?? null, type: v.type ?? nu
 const rowToPurchase = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
 const purchaseToRow = (p) => ({ id: p.id, vendor_id: p.vendorSnapshot?.vendorId ?? null, amount: p.actualCost ?? p.estimatedCost ?? 0, status: p.status ?? "Pending", items: [], data: p });
 
-const rowToBox = (row) => ({ ...(row.data || {}), id: row.id });
-const boxToRow = (b) => ({ id: b.id, name: b.label ?? null, items: [], data: b });
-
 const rowToOverhead = (row) => ({ ...(row.data || {}), id: row.id, amount: row.amount ?? row.data?.amount ?? 0, category: row.category ?? row.data?.category });
 const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o.amount ?? 0, category: o.category ?? null, data: o });
 
@@ -109,7 +106,6 @@ export default function IMS() {
   const [projects, setProjectsState] = useState([]);
   const [vendors, setVendorsState] = useState([]);
   const [purchase, setPurchaseState] = useState([]);
-  const [boxes, setBoxesState] = useState([]);
   const [overheads, setOverheadsState] = useState([]);
   const [supervisors, setSupervisorsState] = useState([]);
   const [users, setUsersState] = useState([]);
@@ -181,7 +177,6 @@ export default function IMS() {
   const fnsRef = useRef([]);
   const vendorsRef = useRef([]);
   const purchaseRef = useRef([]);
-  const boxesRef = useRef([]);
   const overheadsRef = useRef([]);
   const supervisorsRef = useRef([]);
   const usersRef = useRef([]);
@@ -201,7 +196,6 @@ export default function IMS() {
   useEffect(() => { fnsRef.current = functions; }, [functions]);
   useEffect(() => { vendorsRef.current = vendors; }, [vendors]);
   useEffect(() => { purchaseRef.current = purchase; }, [purchase]);
-  useEffect(() => { boxesRef.current = boxes; }, [boxes]);
   useEffect(() => { overheadsRef.current = overheads; }, [overheads]);
   useEffect(() => { supervisorsRef.current = supervisors; }, [supervisors]);
   useEffect(() => { usersRef.current = users; }, [users]);
@@ -514,13 +508,12 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, boxRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
           fetchAll("vendors").catch(() => []),
           fetchAll("purchase_orders").catch(() => []),
-          fetchAll("boxes").catch(() => []),
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
           fetchAll("users").catch(() => []),
@@ -543,7 +536,6 @@ export default function IMS() {
         setProjectsState(projRows.map(rowToProject));
         setVendorsState(venRows.map(rowToVendor));
         setPurchaseState(poRows.map(rowToPurchase));
-        setBoxesState(boxRows.map(rowToBox));
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
         setUsersState(userRows.map(rowToUser));
@@ -614,7 +606,6 @@ export default function IMS() {
     liveTable("purchase_orders", (rows) => setPurchaseState(rows.map(rowToPurchase)));
     liveTable("production_requests", (rows) => setProdRequestsState(rows.map(rowToProd)));
     liveTable("users", (rows) => setUsersState(rows.map(rowToUser)));
-    liveTable("boxes", (rows) => setBoxesState(rows.map(rowToBox)));
     liveTable("overheads", (rows) => setOverheadsState(rows.map(rowToOverhead)));
 
     return () => { active = false; supabase.removeChannel(channel); extraChannels.forEach((ch) => supabase.removeChannel(ch)); };
@@ -862,23 +853,6 @@ export default function IMS() {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
           const { error: e } = await supabase.from("purchase_orders").upsert(purchaseToRow(p), { onConflict: "id" });
-          if (e) setError(`Save failed: ${e.message}`);
-        }
-      }
-    })();
-  }, []);
-
-  const setBoxes = useCallback((updater) => {
-    const prev = boxesRef.current;
-    const next = typeof updater === "function" ? updater(prev) : updater;
-    boxesRef.current = next;
-    setBoxesState(next);
-    const prevMap = new Map(prev.map((b) => [b.id, b]));
-    (async () => {
-      for (const b of next) {
-        const before = prevMap.get(b.id);
-        if (!before || JSON.stringify(before) !== JSON.stringify(b)) {
-          const { error: e } = await supabase.from("boxes").upsert(boxToRow(b), { onConflict: "id" });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1207,8 +1181,7 @@ export default function IMS() {
         ) : tab === "planning" ? (
           <PlanningTab
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
-            vendors={vendors} setVendors={setVendors}
-            settings={settings} setSettings={setSettings} boxes={boxes} setBoxes={setBoxes}
+            settings={settings} setSettings={setSettings}
             trussInv={trussInv} setTrussInv={setTrussInv}
             trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
             studio={studio} authUser={user}

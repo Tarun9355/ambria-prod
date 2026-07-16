@@ -103,7 +103,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   // All main tabs + sub-tabs for the role editor
   const ALL_TABS = [{id:"dashboard",label:"Dashboard"},{id:"inventory",label:"Inventory"},{id:"calendar",label:"Calendar"},{id:"planning",label:"Planning"},{id:"supply",label:"Supply"},{id:"flowers",label:"Flowers"},{id:"finance",label:"Finance"},{id:"admin",label:"Admin"}];
   const ALL_SUBTABS = {
-    planning: [{id:"manpower",label:"Manpower"},{id:"truss",label:"Truss"},{id:"paint",label:"Paint"},{id:"boxes",label:"Boxes"},{id:"trussbatta",label:"Truss & Batta"},{id:"fabricstock",label:"Fabric Stock"}],
+    planning: [{id:"truss",label:"Truss"},{id:"paint",label:"Paint"},{id:"trussbatta",label:"Truss & Batta"},{id:"fabricstock",label:"Fabric Stock"}],
     supply: [{id:"purchase",label:"Purchase"},{id:"production",label:"Production"}],
     flowers: [{id:"mandi",label:"Mandi"},{id:"recipes",label:"Recipes"},{id:"planning",label:"Function Planning"},{id:"transfers",label:"Transfers"}],
     finance: [{id:"pl",label:"Event P&L"},{id:"company_pl",label:"Company P&L"},{id:"overheads",label:"Overheads"}],
