@@ -29,8 +29,8 @@ export default function StudioBuild({ ctx }) {
     clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
-    // venues (for named-venue correction)
-    allInhouseVenues = [], customOutdoor = [],
+    // venues (for named-venue correction + the zone-photo Venue pill filter)
+    allInhouseVenues = [], customOutdoor = [], allVenueData = {}, allOutdoorDB = [],
     // date demand
     dateTypes, clientLedger, activeClientId,
     // build canvas
@@ -74,6 +74,18 @@ export default function StudioBuild({ ctx }) {
   } = ctx;
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
+  // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
+  const zpPill = (active) => ({ padding: "2px 8px", borderRadius: 8, fontSize: 9, cursor: "pointer", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 400 });
+  const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
+  const zpOutdoorVenues = [
+    ...allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") !== "Indoor"),
+    ...(allOutdoorDB || []).map(v => v.name).filter(Boolean),
+  ];
+  const zpWantIndoor = (zpFilters.venueType || []).includes("Indoor");
+  const zpWantOutdoor = (zpFilters.venueType || []).some(v => v === "Outdoor" || v === "Semi-Outdoor");
+  const zpVenueChoices = zpWantIndoor && !zpWantOutdoor ? zpIndoorVenues
+    : zpWantOutdoor && !zpWantIndoor ? zpOutdoorVenues
+    : Array.from(new Set([...zpIndoorVenues, ...zpOutdoorVenues]));
   // "Correct photo tags" modal target — { libId, zoneKey, name, tags } (Phase 1b: full-tag correction)
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
@@ -597,32 +609,49 @@ export default function StudioBuild({ ctx }) {
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Event type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={{padding:"2px 8px",borderRadius:8,fontSize:9,cursor:"pointer",background:zpFilters.eventType.includes(v)?accent:"transparent",color:zpFilters.eventType.includes(v)?(isDark?"#1a1a2e":"#fff"):textS,border:`1px solid ${zpFilters.eventType.includes(v)?accent:border}`,fontWeight:zpFilters.eventType.includes(v)?600:400}}>{v}</span>)}
+                    <span onClick={()=>setZpFilters(p=>({...p,eventType:[]}))} style={zpPill(zpFilters.eventType.length===0)}>All</span>
+                    {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={zpPill(zpFilters.eventType.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Venue type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={{padding:"2px 8px",borderRadius:8,fontSize:9,cursor:"pointer",background:zpFilters.venueType.includes(v)?accent:"transparent",color:zpFilters.venueType.includes(v)?(isDark?"#1a1a2e":"#fff"):textS,border:`1px solid ${zpFilters.venueType.includes(v)?accent:border}`,fontWeight:zpFilters.venueType.includes(v)?600:400}}>{v}</span>)}
+                    <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={zpPill(zpFilters.venueType.length===0)}>All</span>
+                    {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={zpPill(zpFilters.venueType.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Design style</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={{padding:"2px 8px",borderRadius:8,fontSize:9,cursor:"pointer",background:zpFilters.designStyle.includes(v)?accent:"transparent",color:zpFilters.designStyle.includes(v)?(isDark?"#1a1a2e":"#fff"):textS,border:`1px solid ${zpFilters.designStyle.includes(v)?accent:border}`,fontWeight:zpFilters.designStyle.includes(v)?600:400}}>{v}</span>)}
+                    <span onClick={()=>setZpFilters(p=>({...p,designStyle:[]}))} style={zpPill(zpFilters.designStyle.length===0)}>All</span>
+                    {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={zpPill(zpFilters.designStyle.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Color palette</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={{padding:"2px 8px",borderRadius:8,fontSize:9,cursor:"pointer",background:zpFilters.colorPalette.includes(v)?accent:"transparent",color:zpFilters.colorPalette.includes(v)?(isDark?"#1a1a2e":"#fff"):textS,border:`1px solid ${zpFilters.colorPalette.includes(v)?accent:border}`,fontWeight:zpFilters.colorPalette.includes(v)?600:400}}>{v}</span>)}
+                    <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
+                    {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Day / Night</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,timeSetting:[]}))} style={zpPill(zpFilters.timeSetting.length===0)}>All</span>
+                    {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={zpPill(zpFilters.timeSetting.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
-                  <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Venue (name / inhouse / outside)</div>
-                  <input value={zpFilters.venue||""} onChange={e=>setZpFilters(p=>({...p,venue:e.target.value}))} placeholder="e.g. Emerald Green, inhouse venues, Outside Venues…" style={{width:"100%",padding:"5px 9px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.03)":"#fff",color:textP,fontSize:10}}/>
+                  <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>
+                    Venue{zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}
+                  </div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap",maxHeight:110,overflowY:"auto"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
+                    {zpVenueChoices.map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
+                    {zpVenueChoices.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
+                  </div>
                 </div>
-                {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],venue:""})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
+                {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
               <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
               {matchedPhotos.map((ph,i)=>{
@@ -661,7 +690,7 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${TIER_TO_CAT[tier]} ${el.label} photos match your filters`:`No ${TIER_TO_CAT[tier]} ${el.label} photos yet`}</div>
               <div style={{fontSize:11,color:textS,marginBottom:8}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],venue:""})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
+                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
                 <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"8px 20px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:12,fontWeight:600,cursor:zoneUploading?"wait":"pointer"}}>
                   {zoneUploading===k?"⏳ Uploading...":"📷 Upload Client Photo"}
                   <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>

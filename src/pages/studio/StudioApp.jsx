@@ -1413,7 +1413,7 @@ export default function StudioApp() {
 
   // ═══ ZONE PHOTO FILTERS (Build canvas) — VERBATIM ═══
   const [zpFilterOpen, setZpFilterOpen] = useState(false);
-  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], venue: "" });
+  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
@@ -1421,16 +1421,21 @@ export default function StudioApp() {
   const zpFilterPhoto = useCallback((li) => {
     if (!li) return true;
     const tags = li.tags || {};
-    for (const cat of ["eventType", "venueType", "designStyle", "colorPalette"]) {
+    for (const cat of ["eventType", "venueType", "designStyle", "colorPalette", "timeSetting"]) {
       const vals = zpFilters[cat] || [];
       if (!vals.length) continue;
       const it = tags[cat] || [];
       if (!vals.some(v => it.includes(v))) return false;
     }
-    // Venue name search — matches the photo's venue tag OR its folder path (photos are often filed under
-    // "inhouse venues/<venue>/…" or "Outside Venues/<venue>/…"), so a salesperson can type e.g. "emerald".
-    const vq = String(zpFilters.venue || "").toLowerCase().trim();
-    if (vq) { let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); } const hay = (String(tags.venue || "") + " " + url).toLowerCase(); if (!hay.includes(vq)) return false; }
+    // Venue pills — matches the photo's venue tag OR its folder path (photos are often filed under
+    // "inhouse venues/<venue>/…" or "Outside Venues/<venue>/…"), so picking "Emerald Green" also
+    // catches photos that only have it in the folder path, not the venue tag itself.
+    const venueVals = zpFilters.venue || [];
+    if (venueVals.length) {
+      let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); }
+      const hay = (String(tags.venue || "") + " " + url).toLowerCase();
+      if (!venueVals.some(v => hay.includes(String(v).toLowerCase()))) return false;
+    }
     return true;
   }, [zpFilters]);
 

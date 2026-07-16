@@ -2039,7 +2039,7 @@ export default function ManageLibrary({ ctx }) {
                           <span style={{fontSize:14,width:20,textAlign:"center"}}>{ZONE_ICONS[zone]||"📍"}</span>
                           <span style={{fontSize:11,fontWeight:600,color:textP,flex:1}}>{zone}</span>
                           {chosen?<span style={{fontSize:9,color:"#059669",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {chosen.name||"selected"}</span>:<span style={{fontSize:9,color:textS}}>{cands.length} match{cands.length===1?"":"es"}</span>}
-                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],venue:""});}} title="Open the big full-screen picker for this zone" style={{fontSize:9,fontWeight:700,cursor:"pointer",flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${accent}`,color:accent,background:`${accent}12`}}>🔍 Big view</span>
+                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});}} title="Open the big full-screen picker for this zone" style={{fontSize:9,fontWeight:700,cursor:"pointer",flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${accent}`,color:accent,background:`${accent}12`}}>🔍 Big view</span>
                           {chosen&&<span onClick={(e)=>{e.stopPropagation();setZonePhoto(null);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>× clear</span>}
                         </div>
                         {stripList.length===0
@@ -2134,32 +2134,43 @@ export default function ManageLibrary({ ctx }) {
             <div style={{padding:"8px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <span onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 12px",borderRadius:8,background:zpFilterOpen?`${accent}22`:"transparent",border:`1px solid ${zpFilterOpen?accent:border}`,color:zpFilterOpen?accent:textS,fontSize:11,fontWeight:500,cursor:"pointer"}}>🔍 Filters {zpFilterOpen?"▲":"▼"}</span>
               {zpHasFilters&&<span style={{fontSize:10,color:textS}}>{totalFiltered} of {totalRaw}</span>}
-              {zpHasFilters&&<span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],venue:""})} style={{fontSize:10,color:"#E11D48",cursor:"pointer"}}>Clear</span>}
+              {zpHasFilters&&<span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:10,color:"#E11D48",cursor:"pointer"}}>Clear</span>}
             </div>
             {zpFilterOpen&&<div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div>
                   <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Event type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,eventType:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.length===0?accent:"transparent",color:zpFilters.eventType.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.length===0?accent:border}`,fontWeight:zpFilters.eventType.length===0?600:400}}>All</span>
                     {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.includes(v)?accent:"transparent",color:zpFilters.eventType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.includes(v)?accent:border}`,fontWeight:zpFilters.eventType.includes(v)?600:400}}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Venue type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.length===0?accent:"transparent",color:zpFilters.venueType.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.length===0?accent:border}`,fontWeight:zpFilters.venueType.length===0?600:400}}>All</span>
                     {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.includes(v)?accent:"transparent",color:zpFilters.venueType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.includes(v)?accent:border}`,fontWeight:zpFilters.venueType.includes(v)?600:400}}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Design style</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,designStyle:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.length===0?accent:"transparent",color:zpFilters.designStyle.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.length===0?accent:border}`,fontWeight:zpFilters.designStyle.length===0?600:400}}>All</span>
                     {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.includes(v)?accent:"transparent",color:zpFilters.designStyle.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.includes(v)?accent:border}`,fontWeight:zpFilters.designStyle.includes(v)?600:400}}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Color palette</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.length===0?accent:"transparent",color:zpFilters.colorPalette.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.length===0?accent:border}`,fontWeight:zpFilters.colorPalette.length===0?600:400}}>All</span>
                     {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.includes(v)?accent:"transparent",color:zpFilters.colorPalette.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.includes(v)?accent:border}`,fontWeight:zpFilters.colorPalette.includes(v)?600:400}}>{v}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Day / Night</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,timeSetting:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.timeSetting.length===0?accent:"transparent",color:zpFilters.timeSetting.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.timeSetting.length===0?accent:border}`,fontWeight:zpFilters.timeSetting.length===0?600:400}}>All</span>
+                    {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.timeSetting.includes(v)?accent:"transparent",color:zpFilters.timeSetting.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.timeSetting.includes(v)?accent:border}`,fontWeight:zpFilters.timeSetting.includes(v)?600:400}}>{v}</span>)}
                   </div>
                 </div>
               </div>
