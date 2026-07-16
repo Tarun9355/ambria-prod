@@ -1148,7 +1148,7 @@ export default function ManageLibrary({ ctx }) {
                               {["S", "M", "B"].map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                           ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
-                          <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                          <div style={{ fontSize: 10, color: textS }}>{invItem?.unit || el.unit}</div>
                           <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : invItem ? "₹0" : "—"}</div>
                           <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
                           {isKit && (
@@ -1172,7 +1172,8 @@ export default function ManageLibrary({ ctx }) {
                       // getElPriceFromPattern (StudioApp.jsx), same recipe real/artificial blend as
                       // an invId floral element, just without an underlying physical item.
                       const { lineCost, isFloralBlend, realPct, patternSMB } = getElPriceFromPattern(el);
-                      const patternExists = (recipeOnlyPatterns || []).some(p => p.id === el.patternId);
+                      const livePattern = (recipeOnlyPatterns || []).find(p => p.id === el.patternId);
+                      const patternExists = !!livePattern;
                       return (
                         <div key={idx} style={rowStyle} {...rowHover}>
                           <div style={{ fontSize: 11, fontWeight: 500, color: textP, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -1192,7 +1193,7 @@ export default function ManageLibrary({ ctx }) {
                               {["S", "M", "B"].map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                           ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
-                          <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                          <div style={{ fontSize: 10, color: textS }}>{livePattern?.unit || el.unit}</div>
                           <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: lineCost > 0 ? textP : textS }}>{lineCost > 0 ? fmt(lineCost) : "₹0"}</div>
                           <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
                         </div>
@@ -1217,7 +1218,7 @@ export default function ManageLibrary({ ctx }) {
                           {sizes.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                       ) : <div style={{ fontSize: 10, color: textS, textAlign: "center" }}>—</div>}
-                      <div style={{ fontSize: 10, color: textS }}>{el.unit}</div>
+                      <div style={{ fontSize: 10, color: textS }}>{rc?.unit || el.unit}</div>
                       <div style={{ fontSize: 11, fontWeight: 500, textAlign: "right", color: (isTrussSqft ? unitPrice : lineCost) > 0 ? textP : textS }}>{isTrussSqft ? (unitPrice > 0 ? `₹${unitPrice.toLocaleString("en-IN")}/sqft` : "—") : (lineCost > 0 ? fmt(lineCost) : rc ? "₹0" : "—")}</div>
                       <span onClick={() => { const elems = (libEditImg.elements || []).filter((_, i) => i !== idx); setLibEditImg({ ...libEditImg, elements: elems }); }} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12, textAlign: "center" }}>×</span>
                     </div>
