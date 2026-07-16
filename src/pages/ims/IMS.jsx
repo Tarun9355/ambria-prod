@@ -442,6 +442,14 @@ export default function IMS() {
   // Rename a sub-category. When the new label normalizes to a different id, the row's PK changes
   // too (id must stay lower(trim(label)) — the join key everything else matches on) — rolls back
   // on failure (e.g. the new name collides with an existing sub-category).
+  //
+  // The id is only HALF the story: inventory.subCat/subcategory, rate_card.sub, and a couple of
+  // settings maps (labourTiers[type].subCatBatches, heavyElementRanges) all store this same name
+  // as a plain string, matched case-insensitively — none of them reference the category row by a
+  // stable foreign key. Left alone, renaming the row orphans every one of those the instant the
+  // id changes (scaling factor/cost%/floral-mode/hidden-tag reset to default, AI-tagging vocabulary
+  // drops the sub-category's items entirely, labour batching stops matching). So a real rename
+  // (id actually changes) cascades a rename across all of them in the same action.
   const renameSubcat = useCallback(async (oldId, newLabel) => {
     const trimmed = (newLabel || "").trim();
     if (!trimmed) return;
@@ -457,7 +465,46 @@ export default function IMS() {
     } catch (e) {
       setRateCardCategories(prevRows);
       setError(`Failed to rename: ${e.message}`);
+      return;
     }
+    if (newId === oldId) return; // pure re-casing — every case-insensitive join key still matches
+
+    setInventory((prev) => prev.map((it) => {
+      const cur = String(it.subCat ?? it.subcategory ?? "").trim().toLowerCase();
+      return cur === oldId ? { ...it, subCat: trimmed, subcategory: trimmed } : it;
+    }));
+
+    const nextRcItems = (studioRcItemsRef.current || []).map((it) => {
+      const cur = String(it.sub || "").trim().toLowerCase();
+      return cur === oldId ? { ...it, sub: trimmed } : it;
+    });
+    saveRateCardItems(nextRcItems);
+
+    setSettings((s) => {
+      let changed = false;
+      const labourTiers = { ...(s.labourTiers || {}) };
+      for (const type of Object.keys(labourTiers)) {
+        const cfg = labourTiers[type];
+        const batches = cfg?.subCatBatches;
+        if (!batches) continue;
+        const matchKey = Object.keys(batches).find((k) => String(k).trim().toLowerCase() === oldId);
+        if (matchKey && matchKey !== trimmed) {
+          const nb = { ...batches };
+          nb[trimmed] = nb[matchKey];
+          delete nb[matchKey];
+          labourTiers[type] = { ...cfg, subCatBatches: nb };
+          changed = true;
+        }
+      }
+      const heavyElementRanges = (s.heavyElementRanges || []).map((her) => {
+        if (String(her.subCat || "").trim().toLowerCase() === oldId && her.subCat !== trimmed) {
+          changed = true;
+          return { ...her, subCat: trimmed };
+        }
+        return her;
+      });
+      return changed ? { ...s, labourTiers, heavyElementRanges } : s;
+    });
   }, []);
 
   // Rate Card → IMS migration Phase 3: Rate Card admin authority moves from Studio to IMS. Same
@@ -483,14 +530,6 @@ export default function IMS() {
       setError(`Rate card save failed: ${e.message}`);
     }
   }, []);
-
-  const saveRateCardCats = useCallback(async (nextCats) => {
-    const prev = studioRcCats;
-    setStudioRcCats(nextCats);
-    const r = await reliableSave(RC_SK_CATS, JSON.stringify(nextCats), "Categories");
-    if (r && r.ok === false) { setStudioRcCats(prev); setError(`Failed to save categories: ${r.error}`); }
-    return r;
-  }, [studioRcCats]);
 
   // Auto-sync: reconcile Studio prices to the recipe whenever recipes / mandi / markup / driven-subs
   // change (debounced), and once after load — so Studio matches the recipe even with no button press.
@@ -1168,7 +1207,7 @@ export default function IMS() {
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
             onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
             rcItems={studioRcItems} rcCats={studioRcCats}
-            onSaveRateCardItems={saveRateCardItems} onSaveRateCardCats={saveRateCardCats}
+            onSaveRateCardItems={saveRateCardItems}
           />
         ) : tab === "supply" ? (
           <SupplyTab
