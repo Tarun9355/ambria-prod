@@ -1514,7 +1514,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 })}
                                               </div>
                                               <div style={{marginTop:5,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                                                <span onClick={()=>{ const avail=subItems.find(x=>!split.some(s=>s.imsId===x.id)); setSplit([...split,{imsId:avail?avail.id:(subItems[0]?.id||card.imsId),qty:Math.max(0,rem)}]); }} style={{fontSize:9.5,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>+ add item</span>
+                                                <span onClick={()=>setDcBrowseAllOpen({fnIdx, cardKey: card._cardKey, subcategory: subS, splitAdd: true, splitQty: Math.max(0, rem)})} style={{fontSize:9.5,color:accent,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>+ add item</span>
                                                 <span style={{fontSize:9.5,fontWeight:600,color:rem===0?"#10B981":(rem>0?"#F59E0B":"#EF4444")}}>{rem===0?`✓ allocated ${cQty}`:rem>0?`${rem} unallocated`:`over by ${-rem}`}</span>
                                               </div>
                                             </div>
@@ -2163,7 +2163,7 @@ export default function DealCheckOverlay({ ctx }) {
             })()}
             {/* ═══ Browse-all-in-subcategory modal (§7.9.4 #5 escape hatch) ═══ */}
             {dcBrowseAllOpen && (() => {
-              const { fnIdx, cardKey, subcategory, manualId } = dcBrowseAllOpen;
+              const { fnIdx, cardKey, subcategory, manualId, splitAdd, splitQty } = dcBrowseAllOpen;
               const items = dcInventoryCache.filter(x => String(imsField.subcategory(x)).toLowerCase().trim() === String(subcategory).toLowerCase().trim());
               const card = dcCards[fnIdx]?.[cardKey];
               // Availability (free on the event date, netted with fixed-venue locks) per item.
@@ -2171,15 +2171,16 @@ export default function DealCheckOverlay({ ctx }) {
               const _mBlocks = (dealCheckData?.blocksByDate || {})[(_mFns[fnIdx] || {}).fnDate || clientDate] || {};
               const _mVenue = (_mFns[fnIdx] || {}).fnVenue || "";
               const _mFvC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-              const _mCurId = manualId ? (dcManualItems.find(x => x.manualId === manualId)?.imsId) : card?.imsId;
-              const _mCurLabel = manualId ? (dcInventoryCache.find(i => i.id === _mCurId)?.name || "item") : (card?.rcName || "card");
+              const _mSplitIds = splitAdd ? (Array.isArray(card?.split) ? card.split.filter(s=>s&&s.imsId).map(s=>s.imsId) : []) : [];
+              const _mCurId = manualId ? (dcManualItems.find(x => x.manualId === manualId)?.imsId) : (splitAdd ? null : card?.imsId);
+              const _mCurLabel = manualId ? (dcInventoryCache.find(i => i.id === _mCurId)?.name || "item") : (splitAdd ? "the split" : (card?.rcName || "card"));
               return (
                 <div onClick={()=>setDcBrowseAllOpen(null)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
                   <div onClick={e=>e.stopPropagation()} style={{width:"min(820px, 100%)",maxHeight:"82vh",background:"#0F0F1A",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
                     <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                       <div>
                         <div style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:0.2}}>Browse {subcategory}</div>
-                        <div style={{fontSize:10,color:textS,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{items.length} items · pick one to swap into {_mCurLabel}</div>
+                        <div style={{fontSize:10,color:textS,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{items.length} items · pick one to {splitAdd?"add to":"swap into"} {_mCurLabel}</div>
                       </div>
                       <button onClick={()=>setDcBrowseAllOpen(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:13,cursor:"pointer",lineHeight:1}}>✕</button>
                     </div>
@@ -2191,7 +2192,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const rental = imsField.rentalCost(it);
                         const dims = imsField.sizeText(it);
                         const hold = getActiveSoftHold(softHolds, it.id, authUser?.name, Date.now());
-                        const isCurrent = it.id === _mCurId;
+                        const isCurrent = splitAdd ? _mSplitIds.includes(it.id) : it.id === _mCurId;
                         const _mExclude = manualId ? { manualId } : { cardKey };
                         const _mUsedElsewhere = qtyUsedElsewhereInDealCheck(it.id, _mFns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ..._mExclude }, (_mFns[fnIdx]||{}).fnDate || clientDate);
                         const avail = Math.max(0, Math.min(getStudioAvailable(it, _mBlocks), availableAtVenue(_mFvC, _mVenue, it)) - _mUsedElsewhere);
@@ -2202,6 +2203,12 @@ export default function DealCheckOverlay({ ctx }) {
                             if (isBlocked) return;
                             if (manualId) {
                               setDcManualItems(prev => prev.map(x => x.manualId === manualId ? { ...x, imsId: it.id } : x));
+                            } else if (splitAdd) {
+                              setDcCards(prev => {
+                                const prevCard = prev[fnIdx]?.[cardKey] || {};
+                                const prevSplit = Array.isArray(prevCard.split) ? prevCard.split.filter(s=>s&&s.imsId) : [];
+                                return { ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), [cardKey]: { ...prevCard, split: [...prevSplit, { imsId: it.id, qty: Math.max(0, splitQty || 0) }] } } };
+                              });
                             } else {
                               setDcCards(prev => ({
                                 ...prev,
@@ -2218,7 +2225,7 @@ export default function DealCheckOverlay({ ctx }) {
                             {/* Free-on-date availability badge (nets out other zones/cards in this same deal too) */}
                             <div title={isBlocked?"🚫 fully used in this event":"Free for this event"} style={{position:"absolute",bottom:38,right:5,fontSize:10,fontWeight:800,minWidth:20,textAlign:"center",background:avail>0?"rgba(16,185,129,0.92)":"rgba(239,68,68,0.92)",borderRadius:6,padding:"2px 6px",color:"#fff"}}>{avail}</div>
                             {hold && <div style={{position:"absolute",top:5,right:5,fontSize:9,background:"rgba(245,158,11,0.92)",borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>⏳ {hold.salesperson}</div>}
-                            {isCurrent && <div style={{position:"absolute",top:5,left:5,fontSize:9,background:`${accent}ee`,borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>✓ current</div>}
+                            {isCurrent && <div style={{position:"absolute",top:5,left:5,fontSize:9,background:`${accent}ee`,borderRadius:4,padding:"2px 5px",color:"#0F0F1A",fontWeight:700,letterSpacing:0.3}}>{splitAdd?"✓ in split":"✓ current"}</div>}
                           </div>
                         );
                       })}
