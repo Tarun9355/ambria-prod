@@ -1219,7 +1219,6 @@ export default function IMS() {
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
             onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
             rcItems={studioRcItems} rcCats={studioRcCats}
-            onSaveRateCardItems={saveRateCardItems}
           />
         ) : tab === "supply" ? (
           <SupplyTab
@@ -1258,7 +1257,6 @@ export default function IMS() {
             studio={studio} authUser={user}
             syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing}
             inventory={items} rateCardCategories={rateCardCategories}
-            rcItems={studioRcItems} onSaveRateCardItems={saveRateCardItems}
           />
         ) : tab === "approvals" ? (
           <ApprovalsTab

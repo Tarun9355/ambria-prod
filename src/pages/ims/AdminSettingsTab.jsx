@@ -32,7 +32,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], onSaveRateCardItems }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [] }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
@@ -91,8 +91,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [recipeRenameVal, setRecipeRenameVal] = useState("");
   const [recipeSubSearch, setRecipeSubSearch] = useState(""); // find-a-sub-category search, Recipes panel
   const [recipeSubOpen, setRecipeSubOpen] = useState({}); // { [sub]: true } — collapsed by default, click to expand
-  const [legacyOpen, setLegacyOpen] = useState({}); // { [patternId]: true } — Needs Review flower-line expand
-  const [legacyMapTarget, setLegacyMapTarget] = useState({}); // { [patternId]: studioItemName } — "map to Studio twin" picker
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
@@ -898,7 +896,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         </div>
       )}
       {activePanel === "patterns" && (() => {
-        const studioFloralsItems = studio?.floralsItems || [];
         const studioFloralsSubcats = studio?.floralsSubcats || [];
         const studioLoadingFlag = !!studio?.loading;
         const recipeSubs = settings.flowerRecipeSubcats || [];
@@ -930,61 +927,22 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const invOnlySubs = Object.keys(floralsInvBySub).filter((k) => !rcSubKeys.has(k)).map((k) => floralsInvBySub[k].label);
         const allFloralsSubcats = [...studioFloralsSubcats, ...invOnlySubs];
 
-        const activeStudioItems = studioFloralsItems.filter((i) => recipeSubs.includes((i.sub || "").trim()));
+        // Recipes are IMS-native now — a recipe IS a flowerPatterns entry, full stop. No separate
+        // Rate Card "studio item" needs to exist for a recipe to be creatable/renamable/deletable.
+        // Group every existing pattern by its own sub-category (never dropped, even if that sub's
+        // toggle above is off — a toggle only controls which EMPTY groups show up to add new items
+        // into, it must never hide a recipe someone already built).
+        const norm = (n) => (n || "").toLowerCase().trim();
         const groupedBySub = {};
-        activeStudioItems.forEach((i) => { const sub = (i.sub || "").trim() || "(uncategorized)"; (groupedBySub[sub] = groupedBySub[sub] || []).push(i); });
-        // Recipe-driven subs with zero Rate-Card items backing them (inventory-only subs) still need
-        // an editable card — synthesize one placeholder "studioItem" keyed by the sub-category itself
-        // so toggling it on doesn't silently produce nothing.
+        (settings.flowerPatterns || []).forEach((p) => {
+          const sub = (p.sub || "").trim() || "(uncategorized)";
+          (groupedBySub[sub] = groupedBySub[sub] || []).push(p);
+        });
         recipeSubs.forEach((sub) => {
           const trimmedSub = (sub || "").trim();
-          if (!trimmedSub || (groupedBySub[trimmedSub] && groupedBySub[trimmedSub].length)) return;
-          const invInfo = floralsInvBySub[squeezeKey(trimmedSub)];
-          if (!invInfo) return;
-          groupedBySub[trimmedSub] = [{ id: "SUB::" + trimmedSub, name: trimmedSub, sub: trimmedSub, unit: invInfo.unit || "pc" }];
+          if (trimmedSub && !groupedBySub[trimmedSub]) groupedBySub[trimmedSub] = [];
         });
         const sortedSubs = Object.keys(groupedBySub).sort((a, b) => a.localeCompare(b));
-        const legacyPatterns = (settings.flowerPatterns || []).filter((p) => {
-          const norm = (p.name || "").toLowerCase().trim();
-          return !studioFloralsItems.some((i) => (i.name || "").toLowerCase().trim() === norm);
-        });
-        // Valid "map to Studio twin" targets for a legacy pattern — any Studio Florals item that
-        // doesn't already have its OWN non-empty recipe. Mapping renames the legacy pattern onto
-        // the target's name (discarding any empty placeholder pattern the target already has), so
-        // restricting to empty-recipe targets avoids ending up with two patterns sharing one name.
-        const legacyNorm = (n) => (n || "").toLowerCase().trim();
-        const patternHasFlowers = (p) => !!p && Object.values(p.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
-        const legacyMapTargets = studioFloralsItems
-          .filter((si) => !patternHasFlowers((settings.flowerPatterns || []).find((p) => legacyNorm(p.name) === legacyNorm(si.name))))
-          .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-        // Read-only flower-line breakdown for a legacy pattern, so "Needs Review" is actually
-        // reviewable instead of just a name + a Discard button.
-        const legacyFlowerLines = (pat) => Object.entries(pat.sizes || {}).map(([sz, sd]) => ({
-          sz,
-          flowers: (sd?.flowers || []).map((fl) => {
-            if (fl.invItemId) {
-              const invItem = (inventory || []).find((i) => i.id === fl.invItemId);
-              return { label: invItem?.name || "(deleted inventory item)", qty: fl.qty, unit: fl.unitLabel || invItem?.unit || "" };
-            }
-            const flower = resolveMandiFlower(fl.flowerId, settings.mandiCatalogue)?.parent;
-            return { label: flower?.name || fl.flowerId || "(unknown flower)", qty: fl.qty, unit: fl.unitLabel || flower?.unit || "" };
-          }),
-        })).filter((s) => s.flowers.length > 0);
-        const mapLegacyToItem = (pat, targetName) => {
-          const target = studioFloralsItems.find((si) => si.name === targetName);
-          if (!target) return;
-          if (!window.confirm(`Map "${pat._legacyName || pat.name}" onto "${target.name}"? This becomes ${target.name}'s recipe.`)) return;
-          setSettings((s) => {
-            const withoutEmptyTarget = (s.flowerPatterns || []).filter((p) => p.id === pat.id || legacyNorm(p.name) !== legacyNorm(target.name));
-            return {
-              ...s,
-              flowerPatterns: withoutEmptyTarget.map((p) => (p.id === pat.id
-                ? { ...p, name: target.name, sub: (target.sub || p.sub || "").trim(), unit: p.unit || target.unit || "pc" }
-                : p)),
-            };
-          });
-          setLegacyMapTarget((m) => { const n = { ...m }; delete n[pat.id]; return n; });
-        };
 
         const toggleSub = (sub) => {
           setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
@@ -1131,44 +1089,34 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           return new Date(ts).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" });
         };
 
-        // Recipe = a Studio Rate Card Florals item (found here by exact name) + the flowerPattern
-        // attached to it by name match. Add/rename/delete act on the underlying Rate Card item —
-        // rcItems/onSaveRateCardItems come from the same write path as Admin → Rate Card, so an item
-        // added/renamed/deleted here is immediately consistent there too.
-        const normName = (n) => (n || "").toLowerCase().trim();
-        const findRcItem = (nm) => (rcItems || []).find((it) => normName(it.name) === normName(nm) && normName(it.cat) === "florals");
+        // A recipe item IS its flowerPatterns entry — add/rename/delete act on it directly, no
+        // Rate Card row involved.
         const addRecipeItem = (sub) => {
           const nm = (recipeAddForm.name || "").trim();
           if (!nm) { alert("Item needs a name"); return; }
-          if (findRcItem(nm)) { alert(`An item named "${nm}" already exists.`); return; }
-          const item = { id: "RC" + Date.now().toString(36), cat: "florals", sub, name: nm, unit: recipeAddForm.unit || "pc", inhouseMode: "flat", inhouseFlat: 0, inhouseS: 0, inhouseM: 0, inhouseB: 0, outEnabled: false, outS: 0, outM: 0, outB: 0, notes: "", artificialFlat: 0, artificialS: 0, artificialM: 0, artificialB: 0, defaultRealPct: 100, floralMode: "ratio" };
-          onSaveRateCardItems?.([...(rcItems || []), item]);
+          if ((settings.flowerPatterns || []).some((p) => norm(p.name) === norm(nm))) { alert(`An item named "${nm}" already exists.`); return; }
+          const fresh = { id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: nm, mode: "flat", sub, unit: recipeAddForm.unit || "pc", unitBasis: "per piece", sizes: { medium: { flowers: [], totalPieces: 0 } } };
+          setSettings((s) => ({ ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] }));
           setRecipeAddSub(null);
           setRecipeAddForm({ name: "", unit: "pc" });
         };
         const renameRecipeItem = (studioItem, newName) => {
           const nn = (newName || "").trim();
           if (!nn || nn === studioItem.name) { setRecipeRenameId(null); return; }
-          if (findRcItem(nn)) { alert(`An item named "${nn}" already exists.`); return; }
-          const rc = findRcItem(studioItem.name);
-          if (!rc) { alert("Couldn't find the underlying Rate Card item to rename."); setRecipeRenameId(null); return; }
-          onSaveRateCardItems?.((rcItems || []).map((it) => (it.id === rc.id ? { ...it, name: nn } : it)));
-          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).map((p) => (normName(p.name) === normName(studioItem.name) ? { ...p, name: nn } : p)) }));
+          if ((settings.flowerPatterns || []).some((p) => p.id !== studioItem.id && norm(p.name) === norm(nn))) { alert(`An item named "${nn}" already exists.`); return; }
+          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).map((p) => (p.id === studioItem.id ? { ...p, name: nn } : p)) }));
           setRecipeRenameId(null);
         };
         const deleteRecipeItem = (studioItem) => {
-          const rc = findRcItem(studioItem.name);
-          if (!rc) { alert("Couldn't find the underlying Rate Card item to delete."); return; }
-          if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This removes it from the Rate Card entirely and cannot be undone.`)) return;
-          onSaveRateCardItems?.((rcItems || []).filter((it) => it.id !== rc.id), [rc.id]);
-          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => normName(p.name) !== normName(studioItem.name)) }));
+          if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This cannot be undone.`)) return;
+          setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== studioItem.id) }));
         };
 
         return (
           <div className="space-y-4">
             <div>
               <h4 className="font-semibold text-gray-800">🌺 Flower Pattern Matrix</h4>
-              <p className="text-sm text-gray-500 mt-0.5">Pattern names sourced from Studio Rate Card · Florals. Ops edits the recipe (which flowers + how many) below.</p>
+              <p className="text-sm text-gray-500 mt-0.5">Recipes live directly here in IMS — add an item under a sub-category below, then edit the recipe (which flowers + how many).</p>
             </div>
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
@@ -1257,13 +1205,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                   const m = pat?.mode === "smb" ? "smb" : pat?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
                   const hasRecipe = !!pat && Object.values(pat.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
-                  const isPlaceholder = String(studioItem.id || "").startsWith("SUB::");
                   return (
                     <div key={studioItem.id} className="bg-white border rounded-xl overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b flex-wrap">
-                        {isPlaceholder ? (
-                          <span className="text-sm font-semibold text-gray-800">{studioItem.name}</span>
-                        ) : recipeRenameId === studioItem.name ? (
+                        {recipeRenameId === studioItem.name ? (
                           <span className="flex items-center gap-1">
                             <input autoFocus value={recipeRenameVal} onChange={(e) => setRecipeRenameVal(e.target.value)}
                               onKeyDown={(e) => { if (e.key === "Enter") renameRecipeItem(studioItem, recipeRenameVal); if (e.key === "Escape") setRecipeRenameId(null); }}
@@ -1313,7 +1258,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         <span className="ml-auto flex items-center gap-2">
                           {!hasRecipe && <span className="text-[10px] text-amber-600 italic">Empty recipe</span>}
                           {hasRecipe && <span className="text-[10px] text-green-600">✓ Recipe set</span>}
-                          {!isPlaceholder && <button onClick={() => deleteRecipeItem(studioItem)} title="Delete item + recipe" className="text-red-300 hover:text-red-600 text-xs">🗑️</button>}
+                          <button onClick={() => deleteRecipeItem(studioItem)} title="Delete item + recipe" className="text-red-300 hover:text-red-600 text-xs">🗑️</button>
                         </span>
                       </div>
                       {m === "smb" ? (
@@ -1333,51 +1278,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               );
               });
             })()}
-
-            {legacyPatterns.length > 0 && (
-              <div className="space-y-2">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                  <p className="text-xs font-semibold text-amber-800 mb-1">🟡 Needs Review ({legacyPatterns.length})</p>
-                  <p className="text-[11px] text-amber-700">These patterns don't match any Studio Florals item. Map each to a Studio twin (recipe transfers), or delete if obsolete.</p>
-                </div>
-                {legacyPatterns.map((pat) => {
-                  const open = !!legacyOpen[pat.id];
-                  const lines = legacyFlowerLines(pat);
-                  const target = legacyMapTarget[pat.id] || "";
-                  return (
-                  <div key={pat.id} className="bg-amber-50/50 border border-amber-200 rounded-xl p-3">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <button onClick={() => setLegacyOpen((s) => ({ ...s, [pat.id]: !s[pat.id] }))} className="text-gray-400 text-xs w-3">{open ? "▾" : "▸"}</button>
-                      <span className="text-sm font-semibold text-gray-700">{pat._legacyName || pat.name}</span>
-                      <span className="text-[10px] text-gray-500">({Object.values(pat.sizes || {}).reduce((a, sd) => a + (sd?.flowers || []).length, 0)} flower lines)</span>
-                      <span className="ml-auto flex items-center gap-1.5 flex-wrap">
-                        <select value={target} onChange={(e) => setLegacyMapTarget((m) => ({ ...m, [pat.id]: e.target.value }))}
-                          className="border border-gray-300 rounded px-1.5 py-1 text-[11px] max-w-[180px]">
-                          <option value="">Map to Studio item…</option>
-                          {legacyMapTargets.map((si) => <option key={si.id} value={si.name}>{si.name}</option>)}
-                        </select>
-                        <button disabled={!target} onClick={() => mapLegacyToItem(pat, target)}
-                          className={"text-xs px-2 py-1 rounded-lg font-semibold " + (target ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-gray-100 text-gray-400 cursor-not-allowed")}>✓ Map</button>
-                        <button onClick={() => { if (!window.confirm(`Delete legacy pattern "${pat._legacyName || pat.name}"?`)) return; setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== pat.id) })); }} className="text-red-400 hover:text-red-600 text-xs">🗑 Discard</button>
-                      </span>
-                    </div>
-                    {open && (
-                      <div className="mt-2 pt-2 border-t border-amber-200 space-y-1.5">
-                        {lines.length === 0 ? (
-                          <p className="text-[11px] text-gray-400 italic">No flower lines in this recipe.</p>
-                        ) : lines.map(({ sz, flowers }) => (
-                          <div key={sz} className="text-[11px]">
-                            <span className="font-semibold text-gray-600 uppercase tracking-wide mr-1.5">{sz}:</span>
-                            <span className="text-gray-600">{flowers.map((f, i) => <span key={i}>{i > 0 && ", "}{f.label} × {f.qty || 0}{f.unit ? ` ${f.unit}` : ""}</span>)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-            )}
 
             <div className="bg-pink-50 border border-pink-100 rounded-xl p-3 text-xs text-pink-800">
               <p className="font-semibold mb-1">💡 How patterns are used at function planning:</p>
