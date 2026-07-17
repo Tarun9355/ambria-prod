@@ -619,12 +619,24 @@ export default function IMS() {
 
     // ── Realtime for the rest of the shared data — re-fetch the table and re-apply on any
     // change so Studio ⇄ IMS stay in sync live (no refresh needed). ──
+    // Every keystroke into a settings-backed field (e.g. a flower-recipe qty) writes immediately,
+    // which fires this table's own postgres_changes event, which re-fetches here — so fast typing
+    // can have several of these fetches in flight at once. Network completion order isn't the same
+    // as request order, so an older fetch (still reflecting the pre-edit value) can resolve AFTER a
+    // newer one and stomp the just-typed value for a moment, until the real latest fetch corrects
+    // it back — the "value flickers to the old one, then snaps back" bug. Guard against it: only
+    // ever apply the result of the most-recently-ISSUED fetch per table, discard a stale one that
+    // resolves out of order.
     const extraChannels = [];
+    const liveTableSeq = {};
     const liveTable = (table, apply) => {
+      liveTableSeq[table] = 0;
       const ch = supabase
         .channel(`realtime:${table}`)
         .on("postgres_changes", { event: "*", schema: "public", table }, async () => {
+          const myReq = ++liveTableSeq[table];
           const rows = await fetchAll(table).catch(() => null);
+          if (myReq !== liveTableSeq[table]) return; // a newer fetch has since been issued — stale, drop it
           if (rows && active) apply(rows);
         })
         .subscribe();
