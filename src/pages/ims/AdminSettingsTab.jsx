@@ -91,6 +91,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [recipeRenameVal, setRecipeRenameVal] = useState("");
   const [recipeSubSearch, setRecipeSubSearch] = useState(""); // find-a-sub-category search, Recipes panel
   const [recipeSubOpen, setRecipeSubOpen] = useState({}); // { [sub]: true } — collapsed by default, click to expand
+  const [legacyOpen, setLegacyOpen] = useState({}); // { [patternId]: true } — Needs Review flower-line expand
+  const [legacyMapTarget, setLegacyMapTarget] = useState({}); // { [patternId]: studioItemName } — "map to Studio twin" picker
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
@@ -946,6 +948,43 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const norm = (p.name || "").toLowerCase().trim();
           return !studioFloralsItems.some((i) => (i.name || "").toLowerCase().trim() === norm);
         });
+        // Valid "map to Studio twin" targets for a legacy pattern — any Studio Florals item that
+        // doesn't already have its OWN non-empty recipe. Mapping renames the legacy pattern onto
+        // the target's name (discarding any empty placeholder pattern the target already has), so
+        // restricting to empty-recipe targets avoids ending up with two patterns sharing one name.
+        const legacyNorm = (n) => (n || "").toLowerCase().trim();
+        const patternHasFlowers = (p) => !!p && Object.values(p.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
+        const legacyMapTargets = studioFloralsItems
+          .filter((si) => !patternHasFlowers((settings.flowerPatterns || []).find((p) => legacyNorm(p.name) === legacyNorm(si.name))))
+          .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        // Read-only flower-line breakdown for a legacy pattern, so "Needs Review" is actually
+        // reviewable instead of just a name + a Discard button.
+        const legacyFlowerLines = (pat) => Object.entries(pat.sizes || {}).map(([sz, sd]) => ({
+          sz,
+          flowers: (sd?.flowers || []).map((fl) => {
+            if (fl.invItemId) {
+              const invItem = (inventory || []).find((i) => i.id === fl.invItemId);
+              return { label: invItem?.name || "(deleted inventory item)", qty: fl.qty, unit: fl.unitLabel || invItem?.unit || "" };
+            }
+            const flower = resolveMandiFlower(fl.flowerId, settings.mandiCatalogue)?.parent;
+            return { label: flower?.name || fl.flowerId || "(unknown flower)", qty: fl.qty, unit: fl.unitLabel || flower?.unit || "" };
+          }),
+        })).filter((s) => s.flowers.length > 0);
+        const mapLegacyToItem = (pat, targetName) => {
+          const target = studioFloralsItems.find((si) => si.name === targetName);
+          if (!target) return;
+          if (!window.confirm(`Map "${pat._legacyName || pat.name}" onto "${target.name}"? This becomes ${target.name}'s recipe.`)) return;
+          setSettings((s) => {
+            const withoutEmptyTarget = (s.flowerPatterns || []).filter((p) => p.id === pat.id || legacyNorm(p.name) !== legacyNorm(target.name));
+            return {
+              ...s,
+              flowerPatterns: withoutEmptyTarget.map((p) => (p.id === pat.id
+                ? { ...p, name: target.name, sub: (target.sub || p.sub || "").trim(), unit: p.unit || target.unit || "pc" }
+                : p)),
+            };
+          });
+          setLegacyMapTarget((m) => { const n = { ...m }; delete n[pat.id]; return n; });
+        };
 
         const toggleSub = (sub) => {
           setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
@@ -1301,15 +1340,42 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   <p className="text-xs font-semibold text-amber-800 mb-1">🟡 Needs Review ({legacyPatterns.length})</p>
                   <p className="text-[11px] text-amber-700">These patterns don't match any Studio Florals item. Map each to a Studio twin (recipe transfers), or delete if obsolete.</p>
                 </div>
-                {legacyPatterns.map((pat) => (
+                {legacyPatterns.map((pat) => {
+                  const open = !!legacyOpen[pat.id];
+                  const lines = legacyFlowerLines(pat);
+                  const target = legacyMapTarget[pat.id] || "";
+                  return (
                   <div key={pat.id} className="bg-amber-50/50 border border-amber-200 rounded-xl p-3">
                     <div className="flex items-center gap-3 flex-wrap">
+                      <button onClick={() => setLegacyOpen((s) => ({ ...s, [pat.id]: !s[pat.id] }))} className="text-gray-400 text-xs w-3">{open ? "▾" : "▸"}</button>
                       <span className="text-sm font-semibold text-gray-700">{pat._legacyName || pat.name}</span>
                       <span className="text-[10px] text-gray-500">({Object.values(pat.sizes || {}).reduce((a, sd) => a + (sd?.flowers || []).length, 0)} flower lines)</span>
-                      <button onClick={() => { if (!window.confirm(`Delete legacy pattern "${pat._legacyName || pat.name}"?`)) return; setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== pat.id) })); }} className="ml-auto text-red-400 hover:text-red-600 text-xs">🗑 Discard</button>
+                      <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+                        <select value={target} onChange={(e) => setLegacyMapTarget((m) => ({ ...m, [pat.id]: e.target.value }))}
+                          className="border border-gray-300 rounded px-1.5 py-1 text-[11px] max-w-[180px]">
+                          <option value="">Map to Studio item…</option>
+                          {legacyMapTargets.map((si) => <option key={si.id} value={si.name}>{si.name}</option>)}
+                        </select>
+                        <button disabled={!target} onClick={() => mapLegacyToItem(pat, target)}
+                          className={"text-xs px-2 py-1 rounded-lg font-semibold " + (target ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-gray-100 text-gray-400 cursor-not-allowed")}>✓ Map</button>
+                        <button onClick={() => { if (!window.confirm(`Delete legacy pattern "${pat._legacyName || pat.name}"?`)) return; setSettings((s) => ({ ...s, flowerPatterns: (s.flowerPatterns || []).filter((p) => p.id !== pat.id) })); }} className="text-red-400 hover:text-red-600 text-xs">🗑 Discard</button>
+                      </span>
                     </div>
+                    {open && (
+                      <div className="mt-2 pt-2 border-t border-amber-200 space-y-1.5">
+                        {lines.length === 0 ? (
+                          <p className="text-[11px] text-gray-400 italic">No flower lines in this recipe.</p>
+                        ) : lines.map(({ sz, flowers }) => (
+                          <div key={sz} className="text-[11px]">
+                            <span className="font-semibold text-gray-600 uppercase tracking-wide mr-1.5">{sz}:</span>
+                            <span className="text-gray-600">{flowers.map((f, i) => <span key={i}>{i > 0 && ", "}{f.label} × {f.qty || 0}{f.unit ? ` ${f.unit}` : ""}</span>)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
