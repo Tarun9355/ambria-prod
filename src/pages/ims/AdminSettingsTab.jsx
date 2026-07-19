@@ -942,7 +942,19 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           const trimmedSub = (sub || "").trim();
           if (trimmedSub && !groupedBySub[trimmedSub]) groupedBySub[trimmedSub] = [];
         });
-        const sortedSubs = Object.keys(groupedBySub).sort((a, b) => a.localeCompare(b));
+        // Alphabetical within each group — these lists get long, and hunting for a recipe in
+        // insertion order gets slow.
+        Object.keys(groupedBySub).forEach((sub) => {
+          groupedBySub[sub].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
+        });
+        // Only list groups for sub-categories currently ticked above — an unticked sub's recipes
+        // still exist (nothing here deletes them), they just don't clutter this browsing list.
+        // "(uncategorized)" has no toggle to control it, so it always stays visible — otherwise a
+        // pattern with no sub-category would become permanently unreachable here.
+        const recipeSubsTrimmed = new Set(recipeSubs.map((s) => (s || "").trim()));
+        const sortedSubs = Object.keys(groupedBySub)
+          .filter((sub) => sub === "(uncategorized)" || recipeSubsTrimmed.has(sub))
+          .sort((a, b) => a.localeCompare(b));
 
         const toggleSub = (sub) => {
           setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
