@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
-import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId } from "../../../lib/studio/taxonomy";
+import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
@@ -881,8 +881,7 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{ display: "flex", gap: 4 }}>
                     {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
                       const sel=(libEditImg.dims?.plH||"")=== o.v;
-                      const turningOn = !!o.v && !sel;
-                      return <span key={o.v} onClick={()=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),plH:o.v, ...((turningOn&&!libEditImg.dims?.cpT)?{cpT:defaultCarpetMatId(imsPrintMaterials)}:{})}})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{o.l}</span>;
+                      return <span key={o.v} onClick={()=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),plH:o.v}})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{o.l}</span>;
                     })}
                   </div>
                 </div>
@@ -890,9 +889,9 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={libEditImg.dims?.cpT||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value||null}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.05)":"#fff",color:textP}}>
-                    <option value="">— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                  <select value={libEditImg.dims?.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                    <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
+                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
                 </div>
               </div>
@@ -916,8 +915,7 @@ export default function ManageLibrary({ ctx }) {
                         <div style={{ display: "flex", gap: 4 }}>
                           {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
                             const sel=(row.plH||"")=== o.v;
-                            const turningOn = !!o.v && !sel;
-                            return <span key={o.v} onClick={()=>{ setRow({plH:o.v}); if (turningOn && !libEditImg.dims?.cpT) setLibEditImg((li) => ({...li, dims:{...(li.dims||{}), cpT: defaultCarpetMatId(imsPrintMaterials)}})); }} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?"#059669":border}`,background:sel?"#05966918":"transparent",color:sel?"#059669":textS}}>{o.l}</span>;
+                            return <span key={o.v} onClick={()=>setRow({plH:o.v})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?"#059669":border}`,background:sel?"#05966918":"transparent",color:sel?"#059669":textS}}>{o.l}</span>;
                           })}
                         </div>
                       </div>
@@ -1024,7 +1022,7 @@ export default function ManageLibrary({ ctx }) {
                 const flSqft=fL*fW;
                 const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                 const plCost=flSqft*plRate;
-                const cpRate=d.cpT?cp.rate:0;const cpCost=flSqft*cpRate;
+                const cpRate=d.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                 return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost};
               };
               const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls}, ...(d.trussRows||[])];

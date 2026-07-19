@@ -74,23 +74,32 @@ export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}
 export const ARCH_OPTS=[{id:"2d",l:"2D (Flat)",r:60},{id:"3d",l:"3D (Built-out)",r:100}];
 export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out)",r:180}];
 
+// Sentinel `cpT` value meaning "salesperson explicitly turned carpet off" — any OTHER falsy value
+// (null/undefined, from every zone-creation path that doesn't set cpT at all) means "not decided
+// yet", which prices as Carpet Old by default rather than as no carpet — carpet used to be priced
+// unconditionally whenever a zone had a floor footprint, so leaving it untouched must keep pricing,
+// not silently drop to ₹0.
+export const CARPET_OFF = "__off__";
+
 // Carpet used to be a fixed Old/New rate baked in here. It's now priced live from IMS Admin →
 // Settings → 🖨️ Print Materials — `cpT` on a zone holds a printMaterials row id, not an enum, so
 // editing a material's rate there (or adding new floor-covering options) updates every zone
 // instantly instead of requiring a code change. `{rate, label}` together so pricing and display
 // (StudioApp's structItems line, StudioSummary's breakdown) read off the same lookup.
 export function carpetPricingFor(cpT, printMaterials) {
-  if (!cpT) return { rate: 0, label: "" };
+  if (cpT === CARPET_OFF) return { rate: 0, label: "" };
   const list = printMaterials || [];
-  let mat = list.find((m) => m.id === cpT);
-  if (!mat && (cpT === "old" || cpT === "new")) {
+  const effective = cpT || defaultCarpetMatId(list);
+  if (!effective) return { rate: 0, label: "" };
+  let mat = list.find((m) => m.id === effective);
+  if (!mat && (effective === "old" || effective === "new")) {
     // Zones saved before this switch stored cpT as the literal "old"/"new" enum — map by name once.
-    const want = cpT === "old" ? "carpet old" : "carpet new";
+    const want = effective === "old" ? "carpet old" : "carpet new";
     mat = list.find((m) => String(m.name || "").trim().toLowerCase() === want);
   }
   if (mat) return { rate: Number(mat.ratePerSqft) || 0, label: mat.name };
-  const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
-  return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
+  const fallbackRate = effective === "old" ? 7 : effective === "new" ? 15 : 0;
+  return { rate: fallbackRate, label: effective === "old" ? "Old" : effective === "new" ? "New" : effective };
 }
 // Whatever a newly-added platform's carpet should default to — "Carpet Old" by name if that
 // material exists, else any material with "carpet" in its name, else none (no default available).

@@ -1,7 +1,7 @@
 import { Fragment, useState, useRef, useEffect } from "react";
 import {
   TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
-  MASK_OPTS, PLAT_OPTS, carpetPricingFor, defaultCarpetMatId,
+  MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -1283,17 +1283,14 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:12,marginBottom:6}}>
                 {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🏗️"} Platform</span>
-                    {PLAT_OPTS.map(o=>{
-                      const turningOn = zc.plH !== o.id;
-                      return <button key={o.id} onClick={()=>sZ({plH:turningOn?o.id:null, ...(turningOn&&!zc.cpT?{cpT:defaultCarpetMatId(imsPrintMaterials)}:{})})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>;
-                    })}
+                    {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
                 </div>}
                 {zm.hasCarpet&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🟫"} Carpet</span>
-                    <select value={zc.cpT||""} onChange={e=>sZ({cpT:e.target.value||null})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.05)":"#fff",color:textP}}>
-                      <option value="">— None —</option>
-                      {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                    <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                      <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
+                      {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                     </select>
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
                 </div>}
@@ -1600,18 +1597,15 @@ export default function StudioBuild({ ctx }) {
               {/* Platform */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,fontSize:11}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}><span>🏗️ Platform</span>
-                  {PLAT_OPTS.map(o=>{
-                    const turningOn = zc.plH !== o.id;
-                    return <button key={o.id} onClick={()=>sZ({plH:turningOn?o.id:null, ...(turningOn&&!zc.cpT?{cpT:defaultCarpetMatId(imsPrintMaterials)}:{})})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>;
-                  })}
+                  {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                 </div>{showCosts&&st.platform>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
               </div>
               {/* Carpet */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:11}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}><span>🟫 Carpet</span>
-                  <select value={zc.cpT||""} onChange={e=>sZ({cpT:e.target.value||null})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.05)":"#fff",color:textP}}>
-                    <option value="">— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                  <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                    <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
+                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                 </div>{showCosts&&st.carpet>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
               </div>

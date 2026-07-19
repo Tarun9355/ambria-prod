@@ -31,7 +31,7 @@ import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
-  carpetPricingFor, defaultCarpetMatId,
+  carpetPricingFor, CARPET_OFF,
 } from "../../lib/studio/taxonomy";
 
 // Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
@@ -269,7 +269,7 @@ function platformRowCost(row, cpT, printMaterials) {
   const fd = row.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
-  const carpet = cpT ? a * carpetPricingFor(cpT, printMaterials).rate : 0;
+  const carpet = cpT === CARPET_OFF ? 0 : a * carpetPricingFor(cpT, printMaterials).rate;
   return { platform, carpet };
 }
 function calcStructCost(zk, zc, printMaterials) {
@@ -905,7 +905,7 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     const dims = cfg.dims || {}; const sqft = (Number(dims.w) || 0) * (Number(dims.d) || 0); if (sqft <= 0) return;
     if (cfg.trT) addSub("Truss", sqft * Math.max(1, Number(cfg.trussQty) || 1));
     if (cfg.plH) addSub("Platform", sqft);
-    if (cfg.cpT) addSub("Carpet", sqft);
+    if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft);
   });
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
@@ -2599,7 +2599,7 @@ export default function StudioApp() {
       dims: hasDims ? dims : Object.fromEntries(zm.dimFields.map(f => [f, 0])),
       floorDims: Object.keys(floorDims).length ? floorDims : (hasDims ? { ...dims } : {}),
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
-      plH: d.plH || null, cpT: hasDims ? defaultCarpetMatId(imsPrintMaterials) : null,
+      plH: d.plH || null, cpT: d.cpT ?? null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
       trussQty: Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
@@ -3018,7 +3018,7 @@ export default function StudioApp() {
         const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT) addSub("Carpet", sqft); }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
       });
       let truckFrac = 0; Object.values(subAgg).forEach(s => { if (s.perTruck > 0) truckFrac += (s.qty || 0) / s.perTruck; });
       const itemTrucks = Math.ceil(truckFrac);
@@ -3261,7 +3261,7 @@ export default function StudioApp() {
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT) addSub("Carpet", sqft); }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
       });
       let truckFrac = 0;
       Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck }); } });

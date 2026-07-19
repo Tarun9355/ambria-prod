@@ -14,7 +14,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants
 import { deptMpReconciled, itemImsSubcat } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
-import { carpetPricingFor } from "../../../lib/studio/taxonomy";
+import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 
@@ -323,7 +323,7 @@ export default function DealCheckOverlay({ ctx }) {
               const en = fn.enabledEls || {};
               const picks = dcCarpetPick[fi] || {};
               Object.keys(zc).forEach(zk => {
-                if (!en[zk] || !zc[zk] || !zc[zk].cpT) return;
+                if (!en[zk] || !zc[zk] || zc[zk].cpT === CARPET_OFF) return;
                 const pickedId = picks[zk];
                 if (!pickedId) return;
                 const carpetItem = dcInventoryCache.find(x => x.id === pickedId);
@@ -1146,7 +1146,7 @@ export default function DealCheckOverlay({ ctx }) {
                                 {/* §26.18 + §26.19 — Carpet block with visual tile picker */}
                                 {(()=>{
                                   const zc = fns[fnIdx]?.zoneConfig?.[zk];
-                                  if (!zc || !zc.cpT) return null;
+                                  if (!zc || zc.cpT === CARPET_OFF) return null;
                                   const fd = zc.floorDims || zc.dims || {};
                                   const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
                                   if (neededSqft <= 0) return null;
