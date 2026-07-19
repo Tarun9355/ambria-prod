@@ -1263,8 +1263,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           </span>
                         ) : (
                           <span className="flex items-center gap-1">
-                            <span className="text-sm font-semibold text-gray-800">{studioItem.name}</span>
-                            <button onClick={() => { setRecipeRenameId(studioItem.name); setRecipeRenameVal(studioItem.name); }} title="Rename" className="text-gray-300 hover:text-indigo-500 text-xs">✏️</button>
+                            <span onClick={toggleItemOpen} title={itemOpen ? "Collapse" : "Expand"} className="text-sm font-semibold text-gray-800 cursor-pointer hover:text-indigo-600">{studioItem.name}</span>
+                            <button onClick={(e) => { e.stopPropagation(); setRecipeRenameId(studioItem.name); setRecipeRenameVal(studioItem.name); }} title="Rename" className="text-gray-300 hover:text-indigo-500 text-xs">✏️</button>
                           </span>
                         )}
                         <div className="flex rounded-full overflow-hidden border border-gray-300">
