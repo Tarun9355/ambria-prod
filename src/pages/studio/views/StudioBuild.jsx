@@ -1678,7 +1678,9 @@ export default function StudioBuild({ ctx }) {
         const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};
         const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,_verified:true,...stamp,_correctedOn:"build"};
         saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
-        logCorrection?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
+        // Only the first verification counts as a contribution — re-corrections of an already-
+        // verified photo update _lastEditedBy above but don't log again.
+        if(!wasVerified) logCorrection?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
         showMsg("✅ Correction saved to master — thanks!","green");
         setCorrectPhoto(null);
       };
