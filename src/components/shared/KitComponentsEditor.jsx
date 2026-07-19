@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { kitTotalFromInventory } from "../../lib/ims/helpers";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -26,7 +27,14 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
   const kitBase = Number(item.kitBase) || 0;
-  const componentsTotal = comps.reduce((sum, c) => { if (c.patternId) return sum; const ci = (imsInventory || []).find(i => i.id === c.itemId); const r = ci ? (Number(ci.price ?? ci.rentalCost) || 0) : 0; return sum + r * (Number(c.qty) || 0); }, 0);
+  const componentsTotal = comps.reduce((sum, c) => {
+    if (c.patternId) return sum;
+    const ci = (imsInventory || []).find(i => i.id === c.itemId);
+    if (!ci) return sum;
+    const ciIsKit = Array.isArray(ci.subItems) && ci.subItems.length > 0;
+    const r = ciIsKit ? kitTotalFromInventory(ci, imsInventory) : (Number(ci.price ?? ci.rentalCost) || 0);
+    return sum + r * (Number(c.qty) || 0);
+  }, 0);
   const partsTotal = kitBase + componentsTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
@@ -57,9 +65,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
             );
           }
           const cItem = (imsInventory || []).find(i => i.id === c.itemId);
+          const cItemIsKit = cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0;
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
-          const cRate = cItem ? (Number(cItem.price ?? cItem.rentalCost) || 0) : 0;
+          const cRate = cItem ? (cItemIsKit ? kitTotalFromInventory(cItem, imsInventory) : (Number(cItem.price ?? cItem.rentalCost) || 0)) : 0;
           return (
             <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
               <div style={{ position: "relative", flexShrink: 0 }}
@@ -78,7 +87,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   </div>
                 )}
               </div>
-              <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
+              <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}{cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}> 📦</span>}</span>
               <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
                 <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
                 <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{qtyEach}</span>

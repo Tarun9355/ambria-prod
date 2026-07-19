@@ -68,12 +68,39 @@ export const ZONE_META = {
   photobooth:{label:"Photo Op",     dimFields:["L","W","H"], defaultTruss:"singleU", hasPlatform:false, hasCarpet:false, hasMasking:true},
   tableDecor: {label:"Table Decor",   dimFields:[],            defaultTruss:null,      hasPlatform:false, hasCarpet:false, hasMasking:false},
 };
-export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:100,flex:45,vinyl:90},platform:{"4in":30,"1ft":45},carpet:{"new":15,old:7},arch:{"2d":60,"3d":100},pillar:2000,glass:{"2d":120,"3d":180}};
+export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:100,flex:45,vinyl:90},platform:{"4in":30,"1ft":45},arch:{"2d":60,"3d":100},pillar:2000,glass:{"2d":120,"3d":180}};
 export const MASK_OPTS=[{id:"fabric",l:"Fabric",r:20},{id:"acrylic",l:"Acrylic",r:100},{id:"flex",l:"Flex",r:45},{id:"vinyl",l:"Vinyl",r:90}];
 export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}];
-export const CARP_OPTS=[{id:"new",l:"New",r:15},{id:"old",l:"Old",r:7}];
 export const ARCH_OPTS=[{id:"2d",l:"2D (Flat)",r:60},{id:"3d",l:"3D (Built-out)",r:100}];
 export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out)",r:180}];
+
+// Carpet used to be a fixed Old/New rate baked in here. It's now priced live from IMS Admin →
+// Settings → 🖨️ Print Materials — `cpT` on a zone holds a printMaterials row id, not an enum, so
+// editing a material's rate there (or adding new floor-covering options) updates every zone
+// instantly instead of requiring a code change. `{rate, label}` together so pricing and display
+// (StudioApp's structItems line, StudioSummary's breakdown) read off the same lookup.
+export function carpetPricingFor(cpT, printMaterials) {
+  if (!cpT) return { rate: 0, label: "" };
+  const list = printMaterials || [];
+  let mat = list.find((m) => m.id === cpT);
+  if (!mat && (cpT === "old" || cpT === "new")) {
+    // Zones saved before this switch stored cpT as the literal "old"/"new" enum — map by name once.
+    const want = cpT === "old" ? "carpet old" : "carpet new";
+    mat = list.find((m) => String(m.name || "").trim().toLowerCase() === want);
+  }
+  if (mat) return { rate: Number(mat.ratePerSqft) || 0, label: mat.name };
+  const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
+  return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
+}
+// Whatever a newly-added platform's carpet should default to — "Carpet Old" by name if that
+// material exists, else any material with "carpet" in its name, else none (no default available).
+export function defaultCarpetMatId(printMaterials) {
+  const list = printMaterials || [];
+  const exact = list.find((m) => String(m.name || "").trim().toLowerCase() === "carpet old");
+  if (exact) return exact.id;
+  const anyCarpet = list.find((m) => String(m.name || "").toLowerCase().includes("carpet"));
+  return anyCarpet ? anyCarpet.id : null;
+}
 export const ZONE_PRESETS={
   stage:  {small:{L:16,W:10,H:10,tr:"box",mk:"fabric",ms:1,pl:"4in",cp:"new"},medium:{L:24,W:15,H:12,tr:"box",mk:"fabric",ms:1,pl:"1ft",cp:"new",archT:"2d",archQty:2,archW:6,archH:8,pillarQty:4}},
   entry:  {small:{L:20,W:8,H:10,tr:"singleU",mk:"fabric",ms:1,cp:"old"},medium:{L:40,W:12,H:14,tr:"singleU",mk:"fabric",ms:1,cp:"new",archT:"3d",archQty:1,archW:10,archH:12,pillarQty:8}},

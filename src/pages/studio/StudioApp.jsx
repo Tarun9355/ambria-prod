@@ -31,6 +31,7 @@ import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
+  carpetPricingFor, defaultCarpetMatId,
 } from "../../lib/studio/taxonomy";
 
 // Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
@@ -263,14 +264,15 @@ function trussRowCost(row) {
 // One platform footprint's platform+carpet cost. `row` is `{plH, floorDims}` for row 0 or one entry
 // of zc.extraPlatformRows. `cpT` (carpet type) stays a single zone-level choice — there's no per-row
 // carpet-type selector anywhere in the UI, so every footprint uses the zone's one carpet type.
-function platformRowCost(row, cpT) {
+// `printMaterials` is IMS Admin → Settings → 🖨️ Print Materials, the live source for the carpet rate.
+function platformRowCost(row, cpT, printMaterials) {
   const fd = row.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
-  const carpet = cpT ? a * (BASE_RATES.carpet[cpT] || 15) : 0;
+  const carpet = cpT ? a * carpetPricingFor(cpT, printMaterials).rate : 0;
   return { platform, carpet };
 }
-function calcStructCost(zk, zc) {
+function calcStructCost(zk, zc, printMaterials) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   const trussRows = [
@@ -279,7 +281,7 @@ function calcStructCost(zk, zc) {
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row); r.truss += truss; r.masking += masking; });
   const platformRows = [{ plH: zc.plH, floorDims: fd }, ...(zc.extraPlatformRows || [])];
-  platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, zc.cpT); r.platform += platform; r.carpet += carpet; });
+  platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, zc.cpT, printMaterials); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
   if (zc.glassOn && zc.glassT) { const gq = zc.glassQty || 0, gw = zc.glassW || 0, gh = zc.glassH || 0; r.glass = gq * gw * gh * (BASE_RATES.glass[zc.glassT] || 120); }
@@ -2597,7 +2599,7 @@ export default function StudioApp() {
       dims: hasDims ? dims : Object.fromEntries(zm.dimFields.map(f => [f, 0])),
       floorDims: Object.keys(floorDims).length ? floorDims : (hasDims ? { ...dims } : {}),
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
-      plH: d.plH || null, cpT: hasDims ? "new" : null,
+      plH: d.plH || null, cpT: hasDims ? defaultCarpetMatId(imsPrintMaterials) : null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
       trussQty: Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
@@ -2783,9 +2785,9 @@ export default function StudioApp() {
   const calcPhotoCost = useCallback((zoneKey, photo) => {
     const zc = (photo?.dims && Object.values(photo.dims).some(v => v > 0)) ? buildZoneConfig(zoneKey, photo.dims) : null;
     const elCost = calcElsCost(photo?.elements, true, zc);
-    const structCost = zc ? calcStructCost(zoneKey, zc).total : 0;
+    const structCost = zc ? calcStructCost(zoneKey, zc, imsPrintMaterials).total : 0;
     return elCost + structCost;
-  }, [calcElsCost]);
+  }, [calcElsCost, imsPrintMaterials]);
 
   const calcFullEventCost = useCallback((ev) => {
     if (!ev) return 0;
@@ -2803,7 +2805,7 @@ export default function StudioApp() {
       const pd = li.dims || {};
       if (pd.trussW || pd.trussL || pd.trussH || pd.floorL || pd.floorW) {
         const zc = buildZoneConfig(zk, pd);
-        if (zc) decorCost += calcStructCost(zk, zc).total;
+        if (zc) decorCost += calcStructCost(zk, zc, imsPrintMaterials).total;
         const tL = pd.trussL || 0, tW = pd.trussW || 0;
         const tSqft = tL * tW;
         if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().includes("truss") && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
@@ -2848,7 +2850,7 @@ export default function StudioApp() {
     const gensets = match ? (match.gensets || 1) : 1;
     const gensetCost = gensets * gensetRate;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, imsPrintMaterials]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -2879,7 +2881,7 @@ export default function StudioApp() {
   const totalCost = useCallback(() => {
     let c = 0;
     const zones = activeZones.length > 0 ? activeZones : Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { c += calcStructCost(z.type, z.config).total; });
+    zones.forEach(z => { c += calcStructCost(z.type, z.config, imsPrintMaterials).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
@@ -2894,7 +2896,7 @@ export default function StudioApp() {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, itemQty, itemGrades, activeZones, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx]);
+  }, [venue, enabledEls, itemQty, itemGrades, activeZones, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, imsPrintMaterials]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
@@ -2974,7 +2976,7 @@ export default function StudioApp() {
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     let decor = 0;
     const zones = fActiveZones.length > 0 ? fActiveZones : Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { decor += calcStructCost(z.type, z.config).total; });
+    zones.forEach(z => { decor += calcStructCost(z.type, z.config, imsPrintMaterials).total; });
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
       decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio);
@@ -3031,7 +3033,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems, imsPrintMaterials]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -3220,7 +3222,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k]) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], imsPrintMaterials) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -3279,7 +3281,7 @@ export default function StudioApp() {
         gensets, venueGensets, gensetCost, gensetRate, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems, imsPrintMaterials]);
 
   const cat = getCat(grandTotal);
 
@@ -5309,7 +5311,7 @@ Return ONLY JSON:
           }
         });
       }
-      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k]) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? calcStructCost(k, fZoneConfig[k], imsPrintMaterials) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -5318,7 +5320,7 @@ Return ONLY JSON:
       if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹50" : "Single U ₹30") + "/sqft)" + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
       if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
-      if (zl.carpet > 0) structItems.push({ name: "Carpet (" + (zc.cpT === "new" ? "New ₹15" : "Old ₹7") + "/sqft)", total: zl.carpet });
+      if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsPrintMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
       if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
       if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });
@@ -5331,7 +5333,7 @@ Return ONLY JSON:
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, dealCheckData, imsDefaultPaintCost, dcCustomItems]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, dealCheckData, imsDefaultPaintCost, dcCustomItems, imsPrintMaterials]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();

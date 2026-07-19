@@ -94,14 +94,22 @@ export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? S
 // `overrideSubItems`, when given, replaces item.subItems for THIS specific element instance only —
 // e.g. a photo/zone that added an extra candle to one particular kit — without touching the kit's
 // own global recipe (every other use of that kit elsewhere is unaffected).
-function kitTotalFromInventory(item, allInventory, overrideSubItems) {
+// `ancestry` tracks kit ids on the current recursion path (not shared across sibling branches) so a
+// kit nested inside another kit prices live via this same function instead of its own stale `price`
+// column, while a genuine cycle (A contains B, B contains A) just stops contributing further cost.
+export function kitTotalFromInventory(item, allInventory, overrideSubItems, ancestry) {
   const base = Number(item.kitBase) || 0;
   const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
   if (!Array.isArray(allInventory)) return base;
+  const path = ancestry ? new Set(ancestry) : new Set();
+  if (item.id) path.add(item.id);
   return subItems.reduce((sum, si) => {
     if (si.patternId) return sum; // flower-recipe add-on — denotation only, priced separately (getElPriceFromInventory)
     const c = allInventory.find((i) => i.id === si.itemId);
-    const r = c ? (Number(c.price ?? c.rentalCost) || 0) : 0;
+    if (!c) return sum;
+    const cIsKit = Array.isArray(c.subItems) && c.subItems.length > 0;
+    if (cIsKit && path.has(c.id)) return sum;
+    const r = cIsKit ? kitTotalFromInventory(c, allInventory, undefined, path) : (Number(c.price ?? c.rentalCost) || 0);
     return sum + r * (Number(si.qty) || 0);
   }, base);
 }

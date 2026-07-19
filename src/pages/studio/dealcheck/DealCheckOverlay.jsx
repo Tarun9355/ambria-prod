@@ -14,6 +14,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants
 import { deptMpReconciled, itemImsSubcat } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
+import { carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 
@@ -36,7 +37,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
-    dealCheckData, imsPaletteCatalogue, softHolds,
+    dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials,
     // build / fn state
     activeFnIdx, switchActiveFn,
     // pricing helpers
@@ -1186,7 +1187,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     <div style={{padding:"11px 12px",borderRadius:9,background:"rgba(244,63,94,0.05)",border:"1px solid rgba(244,63,94,0.25)",display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                                         <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>🟥 Carpet</span>
-                                        <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#94A3B8",fontWeight:700,letterSpacing:0.4}}>{zc.cpT==="old"?"REUSED PREF":"FLOOR"}</span>
+                                        <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#94A3B8",fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsPrintMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
                                         <span style={{fontSize:10,color:textS}}>{neededSqft} sqft needed</span>
                                       </div>
                                       {carpetItem && calc ? (

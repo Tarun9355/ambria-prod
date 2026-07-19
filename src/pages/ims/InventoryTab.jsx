@@ -468,54 +468,25 @@ Rules:
     }
   }
 
-  // A kit can't contain another kit as a single nested reference — pricing/allocation everywhere
-  // else assumes one level of components. Adding a kit-item to a kit instead flattens in that
-  // kit's OWN components (recursively, in case one of those is itself a kit), scaled by however
-  // many of the nested kit were being added. `seen` guards against a kit that somehow references
-  // itself (directly or via a cycle) — returns nothing further once revisited.
-  function flattenKitSubItems(kitItem, seen) {
-    if (!kitItem || seen.has(kitItem.id)) return [];
-    seen.add(kitItem.id);
-    const subs = Array.isArray(kitItem.subItems) ? kitItem.subItems : [];
-    const out = [];
-    subs.forEach((si) => {
-      if (si.patternId) { out.push({ patternId: si.patternId, qty: Number(si.qty) || 1 }); return; }
-      const child = inventory.find((x) => x.id === si.itemId);
-      const childIsKit = child && Array.isArray(child.subItems) && child.subItems.length > 0;
-      if (childIsKit) {
-        const mult = Number(si.qty) || 1;
-        flattenKitSubItems(child, seen).forEach((n) => out.push({ ...n, qty: (Number(n.qty) || 1) * mult }));
-      } else {
-        out.push({ itemId: si.itemId, qty: Number(si.qty) || 1 });
-      }
-    });
-    return out;
-  }
-  // Merge flattened components into an existing subItems list, summing qty where the same
-  // item/recipe already appears rather than creating a duplicate row.
-  function mergeSubItems(existing, additions) {
-    const keyOf = (s) => (s.patternId ? `p:${s.patternId}` : `i:${s.itemId}`);
-    const out = [...existing];
-    additions.forEach((add) => {
-      const k = keyOf(add);
-      const idx = out.findIndex((s) => keyOf(s) === k);
-      if (idx >= 0) out[idx] = { ...out[idx], qty: (Number(out[idx].qty) || 0) + (Number(add.qty) || 0) };
-      else out.push(add);
-    });
-    return out;
-  }
-
   // §7.9.5 — kit price = base rental (the kit's own assembly/shell charge) + Σ(component rental × qty).
   // Flower-recipe add-ons (si.patternId) contribute nothing here — a pure denotation that this kit
   // includes flowers; their studio rate is added separately wherever the kit is priced
   // (getElPriceFromInventory in StudioApp.jsx), not into this rental total.
-  function kitPriceFrom(subItems, base = 0) {
+  // A component that is itself a kit prices live via this same function (recursively) instead of
+  // its own stale `price` column, so a kit nested inside another kit stays correct everywhere —
+  // mirrors kitTotalFromInventory in lib/ims/helpers.js. `ancestry` (kit ids on the current
+  // recursion path, not shared across sibling branches) stops a genuine cycle from looping forever.
+  function kitPriceFrom(subItems, base = 0, ancestry) {
     const b = Number(base) || 0;
     if (!Array.isArray(subItems)) return b;
+    const path = ancestry ? new Set(ancestry) : new Set();
     return b + subItems.reduce((sum, si) => {
       if (si.patternId) return sum;
       const c = inventory.find((i) => i.id === si.itemId);
-      const r = c ? (Number(c.price ?? c.rentalCost) || 0) : 0;
+      if (!c) return sum;
+      const cIsKit = Array.isArray(c.subItems) && c.subItems.length > 0;
+      if (cIsKit && path.has(c.id)) return sum;
+      const r = cIsKit ? kitPriceFrom(c.subItems, Number(c.kitBase) || 0, new Set(path).add(c.id)) : (Number(c.price ?? c.rentalCost) || 0);
       return sum + r * (Number(si.qty) || 0);
     }, 0);
   }
@@ -1640,7 +1611,8 @@ Rules:
                         );
                       }
                       const child = inventory.find((i) => i.id === si.itemId);
-                      const childRental = child ? (Number(child.price ?? child.rentalCost) || 0) : 0;
+                      const childIsKit = child && Array.isArray(child.subItems) && child.subItems.length > 0;
+                      const childRental = child ? (childIsKit ? kitPriceFrom(child.subItems, Number(child.kitBase) || 0, new Set([editForm.id])) : (Number(child.price ?? child.rentalCost) || 0)) : 0;
                       const lineTotal = childRental * (Number(si.qty) || 0);
                       const childImg = child?.img || (Array.isArray(child?.photoUrls) && child.photoUrls[0]) || "";
                       return (
@@ -1648,7 +1620,7 @@ Rules:
                           {childImg
                             ? <img src={childImg} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
                             : <div className="w-7 h-7 rounded bg-gray-100 flex-shrink-0" />}
-                          <span className="flex-1 text-xs font-medium text-gray-700 truncate">{child ? child.name : `⚠ ${si.itemId} (missing)`}</span>
+                          <span className="flex-1 text-xs font-medium text-gray-700 truncate">{child ? child.name : `⚠ ${si.itemId} (missing)`}{childIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit</span>}</span>
                           <span className="text-xs text-gray-400">₹{childRental.toLocaleString("en-IN")} ea</span>
                           <input type="number" min="1" value={si.qty} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
                             className="w-14 border rounded-md px-2 py-1 text-xs text-center" />
@@ -1691,22 +1663,14 @@ Rules:
                               const iIsKit = Array.isArray(i.subItems) && i.subItems.length > 0;
                               return (
                                 <div key={i.id} onClick={() => {
-                                  setEditForm((f) => {
-                                    if (iIsKit) {
-                                      // A kit can't nest as a single reference — flatten in its own
-                                      // components instead (recursively, merging qty on overlap).
-                                      const flattened = flattenKitSubItems(i, new Set([f.id]));
-                                      return { ...f, subItems: mergeSubItems(f.subItems || [], flattened) };
-                                    }
-                                    return (f.subItems || []).some((s) => s.itemId === i.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: i.id, qty: 1 }] });
-                                  });
+                                  setEditForm((f) => (f.subItems || []).some((s) => s.itemId === i.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: i.id, qty: 1 }] }));
                                   setKitCompSearch("");
                                 }} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
                                   {img
                                     ? <img src={img} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
                                     : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0" />}
                                   <div className="flex-1 min-w-0">
-                                    <div className="text-sm text-gray-800 truncate">{i.name}{iIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit — adds its {i.subItems.length} components</span>}</div>
+                                    <div className="text-sm text-gray-800 truncate">{i.name}{iIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit — priced live from its {i.subItems.length} components</span>}</div>
                                     <div className="text-xs text-gray-400">₹{(Number(i.price ?? i.rentalCost) || 0)} · {(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " : ""}{i.cat || i.category || ""}</div>
                                   </div>
                                 </div>

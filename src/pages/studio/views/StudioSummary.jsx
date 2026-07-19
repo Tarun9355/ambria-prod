@@ -11,7 +11,7 @@
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
 import { useState } from "react";
-import { getCat } from "../../../lib/studio/taxonomy";
+import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
@@ -27,6 +27,8 @@ export default function StudioSummary({ ctx }) {
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
     // pricing helpers
     getElPriceForFn, transportCalc,
+    // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — for the carpet label below
+    imsPrintMaterials,
     // build canvas / source
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
     // sold flow
@@ -504,7 +506,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                               {eb.zl.truss>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🔩 Truss ({eb.zc?.trT==="box"?"Box ₹50":"U ₹30"}/sqft)</span><span style={{fontWeight:600}}>{fmt(eb.zl.truss)}</span></div>}
                               {eb.zl.masking>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🧱 {eb.zc?.mkT} masking ({eb.zc?.mkS} side{eb.zc?.mkS>1?"s":""})</span><span style={{fontWeight:600}}>{fmt(eb.zl.masking)}</span></div>}
                               {eb.zl.platform>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏗️ Platform ({eb.zc?.plH})</span><span style={{fontWeight:600}}>{fmt(eb.zl.platform)}</span></div>}
-                              {eb.zl.carpet>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🟫 Carpet ({eb.zc?.cpT})</span><span style={{fontWeight:600}}>{fmt(eb.zl.carpet)}</span></div>}
+                              {eb.zl.carpet>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🟫 Carpet ({carpetPricingFor(eb.zc?.cpT, imsPrintMaterials).label})</span><span style={{fontWeight:600}}>{fmt(eb.zl.carpet)}</span></div>}
                               {eb.zl.arches>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏛️ Arches ({eb.zc?.archT?.toUpperCase()} ×{eb.zc?.archQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.arches)}</span></div>}
                               {eb.zl.pillars>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏛️ Pillars (×{eb.zc?.pillarQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.pillars)}</span></div>}
                               {eb.zl.glass>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>💎 Glass ({eb.zc?.glassT?.toUpperCase()} ×{eb.zc?.glassQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.glass)}</span></div>}

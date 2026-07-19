@@ -1,7 +1,7 @@
 import { Fragment, useState, useRef, useEffect } from "react";
 import {
   TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
-  MASK_OPTS, PLAT_OPTS, CARP_OPTS,
+  MASK_OPTS, PLAT_OPTS, carpetPricingFor, defaultCarpetMatId,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -576,7 +576,7 @@ export default function StudioBuild({ ctx }) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>toggleEl(k)}>
           <div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k]).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
+            {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],imsPrintMaterials).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(168,85,247,0.08)"}}>🏭</span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>🛒</span>
             {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",fontSize:16,opacity:0.5}}>📋</span>}
@@ -1094,7 +1094,7 @@ export default function StudioBuild({ ctx }) {
 
           {/* Zone structure — always visible, costs hidden behind toggle */}
           {zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc);
+            const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc,imsPrintMaterials);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -1283,12 +1283,18 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:12,marginBottom:6}}>
                 {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🏗️"} Platform</span>
-                    {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                    {PLAT_OPTS.map(o=>{
+                      const turningOn = zc.plH !== o.id;
+                      return <button key={o.id} onClick={()=>sZ({plH:turningOn?o.id:null, ...(turningOn&&!zc.cpT?{cpT:defaultCarpetMatId(imsPrintMaterials)}:{})})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>;
+                    })}
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
                 </div>}
                 {zm.hasCarpet&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🟫"} Carpet</span>
-                    {CARP_OPTS.map(o=><button key={o.id} onClick={()=>sZ({cpT:zc.cpT===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.cpT===o.id?700:400,background:zc.cpT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.cpT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                    <select value={zc.cpT||""} onChange={e=>sZ({cpT:e.target.value||null})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.05)":"#fff",color:textP}}>
+                      <option value="">— None —</option>
+                      {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                    </select>
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
                 </div>}
               </div>
@@ -1348,7 +1354,7 @@ export default function StudioBuild({ ctx }) {
     {customZones.filter(cz=>!cz.sourceType).map(cz=>{
       const k=cz.id;const isOn=enabledEls[k];
       const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k]);
-      const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k]).total:0;
+      const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],imsPrintMaterials).total:0;
       const czTotal=czElCost+czStructCost;
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>setEnabledEls(p=>({...p,[k]:!p[k]}))}>
@@ -1518,7 +1524,7 @@ export default function StudioBuild({ ctx }) {
             const zc=zoneConfig[k]||{};
             const dims=zc.dims||{};
             const fd=zc.floorDims||{};
-            const st=calcStructCost(k,zc);
+            const st=calcStructCost(k,zc,imsPrintMaterials);
             const sZ=u=>{setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
               // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
@@ -1594,13 +1600,19 @@ export default function StudioBuild({ ctx }) {
               {/* Platform */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,fontSize:11}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}><span>🏗️ Platform</span>
-                  {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                  {PLAT_OPTS.map(o=>{
+                    const turningOn = zc.plH !== o.id;
+                    return <button key={o.id} onClick={()=>sZ({plH:turningOn?o.id:null, ...(turningOn&&!zc.cpT?{cpT:defaultCarpetMatId(imsPrintMaterials)}:{})})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>;
+                  })}
                 </div>{showCosts&&st.platform>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
               </div>
               {/* Carpet */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:11}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}><span>🟫 Carpet</span>
-                  {CARP_OPTS.map(o=><button key={o.id} onClick={()=>sZ({cpT:zc.cpT===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.cpT===o.id?700:400,background:zc.cpT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.cpT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                  <select value={zc.cpT||""} onChange={e=>sZ({cpT:e.target.value||null})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.05)":"#fff",color:textP}}>
+                    <option value="">— None —</option>
+                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                  </select>
                 </div>{showCosts&&st.carpet>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
               </div>
               {/* Floor dims */}
