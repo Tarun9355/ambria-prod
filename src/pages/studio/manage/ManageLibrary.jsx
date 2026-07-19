@@ -920,6 +920,15 @@ export default function ManageLibrary({ ctx }) {
                         </div>
                       </div>
                     </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
+                        <select value={row.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                          <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
+                          {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                        </select>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -965,9 +974,9 @@ export default function ManageLibrary({ ctx }) {
                 // A U truss (open on the sides, only 2 of 3 dims filled) only has a back panel to
                 // mask — no left/right walls exist to hang fabric on.
                 const walls=isBox?[
-                  {id:"back",label:"Back wall",dim:`${dL} × ${dH} ft`},
-                  {id:"left",label:"Left wall",dim:`${dW} × ${dH} ft`},
-                  {id:"right",label:"Right wall",dim:`${dW} × ${dH} ft`}
+                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`},
+                  {id:"left",label:"Left wall",dim:`${dL} × ${dH} ft`},
+                  {id:"right",label:"Right wall",dim:`${dL} × ${dH} ft`}
                 ]:[
                   {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`}
                 ];
@@ -1007,26 +1016,26 @@ export default function ManageLibrary({ ctx }) {
                 let maskSqft=0;const maskWalls=[];
                 // U truss has no left/right walls to mask — only its back panel (dW×dH) counts.
                 if(isBox){
-                  if(mw.back){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dL}×${dH}`,sqft:a});}
-                  if(mw.left){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dW}×${dH}`,sqft:a});}
-                  if(mw.right){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dW}×${dH}`,sqft:a});}
+                  if(mw.back){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dW}×${dH}`,sqft:a});}
+                  if(mw.left){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dL}×${dH}`,sqft:a});}
+                  if(mw.right){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dL}×${dH}`,sqft:a});}
                 } else if(isSingleU){
                   if(mw.back){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dW}×${dH}`,sqft:a});}
                 }
                 const maskCost=maskSqft*mkRate*qty;
                 return {isBox,trussSqft,trussRate,trussCost,mkT,mkRate,maskSqft,maskWalls,maskCost};
               };
-              const cp=carpetPricingFor(d.cpT, imsPrintMaterials);
               const platformRowCalc=(row)=>{
                 const fL=row.floorL||0, fW=row.floorW||0;
                 const flSqft=fL*fW;
                 const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                 const plCost=flSqft*plRate;
-                const cpRate=d.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
-                return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost};
+                const cp=carpetPricingFor(row.cpT, imsPrintMaterials);
+                const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
+                return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
               };
               const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls}, ...(d.trussRows||[])];
-              const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH}, ...(d.platformRows||[])];
+              const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH,cpT:d.cpT}, ...(d.platformRows||[])];
               const trussResults=trussRows.map(trussRowCalc);
               const platformResults=platformRows.map(platformRowCalc);
               const structTotal=trussResults.reduce((s,r)=>s+r.trussCost+r.maskCost,0)+platformResults.reduce((s,r)=>s+r.plCost+r.cpCost,0);
@@ -1050,7 +1059,7 @@ export default function ManageLibrary({ ctx }) {
                   <span style={{fontWeight:600}}>{fmt(r.plCost)}</span>
                 </div>)}
                 {platformResults.map((r,ri)=> r.cpCost>0 && <div key={"cp"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11}}>
-                  <div><span style={{fontWeight:600}}>{ri>0?`Platform #${ri+1} — `:""}Carpet ({cp.label})</span><br/><span style={{fontSize:10,color:textS}}>{r.fL}×{r.fW} = {r.flSqft} sqft × ₹{r.cpRate}</span></div>
+                  <div><span style={{fontWeight:600}}>{ri>0?`Platform #${ri+1} — `:""}Carpet ({r.cpLabel})</span><br/><span style={{fontSize:10,color:textS}}>{r.fL}×{r.fW} = {r.flSqft} sqft × ₹{r.cpRate}</span></div>
                   <span style={{fontWeight:600}}>{fmt(r.cpCost)}</span>
                 </div>)}
               </div>;

@@ -261,15 +261,15 @@ function trussRowCost(row) {
   }
   return { truss, masking };
 }
-// One platform footprint's platform+carpet cost. `row` is `{plH, floorDims}` for row 0 or one entry
-// of zc.extraPlatformRows. `cpT` (carpet type) stays a single zone-level choice — there's no per-row
-// carpet-type selector anywhere in the UI, so every footprint uses the zone's one carpet type.
+// One platform footprint's platform+carpet cost. `row` is `{plH, floorDims, cpT}` for row 0 or one
+// entry of zc.extraPlatformRows — each footprint carries its OWN carpet material, since different
+// platforms in the same zone can be finished in different carpet.
 // `printMaterials` is IMS Admin → Settings → 🖨️ Print Materials, the live source for the carpet rate.
-function platformRowCost(row, cpT, printMaterials) {
+function platformRowCost(row, printMaterials) {
   const fd = row.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
-  const carpet = cpT === CARPET_OFF ? 0 : a * carpetPricingFor(cpT, printMaterials).rate;
+  const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, printMaterials).rate;
   return { platform, carpet };
 }
 function calcStructCost(zk, zc, printMaterials) {
@@ -280,8 +280,8 @@ function calcStructCost(zk, zc, printMaterials) {
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row); r.truss += truss; r.masking += masking; });
-  const platformRows = [{ plH: zc.plH, floorDims: fd }, ...(zc.extraPlatformRows || [])];
-  platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, zc.cpT, printMaterials); r.platform += platform; r.carpet += carpet; });
+  const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT }, ...(zc.extraPlatformRows || [])];
+  platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, printMaterials); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
   if (zc.glassOn && zc.glassT) { const gq = zc.glassQty || 0, gw = zc.glassW || 0, gh = zc.glassH || 0; r.glass = gq * gw * gh * (BASE_RATES.glass[zc.glassT] || 120); }
@@ -2580,7 +2580,7 @@ export default function StudioApp() {
       };
     };
     const mapPlatformRow = (row) => ({
-      id: row.id, plH: row.plH || null,
+      id: row.id, plH: row.plH || null, cpT: row.cpT ?? null,
       floorDims: (row.floorL || row.floorW) ? { L: row.floorL || 0, W: row.floorW || 0 } : {},
     });
     const dims = {};
