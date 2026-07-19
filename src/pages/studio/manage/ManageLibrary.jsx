@@ -630,12 +630,12 @@ export default function ManageLibrary({ ctx }) {
         )}
         {/* Detail panel — opens as a centered popup so you don't scroll past the whole grid */}
         {libEditImg && (
-          <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: "20px 40px 20px 260px" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 1240, margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, height: "90vh", boxShadow: "0 12px 48px rgba(0,0,0,0.45)", display: "flex", overflow: "hidden" }}>
+          <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "96vw", maxWidth: "96vw", margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, height: "96vh", boxShadow: "0 12px 48px rgba(0,0,0,0.45)", display: "flex", overflow: "hidden" }}>
             {/* Left: big image, fixed in place — the right side scrolls on its own so you never
                 need to scroll back up to re-check the photo while working through tags/dims/elements. */}
-            <div style={{ width: 420, flexShrink: 0, padding: 16, borderRight: `1px solid ${border}`, overflowY: "auto" }}>
-              <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: "100%", height: 380, objectFit: "cover", borderRadius: 10, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
+            <div style={{ width: "38%", flexShrink: 0, padding: 16, borderRight: `1px solid ${border}`, display: "flex", flexDirection: "column" }}>
+              <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: "100%", flex: 1, minHeight: 0, objectFit: "cover", borderRadius: 10, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
             </div>
             <div style={{ flex: 1, minWidth: 0, padding: 16, overflowY: "auto" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
