@@ -896,36 +896,64 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         </div>
       )}
       {activePanel === "patterns" && (() => {
-        const studioFloralsSubcats = studio?.floralsSubcats || [];
         const studioLoadingFlag = !!studio?.loading;
         const recipeSubs = settings.flowerRecipeSubcats || [];
-
-        // Real inventory counts/units per Florals sub-category — the Rate Card only ever has one
-        // abstract line item per sub, so its own item count is meaningless for "how many physical
-        // items does this recipe apply to." Squeeze internal whitespace (not just trim) before
-        // keying, same bug class already fixed in matchFlowerPattern (a doubled space in a manually
-        // entered sub-category renders identically but compares as a different string).
         const squeezeKey = (s) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-        // Only count/list sub-categories that have a canonical rate_card_categories row — an
-        // orphaned/typo'd sub_cat value on an inventory item shouldn't produce its own toggleable
-        // pill here, same "only recognized sub-cats" rule as the Inventory tab's filter pills.
-        const rcCatIds = new Set((rateCardCategories || []).map((r) => squeezeKey(r.id)));
-        const floralsInvBySub = {};
+
+        // Which sub-categories count as "Florals" — mirrors the Sub-Categories tab's own grouping
+        // exactly (explicit admin category override → live-inventory-derived category → legacy
+        // Rate-Card-item-derived category → "Other"; see the `activePanel === "subcats"` block's
+        // groupLabelFor for the source of truth). Duplicated locally rather than shared, same as
+        // that panel's own CAT_ALIAS_GROUPS, to avoid coupling two independently-working panels.
+        // This used to come from studio.floralsSubcats (the legacy Studio Rate Card ITEMS list),
+        // which could silently drift from whatever the Sub-Categories tab actually shows under
+        // Florals — now it's the same rate_card_categories rows, filtered the same way.
+        const CAT_ALIAS_GROUPS = [
+          { test: (low) => /^(flowers?|florals?)$/.test(low), find: /floral|flower/i, fallback: "Florals" },
+          { test: (low, raw) => /^(cloths?|fabrics?|kapda|kapra)$/.test(low) || /कपड़ा|कपडा/.test(raw), find: /fabric|cloth|कपड़ा/i, fallback: "Fabric" },
+        ];
+        const studioCatLabels = studio?.catLabels || [];
+        const normInvCat = (value) => {
+          const raw = String(value ?? "").trim();
+          if (!raw) return "";
+          const low = raw.toLowerCase();
+          for (const g of CAT_ALIAS_GROUPS) {
+            if (g.test(low, raw)) return studioCatLabels.find((l) => g.find.test(l)) || g.fallback;
+          }
+          let hit = studioCatLabels.find((l) => l.toLowerCase() === low);
+          if (hit) return hit;
+          const sing = (x) => x.replace(/s$/, "");
+          hit = studioCatLabels.find((l) => sing(l.toLowerCase()) === sing(low));
+          if (hit) return hit;
+          return raw;
+        };
+        const invSubToCat = {};
+        const invCountBySub = {};
         (inventory || []).forEach((it) => {
-          if (squeezeKey(it.cat ?? it.category) !== "florals") return;
           const rawSub = it.subCat ?? it.subcategory;
           if (!rawSub) return;
-          const key = squeezeKey(rawSub);
-          if (!rcCatIds.has(key)) return;
-          if (!floralsInvBySub[key]) floralsInvBySub[key] = { label: String(rawSub).trim(), count: 0, unit: it.unit || "pc" };
-          floralsInvBySub[key].count += 1;
+          const subKey = String(rawSub).trim().toLowerCase();
+          if (!subKey) return;
+          invCountBySub[subKey] = (invCountBySub[subKey] || 0) + 1;
+          if (invSubToCat[subKey]) return;
+          const rawCat = it.cat ?? it.category;
+          invSubToCat[subKey] = rawCat ? normInvCat(rawCat) : "Other";
         });
-        // Sub-categories toggleable above: union of Rate-Card-derived subs (today's source) and
-        // inventory-only subs (exist in real stock but have no Rate Card line item yet) — so a
-        // sub-category added directly in Inventory isn't invisible here.
-        const rcSubKeys = new Set(studioFloralsSubcats.map(squeezeKey));
-        const invOnlySubs = Object.keys(floralsInvBySub).filter((k) => !rcSubKeys.has(k)).map((k) => floralsInvBySub[k].label);
-        const allFloralsSubcats = [...studioFloralsSubcats, ...invOnlySubs];
+        const subToCatLabel = {};
+        (rcItems || []).forEach((it) => {
+          const catLabel = (rcCats || []).find((c) => c.id === it.cat)?.l || it.cat;
+          if (!catLabel) return;
+          const subKey = String(it.sub || "").trim().toLowerCase();
+          const aliasKey = String(it.imsAlias || "").trim().toLowerCase();
+          if (subKey) subToCatLabel[subKey] = catLabel;
+          if (aliasKey) subToCatLabel[aliasKey] = catLabel;
+        });
+        const groupLabelFor = (r) => r.category_label || invSubToCat[r.id] || subToCatLabel[r.id] || "Other";
+        const floralsRows = (rateCardCategories || []).filter((r) => groupLabelFor(r) === "Florals");
+        const allFloralsSubcats = floralsRows.map((r) => r.label);
+        // Chip count display — live inventory stock in each Florals sub-category.
+        const floralsInvBySub = {};
+        floralsRows.forEach((r) => { floralsInvBySub[squeezeKey(r.label)] = { count: invCountBySub[r.id] || 0 }; });
 
         // Recipes are IMS-native now — a recipe IS a flowerPatterns entry, full stop. No separate
         // Rate Card "studio item" needs to exist for a recipe to be creatable/renamable/deletable.
@@ -1159,7 +1187,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
               <p className="text-xs font-semibold text-indigo-800 mb-2">Recipe-driven sub-categories <span className="font-normal text-indigo-600">— tick the Florals subs whose items use flower recipes for costing. Counts are live inventory stock.</span></p>
               {studioLoadingFlag && allFloralsSubcats.length === 0 && <p className="text-xs text-gray-400 italic">Loading from Studio…</p>}
-              {!studioLoadingFlag && allFloralsSubcats.length === 0 && <p className="text-xs text-amber-600">No Florals sub-categories found in Studio Rate Card or Inventory.</p>}
+              {!studioLoadingFlag && allFloralsSubcats.length === 0 && <p className="text-xs text-amber-600">No sub-categories are grouped under Florals yet — set that in Admin → Settings → 📂 Sub-Categories.</p>}
               {allFloralsSubcats.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {allFloralsSubcats.map((sub) => {
