@@ -9,7 +9,7 @@ import { Fragment, useState } from "react";
 import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
-import { getCat } from "../../lib/studio/taxonomy";
+import { getCat, carpetPricingFor, defaultCarpetMatId } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
@@ -206,9 +206,19 @@ export default function StudioModals({ ctx }) {
                   <div style={{ display: "flex", gap: 4 }}>
                     {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
                       const sel=(zoneUploadReview.dims?.plH||"")=== o.v;
-                      return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),plH:o.v}})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{o.l}</span>;
+                      const turningOn = !!o.v && !sel;
+                      return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),plH:o.v, ...((turningOn&&!zoneUploadReview.dims?.cpT)?{cpT:defaultCarpetMatId(imsPrintMaterials)}:{})}})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{o.l}</span>;
                     })}
                   </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
+                  <select value={zoneUploadReview.dims?.cpT||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value||null}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.05)":"#fff",color:textP}}>
+                    <option value="">— None —</option>
+                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                  </select>
                 </div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", margin: "6px 0" }}>
@@ -231,7 +241,8 @@ export default function StudioModals({ ctx }) {
                         <div style={{ display: "flex", gap: 4 }}>
                           {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
                             const sel=(row.plH||"")=== o.v;
-                            return <span key={o.v} onClick={()=>setRow({plH:o.v})} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?"#059669":border}`,background:sel?"#05966918":"transparent",color:sel?"#059669":textS}}>{o.l}</span>;
+                            const turningOn = !!o.v && !sel;
+                            return <span key={o.v} onClick={()=>{ setRow({plH:o.v}); if (turningOn && !zoneUploadReview.dims?.cpT) setZoneUploadReview((zur) => ({...zur, dims:{...(zur.dims||{}), cpT: defaultCarpetMatId(imsPrintMaterials)}})); }} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:10,fontWeight:sel?600:400,textAlign:"center",cursor:"pointer",border:`1px solid ${sel?"#059669":border}`,background:sel?"#05966918":"transparent",color:sel?"#059669":textS}}>{o.l}</span>;
                           })}
                         </div>
                       </div>
@@ -334,12 +345,13 @@ export default function StudioModals({ ctx }) {
                   const maskCost=maskSqft*mkRate*qty;
                   return {isBox,trussSqft,trussRate,trussCost,mkT,mkRate,maskSqft,maskWalls,maskCost};
                 };
+                const cp=carpetPricingFor(d.cpT, imsPrintMaterials);
                 const platformRowCalc=(row)=>{
                   const fL=row.floorL||0, fW=row.floorW||0;
                   const flSqft=fL*fW;
                   const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                   const plCost=flSqft*plRate;
-                  const cpRate=15;const cpCost=flSqft*cpRate;
+                  const cpRate=d.cpT?cp.rate:0;const cpCost=flSqft*cpRate;
                   return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost};
                 };
                 const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls}, ...(d.trussRows||[])];
@@ -367,7 +379,7 @@ export default function StudioModals({ ctx }) {
                     <span style={{fontWeight:600}}>{fmt(r.plCost)}</span>
                   </div>)}
                   {platformResults.map((r,ri)=> r.cpCost>0 && <div key={"cp"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11}}>
-                    <div><span style={{fontWeight:600}}>{ri>0?`Platform #${ri+1} — `:""}Carpet (New)</span><br/><span style={{fontSize:10,color:textS}}>{r.fL}×{r.fW} = {r.flSqft} sqft × ₹{r.cpRate}</span></div>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Platform #${ri+1} — `:""}Carpet ({cp.label})</span><br/><span style={{fontSize:10,color:textS}}>{r.fL}×{r.fW} = {r.flSqft} sqft × ₹{r.cpRate}</span></div>
                     <span style={{fontWeight:600}}>{fmt(r.cpCost)}</span>
                   </div>)}
                 </div>;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory } from "../../lib/ims/helpers";
@@ -70,33 +70,60 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
           const cRate = cItem ? (cItemIsKit ? kitTotalFromInventory(cItem, imsInventory) : (Number(cItem.price ?? cItem.rentalCost) || 0)) : 0;
           return (
-            <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-              <div style={{ position: "relative", flexShrink: 0 }}
-                onMouseEnter={(e) => {
-                  if (!cSrc) return;
-                  const r = e.currentTarget.getBoundingClientRect();
-                  const POP = 164;
-                  const openUp = window.innerHeight - r.bottom < POP + 8 && r.top > POP + 8;
-                  setHoverImg({ idx: ci, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
-                }}
-                onMouseLeave={() => setHoverImg(null)}>
-                {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>📦</span>}
-                {hoverImg?.idx === ci && cSrc && (
-                  <div style={{ position: "fixed", top: hoverImg.top, bottom: hoverImg.bottom, left: hoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
-                    <img src={cSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  </div>
-                )}
+            <Fragment key={ci}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                <div style={{ position: "relative", flexShrink: 0 }}
+                  onMouseEnter={(e) => {
+                    if (!cSrc) return;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const POP = 164;
+                    const openUp = window.innerHeight - r.bottom < POP + 8 && r.top > POP + 8;
+                    setHoverImg({ idx: ci, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
+                  }}
+                  onMouseLeave={() => setHoverImg(null)}>
+                  {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>📦</span>}
+                  {hoverImg?.idx === ci && cSrc && (
+                    <div style={{ position: "fixed", top: hoverImg.top, bottom: hoverImg.bottom, left: hoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
+                      <img src={cSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    </div>
+                  )}
+                </div>
+                <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}{cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}> 📦</span>}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
+                  <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
+                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{qtyEach}</span>
+                  <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
+                </div>
+                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
+                {cItem && <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }}>₹{cRate.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(cRate * qtyEach).toLocaleString("en-IN")}</b></span>}
+                <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
-              <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}{cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}> 📦</span>}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
-                <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
-                <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{qtyEach}</span>
-                <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
-              </div>
-              {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-              {cItem && <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }}>₹{cRate.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(cRate * qtyEach).toLocaleString("en-IN")}</b></span>}
-              <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
-            </div>
+              {/* This component is itself a kit — show what's inside it too, read-only (its own
+                  recipe is edited from its own IMS Edit screen, not here). */}
+              {cItemIsKit && (
+                <div style={{ marginLeft: 20, paddingLeft: 8, borderLeft: `2px solid rgba(99,102,241,0.25)`, display: "flex", flexDirection: "column", gap: 2 }}>
+                  {(cItem.subItems || []).map((gs, gi) => {
+                    if (gs.patternId) {
+                      const gpat = (flowerPatterns || []).find(p => p.id === gs.patternId);
+                      return <div key={gi} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "#EC4899", fontStyle: "italic" }}>
+                        <span>🌸</span><span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gpat ? gpat.name : `⚠ ${gs.patternId}`}</span><span>{gs.qty ?? 1}{studioUnitLabel(gpat?.unit)}</span>
+                      </div>;
+                    }
+                    const gc = (imsInventory || []).find(i => i.id === gs.itemId);
+                    const gcIsKit = gc && Array.isArray(gc.subItems) && gc.subItems.length > 0;
+                    const gcRate = gc ? (gcIsKit ? kitTotalFromInventory(gc, imsInventory) : (Number(gc.price ?? gc.rentalCost) || 0)) : 0;
+                    const gQty = Number(gs.qty) || 0;
+                    return <div key={gi} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: textS }}>
+                      {gc?.img ? <img src={gc.img} alt="" style={{ width: 16, height: 16, borderRadius: 3, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 16, height: 16, borderRadius: 3, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", flexShrink: 0 }} />}
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gc ? gc.name : `⚠ ${gs.itemId} not in IMS`}{gcIsKit && " 📦"}</span>
+                      <span>×{gQty}</span>
+                      <span style={{ opacity: 0.85 }}>₹{(gcRate * gQty).toLocaleString("en-IN")}</span>
+                    </div>;
+                  })}
+                  {!(cItem.subItems || []).length && <div style={{ fontSize: 10, color: textS, fontStyle: "italic" }}>no components in this kit</div>}
+                </div>
+              )}
+            </Fragment>
           );
         })}
       </div>

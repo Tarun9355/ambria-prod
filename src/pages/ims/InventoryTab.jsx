@@ -1616,18 +1616,51 @@ Rules:
                       const lineTotal = childRental * (Number(si.qty) || 0);
                       const childImg = child?.img || (Array.isArray(child?.photoUrls) && child.photoUrls[0]) || "";
                       return (
-                        <div key={idx} className="flex items-center gap-2 bg-white border border-indigo-100 rounded-lg px-2 py-1.5">
-                          {childImg
-                            ? <img src={childImg} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
-                            : <div className="w-7 h-7 rounded bg-gray-100 flex-shrink-0" />}
-                          <span className="flex-1 text-xs font-medium text-gray-700 truncate">{child ? child.name : `⚠ ${si.itemId} (missing)`}{childIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit</span>}</span>
-                          <span className="text-xs text-gray-400">₹{childRental.toLocaleString("en-IN")} ea</span>
-                          <input type="number" min="1" value={si.qty} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
-                            className="w-14 border rounded-md px-2 py-1 text-xs text-center" />
-                          <span className="text-xs font-semibold text-indigo-700 w-20 text-right">₹{lineTotal.toLocaleString("en-IN")}</span>
-                          <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.filter((_, i) => i !== idx) }))}
-                            className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
-                        </div>
+                        <React.Fragment key={idx}>
+                          <div className="flex items-center gap-2 bg-white border border-indigo-100 rounded-lg px-2 py-1.5">
+                            {childImg
+                              ? <img src={childImg} alt="" className="w-7 h-7 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                              : <div className="w-7 h-7 rounded bg-gray-100 flex-shrink-0" />}
+                            <span className="flex-1 text-xs font-medium text-gray-700 truncate">{child ? child.name : `⚠ ${si.itemId} (missing)`}{childIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit</span>}</span>
+                            <span className="text-xs text-gray-400">₹{childRental.toLocaleString("en-IN")} ea</span>
+                            <input type="number" min="1" value={si.qty} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
+                              className="w-14 border rounded-md px-2 py-1 text-xs text-center" />
+                            <span className="text-xs font-semibold text-indigo-700 w-20 text-right">₹{lineTotal.toLocaleString("en-IN")}</span>
+                            <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.filter((_, i) => i !== idx) }))}
+                              className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
+                          </div>
+                          {/* This component is itself a kit — show what's INSIDE it too (read-only; edit
+                              its own recipe from its own Edit screen), so nothing about what you're
+                              actually renting is hidden behind a single "📦 kit" line. */}
+                          {childIsKit && (
+                            <div className="ml-6 pl-2 border-l-2 border-indigo-200 space-y-1">
+                              {(child.subItems || []).map((cs, cidx) => {
+                                if (cs.patternId) {
+                                  const pat = (settings.flowerPatterns || []).find((p) => p.id === cs.patternId);
+                                  return (
+                                    <div key={cidx} className="flex items-center gap-2 text-[11px] text-pink-500 italic">
+                                      <span>🌸</span>
+                                      <span className="flex-1 truncate">{pat ? pat.name : `⚠ ${cs.patternId}`}</span>
+                                      <span>{cs.qty ?? 1}{studioUnitLabel(pat?.unit)}</span>
+                                    </div>
+                                  );
+                                }
+                                const gc = inventory.find((i) => i.id === cs.itemId);
+                                const gcIsKit = gc && Array.isArray(gc.subItems) && gc.subItems.length > 0;
+                                const gcRate = gc ? (gcIsKit ? kitPriceFrom(gc.subItems, Number(gc.kitBase) || 0, new Set([child.id])) : (Number(gc.price ?? gc.rentalCost) || 0)) : 0;
+                                return (
+                                  <div key={cidx} className="flex items-center gap-2 text-[11px] text-gray-500">
+                                    {gc?.img ? <img src={gc.img} alt="" className="w-4 h-4 rounded object-cover flex-shrink-0" /> : <div className="w-4 h-4 rounded bg-gray-100 flex-shrink-0" />}
+                                    <span className="flex-1 truncate">{gc ? gc.name : `⚠ ${cs.itemId} (missing)`}{gcIsKit && " 📦"}</span>
+                                    <span>×{cs.qty ?? 1}</span>
+                                    <span className="w-16 text-right">₹{(gcRate * (Number(cs.qty) || 1)).toLocaleString("en-IN")}</span>
+                                  </div>
+                                );
+                              })}
+                              {!(child.subItems || []).length && <div className="text-[11px] text-gray-400 italic">no components in this kit</div>}
+                            </div>
+                          )}
+                        </React.Fragment>
                       );
                     })}
 
