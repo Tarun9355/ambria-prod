@@ -438,7 +438,7 @@ Rules:
       printUnit: it.printable_LxW?.unit || "Feet",
       isKit: Array.isArray(it.subItems) && it.subItems.length > 0,
       kitBase: it.kitBase ?? 0,
-      subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
+      subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => (s.patternId ? { patternId: s.patternId } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
     });
     setEditModal(itemId);
     setDetailItem(null); // close detail modal if it was open
@@ -468,10 +468,14 @@ Rules:
   }
 
   // §7.9.5 — kit price = base rental (the kit's own assembly/shell charge) + Σ(component rental × qty).
+  // Flower-recipe add-ons (si.patternId) contribute nothing here — a pure denotation that this kit
+  // includes flowers; their studio rate is added separately wherever the kit is priced
+  // (getElPriceFromInventory in StudioApp.jsx), not into this rental total.
   function kitPriceFrom(subItems, base = 0) {
     const b = Number(base) || 0;
     if (!Array.isArray(subItems)) return b;
     return b + subItems.reduce((sum, si) => {
+      if (si.patternId) return sum;
       const c = inventory.find((i) => i.id === si.itemId);
       const r = c ? (Number(c.price ?? c.rentalCost) || 0) : 0;
       return sum + r * (Number(si.qty) || 0);
@@ -494,7 +498,7 @@ Rules:
       : "";
     const qtyNum = parseInt(f.qty) || 0;
     const isKit = !!f.isKit && Array.isArray(f.subItems) && f.subItems.length > 0;
-    const cleanSubItems = isKit ? f.subItems.filter((s) => s.itemId).map((s) => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : [];
+    const cleanSubItems = isKit ? f.subItems.filter((s) => s.itemId || s.patternId).map((s) => (s.patternId ? { patternId: s.patternId } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [];
     // When item is a kit, rental price = auto-summed component cost (overrides manual field)
     const kitBaseNum = isKit ? (Number(f.kitBase) || 0) : 0;
     const priceNum = isKit ? kitPriceFrom(cleanSubItems, kitBaseNum) : (parseFloat(f.price) || 0);
@@ -1330,6 +1334,10 @@ Rules:
           const isLegacy = isLegacyCat(editForm.cat);
           const kitPrice = kitPriceFrom(editForm.subItems, Number(editForm.kitBase) || 0);
           const kitComponentOpts = inventory.filter((i) => i.id !== editForm.id && !(editForm.subItems || []).some((s) => s.itemId === i.id));
+          // Flower recipes addable as kit "add-ons" — a pure denotation that this kit includes a
+          // flower recipe, contributing ₹0 to Kit rental price (auto). Its studio rate gets added
+          // on top wherever the kit is priced (getElPriceFromInventory), not here.
+          const kitPatternOpts = (settings.flowerPatterns || []).filter((p) => !(editForm.subItems || []).some((s) => s.patternId === p.id));
           return (
             <div className="space-y-4">
               {/* Cat-migration banner — Tier 1.2 manual review */}
@@ -1575,6 +1583,21 @@ Rules:
                       <p className="text-xs text-gray-500 italic">No components yet — add the items this kit contains (e.g. Console Table ×1, Flower Pot ×3, Candle ×6).</p>
                     )}
                     {(editForm.subItems || []).map((si, idx) => {
+                      if (si.patternId) {
+                        // Flower-recipe add-on — a denotation only, ₹0 here. Its studio rate is
+                        // added wherever this kit is priced (getElPriceFromInventory), not in the
+                        // Kit rental price (auto) total below.
+                        const pat = (settings.flowerPatterns || []).find((p) => p.id === si.patternId);
+                        return (
+                          <div key={idx} className="flex items-center gap-2 bg-pink-50 border border-pink-200 rounded-lg px-2 py-1.5">
+                            <div className="w-7 h-7 rounded bg-pink-100 flex-shrink-0 flex items-center justify-center text-sm">🌸</div>
+                            <span className="flex-1 text-xs font-medium text-gray-700 truncate">{pat ? pat.name : `⚠ ${si.patternId} (recipe missing)`}</span>
+                            <span className="text-[10px] text-pink-600 italic">flower recipe — no rental, priced separately</span>
+                            <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.filter((_, i) => i !== idx) }))}
+                              className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
+                          </div>
+                        );
+                      }
                       const child = inventory.find((i) => i.id === si.itemId);
                       const childRental = child ? (Number(child.price ?? child.rentalCost) || 0) : 0;
                       const lineTotal = childRental * (Number(si.qty) || 0);
@@ -1595,18 +1618,33 @@ Rules:
                       );
                     })}
 
-                    {/* Add component — custom search dropdown (native <datalist> can't show thumbnails) */}
+                    {/* Add component — custom search dropdown (native <datalist> can't show thumbnails).
+                        Searches inventory items AND flower recipes together — a recipe result adds
+                        a denotation-only add-on (🌸, no rental) instead of a priced component. */}
                     <div className="relative">
-                      <input value={kitCompSearch} onChange={(e) => setKitCompSearch(e.target.value)} placeholder="🔍 Search by item name or sub-category…"
+                      <input value={kitCompSearch} onChange={(e) => setKitCompSearch(e.target.value)} placeholder="🔍 Search by item name, sub-category, or flower recipe…"
                         className="w-full border rounded-lg px-3 py-2 text-sm" />
                       {kitCompSearch.trim() && (() => {
                         // Token AND-match (every typed word must appear somewhere in the name, any
                         // order) — "candle 3d" should still find "3D iron candle wall".
                         const tokens = kitCompSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
                         const matches = kitComponentOpts.filter((i) => { const n = (i.name + " " + (i.subCat || i.subcategory || "")).toLowerCase(); return tokens.every((t) => n.includes(t)); }).slice(0, 40);
+                        const patternMatches = kitPatternOpts.filter((p) => { const n = (p.name + " " + (p.sub || "")).toLowerCase(); return tokens.every((t) => n.includes(t)); }).slice(0, 20);
                         return (
                           <div className="absolute z-50 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
-                            {matches.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No matches</div>}
+                            {matches.length === 0 && patternMatches.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No matches</div>}
+                            {patternMatches.map((p) => (
+                              <div key={"pat-" + p.id} onClick={() => {
+                                setEditForm((f) => (f.subItems || []).some((s) => s.patternId === p.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { patternId: p.id }] }));
+                                setKitCompSearch("");
+                              }} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-pink-50 border-b border-gray-100 last:border-b-0">
+                                <div className="w-8 h-8 rounded bg-pink-100 flex-shrink-0 flex items-center justify-center text-sm">🌸</div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm text-gray-800 truncate">{p.name}</div>
+                                  <div className="text-xs text-pink-500">flower recipe{p.sub ? ` · ${p.sub}` : ""} — no rental, priced separately</div>
+                                </div>
+                              </div>
+                            ))}
                             {matches.map((i) => {
                               const img = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
                               return (

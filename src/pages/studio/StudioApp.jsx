@@ -2459,33 +2459,55 @@ export default function StudioApp() {
     if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+    // dealCheckData is null outside an active Deal Check session — floralArtUnitRate/patternExtra
+    // already fall back to studioFloralData for this exact reason; mirror that here too.
+    const floralSrc = dealCheckData || studioFloralData || {};
 
-    // Floral-recipe pricing: an inventory item whose name matches a flower pattern prices from the
-    // recipe's real/artificial Studio rates instead of rental × scaling factor — that rate is
-    // already the final all-in customer price (synced verbatim from the same recipe onto Rate Card
-    // items elsewhere), so no factor/availability-shortfall logic applies on top. Size defaults to
-    // "B" (Big) per the element's own size toggle (StudioBuild.jsx/ManageLibrary.jsx), not derived
-    // from the item's name. Kits matching a recipe (e.g. a console table with a floral topper) go
-    // through this same branch — priceForInvItem below already handles the kit-total × factor case,
-    // so the combined formula is (kit rental × scaling factor) + flower recipe rate, unchanged for
-    // plain (non-kit) items.
+    // Kit + flower recipe, from either/both of two independent sources — both can apply to the
+    // same kit at once:
+    //  (1) a recipe explicitly attached to this kit as an "add-on" in the Inventory Kit editor
+    //      (item.subItems entries with a patternId) — a denotation only, priced here instead of
+    //      contributing to the kit's own rental total (kitTotalFromInventory skips these).
+    //  (2) whatever recipe matches this kit's own sub-category/name (matchFlowerPattern) — the
+    //      same mechanism non-kit Florals items use below, now applying to ANY kit regardless of
+    //      its own top-level category (e.g. a console-table kit filed under Furniture still gets
+    //      its sub-category's recipe priced in, without needing to be filed under "Florals").
+    // Neither blends real/artificial — that toggle exists to cut cost on plain flower-pot-style
+    // items with an artificial mix, which doesn't apply to a fixed decorative kit; both price at
+    // the recipe's full Studio rate (100% real). Falls through to normal kit-rental pricing
+    // (including the availability-shortfall path below) when neither source applies.
+    if (isKit) {
+      const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
+      const recipeCost = (pattern) => {
+        if (!pattern) return 0;
+        const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
+        return rates ? rates.realRate + rates.extra : 0;
+      };
+      const subCatPattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
+      const attachedPatterns = (item.subItems || [])
+        .filter((si) => si.patternId)
+        .map((si) => (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId))
+        .filter(Boolean);
+      if (subCatPattern || attachedPatterns.length) {
+        const flowerCost = recipeCost(subCatPattern) + attachedPatterns.reduce((sum, p) => sum + recipeCost(p), 0);
+        const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
+        const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((p) => p.mode === "smb");
+        return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+      }
+    }
+
+    // Floral-recipe pricing (non-kit): an inventory item whose name/sub-category matches a flower
+    // pattern prices from the recipe's real/artificial Studio rates instead of rental × scaling
+    // factor — that rate is already the final all-in customer price (synced verbatim from the same
+    // recipe onto Rate Card items elsewhere), so no factor/availability-shortfall logic applies on
+    // top. Size defaults to "B" (Big) per the element's own size toggle
+    // (StudioBuild.jsx/ManageLibrary.jsx), not derived from the item's name.
     const isFloral = String(item.cat || item.category || "").toLowerCase() === "florals";
-    if (isFloral) {
-      // dealCheckData is null outside an active Deal Check session — floralArtUnitRate/patternExtra
-      // already fall back to studioFloralData for this exact reason; mirror that here too.
-      const floralSrc = dealCheckData || studioFloralData || {};
+    if (isFloral && !isKit) {
       const pattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
       const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory) : null;
       if (rates) {
-        if (isKit) {
-          // Kit + recipe (e.g. a console table with a floral topper): no real/artificial blend —
-          // that toggle exists so a client can cut cost on plain flower-pot-style items with an
-          // artificial mix, which doesn't apply to a fixed decorative kit. Price at the recipe's
-          // full Studio rate (100% real) plus the kit's own rental × scaling factor.
-          const unitPrice = rates.realRate + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-          return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: pattern.mode === "smb" };
-        }
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
         const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));

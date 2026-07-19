@@ -973,6 +973,7 @@ export default function StudioBuild({ ctx }) {
                       overrides={el.kitOverrides}
                       onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
                       imsInventory={imsInventory}
+                      flowerPatterns={recipeOnlyPatterns}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                       rcSubcatFactors={rcSubcatFactors}
@@ -1501,6 +1502,7 @@ export default function StudioBuild({ ctx }) {
                     overrides={el.kitOverrides}
                     onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
                     imsInventory={imsInventory}
+                    flowerPatterns={recipeOnlyPatterns}
                     qtyMultiplier={el.qty||1}
                     dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                     rcSubcatFactors={rcSubcatFactors}

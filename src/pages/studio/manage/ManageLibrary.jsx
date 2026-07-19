@@ -1194,6 +1194,7 @@ export default function ManageLibrary({ ctx }) {
                                 overrides={el.kitOverrides}
                                 onChange={(next) => { const elems = [...(libEditImg.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setLibEditImg({ ...libEditImg, elements: elems }); }}
                                 imsInventory={imsInventory}
+                                flowerPatterns={recipeOnlyPatterns}
                                 qtyMultiplier={el.qty || 1}
                                 rcSubcatFactors={rcSubcatFactors}
                                 textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}

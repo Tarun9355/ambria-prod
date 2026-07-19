@@ -99,6 +99,7 @@ function kitTotalFromInventory(item, allInventory, overrideSubItems) {
   const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
   if (!Array.isArray(allInventory)) return base;
   return subItems.reduce((sum, si) => {
+    if (si.patternId) return sum; // flower-recipe add-on — denotation only, priced separately (getElPriceFromInventory)
     const c = allInventory.find((i) => i.id === si.itemId);
     const r = c ? (Number(c.price ?? c.rentalCost) || 0) : 0;
     return sum + r * (Number(si.qty) || 0);

@@ -12,17 +12,19 @@ import { isHiddenSubcat } from "../../lib/rateCard";
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
   const [hoverImg, setHoverImg] = useState(null); // { idx, top, bottom, left }
   const [addSearch, setAddSearch] = useState("");
   if (!item) return null;
-  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => ({ itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
+  // A component is either {itemId, qty} (a physical inventory item) or {patternId} (a flower-recipe
+  // add-on — a pure denotation, priced separately via getElPriceFromInventory, contributes ₹0 here).
+  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
   const kitBase = Number(item.kitBase) || 0;
-  const componentsTotal = comps.reduce((sum, c) => { const ci = (imsInventory || []).find(i => i.id === c.itemId); const r = ci ? (Number(ci.price ?? ci.rentalCost) || 0) : 0; return sum + r * (Number(c.qty) || 0); }, 0);
+  const componentsTotal = comps.reduce((sum, c) => { if (c.patternId) return sum; const ci = (imsInventory || []).find(i => i.id === c.itemId); const r = ci ? (Number(ci.price ?? ci.rentalCost) || 0) : 0; return sum + r * (Number(c.qty) || 0); }, 0);
   const partsTotal = kitBase + componentsTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
@@ -34,6 +36,17 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {comps.map((c, ci) => {
+          if (c.patternId) {
+            const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
+            return (
+              <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
+                <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
+                <span style={{ color: "#EC4899", fontSize: 9, fontStyle: "italic", whiteSpace: "nowrap" }}>flower recipe — priced in the total above, not here</span>
+                <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
+              </div>
+            );
+          }
           const cItem = (imsInventory || []).find(i => i.id === c.itemId);
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
