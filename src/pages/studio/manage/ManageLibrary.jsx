@@ -649,8 +649,10 @@ export default function ManageLibrary({ ctx }) {
           <div onClick={(e) => e.stopPropagation()} style={{ width: "96vw", maxWidth: "96vw", margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, height: "96vh", boxShadow: "0 12px 48px rgba(0,0,0,0.45)", display: "flex", overflow: "hidden" }}>
             {/* Left: big image, fixed in place — the right side scrolls on its own so you never
                 need to scroll back up to re-check the photo while working through tags/dims/elements. */}
-            <div style={{ width: "38%", flexShrink: 0, padding: 16, borderRight: `1px solid ${border}`, display: "flex", flexDirection: "column" }}>
-              <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: "100%", flex: 1, minHeight: 0, objectFit: "cover", borderRadius: 10, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
+            <div style={{ width: "38%", flexShrink: 0, padding: 16, borderRight: `1px solid ${border}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              {/* contain (not cover) — most of these are landscape shots, and cropping to fill the
+                  column height was cutting off the sides. Full width visible, letterboxed if needed. */}
+              <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 10, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
             </div>
             <div style={{ flex: 1, minWidth: 0, padding: 16, overflowY: "auto" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
