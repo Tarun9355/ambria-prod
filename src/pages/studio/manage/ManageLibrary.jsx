@@ -824,7 +824,9 @@ export default function ManageLibrary({ ctx }) {
                 const cell = { fontSize: 9, color: textS, marginBottom: 2 };
                 const inp = { ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 };
                 const mw = row.mkWalls || {};
-                const walls = rIsBox ? [{ id: "back", label: "Back" }, { id: "left", label: "Left" }, { id: "right", label: "Right" }] : [{ id: "left", label: "Left" }, { id: "right", label: "Right" }];
+                // A U truss (only 2 of 3 dims filled) is open on the sides — only its back can be
+                // masked, not left/right.
+                const walls = rIsBox ? [{ id: "back", label: "Back" }, { id: "left", label: "Left" }, { id: "right", label: "Right" }] : [{ id: "back", label: "Back" }];
                 return (
                   <div key={row.id} style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: isDark ? "rgba(124,58,237,0.06)" : "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.25)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -932,13 +934,14 @@ export default function ManageLibrary({ ctx }) {
                 const anyWall=mw.back||mw.left||mw.right;
                 const toggleW=(wall)=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),mkWalls:{...mw,[wall]:!mw[wall]}}});
                 const setMkT=(t)=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),mkT:t}});
+                // A U truss (open on the sides, only 2 of 3 dims filled) only has a back panel to
+                // mask — no left/right walls exist to hang fabric on.
                 const walls=isBox?[
                   {id:"back",label:"Back wall",dim:`${dL} × ${dH} ft`},
                   {id:"left",label:"Left wall",dim:`${dW} × ${dH} ft`},
                   {id:"right",label:"Right wall",dim:`${dW} × ${dH} ft`}
                 ]:[
-                  {id:"left",label:"Left wall",dim:`${dW} × ${dH} ft`},
-                  {id:"right",label:"Right wall",dim:`${dW} × ${dH} ft`}
+                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`}
                 ];
                 return <div style={{ marginTop: 10, background: anyWall ? (isDark ? "rgba(201,169,110,0.08)" : "rgba(201,169,110,0.06)") : (isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"), borderRadius: 10, padding: "12px 14px", border: `1px solid ${anyWall ? accent+"40" : border}` }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
@@ -974,9 +977,14 @@ export default function ManageLibrary({ ctx }) {
                 const mw=row.mkWalls||{};const mkT=row.mkT||"";
                 const mkRate=mkRates[mkT]||0;
                 let maskSqft=0;const maskWalls=[];
-                if(mw.back&&isBox){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dL}×${dH}`,sqft:a});}
-                if(mw.left){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dW}×${dH}`,sqft:a});}
-                if(mw.right){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dW}×${dH}`,sqft:a});}
+                // U truss has no left/right walls to mask — only its back panel (dW×dH) counts.
+                if(isBox){
+                  if(mw.back){const a=dL*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dL}×${dH}`,sqft:a});}
+                  if(mw.left){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Left",dim:`${dW}×${dH}`,sqft:a});}
+                  if(mw.right){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Right",dim:`${dW}×${dH}`,sqft:a});}
+                } else if(isSingleU){
+                  if(mw.back){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dW}×${dH}`,sqft:a});}
+                }
                 const maskCost=maskSqft*mkRate*qty;
                 return {isBox,trussSqft,trussRate,trussCost,mkT,mkRate,maskSqft,maskWalls,maskCost};
               };
