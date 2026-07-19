@@ -16,6 +16,12 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   const [loading, setLoading] = useState(false);
   const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, nightly: 0, manual: 0, build: 0 });
   const [debouncedSearch, setDebouncedSearch] = useState(search);
+  // A failed page/counts fetch used to be swallowed silently, leaving counts at their zero-
+  // initialized state and the grid empty — indistinguishable from "the library is actually empty."
+  // Track it explicitly so the UI can show "failed to load" instead of a misleading empty state.
+  const [error, setError] = useState(null);
+  const [retryTick, setRetryTick] = useState(0);
+  const retry = useCallback(() => setRetryTick((t) => t + 1), []);
   const reqIdRef = useRef(0);
 
   useEffect(() => {
@@ -30,22 +36,23 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
 
   useEffect(() => {
     const id = ++reqIdRef.current;
-    setLoading(true); setItems([]); setCursor(null); setHasMore(true);
+    setLoading(true); setItems([]); setCursor(null); setHasMore(true); setError(null);
     fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
       .then(({ items: page, nextCursor, hasMore: more }) => {
         if (id !== reqIdRef.current) return;
         setItems(page); mergeLibItems(page); setCursor(nextCursor); setHasMore(more);
       })
-      .catch(() => { if (id === reqIdRef.current) setHasMore(false); })
+      .catch((e) => { if (id === reqIdRef.current) { setHasMore(false); setError(e?.message || "Failed to load images"); } })
       .finally(() => { if (id === reqIdRef.current) setLoading(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch]);
+  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, retryTick]);
 
   useEffect(() => {
     fetchLibraryCounts({ filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
-      .then(setCounts).catch(() => {});
+      .then(setCounts)
+      .catch((e) => setError((prev) => prev || e?.message || "Failed to load counts"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, venueGroup, venueKey, debouncedSearch]);
+  }, [filterKey, venueGroup, venueKey, debouncedSearch, retryTick]);
 
   const loadMore = useCallback(() => {
     if (loading || !hasMore || !cursor) return;
@@ -63,7 +70,7 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   const removeItem = useCallback((id) => setItems((prev) => prev.filter((it) => it.id !== id)), []);
   const prependItems = useCallback((newItems) => setItems((prev) => [...newItems, ...prev]), []);
 
-  return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems };
+  return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems, error, retry };
 }
 
 // Real component (not a plain helper function) so its hooks are safe even though the grid that
@@ -556,7 +563,15 @@ export default function ManageLibrary({ ctx }) {
             </>
           )}
         </div>
-        {!libPage.loading && libVisible.length === 0 && (
+        {!libPage.loading && libVisible.length === 0 && libPage.error && (
+          <div style={{ textAlign: "center", padding: 60, color: "#EF4444" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Failed to load images</div>
+            <div style={{ fontSize: 12, color: textS, marginBottom: 12 }}>{libPage.error} — this isn't necessarily an empty library, the request itself failed.</div>
+            <button onClick={libPage.retry} style={{ ...S.btn(true), fontSize: 11, padding: "6px 16px" }}>↻ Retry</button>
+          </div>
+        )}
+        {!libPage.loading && libVisible.length === 0 && !libPage.error && (
           <div style={{ textAlign: "center", padding: 60, color: textS }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📸</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>No images here</div>
