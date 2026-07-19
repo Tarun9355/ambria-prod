@@ -61,7 +61,6 @@ export const ZONE_DEF_SK = "ambria-zonedefs-v3";
 export const TEAM_SK = "ambria-team-v1";
 export const LIB_SK = "ambria-library-v2";
 export const TAX_SK = "ambria-taxonomy-v2";
-export const CORR_SK = "ambria-correction-log-v1"; // append-only log of human photo corrections (who/what/when) for contribution reporting
 export const TAG_KB_SK = "ambria-tag-knowledgebase-v1"; // AI-tagging knowledge base distilled from VERIFIED photos (per-area profiles + few-shot exemplars); rebuilt when stale
 export const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // array of "cat::sub" keys flagged in Pricing as NOT taggable (hidden from element-search boxes + AI vocabulary; items still exist in pricing/IMS)
 export const PREMIA_CFG_SK = "ambria-premia-config-v1";

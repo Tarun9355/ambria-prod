@@ -70,11 +70,12 @@ import {
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
-  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, CORR_SK, TAG_KB_SK,
+  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, BATCH_TAGGER_PAUSED_SK,
 } from "../../lib/studio/keys.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
 import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/tagFeedback.js";
+import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/photoCorrections.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -1876,8 +1877,8 @@ export default function StudioApp() {
       // taxonomy are now fully user-managed; create/delete via the Zone editor.
       // Library — row-per-photo in the `library` TABLE, server-side paginated (no whole-table
       // fetch on mount — see `libraryQueries.js` + `mergeLibItems`). Nothing to eagerly load here.
-      // Correction log (contribution tracking)
-      try { const v = await kvGet(CORR_SK); if (v != null) { const cp = parse(v); if (Array.isArray(cp) && !cancelled) { setCorrLog(cp); corrLogRef.current = cp; } } } catch {}
+      // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
+      try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {}
       try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {}
       // Team
       try {
@@ -2021,7 +2022,6 @@ export default function StudioApp() {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
-          else if (key === CORR_SK) { const a = pj(await kvGet(CORR_SK)); if (Array.isArray(a)) { setCorrLog(a); corrLogRef.current = a; } }
         } catch { /* ignore */ }
       })
       .subscribe();
@@ -2186,14 +2186,24 @@ export default function StudioApp() {
     } catch (e) { showMsg?.("Library save failed: " + (e?.message || e), "red"); }
   }, [showMsg]);
   // Append one human correction to the shared log (who/what/when) for contribution reporting.
-  // Best-effort append (same shared-blob model as the rest of the app); capped to the latest 5000.
-  const logCorrection = useCallback((info) => {
-    const entry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), user: authUser?.name || "—", userId: authUser?.id || "", photoId: info?.photoId || "", photoName: info?.photoName || "", source: info?.source || "build", kind: info?.kind || "photo", ts: Date.now() };
-    const next = [entry, ...corrLogRef.current].slice(0, 5000);
+  // A plain INSERT into photo_corrections (see photoCorrections.js) — no read-modify-write, so
+  // concurrent saves from different people can't clobber each other's entries.
+  const logCorrection = useCallback(async (info) => {
+    const row = await logPhotoCorrection({
+      photoId: info?.photoId || "", photoName: info?.photoName || "",
+      source: info?.source || "build", kind: info?.kind || "photo",
+      user: authUser?.name || "—", userId: authUser?.id || "",
+    });
+    if (!row) return;
+    const next = [row, ...corrLogRef.current].slice(0, 5000);
     corrLogRef.current = next;
     setCorrLog(next);
-    reliableSave(CORR_SK, JSON.stringify(next), "Corrections log").catch(() => {});
   }, [authUser]);
+  // Manual refresh (e.g. when the Contributions panel is opened) — picks up other people's saves
+  // without needing a live subscription for a report screen that's opened occasionally.
+  const refreshCorrLog = useCallback(() => {
+    fetchPhotoCorrections().then((rows) => { corrLogRef.current = rows; setCorrLog(rows); }).catch(() => {});
+  }, []);
   // ── AI-tagging knowledge base (distilled from VERIFIED photos) ──────────────────────────────────
   // Rebuilt from the current verified library; injected into the tagger's cached prompt. Lighting
   // rate-card names let it total "lights" per photo. Returns the new KB (or null if nothing verified).
@@ -6005,7 +6015,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch,
     zonePrintSearch, setZonePrintSearch,

@@ -150,7 +150,7 @@ export default function ManageLibrary({ ctx }) {
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logCorrection, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -574,8 +574,10 @@ export default function ManageLibrary({ ctx }) {
                 const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
                 const verifier = st === "verified" ? (img._verifiedBy || null) : null;
                 const dateStr = st === "verified" && img._verifiedAt ? new Date(img._verifiedAt).toLocaleDateString() : null;
+                const editedBy = st === "verified" && img._lastEditedBy && img._lastEditedBy !== verifier ? img._lastEditedBy : null;
+                const editDateStr = editedBy && img._lastEditedAt ? new Date(img._lastEditedAt).toLocaleDateString() : null;
                 const tip = st === "verified"
-                  ? `Verified by ${verifier || "unknown"}${dateStr ? ` on ${dateStr}` : ""}`
+                  ? `Tagged by ${verifier || "unknown"}${dateStr ? ` on ${dateStr}` : ""}${editedBy ? ` · edited by ${editedBy}${editDateStr ? ` on ${editDateStr}` : ""}` : ""}`
                   : st === "review" ? "AI-tagged — needs review" : "Untagged";
                 return (
                   <div style={{ position: "absolute", top: 6, left: 6, right: 30, display: "flex", alignItems: "center", gap: 3 }}>
@@ -679,10 +681,11 @@ export default function ManageLibrary({ ctx }) {
                       // A human save = Verified: stamps who/when so it leaves the "needs review" pile.
                       // Credit stays with whoever verified it FIRST — a later editor's save updates the
                       // tags but must not steal the original verifier's attribution (their own edit is
-                      // still logged as its own contribution below, just doesn't overwrite the badge).
+                      // still logged as its own contribution below). Instead it stamps _lastEditedBy so
+                      // the badge can show "Tagged by A · edited by B".
                       const wasVerified = !!libEditImg._verified;
                       const verified = wasVerified
-                        ? { ...libEditImg, _verified: true }
+                        ? { ...libEditImg, _verified: true, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() }
                         : { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
                       saveLib([verified]);
                       // Already-verified photo re-saved → update in place; newly-verified → it just
@@ -713,7 +716,7 @@ export default function ManageLibrary({ ctx }) {
                   if (lc == null && attention.length === 0 && !reviewed && !aiSuggested) return null;
                   return (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "2px 0 8px" }}>
-                      {reviewed && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#05966922", color: "#059669" }}>✓ Verified by {libEditImg._verifiedBy || "—"}{libEditImg._verifiedAt ? ` on ${new Date(libEditImg._verifiedAt).toLocaleDateString()}` : ""}</span>}
+                      {reviewed && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#05966922", color: "#059669" }}>✓ Tagged by {libEditImg._verifiedBy || "—"}{libEditImg._verifiedAt ? ` on ${new Date(libEditImg._verifiedAt).toLocaleDateString()}` : ""}{libEditImg._lastEditedBy && libEditImg._lastEditedBy !== libEditImg._verifiedBy ? ` · edited by ${libEditImg._lastEditedBy}${libEditImg._lastEditedAt ? ` on ${new Date(libEditImg._lastEditedAt).toLocaleDateString()}` : ""}` : ""}</span>}
                       {aiSuggested && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#7C3AED22", color: "#7C3AED" }}>🤖 AI suggested — review</span>}
                       {lc != null && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#F59E0B22", color: "#F59E0B" }}>💡 {lc} light{lc === 1 ? "" : "s"}</span>}
                       {attention.length > 0 && <span style={{ fontSize: 10, color: "#EF4444", display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>⚠ Needs attention: {attention.map((a, i) => <span key={i} style={{ padding: "1px 6px", borderRadius: 6, background: "#EF444418" }}>{a}</span>)}</span>}
@@ -1613,7 +1616,7 @@ export default function ManageLibrary({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
-        {libAllowed("corrections") && <button onClick={() => setLibView("corrections")} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
+        {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes ({imsPaletteCatalogue.length})</button>
       </div>
       {libView === "palettes" && (
@@ -2069,7 +2072,7 @@ export default function ManageLibrary({ ctx }) {
                     {hasTag&&<button onClick={()=>{const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}
-                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);logCorrection?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
+                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);logCorrection?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
                     <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
@@ -2233,7 +2236,7 @@ export default function ManageLibrary({ ctx }) {
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🤖 AI Tag"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
-              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? {} : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
+              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>
             <div style={{ padding: "16px 22px" }}>
