@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
+import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -19,9 +20,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const [hoverImg, setHoverImg] = useState(null); // { idx, top, bottom, left }
   const [addSearch, setAddSearch] = useState("");
   if (!item) return null;
-  // A component is either {itemId, qty} (a physical inventory item) or {patternId} (a flower-recipe
-  // add-on — a pure denotation, priced separately via getElPriceFromInventory, contributes ₹0 here).
-  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
+  // A component is either {itemId, qty} (a physical inventory item) or {patternId, qty} (a flower-
+  // recipe add-on, qty in the recipe's own unit — priced separately via getElPriceFromInventory,
+  // contributes ₹0 to the rental total below).
+  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
   const kitBase = Number(item.kitBase) || 0;
   const componentsTotal = comps.reduce((sum, c) => { if (c.patternId) return sum; const ci = (imsInventory || []).find(i => i.id === c.itemId); const r = ci ? (Number(ci.price ?? ci.rentalCost) || 0) : 0; return sum + r * (Number(c.qty) || 0); }, 0);
@@ -38,10 +40,17 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         {comps.map((c, ci) => {
           if (c.patternId) {
             const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
+            const patQty = Number(c.qty) || 0;
             return (
               <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                 <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
                 <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
+                  <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, patQty - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
+                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{patQty}{studioUnitLabel(pat?.unit)}</span>
+                  <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
+                </div>
+                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
                 <span style={{ color: "#EC4899", fontSize: 9, fontStyle: "italic", whiteSpace: "nowrap" }}>flower recipe — priced in the total above, not here</span>
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>

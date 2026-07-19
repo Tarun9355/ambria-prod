@@ -2479,20 +2479,25 @@ export default function StudioApp() {
     // (including the availability-shortfall path below) when neither source applies.
     if (isKit) {
       const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
-      const recipeCost = (pattern) => {
+      // recipeQty scales the recipe's own per-unit rate by however much of that recipe's unit
+      // (pc/sqft/rft/...) this kit add-on specifies — e.g. 12 sqft of a per-sqft recipe.
+      const recipeCost = (pattern, recipeQty = 1) => {
         if (!pattern) return 0;
         const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
-        return rates ? rates.realRate + rates.extra : 0;
+        return rates ? (rates.realRate + rates.extra) * (Number(recipeQty) || 0) : 0;
       };
       const subCatPattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
-      const attachedPatterns = (item.subItems || [])
+      // Per-instance overrides (el.kitOverrides) replace the kit's own global subItems recipe for
+      // THIS element only — same source priceForInvItem below already reads for the rental total.
+      const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
+      const attachedPatterns = effectiveSubItems
         .filter((si) => si.patternId)
-        .map((si) => (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId))
-        .filter(Boolean);
+        .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty }))
+        .filter((x) => x.pattern);
       if (subCatPattern || attachedPatterns.length) {
-        const flowerCost = recipeCost(subCatPattern) + attachedPatterns.reduce((sum, p) => sum + recipeCost(p), 0);
+        const flowerCost = recipeCost(subCatPattern) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.qty), 0);
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
-        const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((p) => p.mode === "smb");
+        const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }

@@ -7,6 +7,7 @@ import { DATE_PRICING_LABELS } from "../../lib/ims/constants";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
+import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [] }) {
   const studioLoading = !!studio?.loading;
@@ -438,7 +439,7 @@ Rules:
       printUnit: it.printable_LxW?.unit || "Feet",
       isKit: Array.isArray(it.subItems) && it.subItems.length > 0,
       kitBase: it.kitBase ?? 0,
-      subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => (s.patternId ? { patternId: s.patternId } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
+      subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
     });
     setEditModal(itemId);
     setDetailItem(null); // close detail modal if it was open
@@ -465,6 +466,43 @@ Rules:
       setEditPhotoUploading(false);
       if (editPhotoInputRef.current) editPhotoInputRef.current.value = ""; // allow re-pick of same file
     }
+  }
+
+  // A kit can't contain another kit as a single nested reference — pricing/allocation everywhere
+  // else assumes one level of components. Adding a kit-item to a kit instead flattens in that
+  // kit's OWN components (recursively, in case one of those is itself a kit), scaled by however
+  // many of the nested kit were being added. `seen` guards against a kit that somehow references
+  // itself (directly or via a cycle) — returns nothing further once revisited.
+  function flattenKitSubItems(kitItem, seen) {
+    if (!kitItem || seen.has(kitItem.id)) return [];
+    seen.add(kitItem.id);
+    const subs = Array.isArray(kitItem.subItems) ? kitItem.subItems : [];
+    const out = [];
+    subs.forEach((si) => {
+      if (si.patternId) { out.push({ patternId: si.patternId, qty: Number(si.qty) || 1 }); return; }
+      const child = inventory.find((x) => x.id === si.itemId);
+      const childIsKit = child && Array.isArray(child.subItems) && child.subItems.length > 0;
+      if (childIsKit) {
+        const mult = Number(si.qty) || 1;
+        flattenKitSubItems(child, seen).forEach((n) => out.push({ ...n, qty: (Number(n.qty) || 1) * mult }));
+      } else {
+        out.push({ itemId: si.itemId, qty: Number(si.qty) || 1 });
+      }
+    });
+    return out;
+  }
+  // Merge flattened components into an existing subItems list, summing qty where the same
+  // item/recipe already appears rather than creating a duplicate row.
+  function mergeSubItems(existing, additions) {
+    const keyOf = (s) => (s.patternId ? `p:${s.patternId}` : `i:${s.itemId}`);
+    const out = [...existing];
+    additions.forEach((add) => {
+      const k = keyOf(add);
+      const idx = out.findIndex((s) => keyOf(s) === k);
+      if (idx >= 0) out[idx] = { ...out[idx], qty: (Number(out[idx].qty) || 0) + (Number(add.qty) || 0) };
+      else out.push(add);
+    });
+    return out;
   }
 
   // §7.9.5 — kit price = base rental (the kit's own assembly/shell charge) + Σ(component rental × qty).
@@ -498,7 +536,7 @@ Rules:
       : "";
     const qtyNum = parseInt(f.qty) || 0;
     const isKit = !!f.isKit && Array.isArray(f.subItems) && f.subItems.length > 0;
-    const cleanSubItems = isKit ? f.subItems.filter((s) => s.itemId || s.patternId).map((s) => (s.patternId ? { patternId: s.patternId } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [];
+    const cleanSubItems = isKit ? f.subItems.filter((s) => s.itemId || s.patternId).map((s) => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [];
     // When item is a kit, rental price = auto-summed component cost (overrides manual field)
     const kitBaseNum = isKit ? (Number(f.kitBase) || 0) : 0;
     const priceNum = isKit ? kitPriceFrom(cleanSubItems, kitBaseNum) : (parseFloat(f.price) || 0);
@@ -1584,14 +1622,17 @@ Rules:
                     )}
                     {(editForm.subItems || []).map((si, idx) => {
                       if (si.patternId) {
-                        // Flower-recipe add-on — a denotation only, ₹0 here. Its studio rate is
-                        // added wherever this kit is priced (getElPriceFromInventory), not in the
-                        // Kit rental price (auto) total below.
+                        // Flower-recipe add-on — ₹0 in Kit rental price (auto) below; its studio
+                        // rate (× this qty, in the recipe's OWN unit) is added separately wherever
+                        // this kit is priced (getElPriceFromInventory).
                         const pat = (settings.flowerPatterns || []).find((p) => p.id === si.patternId);
                         return (
                           <div key={idx} className="flex items-center gap-2 bg-pink-50 border border-pink-200 rounded-lg px-2 py-1.5">
                             <div className="w-7 h-7 rounded bg-pink-100 flex-shrink-0 flex items-center justify-center text-sm">🌸</div>
                             <span className="flex-1 text-xs font-medium text-gray-700 truncate">{pat ? pat.name : `⚠ ${si.patternId} (recipe missing)`}</span>
+                            <input type="number" min="0" step="any" value={si.qty ?? 1} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
+                              className="w-14 border border-pink-300 rounded-md px-2 py-1 text-xs text-center" />
+                            <span className="text-[10px] text-pink-600 w-14">{studioUnitLabel(pat?.unit)}</span>
                             <span className="text-[10px] text-pink-600 italic">flower recipe — no rental, priced separately</span>
                             <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.filter((_, i) => i !== idx) }))}
                               className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
@@ -1635,7 +1676,7 @@ Rules:
                             {matches.length === 0 && patternMatches.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No matches</div>}
                             {patternMatches.map((p) => (
                               <div key={"pat-" + p.id} onClick={() => {
-                                setEditForm((f) => (f.subItems || []).some((s) => s.patternId === p.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { patternId: p.id }] }));
+                                setEditForm((f) => (f.subItems || []).some((s) => s.patternId === p.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { patternId: p.id, qty: 1 }] }));
                                 setKitCompSearch("");
                               }} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-pink-50 border-b border-gray-100 last:border-b-0">
                                 <div className="w-8 h-8 rounded bg-pink-100 flex-shrink-0 flex items-center justify-center text-sm">🌸</div>
@@ -1647,16 +1688,25 @@ Rules:
                             ))}
                             {matches.map((i) => {
                               const img = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+                              const iIsKit = Array.isArray(i.subItems) && i.subItems.length > 0;
                               return (
                                 <div key={i.id} onClick={() => {
-                                  setEditForm((f) => (f.subItems || []).some((s) => s.itemId === i.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: i.id, qty: 1 }] }));
+                                  setEditForm((f) => {
+                                    if (iIsKit) {
+                                      // A kit can't nest as a single reference — flatten in its own
+                                      // components instead (recursively, merging qty on overlap).
+                                      const flattened = flattenKitSubItems(i, new Set([f.id]));
+                                      return { ...f, subItems: mergeSubItems(f.subItems || [], flattened) };
+                                    }
+                                    return (f.subItems || []).some((s) => s.itemId === i.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: i.id, qty: 1 }] });
+                                  });
                                   setKitCompSearch("");
                                 }} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
                                   {img
                                     ? <img src={img} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
                                     : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0" />}
                                   <div className="flex-1 min-w-0">
-                                    <div className="text-sm text-gray-800 truncate">{i.name}</div>
+                                    <div className="text-sm text-gray-800 truncate">{i.name}{iIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit — adds its {i.subItems.length} components</span>}</div>
                                     <div className="text-xs text-gray-400">₹{(Number(i.price ?? i.rentalCost) || 0)} · {(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " : ""}{i.cat || i.category || ""}</div>
                                   </div>
                                 </div>
