@@ -2022,6 +2022,7 @@ export default function StudioApp() {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
+          else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
       })
       .subscribe();
@@ -2603,37 +2604,37 @@ export default function StudioApp() {
 
   const applyFloralRatio = useCallback((unitPrice, rc) => unitPrice, []);
 
-  // Load a lightweight floral recipe dataset ONCE on mount so the Build view can auto-derive floral
-  // artificial rates without the user first opening Deal Check (which is what fetches the full
-  // dealCheckData). floralArtUnitRate/patternExtra prefer dealCheckData (date-aware, fresher) and fall
-  // back to this.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await supabase.from("settings").select("key,value").in("key", [
-          "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
-          "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
-          "fixedVenues", "fixedVenueSubcatDiscount",
-        ]);
-        const s = {};
-        (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
-        if (cancelled) return;
-        setStudioFloralData({
-          flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
-          mandiCatalogue: Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [],
-          artificialFlowerRatePerKg: typeof s.artificialFlowerRatePerKg === "number" ? s.artificialFlowerRatePerKg : 50,
-          artificialFlowerBunchesPerKg: (typeof s.artificialFlowerBunchesPerKg === "number" && s.artificialFlowerBunchesPerKg > 0) ? s.artificialFlowerBunchesPerKg : 16,
-          artificialGreenRatePerKg: typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40,
-          artificialGreenBunchesPerKg: (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23,
-          defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
-          fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
-          fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
-        });
-      } catch { /* ignore — floral auto-derive falls back to flat rate */ }
-    })();
-    return () => { cancelled = true; };
+  // Floral recipe dataset (flowerPatterns, mandi prices, artificial-mix rates, markup) — loaded on
+  // mount so the Build view can auto-derive floral rates without the user first opening Deal Check
+  // (which fetches the full dealCheckData). floralArtUnitRate/patternExtra prefer dealCheckData
+  // (date-aware, fresher) and fall back to this. Also re-fetched live below whenever IMS edits any
+  // of these settings rows — a recipe/mandi-price/markup change should reach Studio instantly, not
+  // just on next reload, same as inventory item edits already do (see the "inventory" table
+  // subscription below).
+  const FLORAL_DATA_KEYS = [
+    "flowerPatterns", "mandiCatalogue", "artificialFlowerRatePerKg", "artificialFlowerBunchesPerKg",
+    "artificialGreenRatePerKg", "artificialGreenBunchesPerKg", "defaultStudioMarkup",
+    "fixedVenues", "fixedVenueSubcatDiscount",
+  ];
+  const refreshStudioFloralData = useCallback(async () => {
+    try {
+      const { data } = await supabase.from("settings").select("key,value").in("key", FLORAL_DATA_KEYS);
+      const s = {};
+      (data || []).forEach(r => { let v = r?.value; for (let i = 0; i < 2; i++) { if (typeof v === "string") { try { v = JSON.parse(v); } catch { break; } } } s[r.key] = v; });
+      setStudioFloralData({
+        flowerPatterns: Array.isArray(s.flowerPatterns) ? s.flowerPatterns : [],
+        mandiCatalogue: Array.isArray(s.mandiCatalogue) ? s.mandiCatalogue : [],
+        artificialFlowerRatePerKg: typeof s.artificialFlowerRatePerKg === "number" ? s.artificialFlowerRatePerKg : 50,
+        artificialFlowerBunchesPerKg: (typeof s.artificialFlowerBunchesPerKg === "number" && s.artificialFlowerBunchesPerKg > 0) ? s.artificialFlowerBunchesPerKg : 16,
+        artificialGreenRatePerKg: typeof s.artificialGreenRatePerKg === "number" ? s.artificialGreenRatePerKg : 40,
+        artificialGreenBunchesPerKg: (typeof s.artificialGreenBunchesPerKg === "number" && s.artificialGreenBunchesPerKg > 0) ? s.artificialGreenBunchesPerKg : 23,
+        defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3,
+        fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [],
+        fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {},
+      });
+    } catch { /* ignore — floral auto-derive falls back to flat rate */ }
   }, []);
+  useEffect(() => { refreshStudioFloralData(); }, [refreshStudioFloralData]);
 
   // Auto-derived artificial rate PER UNIT for a floral recipe element = Σ(recipe flowers × artificial
   // bunches-per-unit) × ₹/bunch × studio markup. Mirrors calcFnFloralSourcingCost's artificial cost so

@@ -1251,7 +1251,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       {photo ? <img src={photo} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:textS,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
-                                          <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>{card.rcName || "(unnamed)"}</span>
+                                          <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>{item?.name || card.rcName || "(unnamed)"}</span>
                                           <span title={sourceMeta.label} style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:`${sourceMeta.color}22`,color:sourceMeta.color,fontWeight:700,letterSpacing:0.4}}>{sourceMeta.icon} {sourceMeta.label}</span>
                                           {hold && <span title={`Held by ${hold.salesperson} for ${hold.eventName}`} style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.20)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>⏳ {hold.salesperson}</span>}
                                           {item && (()=>{ const cq=Number(card.qty)||1; const av=getStudioAvailable(item, fnBlocksForChip); return cq>av ? <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {av}</span> : null; })()}
@@ -1260,7 +1260,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         </div>
                                         {card.imsId && item ? (
                                           <div style={{fontSize:11,color:textS,marginBottom:6}}>
-                                            → <span style={{color:"#fff",fontWeight:600}}>{card.imsName || item.name}</span>
+                                            → <span style={{color:"#fff",fontWeight:600}}>{item.name || card.imsName}</span>
                                             <span style={{marginLeft:8,opacity:0.7}}>₹{rental.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${(rental*card.qty).toLocaleString("en-IN")}`:""}</span>
                                             {dims && <span style={{marginLeft:8,opacity:0.7}}>· {dims}</span>}
                                           </div>
@@ -1792,7 +1792,7 @@ export default function DealCheckOverlay({ ctx }) {
                       if (conflictSeen.has(dedup)) return;
                       conflictSeen.add(dedup);
                       const photo = imsField.photos(item)[0];
-                      conflicts.push({ imsId: card.imsId, name: card.imsName || item.name, photo, needed: cardQty, available, isShort, hold, isHeld, fnDate, fnLabel: fn.fnType || `Function ${fi+1}`, item });
+                      conflicts.push({ imsId: card.imsId, name: item.name || card.imsName, photo, needed: cardQty, available, isShort, hold, isHeld, fnDate, fnLabel: fn.fnType || `Function ${fi+1}`, item });
                     });
                   });
 
@@ -1807,7 +1807,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const item = dcInventoryCache.find(x => x.id === card.imsId);
                         const rental = item ? imsField.rentalCost(item) : 0;
                         const photo = item ? imsField.photos(item)[0] : null;
-                        itemFnMap[card.imsId] = { name: card.imsName || item?.name || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
+                        itemFnMap[card.imsId] = { name: item?.name || card.imsName || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
                       }
                       const m = itemFnMap[card.imsId];
                       m.fns.add(fi);

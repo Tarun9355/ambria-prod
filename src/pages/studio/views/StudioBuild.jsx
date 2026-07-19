@@ -849,12 +849,12 @@ export default function StudioBuild({ ctx }) {
                             </div>
                           )}
                         </div>
-                        <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{el.name}</span>
+                        <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{invItem?.name || el.name}</span>
                         {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>📦 KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                         {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:11,opacity:0.5,padding:"0 1px",lineHeight:1}}>📦</span>}
-                        {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {el.imsName||"pinned"}</span>}
+                        {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned"}</span>}
                         {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
@@ -880,7 +880,7 @@ export default function StudioBuild({ ctx }) {
                           }
                           if (!isPaintable) return null;
                           // Look up baseColour from IMS inventory (via dealCheckData if available)
-                          const invItem = (dealCheckData?.inventory || []).find(i => i.name === el.name);
+                          const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
                           const baseColour = invItem?.baseColour || "Ivory";
                           // §23 Phase 2.9d — multi-colour allocation aware
                           const allocs = normalizePaintAllocation(el, baseColour);
@@ -934,7 +934,7 @@ export default function StudioBuild({ ctx }) {
                             const elems=[...(zoneElements[k]||[])];
                             const nextQty = Math.max(0,(el.qty||0)-1);
                             // §23 Phase 2.9d — block qty reduction below paint allocation total
-                            const invItem = (dealCheckData?.inventory || []).find(i => i.name === el.name);
+                            const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
                             const baseColour = invItem?.baseColour || "Ivory";
                             const allocs = normalizePaintAllocation(el, baseColour);
                             const allocTotal = allocs.reduce((s,a) => s + a.qty, 0);
@@ -949,7 +949,7 @@ export default function StudioBuild({ ctx }) {
                             const elems=[...(zoneElements[k]||[])];
                             const nextQty = Math.max(0,parseInt(e.target.value)||0);
                             // §23 Phase 2.9d — same guard for direct typing
-                            const invItem = (dealCheckData?.inventory || []).find(i => i.name === el.name);
+                            const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
                             const baseColour = invItem?.baseColour || "Ivory";
                             const allocs = normalizePaintAllocation(el, baseColour);
                             const allocTotal = allocs.reduce((s,a) => s + a.qty, 0);
@@ -1468,7 +1468,7 @@ export default function StudioBuild({ ctx }) {
                           </div>
                         )}
                       </div>
-                      <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{el.name}</span>
+                      <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B"}}>{invItem?.name || el.name}</span>
                       {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>📦 KIT</span>}
                       {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                       {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
