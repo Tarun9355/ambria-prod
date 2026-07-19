@@ -1672,7 +1672,11 @@ export default function StudioBuild({ ctx }) {
       const save=()=>{
         if(!master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const elems=JSON.parse(JSON.stringify(zoneElements[correctPhoto.zoneKey]||master.elements||[]));
-        const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,_verified:true,_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now(),_correctedOn:"build"};
+        // Keep the original verifier's credit — a later editor's correction updates tags/elements
+        // but shouldn't steal the "verified by" attribution from whoever verified it first.
+        const wasVerified=!!master._verified;
+        const stamp=wasVerified?{}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};
+        const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,_verified:true,...stamp,_correctedOn:"build"};
         saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
         logCorrection?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
         showMsg("✅ Correction saved to master — thanks!","green");

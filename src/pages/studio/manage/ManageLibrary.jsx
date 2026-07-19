@@ -677,8 +677,13 @@ export default function ManageLibrary({ ctx }) {
                         return;
                       }
                       // A human save = Verified: stamps who/when so it leaves the "needs review" pile.
+                      // Credit stays with whoever verified it FIRST — a later editor's save updates the
+                      // tags but must not steal the original verifier's attribution (their own edit is
+                      // still logged as its own contribution below, just doesn't overwrite the badge).
                       const wasVerified = !!libEditImg._verified;
-                      const verified = { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
+                      const verified = wasVerified
+                        ? { ...libEditImg, _verified: true }
+                        : { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
                       saveLib([verified]);
                       // Already-verified photo re-saved → update in place; newly-verified → it just
                       // left this tab (review/untagged/nightly/manual), drop it from the visible page.
@@ -2062,8 +2067,9 @@ export default function ManageLibrary({ ctx }) {
                     </button>
                     {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();if(!confirm("Delete this video from app?"))return;saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]);const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);setYtTagEdit(null);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
                     {hasTag&&<button onClick={()=>{const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
-                    {/* Verify video tags — marks reviewed + logs a video contribution */}
-                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()}};saveYtTags(nt);logCorrection?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
+                    {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
+                        original verifier's credit if someone re-verifies after editing tags. */}
+                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);logCorrection?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
                     <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
@@ -2227,7 +2233,7 @@ export default function ManageLibrary({ ctx }) {
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🤖 AI Tag"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
-              <button onClick={() => { const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() } }; saveYtTags(nt); logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
+              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? {} : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>
             <div style={{ padding: "16px 22px" }}>
