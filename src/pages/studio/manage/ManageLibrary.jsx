@@ -630,11 +630,14 @@ export default function ManageLibrary({ ctx }) {
         )}
         {/* Detail panel — opens as a centered popup so you don't scroll past the whole grid */}
         {libEditImg && (
-          <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 20 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 940, margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, padding: 16, maxHeight: "94vh", overflowY: "auto", boxShadow: "0 12px 48px rgba(0,0,0,0.45)" }}>
-            <div style={{ display: "flex", gap: 16 }}>
-              <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: 200, height: 140, objectFit: "cover", borderRadius: 10, flexShrink: 0, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
-              <div style={{ flex: 1 }}>
+          <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: "20px 40px 20px 260px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 1240, margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, height: "90vh", boxShadow: "0 12px 48px rgba(0,0,0,0.45)", display: "flex", overflow: "hidden" }}>
+            {/* Left: big image, fixed in place — the right side scrolls on its own so you never
+                need to scroll back up to re-check the photo while working through tags/dims/elements. */}
+            <div style={{ width: 420, flexShrink: 0, padding: 16, borderRight: `1px solid ${border}`, overflowY: "auto" }}>
+              <img src={libEditImg.url} alt="" onClick={()=>setPreviewImg(libEditImg.url)} style={{ width: "100%", height: 380, objectFit: "cover", borderRadius: 10, cursor: "pointer", border: "2px solid transparent" }} title="Click to view full size" onError={e => { e.target.style.display = "none"; }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0, padding: 16, overflowY: "auto" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <input value={libEditImg.name || ""} onChange={e => setLibEditImg({ ...libEditImg, name: e.target.value })} style={{ ...S.input, fontSize: 14, fontWeight: 600, flex: 1, marginRight: 8 }} />
                   <div style={{ display: "flex", gap: 6 }}>
@@ -792,8 +795,6 @@ export default function ManageLibrary({ ctx }) {
                     </div>
                   </div>);
                 })}
-              </div>
-            </div>
             {/* ── Zone Dimensions ── */}
             <div style={{ marginTop: 14, borderTop: `1px solid ${border}`, paddingTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "#C9A96E", marginBottom: 8 }}>{"📐"} Zone Dimensions</div>
@@ -1337,6 +1338,7 @@ export default function ManageLibrary({ ctx }) {
                 </div>
                 );
               })()}
+            </div>
             </div>
           </div>
           </div>
