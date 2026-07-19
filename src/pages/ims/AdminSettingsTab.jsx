@@ -91,6 +91,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [recipeRenameVal, setRecipeRenameVal] = useState("");
   const [recipeSubSearch, setRecipeSubSearch] = useState(""); // find-a-sub-category search, Recipes panel
   const [recipeSubOpen, setRecipeSubOpen] = useState({}); // { [sub]: true } — collapsed by default, click to expand
+  const [recipeItemOpen, setRecipeItemOpen] = useState({}); // { [studioItem.id]: true } — collapsed by default, click to expand
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
@@ -1137,6 +1138,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           if ((settings.flowerPatterns || []).some((p) => norm(p.name) === norm(nm))) { alert(`An item named "${nm}" already exists.`); return; }
           const fresh = { id: "FP" + Date.now() + Math.floor(Math.random() * 1000), name: nm, mode: "flat", sub, unit: recipeAddForm.unit || "pc", unitBasis: "per piece", sizes: { medium: { flowers: [], totalPieces: 0 } } };
           setSettings((s) => ({ ...s, flowerPatterns: [...(s.flowerPatterns || []), fresh] }));
+          setRecipeItemOpen((s) => ({ ...s, [fresh.id]: true }));
           setRecipeAddSub(null);
           setRecipeAddForm({ name: "", unit: "pc" });
         };
@@ -1245,9 +1247,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                   const m = pat?.mode === "smb" ? "smb" : pat?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
                   const hasRecipe = !!pat && Object.values(pat.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
+                  const itemOpen = !!recipeItemOpen[studioItem.id];
+                  const toggleItemOpen = () => setRecipeItemOpen((s) => ({ ...s, [studioItem.id]: !s[studioItem.id] }));
                   return (
                     <div key={studioItem.id} className="bg-white border rounded-xl overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b flex-wrap">
+                        <button onClick={toggleItemOpen} title={itemOpen ? "Collapse" : "Expand"} className="text-gray-400 hover:text-gray-600 text-xs w-3 flex-shrink-0">{itemOpen ? "▾" : "▸"}</button>
                         {recipeRenameId === studioItem.name ? (
                           <span className="flex items-center gap-1">
                             <input autoFocus value={recipeRenameVal} onChange={(e) => setRecipeRenameVal(e.target.value)}
@@ -1301,7 +1306,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <button onClick={() => deleteRecipeItem(studioItem)} title="Delete item + recipe" className="text-red-300 hover:text-red-600 text-xs">🗑️</button>
                         </span>
                       </div>
-                      {m === "smb" ? (
+                      {itemOpen && (m === "smb" ? (
                         <div className="grid grid-cols-3 divide-x">
                           {renderSizeColumn(studioItem, "small", "Small", "🔹")}
                           {renderSizeColumn(studioItem, "medium", "Medium", "🔷")}
@@ -1309,7 +1314,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         </div>
                       ) : (
                         <div className="grid grid-cols-1">{renderSizeColumn(studioItem, "medium", "Recipe", "🌼")}</div>
-                      )}
+                      ))}
                     </div>
                   );
                 })}
