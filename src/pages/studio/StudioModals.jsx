@@ -9,10 +9,12 @@ import { Fragment, useState } from "react";
 import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
+import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
+import { itemDimsText } from "../../lib/ims/helpers";
 
 export default function StudioModals({ ctx }) {
   const {
@@ -448,9 +450,7 @@ export default function StudioModals({ ctx }) {
                               setZurElSearch("");
                             }}
                             style={{ padding: "8px 10px", fontSize: 11, cursor: isBlocked ? "not-allowed" : "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10, opacity: isBlocked ? 0.45 : 1 }}>
-                            <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
-                            </div>
+                            <ItemHoverThumb src={src} size={56} name={it.name} sub={(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " + (it.cat || "") : it.cat} dims={itemDimsText(it)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark ? "#1a1a2e" : "#eee"} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>

@@ -10,8 +10,9 @@ import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
+import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
-import { deptMpReconciled, itemImsSubcat } from "../../../lib/ims/helpers";
+import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
@@ -1358,7 +1359,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                         return (
                                                           <div key={x.id} onClick={()=>{ if(isBlocked) return; setComps(comps.some(c=>c.itemId===x.id)?comps:[...comps,{itemId:x.id,qty:1}]); setDcKitAddSearch(prev=>({...prev,[editKey]:""})); }}
                                                             style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,opacity:isBlocked?0.45:1}}>
-                                                            {src ? <img src={src} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>📦</span>}
+                                                            <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={imsField.subcategory(x) ? imsField.subcategory(x)+" › "+(x.cat||x.category||"") : (x.cat||x.category||"")} dims={itemDimsText(x)} border={border} cardBg="#1a1a2e" textP="#fff" textS={textS} emptyBg="rgba(255,255,255,0.06)" />
                                                             <div style={{flex:1,minWidth:0}}>
                                                               <div style={{fontSize:11,color:"#fff",display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</span>
@@ -1651,7 +1652,7 @@ export default function DealCheckOverlay({ ctx }) {
                                               }} style={{display:"flex",gap:10,padding:"8px 10px",alignItems:"center",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid rgba(255,255,255,0.04)`,opacity:isBlocked?0.45:1}}
                                               onMouseEnter={e=>{ if(!isBlocked) e.currentTarget.style.background="rgba(193,154,107,0.10)"; }}
                                               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                                                {itemPhoto ? <img src={itemPhoto} alt="" style={{width:36,height:36,borderRadius:5,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:36,height:36,borderRadius:5,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:textS,flexShrink:0}}>?</div>}
+                                                <ItemHoverThumb src={itemPhoto} size={36} rounded={5} name={item.name} sub={itemSub} dims={_dims} border="rgba(255,255,255,0.15)" cardBg="#0F0F1A" textP="#fff" textS={textS} emptyBg="#0F0F1A" placeholder="?" />
                                                 <div style={{flex:1,minWidth:0}}>
                                                   <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}{_standing && <span style={{marginLeft:6,fontSize:8,padding:"1px 5px",borderRadius:3,background:"rgba(16,185,129,0.2)",color:"#10B981",fontWeight:700,letterSpacing:0.3}}>🏛️ INSTALLED HERE</span>}{isBlocked && <span style={{marginLeft:6,fontSize:8,padding:"1px 5px",borderRadius:3,background:"rgba(239,68,68,0.2)",color:"#EF4444",fontWeight:700,letterSpacing:0.3}}>🚫 fully used in this event</span>}</div>
                                                   <div style={{fontSize:9,color:textS,marginTop:1}}>{itemSub || "—"}{_dims ? ` · 📐 ${_dims}` : ""} · {free} free of {itemQty}{usedElsewhereInDeal>0 ? ` · ${remaining} left for this event` : ""}</div>

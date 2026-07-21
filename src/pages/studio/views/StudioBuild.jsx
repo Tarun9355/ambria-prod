@@ -7,9 +7,10 @@ import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
-import { itemImsSubcat } from "../../../lib/ims/helpers";
+import { itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
+import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 
 // Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
 // can push a corrected element list back to the master library photo ("Save correction to
@@ -793,9 +794,7 @@ export default function StudioBuild({ ctx }) {
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:11,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
-                            <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                              {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:22,opacity:0.3}}>📦</span>}
-                            </div>
+                            <ItemHoverThumb src={src} size={56} name={it.name} sub={(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):it.cat} dims={itemDimsText(it)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark?"#1a1a2e":"#eee"} />
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
@@ -1416,9 +1415,7 @@ export default function StudioBuild({ ctx }) {
                           setZoneElSearch(prev=>({...prev,[k]:""}));
                         }}
                         style={{padding:"8px 10px",fontSize:11,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
-                        <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />:<span style={{fontSize:22,opacity:0.3}}>📦</span>}
-                        </div>
+                        <ItemHoverThumb src={src} size={56} name={it.name} sub={(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):it.cat} dims={itemDimsText(it)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark?"#1a1a2e":"#eee"} />
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>

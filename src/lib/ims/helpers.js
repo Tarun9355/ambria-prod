@@ -85,6 +85,19 @@ export function mpEffWinIds(d, mpWin, type) {
 // the real IMS "Flower Pot" sub-category WITHOUT changing the item's name or its per-item floral pricing.
 export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? String(rc.imsAlias).trim() : ""; return a || (rc && rc.sub) || ""; };
 
+// Display string for an inventory item's physical dimensions, e.g. "3 × 2 × 4 Feet" — prefers the
+// precomputed `item.size` (written whenever the item is saved in IMS), falls back to building one
+// from the raw `dims_LxWxH` object. Empty string when the item has no dims at all.
+export const itemDimsText = (item) => {
+  if (!item) return "";
+  if (item.size) return item.size;
+  const d = item.dims_LxWxH;
+  if (!d) return "";
+  const parts = [d.l, d.w, d.h].filter((v) => v !== undefined && v !== null && v !== "");
+  if (!parts.length) return "";
+  return parts.join(" × ") + (d.unit ? " " + d.unit : "");
+};
+
 // A kit's total = its own base rental + Σ(each component's CURRENT price × qty), read live from
 // the inventory list — mirrors InventoryTab.jsx's kitPriceFrom exactly. Computed fresh on every
 // call rather than trusted from the kit's own stored `price` column: that column is only a

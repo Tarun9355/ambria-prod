@@ -1,10 +1,12 @@
 import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
+import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
+import { itemDimsText } from "../../../lib/ims/helpers";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
 // any sidebar filter, venue selection, or (debounced) search term changes; loadMore() appends.
@@ -1098,9 +1100,6 @@ export default function ManageLibrary({ ctx }) {
                       const invMatches = (imsInventory || []).filter(it => !(libEditImg.elements || []).find(el => el.invId === it.id) && !kitCoveredIds.has(it.id) && !isHiddenSubcat(it, rcSubcatFactors) && matchesTokens([it.name, it.cat, it.subCat || it.subcategory].filter(Boolean).join(" ").toLowerCase()));
                       const patMatches = (recipeOnlyPatterns || []).filter(pt => !(libEditImg.elements || []).find(el => el.patternId === pt.id) && matchesTokens(pt.name.toLowerCase()));
                       const matches = [...invMatches.map(it => ({ kind: "inv", it })), ...patMatches.map(pt => ({ kind: "pat", pt }))];
-                      // Thumbnail is sized to actually be readable inline — no hover step required to
-                      // see it properly (an earlier hover-preview panel was fiddly and could run
-                      // off-screen depending on where this search box sits on the page).
                       return matches.length > 0 ? <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 50, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, marginTop: 2, boxShadow: "0 4px 16px rgba(0,0,0,0.2)", maxHeight: 340, overflowY: "auto", width: 320 }}>
                         {matches.map(m => {
                           if (m.kind === "pat") { const pt = m.pt; return <div key={"pat:" + pt.id}
@@ -1130,9 +1129,7 @@ export default function ManageLibrary({ ctx }) {
                               setLibElSearch("");
                             }}
                             style={{ padding: "8px 10px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${border}`, display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: 22, opacity: 0.3 }}>📦</span>}
-                            </div>
+                            <ItemHoverThumb src={src} size={56} name={it.name} sub={(it.subCat || it.subcategory) ? (it.subCat || it.subcategory) + " › " + (it.cat || "") : it.cat} dims={itemDimsText(it)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark ? "#1a1a2e" : "#eee"} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>

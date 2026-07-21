@@ -1,7 +1,8 @@
 import { useState, Fragment } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
-import { kitTotalFromInventory } from "../../lib/ims/helpers";
+import { kitTotalFromInventory, itemDimsText } from "../../lib/ims/helpers";
+import ItemHoverThumb from "./ItemHoverThumb";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -143,7 +144,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 return (
                   <div key={x.id} onClick={() => { if (isBlocked) return; setComps(comps.some((c) => c.itemId === x.id) ? comps : [...comps, { itemId: x.id, qty: 1 }]); setAddSearch(""); }}
                     style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: isBlocked ? "not-allowed" : "pointer", borderBottom: `1px solid ${border}`, opacity: isBlocked ? 0.45 : 1 }}>
-                    {src ? <img src={src} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>📦</span>}
+                    <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={(x.subCat || x.subcategory) ? (x.subCat || x.subcategory) + " › " + (x.cat || x.category || "") : (x.cat || x.category || "")} dims={itemDimsText(x)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 11, color: textP, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</span>

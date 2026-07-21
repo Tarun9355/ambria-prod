@@ -8,6 +8,8 @@ import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { itemDimsText } from "../../lib/ims/helpers";
+import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [] }) {
   const studioLoading = !!studio?.loading;
@@ -1699,9 +1701,7 @@ Rules:
                                   setEditForm((f) => (f.subItems || []).some((s) => s.itemId === i.id) ? f : ({ ...f, subItems: [...(f.subItems || []), { itemId: i.id, qty: 1 }] }));
                                   setKitCompSearch("");
                                 }} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 border-b border-gray-100 last:border-b-0">
-                                  {img
-                                    ? <img src={img} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
-                                    : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0" />}
+                                  <ItemHoverThumb src={img} size={32} rounded={6} name={i.name} sub={(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " + (i.cat || i.category || "") : (i.cat || i.category || "")} dims={itemDimsText(i)} border="#e5e7eb" cardBg="#fff" textP="#1f2937" textS="#6b7280" emptyBg="#f3f4f6" />
                                   <div className="flex-1 min-w-0">
                                     <div className="text-sm text-gray-800 truncate">{i.name}{iIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit — priced live from its {i.subItems.length} components</span>}</div>
                                     <div className="text-xs text-gray-400">₹{(Number(i.price ?? i.rentalCost) || 0)} · {(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " : ""}{i.cat || i.category || ""}</div>
