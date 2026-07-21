@@ -39,3 +39,15 @@ input::placeholder,
 textarea::placeholder {
   color: #9CA3AF;
 }
+
+/* Hide native number-input spin buttons everywhere. Chrome only shows them on hover/focus, so a
+   grid of otherwise-identical number fields (truss/platform dims, etc.) would visibly resize
+   itself as the cursor moved between fields — this keeps every field's rendered width constant. */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

@@ -85,8 +85,8 @@ export const TRUSS_SHAPES=[{key:"box",label:"Box Truss"},{key:"singleU",label:"S
 export const TRUSS_MATERIALS=[{key:"pole",label:"Pole"},{key:"aluminium",label:"Aluminium"},{key:"iron",label:"Iron"}];
 export const DRAPE_DENSITIES=[{key:"minimum",label:"Minimum"},{key:"moderate",label:"Moderate"},{key:"dense",label:"Dense"}];
 // One rate row per (shape × material × density) — 9 per shape, 18 total. `ceilingRatePerSqft` is
-// the portion of `ratePerSqft` attributable to the ceiling drape specifically — when a zone opts to
-// do its ceiling via a printed panel instead (see `ceilingViaPrint` on a truss row), that portion is
+// the portion of `ratePerSqft` attributable to the ceiling drape specifically — when a zone picks a
+// Custom Ceiling inventory item instead (see `customCeilingItemId` on a truss row), that portion is
 // subtracted from the truss rate rather than charging for fabric drape AND a printed ceiling both.
 // All 18 rows seed at the shape's old flat rate with ceilingRatePerSqft: 0, so pricing is identical
 // to before this model existed until an admin actually customizes a specific cell.

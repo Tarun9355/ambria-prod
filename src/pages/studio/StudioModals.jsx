@@ -10,11 +10,12 @@ import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
+import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { itemDimsText } from "../../lib/ims/helpers";
+import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 
 export default function StudioModals({ ctx }) {
   const {
@@ -43,7 +44,7 @@ export default function StudioModals({ ctx }) {
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
-    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors,
+    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -71,6 +72,8 @@ export default function StudioModals({ ctx }) {
   const [zurHoveredElIdx, setZurHoveredElIdx] = useState(null);
   const [zurElHoverImg, setZurElHoverImg] = useState(null);
   const [zurPrintSearch, setZurPrintSearch] = useState({}); // per-print-row "link to inventory item" search text, keyed by print row id
+  // Custom Ceiling / Custom Masking picker — { kind: "ceiling"|"masking", ri: null (row 0) | index into dims.trussRows }
+  const [zurCustomPicker, setZurCustomPicker] = useState(null);
 
   return (<>
       {/* ═══ §26.13 — 🏭/🛒 Production/Buying Custom Item Modal (31 May 2026) ═══ */}
@@ -124,6 +127,30 @@ export default function StudioModals({ ctx }) {
         </div>
       )}
 
+      {zurCustomPicker && (
+        <InventoryItemPickerModal
+          title={zurCustomPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
+          icon={zurCustomPicker.kind === "ceiling" ? "🎬" : "🖼️"}
+          accent="#7C3AED"
+          imsInventory={imsInventory}
+          categoryMatch="fabric"
+          subcatMatch={zurCustomPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
+          rcFactorByKey={rcFactorByKey}
+          onSelect={(item) => {
+            const field = zurCustomPicker.kind === "ceiling" ? "customCeilingItemId" : "customMaskingItemId";
+            if (zurCustomPicker.ri == null) {
+              setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), [field]: item.id } });
+            } else {
+              const rows = [...((zoneUploadReview.dims || {}).trussRows || [])];
+              rows[zurCustomPicker.ri] = { ...rows[zurCustomPicker.ri], [field]: item.id };
+              setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), trussRows: rows } });
+            }
+            setZurCustomPicker(null);
+          }}
+          onClose={() => setZurCustomPicker(null)}
+          isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
+        />
+      )}
       {/* Zone Upload Review Modal */}
       {zoneUploadReview&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setZoneUploadReview(null)}>
         <div style={{background:cardBg,borderRadius:16,maxWidth:700,width:"100%",maxHeight:"90vh",overflow:"hidden",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
@@ -173,12 +200,14 @@ export default function StudioModals({ ctx }) {
                         return <span key={m.key} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), trussMaterial: m.key}})}
                           style={{ padding:"3px 9px", borderRadius:6, fontSize:10, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}18`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
                       })}
-                      {isFullBox && (
-                        <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:textS, cursor:"pointer", marginLeft:6 }}>
-                          <input type="checkbox" checked={!!d.ceilingViaPrint} onChange={e=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), ceilingViaPrint: e.target.checked}})} />
-                          Ceiling via print
-                        </label>
-                      )}
+                      {isFullBox && (() => {
+                        const ceilingItem = d.customCeilingItemId ? (imsInventory || []).find(i => i.id === d.customCeilingItemId) : null;
+                        if (ceilingItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:6, fontSize:10, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600, marginLeft:6 }}>
+                          🎬 {ceilingItem.name}
+                          <span onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), customCeilingItemId: null}})} style={{ cursor:"pointer", color:"#E11D48", fontWeight:700 }}>×</span>
+                        </span>;
+                        return <button onClick={()=>setZurCustomPicker({ kind:"ceiling", ri:null })} style={{ padding:"3px 9px", borderRadius:6, fontSize:10, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer", marginLeft:6 }}>🎬 Custom Ceiling</button>;
+                      })()}
                     </div>
                     <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, padding:"6px 10px", borderRadius:8, background: missing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):(isDark?"rgba(244,114,182,0.06)":"#FDF2F8"), border:`1px solid ${missing?"rgba(239,68,68,0.55)":"rgba(244,114,182,0.25)"}` }}>
                       <span style={{ fontSize:11, fontWeight:600, color: missing?"#B91C1C":"#9D174D" }}>🪡 Drape Density {isFullBox && <span style={{ color: missing?"#B91C1C":"#059669", fontWeight:700, marginLeft:4 }}>{missing ? "* Required" : "✓"}</span>}</span>
@@ -215,11 +244,19 @@ export default function StudioModals({ ctx }) {
                 return <div style={{ marginBottom: 10, background: anyWall ? (isDark ? "rgba(201,169,110,0.08)" : "rgba(201,169,110,0.06)") : (isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"), borderRadius: 10, padding: "12px 14px", border: `1px solid ${anyWall ? accent+"40" : border}` }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
                   <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Material type</div>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap:"wrap", alignItems:"center" }}>
                     {[{id:"fabric",l:"Fabric"},{id:"acrylic",l:"Acrylic"},{id:"flex",l:"Flex"},{id:"vinyl",l:"Vinyl"}].map(o=>{
                       const sel=mkT===o.id;
                       return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                     })}
+                    {(() => {
+                      const maskItem = zoneUploadReview.dims?.customMaskingItemId ? (imsInventory || []).find(i => i.id === zoneUploadReview.dims.customMaskingItemId) : null;
+                      if (maskItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"4px 9px", borderRadius:6, fontSize:10, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600 }}>
+                        🖼️ {maskItem.name}
+                        <span onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), customMaskingItemId: null}})} style={{ cursor:"pointer", color:"#E11D48", fontWeight:700 }}>×</span>
+                      </span>;
+                      return <button onClick={()=>setZurCustomPicker({ kind:"masking", ri:null })} style={{ padding:"4px 9px", borderRadius:6, fontSize:10, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer" }}>🖼️ Custom Masking</button>;
+                    })()}
                   </div>
                   <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Select walls to mask</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -268,12 +305,14 @@ export default function StudioModals({ ctx }) {
                           const sel = (row.trussMaterial || "pole") === m.key;
                           return <span key={m.key} onClick={()=>setRow({trussMaterial:m.key})} style={{ padding:"2px 7px", borderRadius:5, fontSize:9, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?"#7C3AED":border}`, background: sel?"#7C3AED22":"transparent", color: sel?"#7C3AED":textS }}>{m.label}</span>;
                         })}
-                        {rIsBox && (
-                          <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:9, color:textS, cursor:"pointer", marginLeft:4 }}>
-                            <input type="checkbox" checked={!!row.ceilingViaPrint} onChange={e=>setRow({ceilingViaPrint:e.target.checked})} />
-                            Ceiling via print
-                          </label>
-                        )}
+                        {rIsBox && (() => {
+                          const ceilingItem = row.customCeilingItemId ? (imsInventory || []).find(i => i.id === row.customCeilingItemId) : null;
+                          if (ceilingItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 7px", borderRadius:5, fontSize:9, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600, marginLeft:4 }}>
+                            🎬 {ceilingItem.name}
+                            <span onClick={()=>setRow({customCeilingItemId:null})} style={{ cursor:"pointer", color:"#E11D48", fontWeight:700 }}>×</span>
+                          </span>;
+                          return <button onClick={()=>setZurCustomPicker({ kind:"ceiling", ri })} style={{ padding:"2px 7px", borderRadius:5, fontSize:9, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer", marginLeft:4 }}>🎬 Custom Ceiling</button>;
+                        })()}
                       </div>
                     )}
                     {rIsBox && (
@@ -288,11 +327,19 @@ export default function StudioModals({ ctx }) {
                     {(row.trussW || row.trussH) && (
                       <div>
                         <div style={{ fontSize: 9, color: textS, marginBottom: 4 }}>{"🧱"} Masking</div>
-                        <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", alignItems:"center" }}>
                           {[{ id: "fabric", l: "Fabric" }, { id: "acrylic", l: "Acrylic" }, { id: "flex", l: "Flex" }, { id: "vinyl", l: "Vinyl" }].map(o => {
                             const sel = row.mkT === o.id;
                             return <span key={o.id} onClick={() => setRow({ mkT: sel ? "" : o.id, mkOn: !sel })} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${sel ? "#7C3AED" : border}`, background: sel ? "#7C3AED22" : "transparent", color: sel ? "#7C3AED" : textS, fontWeight: sel ? 600 : 400 }}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                           })}
+                          {(() => {
+                            const maskItem = row.customMaskingItemId ? (imsInventory || []).find(i => i.id === row.customMaskingItemId) : null;
+                            if (maskItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:6, fontSize:9, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600 }}>
+                              🖼️ {maskItem.name}
+                              <span onClick={()=>setRow({customMaskingItemId:null})} style={{ cursor:"pointer", color:"#E11D48", fontWeight:700 }}>×</span>
+                            </span>;
+                            return <button onClick={()=>setZurCustomPicker({ kind:"masking", ri })} style={{ padding:"3px 8px", borderRadius:6, fontSize:9, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer" }}>🖼️ Custom Masking</button>;
+                          })()}
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {walls.map(w => { const on = mw[w.id]; return <div key={w.id} onClick={() => setRow({ mkWalls: { ...mw, [w.id]: !mw[w.id] } })} style={{ flex:1, minWidth:80, padding: "6px 8px", borderRadius: 8, cursor: "pointer", border: `1.5px solid ${on ? "#7C3AED" : border}`, background: on ? "#7C3AED18" : "transparent", textAlign:"center" }}>
@@ -382,9 +429,11 @@ export default function StudioModals({ ctx }) {
                   const isSingleU=!isBox&&dW&&dH;
                   const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
                   const _tr=isBox?trussRateFor("box",row.trussMaterial,row.drapeDensity,imsTrussRates):trussRateFor("singleU",row.trussMaterial,row.drapeDensity,imsTrussRates);
-                  const trussRate=(isBox&&row.ceilingViaPrint)?Math.max(0,_tr.rate-_tr.ceilingRate):_tr.rate;
+                  const ceilingItem = row.customCeilingItemId ? (imsInventory||[]).find(i=>i.id===row.customCeilingItemId) : null;
+                  const trussRate=(isBox&&ceilingItem)?Math.max(0,_tr.rate-_tr.ceilingRate):_tr.rate;
                   const qty=Math.max(1,Number(row.trussQty)||1);
-                  const trussCost=trussSqft*trussRate*qty;
+                  let trussCost=trussSqft*trussRate*qty;
+                  if(ceilingItem) trussCost += priceForInvItem(ceilingItem, rcFactorByKey, imsInventory) * qty;
                   const mw=row.mkWalls||{};const mkT=row.mkT||"";
                   const mkRate=maskingRateFor(mkT,imsMaskingRates);
                   let maskSqft=0;const maskWalls=[];
@@ -396,8 +445,9 @@ export default function StudioModals({ ctx }) {
                   } else if(isSingleU){
                     if(mw.back){const a=dW*dH;maskSqft+=a;maskWalls.push({label:"Back",dim:`${dW}×${dH}`,sqft:a});}
                   }
-                  const maskCost=maskSqft*mkRate*qty;
-                  return {isBox,trussSqft,trussRate,trussCost,mkT,mkRate,maskSqft,maskWalls,maskCost};
+                  const maskItem = row.customMaskingItemId ? (imsInventory||[]).find(i=>i.id===row.customMaskingItemId) : null;
+                  const maskCost = maskItem ? priceForInvItem(maskItem, rcFactorByKey, imsInventory) * qty : maskSqft*mkRate*qty;
+                  return {isBox,trussSqft,trussRate,trussCost,mkT:maskItem?`custom: ${maskItem.name}`:mkT,mkRate,maskSqft,maskWalls,maskCost,ceilingItem,maskItem};
                 };
                 const platformRowCalc=(row)=>{
                   const fL=row.floorL||0, fW=row.floorW||0;
@@ -408,7 +458,7 @@ export default function StudioModals({ ctx }) {
                   const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                   return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
                 };
-                const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,drapeDensity:d.drapeDensity,ceilingViaPrint:d.ceilingViaPrint}, ...(d.trussRows||[])];
+                const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,drapeDensity:d.drapeDensity,customCeilingItemId:d.customCeilingItemId,customMaskingItemId:d.customMaskingItemId}, ...(d.trussRows||[])];
                 const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH,cpT:d.cpT}, ...(d.platformRows||[])];
                 const trussResults=trussRows.map(trussRowCalc);
                 const platformResults=platformRows.map(platformRowCalc);
@@ -421,11 +471,11 @@ export default function StudioModals({ ctx }) {
                     <div style={{fontSize:13,fontWeight:600,color:accent}}>{fmt(structTotal)}</div>
                   </div>
                   {trussResults.map((r,ri)=> r.trussSqft>0 && <div key={"tr"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
-                    <div><span style={{fontWeight:600}}>{ri>0?`Truss #${ri+1} — `:""}{r.isBox?"Box Truss":"Single U"}</span><br/><span style={{fontSize:10,color:textS}}>{r.trussSqft} sqft × ₹{r.trussRate}</span></div>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Truss #${ri+1} — `:""}{r.isBox?"Box Truss":"Single U"}</span><br/><span style={{fontSize:10,color:textS}}>{r.trussSqft} sqft × ₹{r.trussRate}{r.ceilingItem?` + custom ceiling: ${r.ceilingItem.name}`:""}</span></div>
                     <span style={{fontWeight:600}}>{fmt(r.trussCost)}</span>
                   </div>)}
                   {trussResults.map((r,ri)=> r.maskCost>0 && <div key={"mk"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>
-                    <div><span style={{fontWeight:600}}>{ri>0?`Truss #${ri+1} — `:""}{r.mkT.charAt(0).toUpperCase()+r.mkT.slice(1)} Masking</span><br/><span style={{fontSize:10,color:textS}}>{r.maskWalls.map(w=>`${w.label} ${w.dim}=${w.sqft}`).join(" + ")} = {r.maskSqft} sqft × ₹{r.mkRate}</span></div>
+                    <div><span style={{fontWeight:600}}>{ri>0?`Truss #${ri+1} — `:""}{r.maskItem?`Custom Masking: ${r.maskItem.name}`:`${r.mkT.charAt(0).toUpperCase()+r.mkT.slice(1)} Masking`}</span><br/><span style={{fontSize:10,color:textS}}>{r.maskItem?`${r.maskWalls.map(w=>w.label).join(" + ")||"walls"} — flat item rate`:`${r.maskWalls.map(w=>`${w.label} ${w.dim}=${w.sqft}`).join(" + ")} = ${r.maskSqft} sqft × ₹${r.mkRate}`}</span></div>
                     <span style={{fontWeight:600}}>{fmt(r.maskCost)}</span>
                   </div>)}
                   {platformResults.map((r,ri)=> r.plCost>0 && <div key={"pl"+ri} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",fontSize:11,borderBottom:`0.5px solid ${border}`}}>

@@ -223,10 +223,12 @@ function trussRowCost(row, rates) {
   const _trMode = (row.trT === "box" && _trussDims < 3) ? "singleU" : row.trT;
   const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates);
   const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates);
-  // "Ceiling via print" — the salesperson is putting a printed panel up top instead of the fabric
-  // ceiling drape, so the ceiling portion of the Box rate doesn't apply. Single U has no ceiling
-  // concept (open-top structure), so its rate is never reduced this way.
-  const boxRate = row.ceilingViaPrint ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
+  // Custom ceiling — the salesperson picked a specific IMS inventory item (a printed ceiling panel)
+  // instead of the fabric ceiling drape, so the ceiling portion of the Box rate doesn't apply and
+  // that item's own rental (× its sub-category's scaling factor) is charged instead. Single U has
+  // no ceiling concept (open-top structure), so its rate is never reduced this way.
+  const hasCustomCeiling = !!row.customCeilingItemId;
+  const boxRate = hasCustomCeiling ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
   const singleURate = singleU.rate;
   if (_trMode === "box") {
     const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
@@ -241,7 +243,16 @@ function trussRowCost(row, rates) {
   else if (_trMode === "singleU") { truss = (d.W || d.S || d.L || 0) * (d.H || 0) * singleURate; }
   // Multiple identical trusses in one row (e.g. 3× Single U) — cost scales by quantity.
   truss *= Math.max(1, row.trussQty || 1);
-  if (row.mkOn && row.mkT) {
+  if (hasCustomCeiling) {
+    const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
+    if (ceilingItem) truss += priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1);
+  }
+  // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
+  // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.
+  if (row.customMaskingItemId) {
+    const maskItem = (rates?.imsInventory || []).find((i) => i.id === row.customMaskingItemId);
+    masking = maskItem ? priceForInvItem(maskItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1) : 0;
+  } else if (row.mkOn && row.mkT) {
     const h = d.H || 0, rate = maskingRateFor(row.mkT, rates?.maskingRates); let w = 0;
     const dL = d.L || d.S || 0, dW = d.W || d.S || 0;
     if (row.mkWalls) {
@@ -286,7 +297,7 @@ function calcStructCost(zk, zc, rates) {
   // structures in the same zone can be a different material, density, or handle their ceiling
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
-    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, ceilingViaPrint: zc.ceilingViaPrint },
+    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
@@ -1342,7 +1353,6 @@ export default function StudioApp() {
   const [imsMaskingRates, setImsMaskingRates] = useState([]);
   // Bundled live rate settings passed to calcStructCost everywhere — one object instead of a
   // growing list of positional args as more of these settings-driven rates get added.
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates }), [imsPrintMaterials, imsTrussRates, imsMaskingRates]);
   // Save colour + palette catalogues to Studio-owned PALETTE_SK
   const savePaletteData = useCallback((colours, palettes) => {
     const data = { colourCatalogue: colours || imsColourCatalogue, paletteCatalogue: palettes || imsPaletteCatalogue };
@@ -2408,6 +2418,10 @@ export default function StudioApp() {
     return (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
   }, [rcFactorByKey]);
   const rcScalingFactor = useCallback((rc) => rcScalingFactorForSub(itemImsSubcat(rc)), [rcScalingFactorForSub]);
+  // Bundled settings-driven rates passed to calcStructCost everywhere — imsInventory/rcFactorByKey
+  // ride along so trussRowCost can price a "custom ceiling/masking" inventory item (rental × its
+  // sub-category's scaling factor) the same way any other IMS-sourced element prices.
+  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsTrussRates, imsMaskingRates, imsInventory, rcFactorByKey]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -2600,7 +2614,8 @@ export default function StudioApp() {
         trussFrontExt: Number(row.trussFrontExt) || 0,
         trussFrontExtH: Number(row.trussFrontExtH) || 0,
         mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
-        trussMaterial: row.trussMaterial ?? null, drapeDensity: row.drapeDensity ?? null, ceilingViaPrint: !!row.ceilingViaPrint,
+        trussMaterial: row.trussMaterial ?? null, drapeDensity: row.drapeDensity ?? null,
+        customCeilingItemId: row.customCeilingItemId ?? null, customMaskingItemId: row.customMaskingItemId ?? null,
       };
     };
     const mapPlatformRow = (row) => ({
@@ -2624,7 +2639,8 @@ export default function StudioApp() {
       floorDims: Object.keys(floorDims).length ? floorDims : (hasDims ? { ...dims } : {}),
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
       plH: d.plH || null, cpT: d.cpT ?? null,
-      trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null, ceilingViaPrint: !!d.ceilingViaPrint,
+      trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null,
+      customCeilingItemId: d.customCeilingItemId ?? null, customMaskingItemId: d.customMaskingItemId ?? null,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
       trussQty: Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
@@ -5345,11 +5361,16 @@ Return ONLY JSON:
       if (zl.truss > 0) {
         const _tShape = zc.trT === "box" ? "box" : "singleU";
         const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates);
-        const _tEffRate = (_tShape === "box" && zc.ceilingViaPrint) ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
+        const _tHasCustomCeiling = _tShape === "box" && !!zc.customCeilingItemId;
+        const _tEffRate = _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
         const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "pole"))?.label) || "Pole";
-        structItems.push({ name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (zc.trT === "box" && zc.ceilingViaPrint ? " · ceiling via print" : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
+        const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
+        structItems.push({ name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
       }
-      if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
+      if (zl.masking > 0) {
+        const _mCustomItem = zc.customMaskingItemId ? (imsInventory || []).find((i) => i.id === zc.customMaskingItemId) : null;
+        structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
+      }
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
       if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsPrintMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
@@ -6134,7 +6155,7 @@ Return ONLY JSON:
     recipeOnlyPatterns, getElPriceFromPattern,
     // Sub-category scaling factor + cost% (rate_card_categories, IMS-owned) — Deal Check's
     // unavailable-shortfall pricing builds its own lookup map from this.
-    rcSubcatFactors,
+    rcSubcatFactors, rcFactorByKey,
     // Sub-category default floral pricing mode — DCFloralsTab.jsx's resolveRealPct consumes this
     // pre-built map directly rather than re-deriving it from rcSubcatFactors itself.
     rcFloralModeByKey,

@@ -11,6 +11,7 @@ import { itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
+import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 
 // Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
 // can push a corrected element list back to the master library photo ("Save correction to
@@ -27,7 +28,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
-    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors,
+    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
@@ -93,6 +94,26 @@ export default function StudioBuild({ ctx }) {
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
   const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
+  // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
+  const [customPicker, setCustomPicker] = useState(null);
+  const customCeilingField = (k, zc, dense) => {
+    const item = zc.customCeilingItemId ? (imsInventory || []).find(i => i.id === zc.customCeilingItemId) : null;
+    const fs = dense ? 9 : 10;
+    if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600, marginLeft: 8 }}>
+      🎬 {item.name}
+      <span onClick={() => setZoneConfig(p => ({ ...p, [k]: { ...p[k], customCeilingItemId: null } }))} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+    </span>;
+    return <button onClick={() => setCustomPicker({ k, kind: "ceiling" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}>🎬 Custom Ceiling</button>;
+  };
+  const customMaskingField = (k, zc, dense) => {
+    const item = zc.customMaskingItemId ? (imsInventory || []).find(i => i.id === zc.customMaskingItemId) : null;
+    const fs = dense ? 9 : 10;
+    if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 5, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600 }}>
+      🖼️ {item.name}
+      <span onClick={() => setZoneConfig(p => ({ ...p, [k]: { ...p[k], customMaskingItemId: null } }))} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+    </span>;
+    return <button onClick={() => setCustomPicker({ k, kind: "masking" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}>🖼️ Custom Masking</button>;
+  };
   // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
   // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
   // covers it) vs ✨ Fresh (default). Stored in zoneConfig[k].repeat so it flows to Deal Check.
@@ -351,6 +372,20 @@ export default function StudioBuild({ ctx }) {
 
   return (
   <div style={S.main}>
+    {customPicker && (
+      <InventoryItemPickerModal
+        title={customPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
+        icon={customPicker.kind === "ceiling" ? "🎬" : "🖼️"}
+        accent="#7C3AED"
+        imsInventory={imsInventory}
+        categoryMatch="fabric"
+        subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
+        rcFactorByKey={rcFactorByKey}
+        onSelect={(item) => { setZoneConfig(p => ({ ...p, [customPicker.k]: { ...p[customPicker.k], [customPicker.kind === "ceiling" ? "customCeilingItemId" : "customMaskingItemId"]: item.id } })); setCustomPicker(null); }}
+        onClose={() => setCustomPicker(null)}
+        isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
+      />
+    )}
     <div style={{fontSize:28,fontWeight:700,marginBottom:6}}>Build Your Decor</div>
     <div style={{fontSize:14,color:textS,marginBottom:clientDate?8:24,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
       {clientName&&<strong>{clientName} · </strong>}
@@ -1182,8 +1217,9 @@ export default function StudioBuild({ ctx }) {
                     </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.masking)}</span>}
                   </div>
                   {zc.mkOn&&<div style={{marginTop:4,paddingLeft:20}}>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4}}>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
                       {MASK_OPTS.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                      {customMaskingField(k, zc)}
                     </div>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                       {walls.map(w=>{const on=mw[w.id];return <button key={w.id} onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:10,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>;})}
@@ -1287,12 +1323,7 @@ export default function StudioBuild({ ctx }) {
                     const sel=(zc.trussMaterial||"pole")===m.key;
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"3px 9px",borderRadius:6,fontSize:10,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
                   })}
-                  {zc.trT==="box" && (
-                    <label style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:textS,cursor:"pointer",marginLeft:8}}>
-                      <input type="checkbox" checked={!!zc.ceilingViaPrint} onChange={e=>sZ({ceilingViaPrint:e.target.checked})} />
-                      Ceiling via print (skip fabric ceiling drape charge)
-                    </label>
-                  )}
+                  {zc.trT==="box" && customCeilingField(k, zc)}
                 </div>
               )}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
@@ -1605,12 +1636,7 @@ export default function StudioBuild({ ctx }) {
                     const sel=(zc.trussMaterial||"pole")===m.key;
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
                   })}
-                  {zc.trT==="box" && (
-                    <label style={{display:"flex",alignItems:"center",gap:4,color:textS,cursor:"pointer",marginLeft:6}}>
-                      <input type="checkbox" checked={!!zc.ceilingViaPrint} onChange={e=>sZ({ceilingViaPrint:e.target.checked})} />
-                      Ceiling via print
-                    </label>
-                  )}
+                  {zc.trT==="box" && customCeilingField(k, zc, true)}
                 </div>
               )}
               {showCosts&&st.truss>0&&<div style={{fontSize:10,color:textS,marginBottom:6}}>Truss: {fmt(st.truss)}</div>}
@@ -1620,8 +1646,9 @@ export default function StudioBuild({ ctx }) {
                   <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
                 </div>{showCosts&&st.masking>0&&<span style={{fontWeight:600,fontSize:11,color:textP}}>{fmt(st.masking)}</span>}
               </div>
-              {zc.mkOn&&<div style={{display:"flex",gap:4,marginBottom:6,paddingLeft:20}}>
+              {zc.mkOn&&<div style={{display:"flex",gap:4,marginBottom:6,paddingLeft:20,flexWrap:"wrap",alignItems:"center"}}>
                 {MASK_OPTS.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                {customMaskingField(k, zc, true)}
               </div>}
               {/* Platform */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,fontSize:11}}>
