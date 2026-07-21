@@ -193,33 +193,29 @@ export default function StudioModals({ ctx }) {
                 const missing = isFullBox && !d.drapeDensity;
                 return (
                   <>
-                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
-                      <span style={{ fontSize:10, fontWeight:600, color:textS }}>Truss Type:</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:9, color:textS }}>Truss Type:</span>
                       {TRUSS_MATERIALS.map(m => {
                         const sel = (d.trussMaterial || "pole") === m.key;
                         return <span key={m.key} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), trussMaterial: m.key}})}
-                          style={{ padding:"3px 9px", borderRadius:6, fontSize:10, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}18`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
+                          style={{ padding:"2px 7px", borderRadius:5, fontSize:9, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}22`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
                       })}
                       {isFullBox && (() => {
                         const ceilingItem = d.customCeilingItemId ? (imsInventory || []).find(i => i.id === d.customCeilingItemId) : null;
-                        if (ceilingItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:6, fontSize:10, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600, marginLeft:6 }}>
+                        if (ceilingItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 7px", borderRadius:5, fontSize:9, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600, marginLeft:4 }}>
                           🎬 {ceilingItem.name}
                           <span onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), customCeilingItemId: null}})} style={{ cursor:"pointer", color:"#E11D48", fontWeight:700 }}>×</span>
                         </span>;
-                        return <button onClick={()=>setZurCustomPicker({ kind:"ceiling", ri:null })} style={{ padding:"3px 9px", borderRadius:6, fontSize:10, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer", marginLeft:6 }}>🎬 Custom Ceiling</button>;
+                        return <button onClick={()=>setZurCustomPicker({ kind:"ceiling", ri:null })} style={{ padding:"2px 7px", borderRadius:5, fontSize:9, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer", marginLeft:4 }}>🎬 Custom Ceiling</button>;
                       })()}
                     </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, padding:"6px 10px", borderRadius:8, background: missing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):(isDark?"rgba(244,114,182,0.06)":"#FDF2F8"), border:`1px solid ${missing?"rgba(239,68,68,0.55)":"rgba(244,114,182,0.25)"}` }}>
-                      <span style={{ fontSize:11, fontWeight:600, color: missing?"#B91C1C":"#9D174D" }}>🪡 Drape Density {isFullBox && <span style={{ color: missing?"#B91C1C":"#059669", fontWeight:700, marginLeft:4 }}>{missing ? "* Required" : "✓"}</span>}</span>
-                      <span style={{ fontSize:9, color:textS, flex:1 }}>{isFullBox ? "Required for Full Box (ceiling drape)" : "Optional — only used when Full Box truss"}</span>
-                      <div style={{ display:"flex", gap:4 }}>
-                        {[{v:"",l:"—"},{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
-                          const sel = (d.drapeDensity || "") === o.v;
-                          if (isFullBox && o.v === "") return null;
-                          return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), drapeDensity: o.v}})}
-                            style={{ padding:"4px 10px", borderRadius:6, fontSize:10, fontWeight:sel?700:500, textAlign:"center", cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
-                        })}
-                      </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap", padding:"5px 8px", borderRadius:6, background: missing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):"transparent" }}>
+                      <span style={{ fontSize:9, fontWeight:600, color: missing?"#B91C1C":textS }}>🪡 Density{missing?" * Required":!isFullBox?" (optional)":""}:</span>
+                      {[...(isFullBox?[]:[{v:"",l:"—"}]),{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
+                        const sel = (d.drapeDensity || "") === o.v;
+                        return <span key={o.v} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), drapeDensity: o.v}})}
+                          style={{ padding:"3px 8px", borderRadius:5, fontSize:9, fontWeight:sel?700:500, cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
+                      })}
                     </div>
                   </>
                 );
@@ -229,40 +225,37 @@ export default function StudioModals({ ctx }) {
                 const isBoxW=dL&&dW&&dH;
                 const mw=zoneUploadReview.dims?.mkWalls||{};
                 const mkT=zoneUploadReview.dims?.mkT||"";
-                const anyWall=mw.back||mw.left||mw.right;
                 const toggleW=(wall)=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),mkWalls:{...mw,[wall]:!mw[wall]}}});
                 const setMkT=(t)=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),mkT:t}});
                 // A U truss (open on the sides, only 2 of 3 dims filled) only has a back panel to
                 // mask — no left/right walls exist to hang fabric on.
                 const walls=isBoxW?[
-                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`},
-                  {id:"left",label:"Left wall",dim:`${dL} × ${dH} ft`},
-                  {id:"right",label:"Right wall",dim:`${dL} × ${dH} ft`}
+                  {id:"back",label:"Back wall",dim:`${dW}×${dH} ft`},
+                  {id:"left",label:"Left wall",dim:`${dL}×${dH} ft`},
+                  {id:"right",label:"Right wall",dim:`${dL}×${dH} ft`}
                 ]:[
-                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`}
+                  {id:"back",label:"Back wall",dim:`${dW}×${dH} ft`}
                 ];
-                return <div style={{ marginBottom: 10, background: anyWall ? (isDark ? "rgba(201,169,110,0.08)" : "rgba(201,169,110,0.06)") : (isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"), borderRadius: 10, padding: "12px 14px", border: `1px solid ${anyWall ? accent+"40" : border}` }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
-                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Material type</div>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap:"wrap", alignItems:"center" }}>
+                return <div>
+                  <div style={{ fontSize: 9, color: textS, marginBottom: 4 }}>{"🧱"} Masking</div>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap:"wrap", alignItems:"center" }}>
                     {[{id:"fabric",l:"Fabric"},{id:"acrylic",l:"Acrylic"},{id:"flex",l:"Flex"},{id:"vinyl",l:"Vinyl"}].map(o=>{
                       const sel=mkT===o.id;
-                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
+                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"4px 8px",borderRadius:6,fontSize:9,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                     })}
                     {(() => {
                       const maskItem = zoneUploadReview.dims?.customMaskingItemId ? (imsInventory || []).find(i => i.id === zoneUploadReview.dims.customMaskingItemId) : null;
-                      if (maskItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"4px 9px", borderRadius:6, fontSize:10, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600 }}>
+                      if (maskItem) return <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:6, fontSize:9, background:"rgba(124,58,237,0.12)", color:"#7C3AED", fontWeight:600 }}>
                         🖼️ {maskItem.name}
                         <span onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), customMaskingItemId: null}})} style={{ cursor:"pointer", color:"#E11D48", fontWeight:700 }}>×</span>
                       </span>;
-                      return <button onClick={()=>setZurCustomPicker({ kind:"masking", ri:null })} style={{ padding:"4px 9px", borderRadius:6, fontSize:10, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer" }}>🖼️ Custom Masking</button>;
+                      return <button onClick={()=>setZurCustomPicker({ kind:"masking", ri:null })} style={{ padding:"3px 8px", borderRadius:6, fontSize:9, border:`1px dashed ${border}`, background:"transparent", color:textS, cursor:"pointer" }}>🖼️ Custom Masking</button>;
                     })()}
                   </div>
-                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Select walls to mask</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {walls.map(w=>{const on=mw[w.id];return <div key={w.id} onClick={()=>toggleW(w.id)} style={{flex:1,minWidth:90,padding:"10px 12px",borderRadius:10,cursor:"pointer",border:`2px solid ${on?accent:border}`,background:on?(isDark?"rgba(201,169,110,0.12)":"rgba(201,169,110,0.08)"):"transparent",textAlign:"center"}}>
-                      <div style={{fontSize:14,fontWeight:600,color:on?accent:textS,marginBottom:2}}>{on?"✓ ":""}{w.label}</div>
-                      <div style={{fontSize:11,color:on?accent:textS}}>{w.dim}</div>
+                    {walls.map(w=>{const on=mw[w.id];return <div key={w.id} onClick={()=>toggleW(w.id)} style={{flex:1,minWidth:80,padding:"6px 8px",borderRadius:8,cursor:"pointer",border:`1.5px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",textAlign:"center"}}>
+                      <div style={{fontSize:10,fontWeight:600,color:on?accent:textS}}>{on?"✓ ":""}{w.label}</div>
+                      <div style={{fontSize:9,color:on?accent:textS}}>{w.dim}</div>
                     </div>;})}
                   </div>
                 </div>;
