@@ -282,12 +282,12 @@ function platformRowCost(row, rates) {
 function calcStructCost(zk, zc, rates) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
+  // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
+  // structures in the same zone can be a different material, density, or handle their ceiling
+  // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, ceilingViaPrint: zc.ceilingViaPrint },
-    // Drape density is a single zone-wide choice (matches how it's shown/edited today); material and
-    // the ceiling-via-print toggle are per-row since separate truss structures in the same zone can
-    // be a different material or handle their ceiling differently.
-    ...(zc.extraTrussRows || []).map((row) => ({ ...row, drapeDensity: zc.drapeDensity })),
+    ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
   const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT }, ...(zc.extraPlatformRows || [])];
@@ -2600,7 +2600,7 @@ export default function StudioApp() {
         trussFrontExt: Number(row.trussFrontExt) || 0,
         trussFrontExtH: Number(row.trussFrontExtH) || 0,
         mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
-        trussMaterial: row.trussMaterial ?? null, ceilingViaPrint: !!row.ceilingViaPrint,
+        trussMaterial: row.trussMaterial ?? null, drapeDensity: row.drapeDensity ?? null, ceilingViaPrint: !!row.ceilingViaPrint,
       };
     };
     const mapPlatformRow = (row) => ({

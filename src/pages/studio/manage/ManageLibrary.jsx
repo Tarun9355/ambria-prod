@@ -836,6 +836,76 @@ export default function ManageLibrary({ ctx }) {
                   {isBox && (Number(d.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
                 </div>;
               })()}
+              {(libEditImg.dims?.trussW && libEditImg.dims?.trussH) && (() => {
+                const d = libEditImg.dims || {};
+                const isFullBox = !!(d.trussL && d.trussW && d.trussH);
+                const missing = isFullBox && !d.drapeDensity;
+                return (
+                  <>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:10, fontWeight:600, color:textS }}>Truss Type:</span>
+                      {TRUSS_MATERIALS.map(m => {
+                        const sel = (d.trussMaterial || "pole") === m.key;
+                        return <span key={m.key} onClick={()=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), trussMaterial: m.key}})}
+                          style={{ padding:"3px 9px", borderRadius:6, fontSize:10, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}18`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
+                      })}
+                      {isFullBox && (
+                        <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:textS, cursor:"pointer", marginLeft:6 }}>
+                          <input type="checkbox" checked={!!d.ceilingViaPrint} onChange={e=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), ceilingViaPrint: e.target.checked}})} />
+                          Ceiling via print
+                        </label>
+                      )}
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, padding:"6px 10px", borderRadius:8, background: missing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):(isDark?"rgba(244,114,182,0.06)":"#FDF2F8"), border:`1px solid ${missing?"rgba(239,68,68,0.55)":"rgba(244,114,182,0.25)"}` }}>
+                      <span style={{ fontSize:11, fontWeight:600, color: missing?"#B91C1C":"#9D174D" }}>🪡 Drape Density {isFullBox && <span style={{ color: missing?"#B91C1C":"#059669", fontWeight:700, marginLeft:4 }}>{missing ? "* Required" : "✓"}</span>}</span>
+                      <span style={{ fontSize:9, color:textS, flex:1 }}>{isFullBox ? "Required for Full Box (ceiling drape)" : "Optional — only used when Full Box truss"}</span>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {[{v:"",l:"—"},{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
+                          const sel = (d.drapeDensity || "") === o.v;
+                          if (isFullBox && o.v === "") return null;
+                          return <span key={o.v} onClick={()=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), drapeDensity: o.v}})}
+                            style={{ padding:"4px 10px", borderRadius:6, fontSize:10, fontWeight:sel?700:500, textAlign:"center", cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
+                        })}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+              {(libEditImg.dims?.trussW || libEditImg.dims?.trussH) && (() => {
+                const dL=libEditImg.dims?.trussL||0, dW=libEditImg.dims?.trussW||0, dH=libEditImg.dims?.trussH||0;
+                const isBoxW=dL&&dW&&dH;
+                const mw=libEditImg.dims?.mkWalls||{};
+                const mkT=libEditImg.dims?.mkT||"";
+                const anyWall=mw.back||mw.left||mw.right;
+                const toggleW=(wall)=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),mkWalls:{...mw,[wall]:!mw[wall]}}});
+                const setMkT=(t)=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),mkT:t}});
+                // A U truss (open on the sides, only 2 of 3 dims filled) only has a back panel to
+                // mask — no left/right walls exist to hang fabric on.
+                const walls=isBoxW?[
+                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`},
+                  {id:"left",label:"Left wall",dim:`${dL} × ${dH} ft`},
+                  {id:"right",label:"Right wall",dim:`${dL} × ${dH} ft`}
+                ]:[
+                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`}
+                ];
+                return <div style={{ marginBottom: 10, background: anyWall ? (isDark ? "rgba(201,169,110,0.08)" : "rgba(201,169,110,0.06)") : (isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"), borderRadius: 10, padding: "12px 14px", border: `1px solid ${anyWall ? accent+"40" : border}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
+                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Material type</div>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                    {[{id:"fabric",l:"Fabric"},{id:"acrylic",l:"Acrylic"},{id:"flex",l:"Flex"},{id:"vinyl",l:"Vinyl"}].map(o=>{
+                      const sel=mkT===o.id;
+                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
+                    })}
+                  </div>
+                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Select walls to mask</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {walls.map(w=>{const on=mw[w.id];return <div key={w.id} onClick={()=>toggleW(w.id)} style={{flex:1,minWidth:90,padding:"10px 12px",borderRadius:10,cursor:"pointer",border:`2px solid ${on?accent:border}`,background:on?(isDark?"rgba(201,169,110,0.12)":"rgba(201,169,110,0.08)"):"transparent",textAlign:"center"}}>
+                      <div style={{fontSize:14,fontWeight:600,color:on?accent:textS,marginBottom:2}}>{on?"✓ ":""}{w.label}</div>
+                      <div style={{fontSize:11,color:on?accent:textS}}>{w.dim}</div>
+                    </div>;})}
+                  </div>
+                </div>;
+              })()}
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
                 <button onClick={() => setLibEditImg({ ...libEditImg, dims: { ...(libEditImg.dims || {}), trussRows: [...((libEditImg.dims || {}).trussRows || []), { id: "TR" + Date.now() + Math.floor(Math.random() * 1000), trussL: 0, trussW: 0, trussH: 0, trussQty: 1, trussFrontExt: 0, trussFrontExtH: 0, mkOn: false, mkT: "", mkWalls: {} }] } })}
                   style={{ fontSize: 10, fontWeight: 600, color: "#7C3AED", background: "transparent", border: "1px dashed #7C3AED80", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Truss</button>
@@ -847,9 +917,12 @@ export default function ManageLibrary({ ctx }) {
                 const cell = { fontSize: 9, color: textS, marginBottom: 2 };
                 const inp = { ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 };
                 const mw = row.mkWalls || {};
+                const rMissing = rIsBox && !row.drapeDensity;
                 // A U truss (only 2 of 3 dims filled) is open on the sides — only its back can be
                 // masked, not left/right.
-                const walls = rIsBox ? [{ id: "back", label: "Back" }, { id: "left", label: "Left" }, { id: "right", label: "Right" }] : [{ id: "back", label: "Back" }];
+                const walls = rIsBox
+                  ? [{ id: "back", label: "Back wall", dim: `${row.trussW}×${row.trussH} ft` }, { id: "left", label: "Left wall", dim: `${row.trussL}×${row.trussH} ft` }, { id: "right", label: "Right wall", dim: `${row.trussL}×${row.trussH} ft` }]
+                  : [{ id: "back", label: "Back wall", dim: `${row.trussW || 0}×${row.trussH || 0} ft` }];
                 return (
                   <div key={row.id} style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: isDark ? "rgba(124,58,237,0.06)" : "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.25)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -861,6 +934,8 @@ export default function ManageLibrary({ ctx }) {
                       <div><div style={cell}>Truss Width (ft)</div><input type="number" value={row.trussW || ""} onChange={e => setRow({ trussW: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
                       <div><div style={cell}>Truss Height (ft)</div><input type="number" value={row.trussH || ""} onChange={e => setRow({ trussH: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
                       <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={row.trussQty || ""} placeholder="1" onChange={e => setRow({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
+                      {rIsBox && <div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={row.trussFrontExt || ""} placeholder="0" onChange={e => setRow({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                      {rIsBox && (Number(row.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={row.trussFrontExtH || ""} placeholder={String(row.trussH || 0)} onChange={e => setRow({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
                     </div>
                     {(row.trussW || row.trussH) && (
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
@@ -877,16 +952,29 @@ export default function ManageLibrary({ ctx }) {
                         )}
                       </div>
                     )}
+                    {rIsBox && (
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap", padding:"5px 8px", borderRadius:6, background: rMissing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):"transparent" }}>
+                        <span style={{ fontSize:9, fontWeight:600, color: rMissing?"#B91C1C":textS }}>🪡 Density{rMissing?" * Required":""}:</span>
+                        {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
+                          const sel = (row.drapeDensity || "") === o.v;
+                          return <span key={o.v} onClick={()=>setRow({drapeDensity:o.v})} style={{ padding:"3px 8px", borderRadius:5, fontSize:9, fontWeight:sel?700:500, cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
+                        })}
+                      </div>
+                    )}
                     {(row.trussW || row.trussH) && (
                       <div>
-                        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                        <div style={{ fontSize: 9, color: textS, marginBottom: 4 }}>{"🧱"} Masking</div>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
                           {[{ id: "fabric", l: "Fabric" }, { id: "acrylic", l: "Acrylic" }, { id: "flex", l: "Flex" }, { id: "vinyl", l: "Vinyl" }].map(o => {
                             const sel = row.mkT === o.id;
-                            return <span key={o.id} onClick={() => setRow({ mkT: sel ? "" : o.id, mkOn: !sel })} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${sel ? "#7C3AED" : border}`, background: sel ? "#7C3AED22" : "transparent", color: sel ? "#7C3AED" : textS, fontWeight: sel ? 600 : 400 }}>{o.l}</span>;
+                            return <span key={o.id} onClick={() => setRow({ mkT: sel ? "" : o.id, mkOn: !sel })} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${sel ? "#7C3AED" : border}`, background: sel ? "#7C3AED22" : "transparent", color: sel ? "#7C3AED" : textS, fontWeight: sel ? 600 : 400 }}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                           })}
                         </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          {walls.map(w => { const on = mw[w.id]; return <span key={w.id} onClick={() => setRow({ mkWalls: { ...mw, [w.id]: !mw[w.id] } })} style={{ padding: "3px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${on ? "#7C3AED" : border}`, background: on ? "#7C3AED18" : "transparent", color: on ? "#7C3AED" : textS }}>{on ? "✓ " : ""}{w.label}</span>; })}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {walls.map(w => { const on = mw[w.id]; return <div key={w.id} onClick={() => setRow({ mkWalls: { ...mw, [w.id]: !mw[w.id] } })} style={{ flex:1, minWidth:80, padding: "6px 8px", borderRadius: 8, cursor: "pointer", border: `1.5px solid ${on ? "#7C3AED" : border}`, background: on ? "#7C3AED18" : "transparent", textAlign:"center" }}>
+                            <div style={{fontSize:10,fontWeight:600,color:on?"#7C3AED":textS}}>{on ? "✓ " : ""}{w.label}</div>
+                            <div style={{fontSize:9,color:on?"#7C3AED":textS}}>{w.dim}</div>
+                          </div>; })}
                         </div>
                       </div>
                     )}
@@ -951,92 +1039,11 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                 );
               })}
-              {/* ── §23 Phase 2.9e (26 May 2026) — Drape Density (Liza kg/sqft for Full Box ceiling) ── */}
-              {(() => {
-                const d = libEditImg.dims || {};
-                const isFullBox = !!(d.trussL && d.trussW && d.trussH);
-                const hasDensity = !!d.drapeDensity;
-                const missing = isFullBox && !hasDensity;
-                const borderC  = missing ? "rgba(239,68,68,0.55)" : "rgba(244,114,182,0.25)";
-                const bgC      = missing ? (isDark?"rgba(239,68,68,0.10)":"#FEF2F2") : (isDark?"rgba(244,114,182,0.06)":"#FDF2F8");
-                const labelC   = missing ? "#B91C1C" : "#9D174D";
-                return (
-                  <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:8, padding:"6px 10px", borderRadius:8, background:bgC, border:`1px solid ${borderC}` }}>
-                    <span style={{ fontSize:11, fontWeight:600, color:labelC }}>🪡 Drape Density {isFullBox && <span style={{ color: missing?"#B91C1C":"#059669", fontWeight:700, marginLeft:4 }}>{missing ? "* Required" : "✓"}</span>}</span>
-                    <span style={{ fontSize:9, color:textS, flex:1 }}>{isFullBox ? "Required for Full Box (ceiling drape)" : "Optional — only used when Full Box truss"}</span>
-                    <div style={{ display:"flex", gap:4 }}>
-                      {[{v:"",l:"—"},{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
-                        const sel = (libEditImg.dims?.drapeDensity || "") === o.v;
-                        // Hide the "—" option for Full Box (must pick one of the 3 real values)
-                        if (isFullBox && o.v === "") return null;
-                        return <span key={o.v} onClick={()=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), drapeDensity: o.v}})}
-                          style={{ padding:"4px 10px", borderRadius:6, fontSize:10, fontWeight:sel?700:500, textAlign:"center", cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-              {(libEditImg.dims?.trussW && libEditImg.dims?.trussH) && (() => {
-                const d = libEditImg.dims || {};
-                const isFullBox = !!(d.trussL && d.trussW && d.trussH);
-                return (
-                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap" }}>
-                    <span style={{ fontSize:10, fontWeight:600, color:textS }}>Truss Material:</span>
-                    {TRUSS_MATERIALS.map(m => {
-                      const sel = (d.trussMaterial || "pole") === m.key;
-                      return <span key={m.key} onClick={()=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), trussMaterial: m.key}})}
-                        style={{ padding:"3px 9px", borderRadius:6, fontSize:10, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}18`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
-                    })}
-                    {isFullBox && (
-                      <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:textS, cursor:"pointer", marginLeft:6 }}>
-                        <input type="checkbox" checked={!!d.ceilingViaPrint} onChange={e=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), ceilingViaPrint: e.target.checked}})} />
-                        Ceiling via print
-                      </label>
-                    )}
-                  </div>
-                );
-              })()}
               <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 10, color: textS }}>
                 <span>{(libEditImg.dims?.trussL && libEditImg.dims?.trussW && libEditImg.dims?.trussH) ? <span style={{ color: "#C9A96E", fontWeight: 600 }}>{"🔩"} Box Truss</span> : (libEditImg.dims?.trussW && libEditImg.dims?.trussH) ? <span style={{ color: "#7C3AED", fontWeight: 600 }}>{"🔩"} Single U</span> : "Fill truss dims"}</span>
                 {(libEditImg.dims?.floorL && libEditImg.dims?.floorW) ? <span>{"🧹"} Floor: {libEditImg.dims.floorL}×{libEditImg.dims.floorW} = {libEditImg.dims.floorL * libEditImg.dims.floorW} sqft</span> : null}
                 {libEditImg.dims?.plH ? <span style={{ color: "#059669", fontWeight: 600 }}>{"🔨"} {libEditImg.dims.plH === "4in" ? "4 inch" : "1ft-3ft raise"}</span> : null}
               </div>
-              {/* ── Masking walls ── */}
-              {(libEditImg.dims?.trussW || libEditImg.dims?.trussH) && (() => {
-                const dL=libEditImg.dims?.trussL||0, dW=libEditImg.dims?.trussW||0, dH=libEditImg.dims?.trussH||0;
-                const isBox=dL&&dW&&dH;
-                const mw=libEditImg.dims?.mkWalls||{};
-                const mkT=libEditImg.dims?.mkT||"";
-                const anyWall=mw.back||mw.left||mw.right;
-                const toggleW=(wall)=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),mkWalls:{...mw,[wall]:!mw[wall]}}});
-                const setMkT=(t)=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),mkT:t}});
-                // A U truss (open on the sides, only 2 of 3 dims filled) only has a back panel to
-                // mask — no left/right walls exist to hang fabric on.
-                const walls=isBox?[
-                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`},
-                  {id:"left",label:"Left wall",dim:`${dL} × ${dH} ft`},
-                  {id:"right",label:"Right wall",dim:`${dL} × ${dH} ft`}
-                ]:[
-                  {id:"back",label:"Back wall",dim:`${dW} × ${dH} ft`}
-                ];
-                return <div style={{ marginTop: 10, background: anyWall ? (isDark ? "rgba(201,169,110,0.08)" : "rgba(201,169,110,0.06)") : (isDark ? "rgba(255,255,255,0.03)" : "#FAFAFA"), borderRadius: 10, padding: "12px 14px", border: `1px solid ${anyWall ? accent+"40" : border}` }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
-                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Material type</div>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                    {[{id:"fabric",l:"Fabric"},{id:"acrylic",l:"Acrylic"},{id:"flex",l:"Flex"},{id:"vinyl",l:"Vinyl"}].map(o=>{
-                      const sel=mkT===o.id;
-                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
-                    })}
-                  </div>
-                  <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Select walls to mask</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {walls.map(w=>{const on=mw[w.id];return <div key={w.id} onClick={()=>toggleW(w.id)} style={{flex:1,minWidth:90,padding:"10px 12px",borderRadius:10,cursor:"pointer",border:`2px solid ${on?accent:border}`,background:on?(isDark?"rgba(201,169,110,0.12)":"rgba(201,169,110,0.08)"):"transparent",textAlign:"center"}}>
-                      <div style={{fontSize:14,fontWeight:600,color:on?accent:textS,marginBottom:2}}>{on?"✓ ":""}{w.label}</div>
-                      <div style={{fontSize:11,color:on?accent:textS}}>{w.dim}</div>
-                    </div>;})}
-                  </div>
-                </div>;
-              })()}
             </div>
             {/* ── Zone Structure Costs — sums the primary row + any extra Truss/Platform rows ── */}
             {(() => {
@@ -1046,7 +1053,7 @@ export default function ManageLibrary({ ctx }) {
                 const isBox=dL&&dW&&dH;
                 const isSingleU=!isBox&&dW&&dH;
                 const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
-                const _tr=isBox?trussRateFor("box",row.trussMaterial,d.drapeDensity,imsTrussRates):trussRateFor("singleU",row.trussMaterial,d.drapeDensity,imsTrussRates);
+                const _tr=isBox?trussRateFor("box",row.trussMaterial,row.drapeDensity,imsTrussRates):trussRateFor("singleU",row.trussMaterial,row.drapeDensity,imsTrussRates);
                 const trussRate=(isBox&&row.ceilingViaPrint)?Math.max(0,_tr.rate-_tr.ceilingRate):_tr.rate;
                 const qty=Math.max(1,Number(row.trussQty)||1);
                 const trussCost=trussSqft*trussRate*qty;
@@ -1073,7 +1080,7 @@ export default function ManageLibrary({ ctx }) {
                 const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                 return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
               };
-              const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,ceilingViaPrint:d.ceilingViaPrint}, ...(d.trussRows||[])];
+              const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,drapeDensity:d.drapeDensity,ceilingViaPrint:d.ceilingViaPrint}, ...(d.trussRows||[])];
               const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH,cpT:d.cpT}, ...(d.platformRows||[])];
               const trussResults=trussRows.map(trussRowCalc);
               const platformResults=platformRows.map(platformRowCalc);
