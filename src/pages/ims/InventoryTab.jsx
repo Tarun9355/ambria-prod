@@ -1704,7 +1704,7 @@ Rules:
                                   <ItemHoverThumb src={img} size={32} rounded={6} name={i.name} sub={(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " + (i.cat || i.category || "") : (i.cat || i.category || "")} dims={itemDimsText(i)} border="#e5e7eb" cardBg="#fff" textP="#1f2937" textS="#6b7280" emptyBg="#f3f4f6" />
                                   <div className="flex-1 min-w-0">
                                     <div className="text-sm text-gray-800 truncate">{i.name}{iIsKit && <span className="ml-1 text-[10px] text-indigo-600 font-semibold">📦 kit — priced live from its {i.subItems.length} components</span>}</div>
-                                    <div className="text-xs text-gray-400">₹{(Number(i.price ?? i.rentalCost) || 0)} · {(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " : ""}{i.cat || i.category || ""}</div>
+                                    <div className="text-xs text-gray-400">₹{(Number(i.price ?? i.rentalCost) || 0)} · {(i.subCat || i.subcategory) ? (i.subCat || i.subcategory) + " › " : ""}{i.cat || i.category || ""}{itemDimsText(i) ? ` · 📐 ${itemDimsText(i)}` : ""}</div>
                                   </div>
                                 </div>
                               );

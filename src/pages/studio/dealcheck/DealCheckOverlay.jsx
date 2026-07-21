@@ -1366,7 +1366,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                                 {isBlocked && <span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
                                                                 {!isBlocked && remaining!=null && <span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
                                                               </div>
-                                                              <div style={{fontSize:9,color:textS}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}</div>
+                                                              <div style={{fontSize:9,color:textS}}>{imsField.subcategory(x) ? imsField.subcategory(x)+" › " : ""}{x.cat||x.category||""}{itemDimsText(x) ? ` · 📐 ${itemDimsText(x)}` : ""}</div>
                                                             </div>
                                                           </div>
                                                         );
