@@ -7,6 +7,7 @@ import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
+import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES } from "../../lib/studio/taxonomy";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -66,6 +67,17 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     setSettings((s) => ({ ...s, printMaterials: [...(s.printMaterials || []), { id: "PM" + Date.now(), name, ratePerSqft: 0 }] }));
     setPrintMatNew("");
   };
+  // Truss/masking rates are a FIXED small set (tied to the truss geometry / wall-area pricing
+  // formulas elsewhere) — only the rate is editable, not the name or the list itself. Seed from the
+  // code defaults until an admin actually customizes one, so the panel never shows blank rows.
+  const updateTrussRate = (key, ratePerSqft) => {
+    const current = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
+    setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
+  };
+  const updateMaskingRate = (key, ratePerSqft) => {
+    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
+    setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
+  };
   const [newVenueInput, setNewVenueInput] = useState("");
   const addVenueMin = () => {
     const name = newVenueInput.trim();
@@ -106,6 +118,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "subcats", label: "📂 Sub-Categories" },
     { id: "synonyms", label: "🔤 AI Synonyms" },
     { id: "printmaterials", label: "🖨️ Print Materials" },
+    { id: "structurerates", label: "🏗️ Truss & Masking" },
   ];
 
   function addSupervisor() {
@@ -1921,6 +1934,50 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         </div>
       )}
+      {activePanel === "structurerates" && (() => {
+        const trussRatesList = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
+        const maskingRatesList = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
+        return (
+          <div className="space-y-6">
+            <div>
+              <p className="font-bold text-gray-900 mb-1">🏗️ Truss & Masking Rates</p>
+              <p className="text-xs text-gray-500">₹/sqft rates used to price truss structures and wall masking everywhere in Studio (Tagging, Build, Library). This is a fixed set tied to the pricing formulas, so only the rate is editable here — not the name or the list itself.</p>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Truss</p>
+              <div className="space-y-2">
+                {trussRatesList.map((r) => (
+                  <div key={r.key} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
+                    <span className="flex-1 text-sm font-medium">{r.name}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-400">₹</span>
+                      <input type="number" min="0" value={r.ratePerSqft ?? 0} onChange={(e) => updateTrussRate(r.key, parseFloat(e.target.value) || 0)}
+                        className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                      <span className="text-xs text-gray-400">/sqft</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">Masking</p>
+              <div className="space-y-2">
+                {maskingRatesList.map((r) => (
+                  <div key={r.key} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
+                    <span className="flex-1 text-sm font-medium">{r.name}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-400">₹</span>
+                      <input type="number" min="0" value={r.ratePerSqft ?? 0} onChange={(e) => updateMaskingRate(r.key, parseFloat(e.target.value) || 0)}
+                        className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                      <span className="text-xs text-gray-400">/sqft</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

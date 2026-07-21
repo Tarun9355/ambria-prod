@@ -10,7 +10,7 @@ import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
-import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF } from "../../lib/studio/taxonomy";
+import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
@@ -32,6 +32,7 @@ export default function StudioModals({ ctx }) {
     // Build's zone editor use, so the upload-review modal reflects the same live system instead of
     // its own smaller Rate-Card-only copy.
     getElPriceFromInventory, getElPriceFromPattern, recipeOnlyPatterns, imsPrintMaterials,
+    imsTrussRates, imsMaskingRates,
     // previewImg
     previewImg, setPreviewImg,
     // element gallery (zone photo viewer — grid + full-screen)
@@ -314,9 +315,9 @@ export default function StudioModals({ ctx }) {
                   <div style={{ fontSize: 12, fontWeight: 600, color: anyWall ? accent : textP, marginBottom: 8 }}>{"🧱"} Masking</div>
                   <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Material type</div>
                   <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-                    {[{id:"fabric",l:"Fabric ₹20"},{id:"acrylic",l:"Acrylic ₹100"},{id:"flex",l:"Flex ₹45"},{id:"vinyl",l:"Vinyl ₹90"}].map(o=>{
+                    {[{id:"fabric",l:"Fabric"},{id:"acrylic",l:"Acrylic"},{id:"flex",l:"Flex"},{id:"vinyl",l:"Vinyl"}].map(o=>{
                       const sel=mkT===o.id;
-                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l}</span>;
+                      return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",border:`1.5px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                     })}
                   </div>
                   <div style={{ fontSize: 10, color: textS, marginBottom: 6 }}>Select walls to mask</div>
@@ -331,17 +332,16 @@ export default function StudioModals({ ctx }) {
               {/* ── Zone Structure Cost — sums the primary row + any extra Truss/Platform rows ── */}
               {(() => {
                 const d=zoneUploadReview.dims||{};
-                const mkRates={fabric:20,acrylic:100,flex:45,vinyl:90};
                 const trussRowCalc=(row)=>{
                   const dL=row.trussL||0, dW=row.trussW||0, dH=row.trussH||0;
                   const isBox=dL&&dW&&dH;
                   const isSingleU=!isBox&&dW&&dH;
                   const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
-                  const trussRate=isBox?50:30;
+                  const trussRate=isBox?trussRateFor("box",imsTrussRates):trussRateFor("singleU",imsTrussRates);
                   const qty=Math.max(1,Number(row.trussQty)||1);
                   const trussCost=trussSqft*trussRate*qty;
                   const mw=row.mkWalls||{};const mkT=row.mkT||"";
-                  const mkRate=mkRates[mkT]||0;
+                  const mkRate=maskingRateFor(mkT,imsMaskingRates);
                   let maskSqft=0;const maskWalls=[];
                   // U truss has no left/right walls to mask — only its back panel (dW×dH) counts.
                   if(isBox){

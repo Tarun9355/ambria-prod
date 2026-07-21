@@ -74,6 +74,26 @@ export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}
 export const ARCH_OPTS=[{id:"2d",l:"2D (Flat)",r:60},{id:"3d",l:"3D (Built-out)",r:100}];
 export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out)",r:180}];
 
+// Truss and masking rates used to be the fixed numbers in BASE_RATES above. They're now editable
+// live from IMS Admin → Settings → 🏗️ Truss & Masking Rates — unlike Print Materials (a free-form
+// list), truss type and masking material are a FIXED small set tied to the geometry/pricing
+// formulas elsewhere (box vs single-U truss math, per-wall masking area math), so the settings
+// array is keyed by a stable `key` (not a free-form id) and rows can't be added/removed, only
+// their rate edited. `settings.trussRates`/`settings.maskingRates` missing or not yet customized
+// falls back to these same defaults, so nothing changes price until an admin actually edits one.
+export const DEFAULT_TRUSS_RATES=[{key:"box",name:"Box Truss",ratePerSqft:50},{key:"singleU",name:"Single U Truss",ratePerSqft:30}];
+export const DEFAULT_MASKING_RATES=[{key:"fabric",name:"Fabric",ratePerSqft:20},{key:"acrylic",name:"Acrylic",ratePerSqft:100},{key:"flex",name:"Flex",ratePerSqft:45},{key:"vinyl",name:"Vinyl",ratePerSqft:90}];
+export function trussRateFor(key, trussRates) {
+  const list = (Array.isArray(trussRates) && trussRates.length) ? trussRates : DEFAULT_TRUSS_RATES;
+  const row = list.find((r) => r.key === key) || DEFAULT_TRUSS_RATES.find((r) => r.key === key);
+  return Number(row?.ratePerSqft) || 0;
+}
+export function maskingRateFor(key, maskingRates) {
+  const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
+  const row = list.find((r) => r.key === key) || DEFAULT_MASKING_RATES.find((r) => r.key === key);
+  return Number(row?.ratePerSqft) || 0;
+}
+
 // Sentinel `cpT` value meaning "salesperson explicitly turned carpet off" — any OTHER falsy value
 // (null/undefined, from every zone-creation path that doesn't set cpT at all) means "not decided
 // yet", which prices as Carpet Old by default rather than as no carpet — carpet used to be priced

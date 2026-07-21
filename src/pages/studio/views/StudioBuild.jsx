@@ -56,6 +56,8 @@ export default function StudioBuild({ ctx }) {
     imsInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials)
     imsPrintMaterials,
+    // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + bundled calcStructCost input
+    imsTrussRates, imsMaskingRates, structRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items in the "+Add element" search
     recipeOnlyPatterns,
@@ -577,7 +579,7 @@ export default function StudioBuild({ ctx }) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>toggleEl(k)}>
           <div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],imsPrintMaterials).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
+            {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(168,85,247,0.08)"}}>🏭</span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>🛒</span>
             {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",fontSize:16,opacity:0.5}}>📋</span>}
@@ -1093,7 +1095,7 @@ export default function StudioBuild({ ctx }) {
 
           {/* Zone structure — always visible, costs hidden behind toggle */}
           {zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc,imsPrintMaterials);
+            const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc,structRates);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -1350,7 +1352,7 @@ export default function StudioBuild({ ctx }) {
     {customZones.filter(cz=>!cz.sourceType).map(cz=>{
       const k=cz.id;const isOn=enabledEls[k];
       const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k]);
-      const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],imsPrintMaterials).total:0;
+      const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
       const czTotal=czElCost+czStructCost;
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>setEnabledEls(p=>({...p,[k]:!p[k]}))}>
@@ -1518,7 +1520,7 @@ export default function StudioBuild({ ctx }) {
             const zc=zoneConfig[k]||{};
             const dims=zc.dims||{};
             const fd=zc.floorDims||{};
-            const st=calcStructCost(k,zc,imsPrintMaterials);
+            const st=calcStructCost(k,zc,structRates);
             const sZ=u=>{setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
               // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
