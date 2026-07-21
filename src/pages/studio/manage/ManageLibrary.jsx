@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "rea
 import LazyYT from "../../../components/studio/LazyYT";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
-import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor } from "../../../lib/studio/taxonomy";
+import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS } from "../../../lib/studio/taxonomy";
 import { logTagCorrections } from "../../../lib/studio/tagFeedback";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
@@ -863,6 +863,21 @@ export default function ManageLibrary({ ctx }) {
                       <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={row.trussQty || ""} placeholder="1" onChange={e => setRow({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
                     </div>
                     {(row.trussW || row.trussH) && (
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:9, color:textS }}>Material:</span>
+                        {TRUSS_MATERIALS.map(m => {
+                          const sel = (row.trussMaterial || "pole") === m.key;
+                          return <span key={m.key} onClick={()=>setRow({trussMaterial:m.key})} style={{ padding:"2px 7px", borderRadius:5, fontSize:9, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?"#7C3AED":border}`, background: sel?"#7C3AED22":"transparent", color: sel?"#7C3AED":textS }}>{m.label}</span>;
+                        })}
+                        {rIsBox && (
+                          <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:9, color:textS, cursor:"pointer", marginLeft:4 }}>
+                            <input type="checkbox" checked={!!row.ceilingViaPrint} onChange={e=>setRow({ceilingViaPrint:e.target.checked})} />
+                            Ceiling via print
+                          </label>
+                        )}
+                      </div>
+                    )}
+                    {(row.trussW || row.trussH) && (
                       <div>
                         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                           {[{ id: "fabric", l: "Fabric" }, { id: "acrylic", l: "Acrylic" }, { id: "flex", l: "Flex" }, { id: "vinyl", l: "Vinyl" }].map(o => {
@@ -961,6 +976,26 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                 );
               })()}
+              {(libEditImg.dims?.trussW && libEditImg.dims?.trussH) && (() => {
+                const d = libEditImg.dims || {};
+                const isFullBox = !!(d.trussL && d.trussW && d.trussH);
+                return (
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:10, fontWeight:600, color:textS }}>Truss Material:</span>
+                    {TRUSS_MATERIALS.map(m => {
+                      const sel = (d.trussMaterial || "pole") === m.key;
+                      return <span key={m.key} onClick={()=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), trussMaterial: m.key}})}
+                        style={{ padding:"3px 9px", borderRadius:6, fontSize:10, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}18`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
+                    })}
+                    {isFullBox && (
+                      <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:10, color:textS, cursor:"pointer", marginLeft:6 }}>
+                        <input type="checkbox" checked={!!d.ceilingViaPrint} onChange={e=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), ceilingViaPrint: e.target.checked}})} />
+                        Ceiling via print
+                      </label>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 10, color: textS }}>
                 <span>{(libEditImg.dims?.trussL && libEditImg.dims?.trussW && libEditImg.dims?.trussH) ? <span style={{ color: "#C9A96E", fontWeight: 600 }}>{"🔩"} Box Truss</span> : (libEditImg.dims?.trussW && libEditImg.dims?.trussH) ? <span style={{ color: "#7C3AED", fontWeight: 600 }}>{"🔩"} Single U</span> : "Fill truss dims"}</span>
                 {(libEditImg.dims?.floorL && libEditImg.dims?.floorW) ? <span>{"🧹"} Floor: {libEditImg.dims.floorL}×{libEditImg.dims.floorW} = {libEditImg.dims.floorL * libEditImg.dims.floorW} sqft</span> : null}
@@ -1011,7 +1046,8 @@ export default function ManageLibrary({ ctx }) {
                 const isBox=dL&&dW&&dH;
                 const isSingleU=!isBox&&dW&&dH;
                 const trussSqft=isBox?(()=>{const s=[dL,dW,dH].sort((a,b)=>b-a);return s[0]*s[1];})():(isSingleU?dW*dH:0);
-                const trussRate=isBox?trussRateFor("box",imsTrussRates):trussRateFor("singleU",imsTrussRates);
+                const _tr=isBox?trussRateFor("box",row.trussMaterial,d.drapeDensity,imsTrussRates):trussRateFor("singleU",row.trussMaterial,d.drapeDensity,imsTrussRates);
+                const trussRate=(isBox&&row.ceilingViaPrint)?Math.max(0,_tr.rate-_tr.ceilingRate):_tr.rate;
                 const qty=Math.max(1,Number(row.trussQty)||1);
                 const trussCost=trussSqft*trussRate*qty;
                 const mw=row.mkWalls||{};const mkT=row.mkT||"";
@@ -1037,7 +1073,7 @@ export default function ManageLibrary({ ctx }) {
                 const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                 return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
               };
-              const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls}, ...(d.trussRows||[])];
+              const trussRows=[{trussL:d.trussL,trussW:d.trussW,trussH:d.trussH,trussQty:d.trussQty,mkT:d.mkT,mkWalls:d.mkWalls,trussMaterial:d.trussMaterial,ceilingViaPrint:d.ceilingViaPrint}, ...(d.trussRows||[])];
               const platformRows=[{floorL:d.floorL,floorW:d.floorW,plH:d.plH,cpT:d.cpT}, ...(d.platformRows||[])];
               const trussResults=trussRows.map(trussRowCalc);
               const platformResults=platformRows.map(platformRowCalc);

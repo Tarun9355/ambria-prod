@@ -31,7 +31,7 @@ import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS, DRAPE_DENSITIES,
 } from "../../lib/studio/taxonomy";
 
 // Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
@@ -221,8 +221,13 @@ function trussRowCost(row, rates) {
   // saved zone) — "2 dims ⇒ Single U, 3 dims ⇒ Box".
   const _trussDims = [d.L, (d.W || d.S), d.H].filter((x) => (Number(x) || 0) > 0).length;
   const _trMode = (row.trT === "box" && _trussDims < 3) ? "singleU" : row.trT;
-  const boxRate = trussRateFor("box", rates?.trussRates);
-  const singleURate = trussRateFor("singleU", rates?.trussRates);
+  const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates);
+  const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates);
+  // "Ceiling via print" — the salesperson is putting a printed panel up top instead of the fabric
+  // ceiling drape, so the ceiling portion of the Box rate doesn't apply. Single U has no ceiling
+  // concept (open-top structure), so its rate is never reduced this way.
+  const boxRate = row.ceilingViaPrint ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
+  const singleURate = singleU.rate;
   if (_trMode === "box") {
     const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
     truss = v[0] * v[1] * boxRate;
@@ -278,8 +283,11 @@ function calcStructCost(zk, zc, rates) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   const trussRows = [
-    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS },
-    ...(zc.extraTrussRows || []),
+    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, ceilingViaPrint: zc.ceilingViaPrint },
+    // Drape density is a single zone-wide choice (matches how it's shown/edited today); material and
+    // the ceiling-via-print toggle are per-row since separate truss structures in the same zone can
+    // be a different material or handle their ceiling differently.
+    ...(zc.extraTrussRows || []).map((row) => ({ ...row, drapeDensity: zc.drapeDensity })),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
   const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT }, ...(zc.extraPlatformRows || [])];
@@ -2592,6 +2600,7 @@ export default function StudioApp() {
         trussFrontExt: Number(row.trussFrontExt) || 0,
         trussFrontExtH: Number(row.trussFrontExtH) || 0,
         mkOn: !!row.mkT, mkT: row.mkT || null, mkWalls: row.mkWalls || {},
+        trussMaterial: row.trussMaterial ?? null, ceilingViaPrint: !!row.ceilingViaPrint,
       };
     };
     const mapPlatformRow = (row) => ({
@@ -2615,6 +2624,7 @@ export default function StudioApp() {
       floorDims: Object.keys(floorDims).length ? floorDims : (hasDims ? { ...dims } : {}),
       trT, mkOn: !!d.mkT, mkT: d.mkT || null, mkWalls: d.mkWalls || {},
       plH: d.plH || null, cpT: d.cpT ?? null,
+      trussMaterial: d.trussMaterial ?? null, drapeDensity: d.drapeDensity ?? null, ceilingViaPrint: !!d.ceilingViaPrint,
       // Carry truss quantity + box front-extension tagged on the library photo through to Build.
       trussQty: Math.max(1, Number(d.trussQty) || 1),
       trussFrontExt: Number(d.trussFrontExt) || 0,
@@ -5332,7 +5342,13 @@ Return ONLY JSON:
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
-      if (zl.truss > 0) structItems.push({ name: "Truss (" + (zc.trT === "box" ? "Box ₹" + trussRateFor("box", imsTrussRates) : "Single U ₹" + trussRateFor("singleU", imsTrussRates)) + "/sqft)" + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
+      if (zl.truss > 0) {
+        const _tShape = zc.trT === "box" ? "box" : "singleU";
+        const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates);
+        const _tEffRate = (_tShape === "box" && zc.ceilingViaPrint) ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
+        const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "pole"))?.label) || "Pole";
+        structItems.push({ name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (zc.trT === "box" && zc.ceilingViaPrint ? " · ceiling via print" : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
+      }
       if (zl.masking > 0) structItems.push({ name: "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
       if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsPrintMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }

@@ -76,17 +76,34 @@ export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out
 
 // Truss and masking rates used to be the fixed numbers in BASE_RATES above. They're now editable
 // live from IMS Admin → Settings → 🏗️ Truss & Masking Rates — unlike Print Materials (a free-form
-// list), truss type and masking material are a FIXED small set tied to the geometry/pricing
-// formulas elsewhere (box vs single-U truss math, per-wall masking area math), so the settings
-// array is keyed by a stable `key` (not a free-form id) and rows can't be added/removed, only
-// their rate edited. `settings.trussRates`/`settings.maskingRates` missing or not yet customized
-// falls back to these same defaults, so nothing changes price until an admin actually edits one.
-export const DEFAULT_TRUSS_RATES=[{key:"box",name:"Box Truss",ratePerSqft:50},{key:"singleU",name:"Single U Truss",ratePerSqft:30}];
+// list), truss shape/material and masking material are a FIXED small set tied to the geometry/
+// pricing formulas elsewhere (box vs single-U truss math, per-wall masking area math), so the
+// settings arrays are keyed by stable fields (not a free-form id) and rows can't be added/removed,
+// only their rate edited. `settings.trussRates`/`settings.maskingRates` missing or not yet
+// customized falls back to these same defaults, so nothing changes price until an admin edits one.
+export const TRUSS_SHAPES=[{key:"box",label:"Box Truss"},{key:"singleU",label:"Single U Truss"}];
+export const TRUSS_MATERIALS=[{key:"pole",label:"Pole"},{key:"aluminium",label:"Aluminium"},{key:"iron",label:"Iron"}];
+export const DRAPE_DENSITIES=[{key:"minimum",label:"Minimum"},{key:"moderate",label:"Moderate"},{key:"dense",label:"Dense"}];
+// One rate row per (shape × material × density) — 9 per shape, 18 total. `ceilingRatePerSqft` is
+// the portion of `ratePerSqft` attributable to the ceiling drape specifically — when a zone opts to
+// do its ceiling via a printed panel instead (see `ceilingViaPrint` on a truss row), that portion is
+// subtracted from the truss rate rather than charging for fabric drape AND a printed ceiling both.
+// All 18 rows seed at the shape's old flat rate with ceilingRatePerSqft: 0, so pricing is identical
+// to before this model existed until an admin actually customizes a specific cell.
+export const DEFAULT_TRUSS_RATES = TRUSS_SHAPES.flatMap((shape) => TRUSS_MATERIALS.flatMap((material) => DRAPE_DENSITIES.map((density) => ({
+  shape: shape.key, material: material.key, density: density.key,
+  ratePerSqft: shape.key === "box" ? 50 : 30, ceilingRatePerSqft: 0,
+}))));
 export const DEFAULT_MASKING_RATES=[{key:"fabric",name:"Fabric",ratePerSqft:20},{key:"acrylic",name:"Acrylic",ratePerSqft:100},{key:"flex",name:"Flex",ratePerSqft:45},{key:"vinyl",name:"Vinyl",ratePerSqft:90}];
-export function trussRateFor(key, trussRates) {
+// `material`/`density` default to "pole"/"moderate" when a row hasn't set them yet (e.g. zones
+// saved before this model existed) — safe because every material/density starts at the same
+// default rate, so an unset value never silently changes an existing zone's price.
+export function trussRateFor(shape, material, density, trussRates) {
   const list = (Array.isArray(trussRates) && trussRates.length) ? trussRates : DEFAULT_TRUSS_RATES;
-  const row = list.find((r) => r.key === key) || DEFAULT_TRUSS_RATES.find((r) => r.key === key);
-  return Number(row?.ratePerSqft) || 0;
+  const mat = material || "pole", den = density || "moderate";
+  const row = list.find((r) => r.shape === shape && r.material === mat && r.density === den)
+    || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === mat && r.density === den);
+  return { rate: Number(row?.ratePerSqft) || 0, ceilingRate: Number(row?.ceilingRatePerSqft) || 0 };
 }
 export function maskingRateFor(key, maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;

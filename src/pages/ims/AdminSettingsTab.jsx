@@ -7,7 +7,7 @@ import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
-import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES } from "../../lib/studio/taxonomy";
+import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -70,9 +70,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // Truss/masking rates are a FIXED small set (tied to the truss geometry / wall-area pricing
   // formulas elsewhere) — only the rate is editable, not the name or the list itself. Seed from the
   // code defaults until an admin actually customizes one, so the panel never shows blank rows.
-  const updateTrussRate = (key, ratePerSqft) => {
+  const updateTrussRate = (shape, material, density, field, value) => {
     const current = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
-    setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
+    setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.shape === shape && r.material === material && r.density === density) ? { ...r, [field]: value } : r) }));
   };
   const updateMaskingRate = (key, ratePerSqft) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
@@ -1943,21 +1943,46 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <p className="font-bold text-gray-900 mb-1">🏗️ Truss & Masking Rates</p>
               <p className="text-xs text-gray-500">₹/sqft rates used to price truss structures and wall masking everywhere in Studio (Tagging, Build, Library). This is a fixed set tied to the pricing formulas, so only the rate is editable here — not the name or the list itself.</p>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-700 mb-2">Truss</p>
-              <div className="space-y-2">
-                {trussRatesList.map((r) => (
-                  <div key={r.key} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
-                    <span className="flex-1 text-sm font-medium">{r.name}</span>
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-gray-400">₹</span>
-                      <input type="number" min="0" value={r.ratePerSqft ?? 0} onChange={(e) => updateTrussRate(r.key, parseFloat(e.target.value) || 0)}
-                        className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
-                      <span className="text-xs text-gray-400">/sqft</span>
-                    </div>
+            <div className="space-y-5">
+              <p className="text-sm font-semibold text-gray-700 -mb-3">Truss</p>
+              {TRUSS_SHAPES.map((shape) => (
+                <div key={shape.key} className="border rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 px-3 py-2 border-b">
+                    <span className="text-sm font-bold text-gray-800">{shape.label}</span>
                   </div>
-                ))}
-              </div>
+                  <div className="divide-y">
+                    <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-50 text-xs text-gray-400 font-semibold">
+                      <span className="flex-1">Material</span>
+                      <span className="flex-1">Density</span>
+                      <span className="w-32 text-center">Rate (₹/sqft)</span>
+                      <span className="w-40 text-center">Ceiling portion (₹/sqft)</span>
+                    </div>
+                    {TRUSS_MATERIALS.map((material) => DRAPE_DENSITIES.map((density) => {
+                      const row = trussRatesList.find((r) => r.shape === shape.key && r.material === material.key && r.density === density.key)
+                        || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape.key && r.material === material.key && r.density === density.key);
+                      return (
+                        <div key={material.key + ":" + density.key} className="flex items-center gap-3 px-3 py-2">
+                          <span className="flex-1 text-sm font-medium">{material.label}</span>
+                          <span className="flex-1 text-sm text-gray-500">{density.label}</span>
+                          <div className="w-32 flex items-center justify-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input type="number" min="0" value={row?.ratePerSqft ?? 0}
+                              onChange={(e) => updateTrussRate(shape.key, material.key, density.key, "ratePerSqft", parseFloat(e.target.value) || 0)}
+                              className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                          </div>
+                          <div className="w-40 flex items-center justify-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input type="number" min="0" value={row?.ceilingRatePerSqft ?? 0}
+                              onChange={(e) => updateTrussRate(shape.key, material.key, density.key, "ceilingRatePerSqft", parseFloat(e.target.value) || 0)}
+                              className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                          </div>
+                        </div>
+                      );
+                    }))}
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-gray-500 italic">"Ceiling portion" is the slice of the rate that's specifically the fabric ceiling drape — when a zone does its ceiling via a printed panel instead ("Ceiling via print" on that truss), this portion is subtracted from the rate instead of charging for both.</p>
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-2">Masking</p>

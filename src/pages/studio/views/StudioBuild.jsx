@@ -1,7 +1,7 @@
 import { Fragment, useState, useRef, useEffect } from "react";
 import {
   TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
-  MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF,
+  MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
@@ -1280,6 +1280,21 @@ export default function StudioBuild({ ctx }) {
                   </div>
                 </div>;
               })()}
+              {zc.trT && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,fontWeight:600,color:textS}}>Truss Material:</span>
+                  {TRUSS_MATERIALS.map(m=>{
+                    const sel=(zc.trussMaterial||"pole")===m.key;
+                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"3px 9px",borderRadius:6,fontSize:10,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
+                  })}
+                  {zc.trT==="box" && (
+                    <label style={{display:"flex",alignItems:"center",gap:5,fontSize:10,color:textS,cursor:"pointer",marginLeft:8}}>
+                      <input type="checkbox" checked={!!zc.ceilingViaPrint} onChange={e=>sZ({ceilingViaPrint:e.target.checked})} />
+                      Ceiling via print (skip fabric ceiling drape charge)
+                    </label>
+                  )}
+                </div>
+              )}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               <div style={{fontSize:12,marginBottom:6}}>
                 {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
@@ -1583,6 +1598,21 @@ export default function StudioBuild({ ctx }) {
                   </div>
                 </div>;
               })()}
+              {zc.trT && (
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
+                  <span style={{fontWeight:600,color:textS}}>Material:</span>
+                  {TRUSS_MATERIALS.map(m=>{
+                    const sel=(zc.trussMaterial||"pole")===m.key;
+                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
+                  })}
+                  {zc.trT==="box" && (
+                    <label style={{display:"flex",alignItems:"center",gap:4,color:textS,cursor:"pointer",marginLeft:6}}>
+                      <input type="checkbox" checked={!!zc.ceilingViaPrint} onChange={e=>sZ({ceilingViaPrint:e.target.checked})} />
+                      Ceiling via print
+                    </label>
+                  )}
+                </div>
+              )}
               {showCosts&&st.truss>0&&<div style={{fontSize:10,color:textS,marginBottom:6}}>Truss: {fmt(st.truss)}</div>}
               {/* Masking */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
