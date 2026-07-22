@@ -5363,7 +5363,7 @@ Return ONLY JSON:
         const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates);
         const _tHasCustomCeiling = _tShape === "box" && !!zc.customCeilingItemId;
         const _tEffRate = _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
-        const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "pole"))?.label) || "Pole";
+        const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "iron"))?.label) || "Pole";
         const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
         structItems.push({ name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
       }

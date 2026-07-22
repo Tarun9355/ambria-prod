@@ -196,7 +196,7 @@ export default function StudioModals({ ctx }) {
                     <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
                       <span style={{ fontSize:9, color:textS }}>Truss Type:</span>
                       {TRUSS_MATERIALS.map(m => {
-                        const sel = (d.trussMaterial || "pole") === m.key;
+                        const sel = (d.trussMaterial || "iron") === m.key;
                         return <span key={m.key} onClick={()=>setZoneUploadReview({...zoneUploadReview, dims:{...(zoneUploadReview.dims||{}), trussMaterial: m.key}})}
                           style={{ padding:"2px 7px", borderRadius:5, fontSize:9, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?accent:border}`, background: sel?`${accent}22`:"transparent", color: sel?accent:textS }}>{m.label}</span>;
                       })}
@@ -295,7 +295,7 @@ export default function StudioModals({ ctx }) {
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
                         <span style={{ fontSize:9, color:textS }}>Material:</span>
                         {TRUSS_MATERIALS.map(m => {
-                          const sel = (row.trussMaterial || "pole") === m.key;
+                          const sel = (row.trussMaterial || "iron") === m.key;
                           return <span key={m.key} onClick={()=>setRow({trussMaterial:m.key})} style={{ padding:"2px 7px", borderRadius:5, fontSize:9, fontWeight:sel?700:400, cursor:"pointer", border:`1px solid ${sel?"#7C3AED":border}`, background: sel?"#7C3AED22":"transparent", color: sel?"#7C3AED":textS }}>{m.label}</span>;
                         })}
                         {rIsBox && (() => {

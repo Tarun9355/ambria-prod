@@ -1320,7 +1320,7 @@ export default function StudioBuild({ ctx }) {
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
                   <span style={{fontSize:11,fontWeight:600,color:textS}}>Truss Material:</span>
                   {TRUSS_MATERIALS.map(m=>{
-                    const sel=(zc.trussMaterial||"pole")===m.key;
+                    const sel=(zc.trussMaterial|| "iron")===m.key;
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"3px 9px",borderRadius:6,fontSize:10,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
                   })}
                   {zc.trT==="box" && customCeilingField(k, zc)}
@@ -1633,7 +1633,7 @@ export default function StudioBuild({ ctx }) {
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
                   <span style={{fontWeight:600,color:textS}}>Material:</span>
                   {TRUSS_MATERIALS.map(m=>{
-                    const sel=(zc.trussMaterial||"pole")===m.key;
+                    const sel=(zc.trussMaterial|| "iron")===m.key;
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
                   })}
                   {zc.trT==="box" && customCeilingField(k, zc, true)}

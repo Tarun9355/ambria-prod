@@ -95,12 +95,11 @@ export const DEFAULT_TRUSS_RATES = TRUSS_SHAPES.flatMap((shape) => TRUSS_MATERIA
   ratePerSqft: shape.key === "box" ? 50 : 30, ceilingRatePerSqft: 0,
 }))));
 export const DEFAULT_MASKING_RATES=[{key:"fabric",name:"Fabric",ratePerSqft:20},{key:"acrylic",name:"Acrylic",ratePerSqft:100},{key:"flex",name:"Flex",ratePerSqft:45},{key:"vinyl",name:"Vinyl",ratePerSqft:90}];
-// `material`/`density` default to "pole"/"moderate" when a row hasn't set them yet (e.g. zones
-// saved before this model existed) — safe because every material/density starts at the same
-// default rate, so an unset value never silently changes an existing zone's price.
+// `material`/`density` default to "iron"/"moderate" when a row hasn't set them yet (e.g. zones or
+// tagged photos saved before this model existed) — Iron is the house-standard default truss material.
 export function trussRateFor(shape, material, density, trussRates) {
   const list = (Array.isArray(trussRates) && trussRates.length) ? trussRates : DEFAULT_TRUSS_RATES;
-  const mat = material || "pole", den = density || "moderate";
+  const mat = material || "iron", den = density || "moderate";
   const row = list.find((r) => r.shape === shape && r.material === mat && r.density === den)
     || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === mat && r.density === den);
   return { rate: Number(row?.ratePerSqft) || 0, ceilingRate: Number(row?.ceilingRatePerSqft) || 0 };
