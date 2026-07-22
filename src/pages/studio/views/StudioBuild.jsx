@@ -80,7 +80,9 @@ export default function StudioBuild({ ctx }) {
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
   const [zoneCollapsed, setZoneCollapsed] = useState({});
-  const toggleZoneCollapse = (k) => setZoneCollapsed((p) => ({ ...p, [k]: !p[k] }));
+  // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
+  const isCollapsed = (k) => zoneCollapsed[k] !== false;
+  const toggleZoneCollapse = (k) => setZoneCollapsed((p) => ({ ...p, [k]: p[k] === false ? true : false }));
   const [notesOpen, setNotesOpen] = useState({}); // per-zone: reveal the client-note field (else a small icon)
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
@@ -604,9 +606,9 @@ export default function StudioBuild({ ctx }) {
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : toggleEl(k)}>
-          <div style={{display:"flex",alignItems:"center",gap:12}}>{isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={zoneCollapsed[k]?"Expand":"Collapse"}>{zoneCollapsed[k]?"▶":"▼"}</span>}<span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>{isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={isCollapsed(k)?"Expand":"Collapse"}>{isCollapsed(k)?"▶":"▼"}</span>}<span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&!zoneCollapsed[k]&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
+            {isOn&&showCosts&&!isCollapsed(k)&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(168,85,247,0.08)"}}>🏭</span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>🛒</span>
             {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",fontSize:16,opacity:0.5}}>📋</span>}
@@ -737,13 +739,13 @@ export default function StudioBuild({ ctx }) {
           </div>
 
           {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
-          {showCosts&&!zoneCollapsed[k]&&<Fragment>
+          {showCosts&&!isCollapsed(k)&&<Fragment>
 
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
           {zoneElements[k] ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div onClick={()=>toggleZoneCollapse(k)} title="Collapse this zone" style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{fontSize:10,color:"#999"}}>{zoneCollapsed[k]?"▶":"▼"}</span>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
+                <div onClick={()=>toggleZoneCollapse(k)} title="Collapse this zone" style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{fontSize:10,color:"#999"}}>{isCollapsed(k)?"▶":"▼"}</span>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
                       master library photo so the fix sticks for everyone. Shows only for a selected
@@ -1348,7 +1350,7 @@ export default function StudioBuild({ ctx }) {
           </Fragment>}
 
           {/* §26.13 — Production/Buying custom items in this zone */}
-          {!zoneCollapsed[k] && dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).length > 0 && (
+          {!isCollapsed(k) && dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).length > 0 && (
             <div style={{marginTop:10,marginBottom:4}}>
               {dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).map(ci => {
                 const isP = ci.type === "production";
@@ -1404,7 +1406,7 @@ export default function StudioBuild({ ctx }) {
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : setEnabledEls(p=>({...p,[k]:!p[k]}))}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={zoneCollapsed[k]?"Expand":"Collapse"}>{zoneCollapsed[k]?"▶":"▼"}</span>}
+            {isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={isCollapsed(k)?"Expand":"Collapse"}>{isCollapsed(k)?"▶":"▼"}</span>}
             <span style={{fontSize:22}}>{cz.icon||"📦"}</span>
             <div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{cz.name}</div>
             <span style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Custom</span>
@@ -1415,7 +1417,7 @@ export default function StudioBuild({ ctx }) {
             <span onClick={e=>{e.stopPropagation();if(confirm("Remove "+cz.name+"?")){setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});}}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>
           </div>
         </div>
-        {isOn&&!zoneCollapsed[k]&&<div style={{padding:"0 18px 16px"}}>
+        {isOn&&!isCollapsed(k)&&<div style={{padding:"0 18px 16px"}}>
           {/* Element card — add items from Rate Card */}
           <div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
