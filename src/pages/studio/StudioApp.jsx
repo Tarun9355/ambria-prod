@@ -2520,10 +2520,19 @@ export default function StudioApp() {
       const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
       // recipeQty scales the recipe's own per-unit rate by however much of that recipe's unit
       // (pc/sqft/rft/...) this kit add-on specifies — e.g. 12 sqft of a per-sqft recipe.
-      const recipeCost = (pattern, recipeQty = 1) => {
+      // A kit's recipe blends real/artificial by the global ratio exactly like a standalone recipe
+      // element does (see the non-kit floral path below) — a sub-category floral_mode of real/
+      // artificial pins it to 100/0, otherwise it follows the deal's floralRatio. `extra` (pot/base)
+      // is added once, un-blended, matching getElPrice's composition order.
+      const recipeCost = (pattern, subKey, recipeQty = 1) => {
         if (!pattern) return 0;
         const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
-        return rates ? (rates.realRate + rates.extra) * (Number(recipeQty) || 0) : 0;
+        if (!rates) return 0;
+        const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
+        const subMode = sk ? rcFloralModeByKey[sk] : undefined;
+        const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const blended = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+        return blended * (Number(recipeQty) || 0);
       };
       const subCatPattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       // Per-instance overrides (el.kitOverrides) replace the kit's own global subItems recipe for
@@ -2534,7 +2543,7 @@ export default function StudioApp() {
         .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty }))
         .filter((x) => x.pattern);
       if (subCatPattern || attachedPatterns.length) {
-        const flowerCost = recipeCost(subCatPattern) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.qty), 0);
+        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty), 0);
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };

@@ -151,7 +151,7 @@ export default function ManageLibrary({ ctx }) {
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub,
     setPreviewImg,
     // rate card (element breakdown) — kept for legacy/AI-tagged elements without invId
-    rcItems, rcCats, rcIsSMB, isSubTagHidden, rcSubcatFactors, rcFactorByKey,
+    rcItems, rcCats, rcIsSMB, isSubTagHidden, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // IMS inventory (element breakdown "+Add element" now sources from here, not the Rate Card)
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — per-element Print section
@@ -1298,6 +1298,7 @@ export default function ManageLibrary({ ctx }) {
                                 rcFactorByKey={rcFactorByKey}
                                 elSize={el.size}
                                 mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3}
+                                floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData)||{}}
                                 textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                               />
                             </div>

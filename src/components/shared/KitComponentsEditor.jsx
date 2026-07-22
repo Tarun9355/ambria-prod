@@ -15,7 +15,7 @@ import ItemHoverThumb from "./ItemHoverThumb";
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
@@ -39,12 +39,20 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Recipe (flower) Studio rate for a pattern at the element's size = real mandi cost × markup. Lets a
   // kit that includes a flower recipe show its flower cost here, priced the same way getElPriceFromInventory does.
   const _szKey = (() => { const s = String(elSize || "B").toUpperCase(); return (s === "S" || s === "SMALL") ? "small" : (s === "B" || s === "BIG" || s === "LARGE") ? "big" : "medium"; })();
-  const recipeRateFor = (pat) => {
+  // Full artificial-rate settings (art flower/green ₹/kg, bunches/kg, markup) so artRate here matches
+  // getElPriceFromInventory's blend byte-for-byte; falls back to just the markup when not provided.
+  const _floralSettings = { ...(floralSettings || {}), defaultStudioMarkup: Number(studioMarkup) || (floralSettings?.defaultStudioMarkup) || 3 };
+  const recipeRateFor = (pat, subKey) => {
     if (!pat) return 0;
-    // Full recipe Studio rate = real cost × markup + extra (pot/base) — exactly the Recipe editor's
-    // "Studio rate" and getElPriceFromInventory's flower cost. Extra is already folded in; nothing else.
-    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, { defaultStudioMarkup: Number(studioMarkup) || 3 }, imsInventory);
-    return rates ? (rates.realRate + rates.extra) : 0;
+    // Recipe Studio rate blended real/artificial by the global ratio — same as a standalone recipe
+    // element (getElPrice). A sub-category floral_mode of real/artificial pins it to 100/0; else it
+    // follows the deal's floralRatio. `extra` (pot/base) is added once, un-blended.
+    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, _floralSettings, imsInventory);
+    if (!rates) return 0;
+    const sk = String(subKey || pat.sub || "").trim().toLowerCase();
+    const subMode = sk ? rcFloralModeByKey[sk] : undefined;
+    const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+    return Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
   };
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
   const rentalMarked = priceForInvItem(item, _factorMap, imsInventory, isEdited ? comps : undefined);
@@ -53,8 +61,8 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Flower recipe part = explicit patternId add-ons + a recipe matched to the kit's OWN sub-category
   // (same two sources getElPriceFromInventory sums), each at the recipe's Studio rate.
   const subCatPattern = matchFlowerPattern(item, flowerPatterns || []);
-  const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern) : 0;
-  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat) * (Number(c.qty) || 0); }, 0);
+  const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern, item.subCat || item.subcategory) : 0;
+  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub) * (Number(c.qty) || 0); }, 0);
   const partsTotal = rentalMarked + flowerTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
@@ -86,7 +94,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
-                {(() => { const rr = recipeRateFor(pat); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
+                {(() => { const rr = recipeRateFor(pat, pat?.sub); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
             );

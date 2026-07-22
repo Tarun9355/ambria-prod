@@ -28,7 +28,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
-    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey,
+    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
@@ -206,8 +206,12 @@ export default function StudioBuild({ ctx }) {
     setZoneElements(p => {
       const elems = [...(p[zoneKey] || [])];
       if (!elems[idx]) return p;
-      elems[idx] = selectedId
-        ? { ...elems[idx], imsId: selectedId, imsName: pick?.name || "", imsPhoto: pick?.photo || "" }
+      elems[idx] = (selectedId && pick)
+        // Picking an item REPLACES this element with it — invId drives both the display name and
+        // the price (getElPriceFromInventory), so name + rate follow the picked item. imsId keeps
+        // the booking pin in sync.
+        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "" }
+        // Deselecting clears only the booking pin — the element keeps its current identity.
         : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; return e; })();
       return { ...p, [zoneKey]: elems };
     });
@@ -1009,6 +1013,7 @@ export default function StudioBuild({ ctx }) {
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
                       mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
+                      floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData)||{}}
                       textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                     />}
                   </div>);
@@ -1560,6 +1565,7 @@ export default function StudioBuild({ ctx }) {
                     rcSubcatFactors={rcSubcatFactors}
                     rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
+                    floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData)||{}}
                     textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                   />}
                 </div>);

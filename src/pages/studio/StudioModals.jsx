@@ -44,7 +44,7 @@ export default function StudioModals({ ctx }) {
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
-    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey,
+    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -621,6 +621,7 @@ export default function StudioModals({ ctx }) {
                               rcSubcatFactors={rcSubcatFactors}
                               rcFactorByKey={rcFactorByKey}
                               mandiCatalogue={dealCheckData?.mandiCatalogue || []} studioMarkup={Number(dealCheckData?.defaultStudioMarkup) || 3} elSize={el.size}
+                              floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={dealCheckData || {}}
                               textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                             />
                           </div>
