@@ -160,7 +160,7 @@ export default function ManageLibrary({ ctx }) {
     imsTrussRates, imsMaskingRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items, priced straight from the recipe
-    recipeOnlyPatterns, getElPriceFromPattern,
+    recipeOnlyPatterns, getElPriceFromPattern, studioFloralData, dealCheckData,
     // misc
     showMsg, aiTagImage, authUser, corrLog, logCorrection, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
@@ -1296,6 +1296,7 @@ export default function ManageLibrary({ ctx }) {
                                 qtyMultiplier={el.qty || 1}
                                 rcSubcatFactors={rcSubcatFactors}
                                 elSize={el.size}
+                                mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3}
                                 textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                               />
                             </div>

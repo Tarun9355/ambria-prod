@@ -1,6 +1,6 @@
 import { useState, Fragment } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { studioUnitLabel, computePatternSizeCost, matchFlowerPattern } from "../../lib/ims/flowerHelpers";
+import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 import ItemHoverThumb from "./ItemHoverThumb";
 
@@ -38,10 +38,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const _szKey = (() => { const s = String(elSize || "B").toUpperCase(); return (s === "S" || s === "SMALL") ? "small" : (s === "B" || s === "BIG" || s === "LARGE") ? "big" : "medium"; })();
   const recipeRateFor = (pat) => {
     if (!pat) return 0;
-    const sizes = pat.sizes || {};
-    const sd = sizes[_szKey] || sizes.big || sizes.medium || sizes[Object.keys(sizes)[0]];
-    const raw = computePatternSizeCost(sd, mandiCatalogue, imsInventory);
-    return raw ? Math.round(raw * (Number(studioMarkup) || 3)) : 0;
+    // Full recipe Studio rate = real cost × markup + extra (pot/base) — exactly the Recipe editor's
+    // "Studio rate" and getElPriceFromInventory's flower cost. Extra is already folded in; nothing else.
+    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, { defaultStudioMarkup: Number(studioMarkup) || 3 }, imsInventory);
+    return rates ? (rates.realRate + rates.extra) : 0;
   };
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
   const rentalMarked = priceForInvItem(item, rcSubcatFactors, imsInventory, isEdited ? comps : undefined);
