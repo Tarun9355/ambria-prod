@@ -721,14 +721,9 @@ export default function ManageLibrary({ ctx }) {
                       setLibAiLoading(false);
                     }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px", background: "#7C3AED", opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "🔄 Tagging..." : "🤖 AI Tag"}</button>
                     <button onClick={() => {
-                      // §23 Phase 2.9e — Mandate drape density for Full Box photos (trussL && trussW && trussH all filled)
+                      // Drape density defaults to Moderate when unset (house standard), so it's no longer
+                      // mandatory for Full Box photos — the tagger can still pick Minimum/Dense to override.
                       const d = libEditImg.dims || {};
-                      const isFullBox = !!(d.trussL && d.trussW && d.trussH);
-                      const hasDensity = !!d.drapeDensity;
-                      if (isFullBox && !hasDensity) {
-                        showMsg("🪡 Drape Density required for Full Box photos — pick Minimum, Moderate, or Dense", "red");
-                        return;
-                      }
                       // A human save = Verified: stamps who/when so it leaves the "needs review" pile.
                       // Credit stays with whoever verified it FIRST — a later editor's save updates the
                       // tags but must not steal the original verifier's attribution (their own edit is
@@ -866,7 +861,7 @@ export default function ManageLibrary({ ctx }) {
               {(libEditImg.dims?.trussW && libEditImg.dims?.trussH) && (() => {
                 const d = libEditImg.dims || {};
                 const isFullBox = !!(d.trussL && d.trussW && d.trussH);
-                const missing = isFullBox && !d.drapeDensity;
+                const missing = false;
                 return (
                   <>
                     <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>
@@ -887,8 +882,8 @@ export default function ManageLibrary({ ctx }) {
                     </div>
                     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap", padding:"5px 8px", borderRadius:6, background: missing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):"transparent" }}>
                       <span style={{ fontSize:9, fontWeight:600, color: missing?"#B91C1C":textS }}>🪡 Density{missing?" * Required":!isFullBox?" (optional)":""}:</span>
-                      {[...(isFullBox?[]:[{v:"",l:"—"}]),{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
-                        const sel = (d.drapeDensity || "") === o.v;
+                      {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
+                        const sel = (d.drapeDensity || "moderate") === o.v;
                         return <span key={o.v} onClick={()=>setLibEditImg({...libEditImg, dims:{...(libEditImg.dims||{}), drapeDensity: o.v}})}
                           style={{ padding:"3px 8px", borderRadius:5, fontSize:9, fontWeight:sel?700:500, cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
                       })}
@@ -947,7 +942,7 @@ export default function ManageLibrary({ ctx }) {
                 const cell = { fontSize: 9, color: textS, marginBottom: 2 };
                 const inp = { ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 };
                 const mw = row.mkWalls || {};
-                const rMissing = rIsBox && !row.drapeDensity;
+                const rMissing = false;
                 // A U truss (only 2 of 3 dims filled) is open on the sides — only its back can be
                 // masked, not left/right.
                 const walls = rIsBox
@@ -988,7 +983,7 @@ export default function ManageLibrary({ ctx }) {
                       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap", padding:"5px 8px", borderRadius:6, background: rMissing?(isDark?"rgba(239,68,68,0.10)":"#FEF2F2"):"transparent" }}>
                         <span style={{ fontSize:9, fontWeight:600, color: rMissing?"#B91C1C":textS }}>🪡 Density{rMissing?" * Required":""}:</span>
                         {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o => {
-                          const sel = (row.drapeDensity || "") === o.v;
+                          const sel = (row.drapeDensity || "moderate") === o.v;
                           return <span key={o.v} onClick={()=>setRow({drapeDensity:o.v})} style={{ padding:"3px 8px", borderRadius:5, fontSize:9, fontWeight:sel?700:500, cursor:"pointer", border:`1px solid ${sel?"#EC4899":border}`, background: sel?"rgba(236,72,153,0.12)":"transparent", color: sel?"#9D174D":textS }}>{o.l}</span>;
                         })}
                       </div>
