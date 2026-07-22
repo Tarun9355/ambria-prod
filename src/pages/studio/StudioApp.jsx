@@ -2708,16 +2708,22 @@ export default function StudioApp() {
     let comp = sizes[sk] || sizes.medium; if (!comp && sk === "big" && sizes.large) comp = sizes.large;
     if (!comp && Object.keys(sizes).length) comp = sizes[Object.keys(sizes)[0]];
     if (!comp || !Array.isArray(comp.flowers)) return null;
-    let cost = 0;
+    let cost = 0, mappedFinal = 0;
     comp.flowers.forEach(fl => {
       const parent = resolveMandiFlower(fl.flowerId, mc)?.parent || null;
       const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
       if (ft === "real_only") return; // this flower has no artificial substitute
+      if (ft === "mapping") {
+        // Artificial version is a SPECIFIC inventory item — its rental rate (snapshotted at map time)
+        // is already client-facing, so add it AFTER markup, not through the bunch × markup path.
+        mappedFinal += (Number(fl.qty) || 0) * (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
+        return;
+      }
       const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
       const bunches = (Number(fl.qty) || 0) * bpu;
       cost += bunches * (ft === "green" ? agRate / agBPK : afRate / afBPK);
     });
-    return Math.round(cost * markup);
+    return Math.round(cost * markup + mappedFinal);
   }, [dealCheckData, studioFloralData]);
 
   // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).
@@ -3137,11 +3143,16 @@ export default function StudioApp() {
           tReal += realCost;
           if (realUnits > 0 && parent) { const nm = parent.name || "Flower"; if (!fbreak[nm]) fbreak[nm] = { name: nm, qty: 0, cost: 0, unit: parent.unit || "" }; fbreak[nm].qty += realUnits; fbreak[nm].cost += realCost; }
           if (effA > 0) {
-            const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
-            const bunches = (fl.qty || 0) * q * effA * bpu;
-            const isG = ft === "green";
-            if (isG) artGreenBunches += bunches; else artFlowerBunches += bunches;
-            tArt += bunches * (isG ? artGreenRate / artGreenBPK : artFlowerRate / artFlowerBPK);
+            if (ft === "mapping") {
+              // Mapped to a specific artificial inventory item — sourcing cost = its purchase cost per unit.
+              tArt += (fl.qty || 0) * q * effA * (Number(parent?.artificialMapCost) || 0);
+            } else {
+              const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
+              const bunches = (fl.qty || 0) * q * effA * bpu;
+              const isG = ft === "green";
+              if (isG) artGreenBunches += bunches; else artFlowerBunches += bunches;
+              tArt += bunches * (isG ? artGreenRate / artGreenBPK : artFlowerRate / artFlowerBPK);
+            }
           }
         });
       });

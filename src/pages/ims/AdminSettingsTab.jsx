@@ -575,7 +575,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             const results = (inventory || [])
               .filter((it) => !q || String(it.name || "").toLowerCase().includes(q) || String(it.subCat || it.subcategory || "").toLowerCase().includes(q))
               .slice(0, 60);
-            const pick = (it) => { setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === sMandiMapPicker.flowerId ? { ...x, artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null } : x) })); setSMandiMapPicker(null); };
+            const pick = (it) => {
+              const price = it ? (Number(it.price ?? it.rentalCost) || 0) : 0;   // client-facing rental → Studio artificial price
+              const cost = it ? (Number(it.cost) || price) : 0;                    // purchase cost → Deal Check sourcing cost
+              setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === sMandiMapPicker.flowerId ? { ...x, artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null, artificialMapPrice: price, artificialMapCost: cost } : x) }));
+              setSMandiMapPicker(null);
+            };
             return (
               <div onClick={() => setSMandiMapPicker(null)} className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5">
                 <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(720px,100%)] max-h-[82vh] flex flex-col overflow-hidden shadow-2xl">
