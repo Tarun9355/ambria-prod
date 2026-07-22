@@ -1295,6 +1295,10 @@ Rules:
           // Check (see priceForInvItem in src/lib/ims/helpers.js for the Studio-side mirror).
           const selIsKit = Array.isArray(selItem.subItems) && selItem.subItems.length > 0;
           const selPrice = selIsKit ? kitPriceFrom(selItem.subItems, selItem.kitBase) : selItem.price;
+          const _d = selItem.dims_LxWxH;
+          const dimsText = selItem.size || (_d ? [_d.l, _d.w, _d.h].filter((x) => x !== "" && x != null).join(" × ") + " " + (_d.unit || "Feet") : "—");
+          const _p = selItem.printable_LxW;
+          const printText = _p && (_p.l || _p.w) ? [_p.l, _p.w].filter((x) => x !== "" && x != null).join(" × ") + " " + (_p.unit || "Feet") : "—";
           return <div className="space-y-4">
           <div className="flex gap-4">
             {selItem.img
@@ -1302,11 +1306,29 @@ Rules:
               : <div className="w-28 h-28 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300 flex-shrink-0"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
             }
             <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm flex-1">
-              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"]].map(([l, v]) => (
+              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"], ["Dimensions", dimsText], ["Printable Area", printText]].map(([l, v]) => (
                 <div key={l}><span className="text-gray-400">{l}: </span><span className="font-medium text-gray-800">{v}</span></div>
               ))}
             </div>
           </div>
+          {selIsKit && (
+            <div>
+              <h4 className="font-semibold text-gray-700 mb-2 text-sm">📦 Kit contents{(Number(selItem.kitBase) || 0) > 0 ? ` · kit base ${fmt(selItem.kitBase)}` : ""}:</h4>
+              <div className="border rounded-lg overflow-hidden">
+                {selItem.subItems.map((s, idx) => {
+                  const ci = inventory.find((x) => x.id === s.itemId);
+                  const cq = Number(s.qty) || 1;
+                  return (
+                    <div key={idx} className="flex items-center gap-2 text-sm px-3 py-2 border-b last:border-b-0">
+                      {ci?.img ? <img src={ci.img} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" onError={(e) => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 flex items-center justify-center text-gray-300 text-xs">📷</div>}
+                      <span className="font-medium text-gray-800">{ci?.name || `⚠ ${s.itemId} (not in inventory)`}</span>
+                      <span className="ml-auto text-gray-500">×{cq}{ci ? ` · ${fmt((Number(ci.price) || 0) * cq)}` : ""}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div>
             <h4 className="font-semibold text-gray-700 mb-2 text-sm">Blocked for Functions:</h4>
             {functions.filter((f) => f.items?.some((it) => it.invId === selItem.id)).length === 0
