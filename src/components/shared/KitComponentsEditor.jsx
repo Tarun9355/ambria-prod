@@ -62,6 +62,13 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         {isEdited && <span onClick={resetKit} style={{ fontSize: 9, color: textS, cursor: "pointer", textDecoration: "underline" }}>reset to default</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {kitBase > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+            <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(99,102,241,0.14)" : "rgba(99,102,241,0.10)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🧰</span>
+            <span style={{ color: textP, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name} <span style={{ color: textS, fontSize: 9, fontStyle: "italic" }}>· this kit's own rental{kitFactor !== 1 ? ` (₹${kitBase.toLocaleString("en-IN")} × ${kitFactor})` : ""}</span></span>
+            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="the kit/console's own charge (× its sub-category multiplier), on top of the add-on items"><b style={{ color: "#A5B4FC" }}>₹{kitBaseMarked.toLocaleString("en-IN")}</b></span>
+          </div>
+        )}
         {comps.map((c, ci) => {
           if (c.patternId) {
             const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
