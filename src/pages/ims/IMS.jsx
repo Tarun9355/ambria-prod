@@ -503,7 +503,17 @@ export default function IMS() {
         }
         return her;
       });
-      return changed ? { ...s, labourTiers, heavyElementRanges } : s;
+      // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
+      // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
+      // to its items and every tagged photo using those items loses its recipe pricing.
+      const flowerPatterns = (s.flowerPatterns || []).map((p) => {
+        if (String(p.sub || "").trim().toLowerCase() === oldId && p.sub !== trimmed) {
+          changed = true;
+          return { ...p, sub: trimmed };
+        }
+        return p;
+      });
+      return changed ? { ...s, labourTiers, heavyElementRanges, flowerPatterns } : s;
     });
   }, []);
 
