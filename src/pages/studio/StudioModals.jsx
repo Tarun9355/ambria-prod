@@ -615,7 +615,7 @@ export default function StudioModals({ ctx }) {
                               overrides={el.kitOverrides}
                               onChange={(next) => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }}
                               imsInventory={imsInventory}
-                              flowerPatterns={recipeOnlyPatterns}
+                              flowerPatterns={dealCheckData?.flowerPatterns||recipeOnlyPatterns}
                               qtyMultiplier={el.qty || 1}
                               dealAwareness={{ getRemaining: (itemId) => zurRemainingForItem(itemId, idx) }}
                               rcSubcatFactors={rcSubcatFactors}
