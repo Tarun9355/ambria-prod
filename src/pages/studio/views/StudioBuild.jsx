@@ -81,6 +81,7 @@ export default function StudioBuild({ ctx }) {
   const showCosts = true;
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   const toggleZoneCollapse = (k) => setZoneCollapsed((p) => ({ ...p, [k]: !p[k] }));
+  const [notesOpen, setNotesOpen] = useState({}); // per-zone: reveal the client-note field (else a small icon)
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
@@ -1371,17 +1372,24 @@ export default function StudioBuild({ ctx }) {
               })}
             </div>
           )}
-          {/* ═══ CLIENT NOTES per element — always visible ═══ */}
-          <div style={{marginTop:10,background:elNotes[k]?(isDark?"rgba(201,169,110,0.06)":"#FFFDF7"):"transparent",borderRadius:10,padding:elNotes[k]?"10px 12px":"0"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-              <span style={{fontSize:12}}>📝</span>
-              <span style={{fontSize:11,fontWeight:600,color:elNotes[k]?textP:textS}}>Client Notes</span>
-              {elNotes[k]&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Will appear in PPT</span>}
+          {/* ═══ CLIENT NOTES per element — hidden behind a small icon until opened (or if a note exists) ═══ */}
+          {(notesOpen[k] || elNotes[k]) ? (
+            <div style={{marginTop:10,background:elNotes[k]?(isDark?"rgba(201,169,110,0.06)":"#FFFDF7"):"transparent",borderRadius:10,padding:"10px 12px",border:`1px solid ${elNotes[k]?textP+"40":border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:12}}>📝</span>
+                <span style={{fontSize:11,fontWeight:600,color:elNotes[k]?textP:textS}}>Client Notes</span>
+                {elNotes[k]&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Will appear in PPT</span>}
+                {!elNotes[k]&&<span onClick={()=>setNotesOpen(p=>({...p,[k]:false}))} title="Close" style={{marginLeft:"auto",cursor:"pointer",color:textS,fontSize:14,lineHeight:1}}>×</span>}
+              </div>
+              <textarea autoFocus={!!notesOpen[k]&&!elNotes[k]} value={elNotes[k]||""} onChange={e=>setElNotes(p=>({...p,[k]:e.target.value}))}
+                placeholder={`e.g. "Remove couch from stage", "Use only white roses", "Client wants minimal lighting"...`}
+                style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"#12121F":"#fff",color:textP,fontSize:12,outline:"none",resize:"vertical",minHeight:36,maxHeight:100,boxSizing:"border-box",fontFamily:"inherit"}}/>
             </div>
-            <textarea value={elNotes[k]||""} onChange={e=>setElNotes(p=>({...p,[k]:e.target.value}))}
-              placeholder={`e.g. "Remove couch from stage", "Use only white roses", "Client wants minimal lighting"...`}
-              style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1px solid ${elNotes[k]?textP+"40":border}`,background:isDark?"#12121F":"#fff",color:textP,fontSize:12,outline:"none",resize:"vertical",minHeight:36,maxHeight:100,boxSizing:"border-box",fontFamily:"inherit"}}/>
-          </div>
+          ) : (
+            <div style={{marginTop:10}}>
+              <span onClick={()=>setNotesOpen(p=>({...p,[k]:true}))} title="Add a client note (shows in the PPT)" style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,fontWeight:600,color:textS,padding:"4px 10px",borderRadius:8,border:`1px dashed ${border}`}}>📝 Add note</span>
+            </div>
+          )}
 
         </div>}
       </div>);
