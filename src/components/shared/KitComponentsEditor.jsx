@@ -80,7 +80,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cItemIsKit = cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0;
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
-          const cRate = cItem ? (cItemIsKit ? kitTotalFromInventory(cItem, imsInventory) : (Number(cItem.price ?? cItem.rentalCost) || 0)) : 0;
+          const cRate = cItem ? priceForInvItem(cItem, rcSubcatFactors, imsInventory) : 0; // rental × this component's own sub-cat multiplier (recursive for sub-kits)
           return (
             <Fragment key={ci}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -107,7 +107,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-                {cItem && (() => { const marked = Math.round(cRate * kitFactor); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title={kitFactor !== 1 ? `rental ₹${cRate.toLocaleString("en-IN")} × ${kitFactor} multiplier` : "rental"}>₹{marked.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
+                {cItem && (() => { const marked = Math.round(cRate); const raw = Number(cItem.price ?? cItem.rentalCost) || 0; return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title={(marked !== raw && raw > 0) ? `rental ₹${raw.toLocaleString("en-IN")} × sub-category multiplier` : "rental × multiplier"}>₹{marked.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
               {/* This component is itself a kit — show what's inside it too, read-only (its own
@@ -123,7 +123,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     }
                     const gc = (imsInventory || []).find(i => i.id === gs.itemId);
                     const gcIsKit = gc && Array.isArray(gc.subItems) && gc.subItems.length > 0;
-                    const gcRate = gc ? (gcIsKit ? kitTotalFromInventory(gc, imsInventory) : (Number(gc.price ?? gc.rentalCost) || 0)) : 0;
+                    const gcRate = gc ? priceForInvItem(gc, rcSubcatFactors, imsInventory) : 0; // rental × its own sub-cat multiplier
                     const gQty = Number(gs.qty) || 0;
                     return <div key={gi} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: textS }}>
                       {gc?.img ? <img src={gc.img} alt="" style={{ width: 16, height: 16, borderRadius: 3, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 16, height: 16, borderRadius: 3, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", flexShrink: 0 }} />}

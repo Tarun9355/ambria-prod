@@ -133,14 +133,28 @@ export function kitTotalFromInventory(item, allInventory, overrideSubItems, ance
 // `rate_card_categories`. `allInventory` (optional) enables the live kit-total recompute above;
 // pass it whenever available — omitting it only matters for kits, where it falls back to the
 // item's own (possibly stale) stored price. `overrideSubItems` — see kitTotalFromInventory above.
-export function priceForInvItem(item, factorByKey, allInventory, overrideSubItems) {
+export function priceForInvItem(item, factorByKey, allInventory, overrideSubItems, _seen) {
   if (!item) return 0;
   const key = String(item.subCat || item.subcategory || "").trim().toLowerCase();
   const f = key ? factorByKey?.[key] : undefined;
   const factor = (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
   const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-  const base = isKit ? kitTotalFromInventory(item, allInventory, overrideSubItems) : (Number(item.price) || 0);
-  return base * factor;
+  if (isKit) {
+    // Kit price = its own base × the kit's factor + Σ(each component priced at ITS OWN sub-category
+    // multiplier, recursively). So a component like "Metal Candle Stick" (rental ₹150, sub-cat factor
+    // 2×) contributes ₹300 inside the kit, and a kit-inside-a-kit carries its own components' factors.
+    const seen = _seen ? new Set(_seen) : new Set();
+    if (item.id) { if (seen.has(item.id)) return 0; seen.add(item.id); } // cycle guard
+    const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
+    const compTotal = subItems.reduce((s, si) => {
+      if (si.patternId) return s; // flower recipe add-on — priced separately (getElPriceFromInventory)
+      const ci = (allInventory || []).find((i) => i.id === si.itemId);
+      if (!ci) return s;
+      return s + priceForInvItem(ci, factorByKey, allInventory, undefined, seen) * (Number(si.qty) || 0);
+    }, 0);
+    return (Number(item.kitBase) || 0) * factor + compTotal;
+  }
+  return (Number(item.price) || 0) * factor;
 }
 
 export function mpDayCost(r, d, mpDay, mpWin, mpWinCount, rate) {
