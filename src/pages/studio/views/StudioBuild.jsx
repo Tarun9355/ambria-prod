@@ -627,8 +627,7 @@ export default function StudioBuild({ ctx }) {
         </div>
         {isOn&&<div style={{padding:"0 18px 16px"}}>
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
-          {matchedPhotos.length>0 ? (
-            <div style={{marginBottom:12}}>
+          <div style={{marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                 <div style={{fontSize:11,fontWeight:600,color:textS}}>📷 {TIER_TO_CAT[tier]} {el.label} — tap to apply pricing</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -689,6 +688,7 @@ export default function StudioBuild({ ctx }) {
                 </div>
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
+              {matchedPhotos.length>0 ? (
               <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
               {matchedPhotos.map((ph,i)=>{
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
@@ -720,9 +720,8 @@ export default function StudioBuild({ ctx }) {
                 </div>);
               })}
               </div>
-            </div>
-          ) : (
-            <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:12,padding:"16px 20px",marginBottom:12,textAlign:"center"}}>
+              ) : (
+            <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:12,padding:"16px 20px",textAlign:"center"}}>
               <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${TIER_TO_CAT[tier]} ${el.label} photos match your filters`:`No ${TIER_TO_CAT[tier]} ${el.label} photos yet`}</div>
               <div style={{fontSize:11,color:textS,marginBottom:8}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
@@ -734,6 +733,7 @@ export default function StudioBuild({ ctx }) {
               </div>
             </div>
           )}
+          </div>
 
           {/* ═══ AI INSPIRATION per element — HIDDEN pending search integration ═══ */}
 
