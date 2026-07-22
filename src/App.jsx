@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { landingPath, userApps } from "./lib/auth";
@@ -33,6 +34,18 @@ function Protected({ app, children }) {
 
 export default function App() {
   const { user, roleTabs } = useAuth();
+  // Stop the mouse wheel from changing a focused <input type="number"> — a browser default where
+  // scrolling over a focused number field silently increments/decrements it. Blurring on wheel lets
+  // the page scroll normally while the value stays put; manual typing and the ± steppers still work.
+  // Global (document-level) so it covers every number field in Studio + IMS.
+  useEffect(() => {
+    const onWheel = (e) => {
+      const el = document.activeElement;
+      if (el && el.tagName === "INPUT" && el.type === "number" && el === e.target) el.blur();
+    };
+    document.addEventListener("wheel", onWheel, { passive: true });
+    return () => document.removeEventListener("wheel", onWheel);
+  }, []);
   return (
     <>
       <Routes>
