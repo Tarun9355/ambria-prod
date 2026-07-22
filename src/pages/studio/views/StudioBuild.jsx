@@ -606,7 +606,7 @@ export default function StudioBuild({ ctx }) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : toggleEl(k)}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>{isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={zoneCollapsed[k]?"Expand":"Collapse"}>{zoneCollapsed[k]?"▶":"▼"}</span>}<span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
+            {isOn&&showCosts&&!zoneCollapsed[k]&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(168,85,247,0.08)"}}>🏭</span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>🛒</span>
             {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",fontSize:16,opacity:0.5}}>📋</span>}
@@ -619,7 +619,7 @@ export default function StudioBuild({ ctx }) {
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
           </div>
         </div>
-        {isOn&&!zoneCollapsed[k]&&<div style={{padding:"0 18px 16px"}}>
+        {isOn&&<div style={{padding:"0 18px 16px"}}>
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
           {matchedPhotos.length>0 ? (
             <div style={{marginBottom:12}}>
@@ -736,8 +736,8 @@ export default function StudioBuild({ ctx }) {
             {["simple","enhanced"].map(t=><button key={t} onClick={()=>{setElTiers(p=>({...p,[k]:t}));}} style={{flex:1,padding:"8px 10px",border:"none",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:tier===t?700:400,background:tier===t?"#444":isDark?"rgba(255,255,255,0.04)":"#F3F4F6",color:tier===t?"#fff":textS,textTransform:"capitalize"}}>{t === "simple" ? "Silver" : "Gold"}</button>)}
           </div>
 
-          {/* ═══ ELEMENT CARD + ZONE STRUCTURE — behind showCosts toggle ═══ */}
-          {showCosts&&<Fragment>
+          {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
+          {showCosts&&!zoneCollapsed[k]&&<Fragment>
 
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
           {zoneElements[k] ? (
@@ -1348,7 +1348,7 @@ export default function StudioBuild({ ctx }) {
           </Fragment>}
 
           {/* §26.13 — Production/Buying custom items in this zone */}
-          {dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).length > 0 && (
+          {!zoneCollapsed[k] && dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).length > 0 && (
             <div style={{marginTop:10,marginBottom:4}}>
               {dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).map(ci => {
                 const isP = ci.type === "production";
