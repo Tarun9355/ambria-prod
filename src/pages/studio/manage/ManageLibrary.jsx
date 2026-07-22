@@ -1316,7 +1316,7 @@ export default function ManageLibrary({ ctx }) {
                             <div style={{ width: 20, height: 20, borderRadius: 4, overflow: "hidden", flexShrink: 0, background: isDark ? "#1a1a2e" : "#eee", display: "flex", alignItems: "center", justifyContent: "center" }}>
                               <span style={{ fontSize: 11, opacity: 0.5 }}>🌺</span>
                             </div>
-                            {el.name}
+                            {livePattern?.name || el.name}
                             <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(236,72,153,0.15)", color: "#EC4899", fontWeight: 700 }}>🌺 RECIPE</span>
                             {!patternExists && <span title="This flower recipe no longer exists" style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700 }}>⚠ DELETED</span>}
                             {el.lowConfidence && <span title={`AI matched this by a ${el.matchScore ?? "?"}% keyword overlap, not an exact/near-exact name — please verify it's the right recipe`} style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700 }}>❓ VERIFY</span>}
