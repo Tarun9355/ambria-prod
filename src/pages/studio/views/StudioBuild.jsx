@@ -1327,6 +1327,15 @@ export default function StudioBuild({ ctx }) {
                   {zc.trT==="box" && customCeilingField(k, zc)}
                 </div>
               )}
+              {zc.trT && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,fontWeight:600,color:textS}}>🪡 Drape density:</span>
+                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
+                    const sel=(zc.drapeDensity||"moderate")===o.v;
+                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={{padding:"3px 9px",borderRadius:6,fontSize:10,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?"#EC4899":border}`,background:sel?"rgba(236,72,153,0.12)":"transparent",color:sel?"#9D174D":textS}}>{o.l}</span>;
+                  })}
+                </div>
+              )}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               <div style={{fontSize:12,marginBottom:6}}>
                 {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
@@ -1649,6 +1658,15 @@ export default function StudioBuild({ ctx }) {
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
                   })}
                   {zc.trT==="box" && customCeilingField(k, zc, true)}
+                </div>
+              )}
+              {zc.trT && (
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
+                  <span style={{fontWeight:600,color:textS}}>🪡 Density:</span>
+                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
+                    const sel=(zc.drapeDensity||"moderate")===o.v;
+                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?"#EC4899":border}`,background:sel?"rgba(236,72,153,0.12)":"transparent",color:sel?"#9D174D":textS}}>{o.l}</span>;
+                  })}
                 </div>
               )}
               {showCosts&&st.truss>0&&<div style={{fontSize:10,color:textS,marginBottom:6}}>Truss: {fmt(st.truss)}</div>}
