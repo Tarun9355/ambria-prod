@@ -94,6 +94,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [sMandiCatNew, setSMandiCatNew] = useState("");
   const [sMandiExpanded, setSMandiExpanded] = useState(() => new Set());
   const [sMandiUploading, setSMandiUploading] = useState({});
+  const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
+  const [sMandiMapSearch, setSMandiMapSearch] = useState("");
 
   // Recipes panel (patterns) — add/rename/delete state for the underlying Rate Card Florals item
   // a recipe card is attached to. Recipe (flower-line) CRUD itself lives inline in each card
@@ -566,6 +568,50 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             )}
           </div>
 
+          {/* Mapping picker — choose the artificial inventory item a "Mapping" flower maps to */}
+          {sMandiMapPicker && (() => {
+            const flower = (settings.mandiCatalogue || []).find((f) => f.id === sMandiMapPicker.flowerId);
+            const q = sMandiMapSearch.trim().toLowerCase();
+            const results = (inventory || [])
+              .filter((it) => !q || String(it.name || "").toLowerCase().includes(q) || String(it.subCat || it.subcategory || "").toLowerCase().includes(q))
+              .slice(0, 60);
+            const pick = (it) => { setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === sMandiMapPicker.flowerId ? { ...x, artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null } : x) })); setSMandiMapPicker(null); };
+            return (
+              <div onClick={() => setSMandiMapPicker(null)} className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5">
+                <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(720px,100%)] max-h-[82vh] flex flex-col overflow-hidden shadow-2xl">
+                  <div className="px-5 py-4 border-b flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-gray-800">🔗 Map "{flower?.name || "flower"}" → artificial inventory item</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Pick the specific artificial flower this real flower maps to in inventory.</p>
+                    </div>
+                    <button onClick={() => setSMandiMapPicker(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+                  </div>
+                  <div className="p-4 border-b">
+                    <input autoFocus value={sMandiMapSearch} onChange={(e) => setSMandiMapSearch(e.target.value)} placeholder="Search inventory by name or sub-category…" className="w-full border rounded-lg px-3 py-2 text-sm" />
+                    {flower?.artificialMapItemId && <button onClick={() => pick(null)} className="mt-2 text-xs text-red-500 hover:text-red-700">✕ Clear current mapping</button>}
+                  </div>
+                  <div className="p-4 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {(inventory || []).length === 0 ? <div className="col-span-full text-center text-gray-400 text-sm py-8 italic">Inventory not loaded.</div>
+                     : results.length === 0 ? <div className="col-span-full text-center text-gray-400 text-sm py-8 italic">No inventory items match “{sMandiMapSearch}”.</div>
+                     : results.map((it) => {
+                        const photo = (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "";
+                        const isCur = it.id === flower?.artificialMapItemId;
+                        return (
+                          <div key={it.id} onClick={() => pick(it)} className={"cursor-pointer rounded-xl overflow-hidden border-2 " + (isCur ? "border-blue-500" : "border-gray-200 hover:border-blue-300")}>
+                            {photo ? <img src={photo} alt="" className="w-full h-24 object-cover" /> : <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
+                            <div className="px-2 py-1.5">
+                              <div className="text-xs font-semibold text-gray-800 truncate">{it.name}</div>
+                              <div className="text-[10px] text-gray-400 truncate">{it.subCat || it.subcategory || ""}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Mandi catalogue */}
           <div className="bg-white border rounded-xl overflow-hidden">
             <div className="px-4 py-3 bg-gray-50 border-b space-y-2">
@@ -686,11 +732,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 const variantCount = variants.length;
                 const expanded = sMandiExpanded.has(p.id);
                 const type = p.flowerType || (p.isGreen ? "green" : "flower");
-                const nextType = type === "flower" ? "green" : type === "green" ? "real_only" : "flower";
+                const nextType = type === "flower" ? "green" : type === "green" ? "real_only" : type === "real_only" ? "mapping" : "flower";
                 const typeCfg = {
                   flower: { emoji: "🌹", label: "Flower", cls: "bg-pink-100 text-pink-700 border-pink-300", title: "Uses artificial-flower rate when blended" },
                   green: { emoji: "🌿", label: "Green", cls: "bg-green-100 text-green-700 border-green-300", title: "Uses artificial-green rate when blended" },
                   real_only: { emoji: "🔒", label: "Real Only", cls: "bg-amber-100 text-amber-800 border-amber-400", title: "Cannot be replaced — always 100% real regardless of element's blend setting" },
+                  mapping: { emoji: "🔗", label: "Mapping", cls: "bg-blue-100 text-blue-700 border-blue-300", title: "Artificial version is a SPECIFIC inventory item — pick it with the search button" },
                 }[type];
                 const recalcParentLowest = (variantList) => {
                   let lo = null;
@@ -771,8 +818,17 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         title={typeCfg.title} className={"text-xs px-2 py-1 rounded font-medium border w-full " + typeCfg.cls}>
                         {typeCfg.emoji} {typeCfg.label}
                       </button>
-                      {/* Art Bunches/Unit */}
-                      {type !== "real_only" ? (
+                      {/* Art Bunches/Unit — or, for a Mapping flower, the inventory picker button */}
+                      {type === "mapping" ? (() => {
+                        const mapped = p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;
+                        return (
+                          <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); }}
+                            title={mapped ? `Mapped to inventory item: ${mapped.name} — click to change` : "Pick the artificial inventory item this flower maps to"}
+                            className={"text-xs px-2 py-1 rounded font-medium border w-full truncate " + (mapped ? "bg-blue-50 text-blue-700 border-blue-300" : "bg-white text-gray-500 border-dashed border-gray-300 hover:border-blue-400")}>
+                            {mapped ? `🔗 ${mapped.name}` : "🔍 Map flower"}
+                          </button>
+                        );
+                      })() : type !== "real_only" ? (
                         <input type="number" min="0" step="0.01" value={p.artificialBunchesPerUnit ?? ""} onClick={(e) => e.stopPropagation()} placeholder="art b/u"
                           onChange={(e) => { const v = parseFloat(e.target.value); setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, artificialBunchesPerUnit: isNaN(v) ? null : v } : x) })); }}
                           title={`How many artificial ${type === "green" ? "green" : "flower"} bunches replace 1 ${p.unit} of ${p.name}`}
