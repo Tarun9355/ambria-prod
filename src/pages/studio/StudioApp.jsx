@@ -1442,6 +1442,18 @@ export default function StudioApp() {
   // ═══ ZONE PHOTO FILTERS (Build canvas) — VERBATIM ═══
   const [zpFilterOpen, setZpFilterOpen] = useState(false);
   const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
+  // Build the zone photo-filter selection from a reference's tags (video or event) so every zone
+  // defaults to the reference's own event type / venue / style / palette / day-night / venue instead
+  // of "All". The salesperson can still widen it via the 🔍 filter. `venue` is a string on tags but
+  // an array in the filter, so it's wrapped.
+  const zpFiltersFromTags = useCallback((tags) => ({
+    eventType: Array.isArray(tags?.eventType) ? tags.eventType : [],
+    venueType: Array.isArray(tags?.venueType) ? tags.venueType : [],
+    designStyle: Array.isArray(tags?.designStyle) ? tags.designStyle : [],
+    colorPalette: Array.isArray(tags?.colorPalette) ? tags.colorPalette : [],
+    timeSetting: Array.isArray(tags?.timeSetting) ? tags.timeSetting : [],
+    venue: Array.isArray(tags?.venue) ? tags.venue : (tags?.venue ? [tags.venue] : []),
+  }), []);
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
@@ -4068,6 +4080,9 @@ Return ONLY JSON:
       const vTag = ytVideoTags[vidId] || {};
       const vid = allVideos.find(v => v.id === vidId);
       setSourceVideo({ id: vidId, title: vid?.title || ev.name, tags: vTag });
+      // Default every zone's photo filter to this reference's tags (event type/venue/style/palette/
+      // day-night/venue) so the strips show reference-specific photos, not everything.
+      setZpFilters(zpFiltersFromTags(vTag));
       // Default the Build palette to the one tagged on the video (salesperson can still change it).
       const vidPalette = vTag.palette || (Array.isArray(vTag.colors) ? vTag.colors[0] : "") || "";
       if (vidPalette) {
@@ -4429,6 +4444,7 @@ Return ONLY JSON:
         const vid = allVideos.find(v => v.id === session.sourceVideoId);
         const vTag = ytVideoTags[session.sourceVideoId] || {};
         setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
+      setZpFilters(zpFiltersFromTags(vTag));
       }
       setStep(landingStep);
       const fnCount = Object.keys(session.fnSnapshots).length;
@@ -4457,6 +4473,7 @@ Return ONLY JSON:
       const vid = allVideos.find(v => v.id === session.sourceVideoId);
       const vTag = ytVideoTags[session.sourceVideoId] || {};
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
+      setZpFilters(zpFiltersFromTags(vTag));
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
     setStep(landingStep);
@@ -4615,6 +4632,7 @@ Return ONLY JSON:
       const vid = allVideos.find(v => v.id === session.sourceVideoId);
       const vTag = ytVideoTags[session.sourceVideoId] || {};
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
+      setZpFilters(zpFiltersFromTags(vTag));
     } else {
       setSourceVideo(null);
     }
