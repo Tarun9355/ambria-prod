@@ -1747,12 +1747,35 @@ export default function StudioBuild({ ctx }) {
       const toggle=(key,val)=>setCorrectPhoto(p=>{const cur=p.tags?.[key]||[];const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val];return {...p,tags:{...p.tags,[key]:next}};});
       const save=()=>{
         if(!master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
-        const elems=JSON.parse(JSON.stringify(zoneElements[correctPhoto.zoneKey]||master.elements||[]));
+        const zk=correctPhoto.zoneKey;
+        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master.elements||[]));
+        // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
+        // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
+        // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity
+        // scale) are dropped so the template doesn't force them onto future quotes.
+        const liveCfg=zoneConfig[zk];
+        const zoneCfgMap={...(master.zoneConfigByType||{})};
+        let libDims=master.dims;
+        if(liveCfg){
+          const {repeat,scale,...rest}=liveCfg;
+          zoneCfgMap[zk]=JSON.parse(JSON.stringify(rest));
+          // Mirror the primary dims into the master's Library-shape dims too, so browse thumbnails,
+          // the Library editor and buildZoneConfig's fallback all reflect the corrected measurements.
+          const d=liveCfg.dims||{},fd=liveCfg.floorDims||{};
+          libDims={...(master.dims||{}),
+            trussL:d.L||0,trussW:d.W||0,trussH:d.H||0,floorL:fd.L||0,floorW:fd.W||0,
+            plH:liveCfg.plH||master.dims?.plH||"",cpT:liveCfg.cpT??master.dims?.cpT??null,
+            mkT:liveCfg.mkT||master.dims?.mkT||"",mkWalls:liveCfg.mkWalls||master.dims?.mkWalls||{},
+            trussFrontExt:liveCfg.trussFrontExt||0,trussFrontExtH:liveCfg.trussFrontExtH||0,
+            trussMaterial:liveCfg.trussMaterial??master.dims?.trussMaterial??null,
+            drapeDensity:liveCfg.drapeDensity??master.dims?.drapeDensity??null,
+            customCeilingItemId:liveCfg.customCeilingItemId??null,customMaskingItemId:liveCfg.customMaskingItemId??null};
+        }
         // Keep the original verifier's credit — a later editor's correction updates tags/elements
         // but shouldn't steal the "verified by" attribution from whoever verified it first.
         const wasVerified=!!master._verified;
         const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};
-        const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,_verified:true,...stamp,_correctedOn:"build"};
+        const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
         saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
         // Only the first verification counts as a contribution — re-corrections of an already-
         // verified photo update _lastEditedBy above but don't log again.
@@ -1763,16 +1786,16 @@ export default function StudioBuild({ ctx }) {
       return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}}>
         <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:620,maxHeight:"90vh",overflow:"auto",border:`1px solid ${border}`,padding:18}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div style={{fontSize:15,fontWeight:700,color:textP}}>✏️ Correct photo tags</div>
+            <div style={{fontSize:15,fontWeight:700,color:textP}}>✏️ Correct photo — tags, elements & zone details</div>
             <span onClick={()=>setCorrectPhoto(null)} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700}}>✕</span>
           </div>
-          <div style={{fontSize:11,color:textS,marginBottom:12}}>Fix any tags below — they save to the shared library photo for everyone (future quotes). Element quantities come from your edits in the build card above. Quotes already given keep their own numbers.</div>
+          <div style={{fontSize:11,color:textS,marginBottom:12}}>Fix any tags below — they save to the shared library photo for everyone (future quotes). Your <b>element edits, zone dimensions and all structure details</b> (truss, masking, plinth, carpet, prints, materials) from the build card above are saved too. Quotes already given keep their own numbers.</div>
           <div style={{display:"flex",gap:12,marginBottom:12}}>
             {master?.url&&<img src={master.url} alt="" style={{width:120,height:84,objectFit:"cover",borderRadius:10,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>}
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
               <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>
-              <div style={{fontSize:9,color:textS,marginTop:6}}>📋 {(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements (from your edits above)</div>
+              <div style={{fontSize:9,color:textS,marginTop:6}}>📋 {(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements{(()=>{const c=zoneConfig[correctPhoto.zoneKey];if(!c)return "";const d=c.dims||{};const hasDims=(d.L||d.W||d.H||d.S);const nPrints=(c.prints||[]).length;const bits=[];if(hasDims)bits.push(`dims ${d.L||0}×${d.W||0}${d.H?"×"+d.H:""}`);if(c.trT)bits.push(c.trT);if(nPrints)bits.push(`${nPrints} print${nPrints>1?"s":""}`);return bits.length?` · ${bits.join(" · ")}`:"";})()} <span style={{color:accent}}>(saved from your edits above)</span></div>
             </div>
           </div>
           {/* Specific named venue (2-level: Inhouse / Outside) */}

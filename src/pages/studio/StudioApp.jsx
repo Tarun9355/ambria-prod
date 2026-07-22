@@ -5307,8 +5307,14 @@ Return ONLY JSON:
     }
     const libImg = photo.isLibrary ? libItems.find(i => i.url === photo.src || i.id === photo.eventId) : null;
     const photoDims = photo.dims || libImg?.dims || {};
-    const cfg = buildZoneConfig(elKey, photoDims);
-    if (cfg) {
+    let cfg = buildZoneConfig(elKey, photoDims);
+    // Full zone build spec saved by Build's "Correct & update master" — restore it verbatim
+    // (dims, truss, masking, plinth, carpet, prints, materials, custom items…). Falls back to the
+    // legacy partial-config restore for photos verified before full-config saving existed.
+    const savedFull = libImg?.zoneConfigByType?.[elKey] || photo.zoneConfigByType?.[elKey] || null;
+    if (savedFull) {
+      cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(savedFull)) };
+    } else if (cfg) {
       const evZone = (photo.zones || []).find(z => z.type === elKey);
       if (evZone?.config) {
         cfg.trT = evZone.config.trT || cfg.trT;
@@ -5318,6 +5324,8 @@ Return ONLY JSON:
         cfg.plH = evZone.config.plH || cfg.plH;
         cfg.cpT = evZone.config.cpT || cfg.cpT;
       }
+    }
+    if (cfg) {
       setZoneConfig(p => ({ ...p, [elKey]: cfg }));
     }
     setActiveZones([]);
