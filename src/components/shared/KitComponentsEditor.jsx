@@ -80,7 +80,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cItemIsKit = cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0;
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
-          const cRate = cItem ? priceForInvItem(cItem, rcSubcatFactors, imsInventory) : 0; // rental × this component's own sub-cat multiplier (recursive for sub-kits)
+          const cRate = cItem ? priceForInvItem(cItem, rcSubcatFactors, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0; // rental × own sub-cat multiplier; honors this instance's sub-kit edits
           return (
             <Fragment key={ci}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -110,29 +110,27 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 {cItem && (() => { const marked = Math.round(cRate); const raw = Number(cItem.price ?? cItem.rentalCost) || 0; return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title={(marked !== raw && raw > 0) ? `rental ₹${raw.toLocaleString("en-IN")} × sub-category multiplier` : "rental × multiplier"}>₹{marked.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
-              {/* This component is itself a kit — show what's inside it too, read-only (its own
-                  recipe is edited from its own IMS Edit screen, not here). */}
+              {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
+                  component's `subOverrides`, so the master sub-kit and every other kit/photo using it
+                  stay untouched. Recursively renders this same editor for the nested kit. */}
               {cItemIsKit && (
-                <div style={{ marginLeft: 20, paddingLeft: 8, borderLeft: `2px solid rgba(99,102,241,0.25)`, display: "flex", flexDirection: "column", gap: 2 }}>
-                  {(cItem.subItems || []).map((gs, gi) => {
-                    if (gs.patternId) {
-                      const gpat = (flowerPatterns || []).find(p => p.id === gs.patternId);
-                      return <div key={gi} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "#EC4899", fontStyle: "italic" }}>
-                        <span>🌸</span><span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gpat ? gpat.name : `⚠ ${gs.patternId}`}</span><span>{gs.qty ?? 1}{studioUnitLabel(gpat?.unit)}</span>
-                      </div>;
-                    }
-                    const gc = (imsInventory || []).find(i => i.id === gs.itemId);
-                    const gcIsKit = gc && Array.isArray(gc.subItems) && gc.subItems.length > 0;
-                    const gcRate = gc ? priceForInvItem(gc, rcSubcatFactors, imsInventory) : 0; // rental × its own sub-cat multiplier
-                    const gQty = Number(gs.qty) || 0;
-                    return <div key={gi} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: textS }}>
-                      {gc?.img ? <img src={gc.img} alt="" style={{ width: 16, height: 16, borderRadius: 3, objectFit: "cover", flexShrink: 0 }} /> : <span style={{ width: 16, height: 16, borderRadius: 3, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", flexShrink: 0 }} />}
-                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gc ? gc.name : `⚠ ${gs.itemId} not in IMS`}{gcIsKit && " 📦"}</span>
-                      <span>×{gQty}</span>
-                      <span style={{ opacity: 0.85 }}>₹{(gcRate * gQty).toLocaleString("en-IN")}</span>
-                    </div>;
-                  })}
-                  {!(cItem.subItems || []).length && <div style={{ fontSize: 10, color: textS, fontStyle: "italic" }}>no components in this kit</div>}
+                <div style={{ marginLeft: 20, paddingLeft: 6, borderLeft: `2px solid rgba(99,102,241,0.25)` }}>
+                  <KitComponentsEditor
+                    item={cItem}
+                    overrides={Array.isArray(c.subOverrides) ? c.subOverrides : undefined}
+                    onChange={(nextSub) => setComps(comps.map((x, i) => {
+                      if (i !== ci) return x;
+                      if (nextSub === undefined) { const { subOverrides, ...rest } = x; return rest; } // reset → back to master sub-kit
+                      return { ...x, subOverrides: nextSub };
+                    }))}
+                    imsInventory={imsInventory}
+                    flowerPatterns={flowerPatterns}
+                    qtyMultiplier={1}
+                    rcSubcatFactors={rcSubcatFactors}
+                    mandiCatalogue={mandiCatalogue}
+                    studioMarkup={studioMarkup}
+                    textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
+                  />
                 </div>
               )}
             </Fragment>

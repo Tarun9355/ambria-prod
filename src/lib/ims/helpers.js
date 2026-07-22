@@ -150,7 +150,10 @@ export function priceForInvItem(item, factorByKey, allInventory, overrideSubItem
       if (si.patternId) return s; // flower recipe add-on — priced separately (getElPriceFromInventory)
       const ci = (allInventory || []).find((i) => i.id === si.itemId);
       if (!ci) return s;
-      return s + priceForInvItem(ci, factorByKey, allInventory, undefined, seen) * (Number(si.qty) || 0);
+      // si.subOverrides = a per-THIS-parent-instance edit of a sub-kit's components (editing "Glass
+      // Consol Table" inside "fiber Rajwada stage" without touching the master kit or other parents).
+      const subOv = Array.isArray(si.subOverrides) ? si.subOverrides : undefined;
+      return s + priceForInvItem(ci, factorByKey, allInventory, subOv, seen) * (Number(si.qty) || 0);
     }, 0);
     return (Number(item.kitBase) || 0) * factor + compTotal;
   }
