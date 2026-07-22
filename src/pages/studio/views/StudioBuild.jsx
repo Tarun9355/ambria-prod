@@ -743,7 +743,7 @@ export default function StudioBuild({ ctx }) {
           {zoneElements[k] ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:11,fontWeight:600,color:"#666"}}>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
+                <div onClick={()=>toggleZoneCollapse(k)} title="Collapse this zone" style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{fontSize:10,color:"#999"}}>{zoneCollapsed[k]?"▶":"▼"}</span>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
                       master library photo so the fix sticks for everyone. Shows only for a selected
