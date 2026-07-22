@@ -9,6 +9,40 @@ import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 
+// Smart swatch: resolve a colour NAME → hex so the team doesn't have to know hex codes. Order:
+// a manual override (row.hex) → the colour catalogue → a curated decor-colour map → a CSS colour name
+// (spaces removed, e.g. "sky blue" → "skyblue") → grey. Keeps blue-collar data entry correct-by-default.
+const DECOR_COLOURS = {
+  "ivory": "#FFFFF0", "off-white": "#FAF9F6", "offwhite": "#FAF9F6", "white": "#FFFFFF", "cream": "#FFFDD0", "beige": "#F5F5DC",
+  "rose gold": "#B76E79", "rosegold": "#B76E79", "gold": "#D4AF37", "silver": "#C0C0C0", "maroon": "#800000", "burgundy": "#800020",
+  "wine": "#722F37", "red": "#D32F2F", "rani": "#E3006D", "pink": "#FF69B4", "magenta": "#FF00FF", "fuchsia": "#C154C1",
+  "orange": "#FFA500", "rust orange": "#B7410E", "rust": "#B7410E", "peach": "#FFCBA4", "coral": "#FF7F50",
+  "yellow": "#FFD54F", "mustard": "#E1AD01", "black": "#111111", "brown": "#8B5A2B", "tan": "#D2B48C", "charcoal": "#36454F",
+  "grey": "#9E9E9E", "gray": "#9E9E9E", "purple": "#800080", "lilac": "#C8A2C8", "lavender": "#B57EDC",
+  "light blue": "#ADD8E6", "sky blue": "#87CEEB", "blue": "#1976D2", "navy": "#000080", "teal": "#008080", "turquoise": "#40E0D0",
+  "green": "#2E7D32", "sage green": "#9CAF88", "sage": "#9CAF88", "olive": "#808000", "mint": "#98D8A0",
+};
+const cssColourToHex = (name) => {
+  try {
+    const spaceless = String(name || "").trim().toLowerCase().replace(/\s+/g, "");
+    if (!spaceless) return null;
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillStyle = spaceless; const a = ctx.fillStyle;
+    ctx.fillStyle = "#fff"; ctx.fillStyle = spaceless; const b = ctx.fillStyle;
+    return a === b ? a : null; // invalid names leave the base value unchanged in both passes
+  } catch { return null; }
+};
+const swatchHexFor = (name, colourCatalogue, override) => {
+  if (override && /^#/.test(override)) return override;
+  const key = String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!key) return "#cccccc";
+  const cat = (colourCatalogue || []).find((c) => String(c.name || "").trim().replace(/\s+/g, " ").toLowerCase() === key);
+  if (cat?.hex && /^#/.test(cat.hex)) return cat.hex;
+  if (DECOR_COLOURS[key]) return DECOR_COLOURS[key];
+  const css = cssColourToHex(key);
+  return css || "#cccccc";
+};
+
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
 // display label to — kept as options so existing rows' labels still render, not just new picks.
@@ -1551,7 +1585,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         const rates = trussInv.rates || {};
         const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateMarkup = (key, val) => setTrussInv((ti) => ({ ...ti, fabricFreshMarkup: { ...(ti.fabricFreshMarkup || {}), [key]: parseFloat(val) || 0 } }));
-        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
+        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         const removeStockRow = (which, idx) => setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
         const renderFabric = (title, emoji, themeColor, which, qtyField, qtyLabel, rentalKey, purchaseKey, markupKey, rentalKeyNew) => {
@@ -1584,7 +1618,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         const newQ = Number(row[`${qtyField}New`]) || 0;
                         return (
                           <tr key={`${which}-${i}`} className={`border-t border-${themeColor}-50`}>
-                            <td className="px-2 py-1.5"><div className="w-5 h-5 rounded border border-gray-300" style={{ background: cObj?.hex || "#ccc" }} /></td>
+                            <td className="px-2 py-1.5">{(() => {
+                              const auto = swatchHexFor(row.colour, settings.colourCatalogue, row.hex);
+                              return <input type="color" value={auto} onChange={(e) => updateStock(which, i, "hex", e.target.value)} title={row.hex ? "Custom swatch — click to change" : `Auto-detected from "${row.colour || "colour"}" — click to override`} className="w-6 h-6 rounded border border-gray-300 cursor-pointer p-0 bg-transparent" style={{ appearance: "none" }} />;
+                            })()}</td>
                             <td className="px-2 py-1.5">
                               <input type="text" value={row.colour || ""} list={`${which}-colours`} placeholder="Type or pick a colour…" onChange={(e) => updateStock(which, i, "colour", e.target.value)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
                             </td>
