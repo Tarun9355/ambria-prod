@@ -223,7 +223,27 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
 // Inputs:
 //   zc: zoneConfig entry { dims:{L,W,H}, trussType }
 //   trussInv: { pillars, beams, rates: {pillarRftRate, beamRftRate, battaRftRate, lizaKgRate}, batta:{bufferPct}, settings }
+// Resolve a material-specific view of the truss inventory (pillars/beams/rates/settings per material;
+// batta + liza + fabric factors stay SHARED at the top level = Iron). Iron reads the top-level object
+// (back-compat with every existing consumer). Pole/Aluminium read trussInv.materials[mat] — but fall back
+// to Iron until that material has any pillars configured, so an un-filled material never breaks pricing.
+export const trussInvForMaterial = (trussInv, material) => {
+  if (!trussInv) return trussInv;
+  const mat = String(material || "iron").toLowerCase();
+  if (mat === "iron") return trussInv;
+  const m = trussInv.materials && trussInv.materials[mat];
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return trussInv; // not configured yet → Iron
+  return {
+    ...trussInv,                                                   // shared: batta, liza, fabricFactors, fabricFreshMarkup, lizaStock…
+    pillars: m.pillars || {},                                     // per-material skeleton
+    beams: m.beams || {},
+    rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam rates (batta rate stays shared)
+    settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
+  };
+};
+
 export const calcZoneTrussPreview = (zc, trussInv) => {
+  trussInv = trussInvForMaterial(trussInv, zc?.trussMaterial); // material-aware pillars/beams/rates
   const layer0 = resolveTrussConfig(zc);
   if (!layer0) return null;
   const out = { ...layer0, topology: null, costs: null, batta: null, smartFlag: "green", warnings: [] };
