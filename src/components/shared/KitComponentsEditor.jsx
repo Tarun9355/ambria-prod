@@ -1,6 +1,6 @@
 import { useState, Fragment } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { studioUnitLabel, computePatternSizeCost } from "../../lib/ims/flowerHelpers";
+import { studioUnitLabel, computePatternSizeCost, matchFlowerPattern } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 import ItemHoverThumb from "./ItemHoverThumb";
 
@@ -45,8 +45,13 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   };
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
   const rentalMarked = priceForInvItem(item, rcSubcatFactors, imsInventory, isEdited ? comps : undefined);
-  // Flower recipe part — patternId add-ons priced here now (was ₹0 / "priced elsewhere").
-  const flowerTotal = comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat) * (Number(c.qty) || 0); }, 0);
+  const kitBaseMarked = Math.round(kitBase * kitFactor);        // the console's OWN charge (base × its factor)
+  const itemsMarked = Math.max(0, rentalMarked - kitBaseMarked); // Σ components at their own multipliers
+  // Flower recipe part = explicit patternId add-ons + a recipe matched to the kit's OWN sub-category
+  // (same two sources getElPriceFromInventory sums), each at the recipe's Studio rate.
+  const subCatPattern = matchFlowerPattern(item, flowerPatterns || []);
+  const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern) : 0;
+  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat) * (Number(c.qty) || 0); }, 0);
   const partsTotal = rentalMarked + flowerTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
@@ -71,7 +76,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
-                {(() => { const rr = recipeRateFor(pat); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }}>🌸 ₹{rr.toLocaleString("en-IN")} × {patQty} = <b style={{ color: "#EC4899" }}>₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
+                {(() => { const rr = recipeRateFor(pat); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
             );
@@ -107,7 +112,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-                {cItem && (() => { const marked = Math.round(cRate); const raw = Number(cItem.price ?? cItem.rentalCost) || 0; return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title={(marked !== raw && raw > 0) ? `rental ₹${raw.toLocaleString("en-IN")} × sub-category multiplier` : "rental × multiplier"}>₹{marked.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
+                {cItem && (() => { const marked = Math.round(cRate); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="client price (rental + margin, all-in)"><b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
               {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
@@ -136,6 +141,13 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
             </Fragment>
           );
         })}
+        {subCatRecipe > 0 && subCatPattern && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+            <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
+            <span style={{ color: textP, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subCatPattern.name} <span style={{ color: "#EC4899", fontSize: 9, fontStyle: "italic" }}>· recipe (this kit's sub-category)</span></span>
+            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{subCatRecipe.toLocaleString("en-IN")}</b></span>
+          </div>
+        )}
       </div>
       <div style={{ marginTop: 5, position: "relative" }}>
         <input value={addSearch} onChange={(e) => setAddSearch(e.target.value)} placeholder="🔍 Search by name or sub-category to add…"
@@ -170,7 +182,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         })()}
       </div>
       <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-        <span style={{ color: textS }}>Kit = rental ₹{rentalMarked.toLocaleString("en-IN")}{flowerTotal > 0 ? ` + 🌸 flowers ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
+        <span style={{ color: textS }}>Kit total = items ₹{itemsMarked.toLocaleString("en-IN")}{kitBaseMarked > 0 ? ` + console ₹${kitBaseMarked.toLocaleString("en-IN")}` : ""}{flowerTotal > 0 ? ` + 🌸 recipe ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
         <span style={{ color: "#A5B4FC", fontWeight: 700 }}>{fmt ? fmt(partsTotal * qtyMultiplier) : `₹${(partsTotal * qtyMultiplier).toLocaleString("en-IN")}`}</span>
       </div>
     </div>
