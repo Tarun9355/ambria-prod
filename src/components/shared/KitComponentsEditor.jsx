@@ -1,7 +1,7 @@
 import { useState, Fragment } from "react";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
-import { kitTotalFromInventory, itemDimsText } from "../../lib/ims/helpers";
+import { studioUnitLabel, computePatternSizeCost } from "../../lib/ims/flowerHelpers";
+import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 import ItemHoverThumb from "./ItemHoverThumb";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
@@ -15,7 +15,7 @@ import ItemHoverThumb from "./ItemHoverThumb";
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, mandiCatalogue = [], studioMarkup = 3, elSize, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
@@ -28,15 +28,26 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
   const kitBase = Number(item.kitBase) || 0;
-  const componentsTotal = comps.reduce((sum, c) => {
-    if (c.patternId) return sum;
-    const ci = (imsInventory || []).find(i => i.id === c.itemId);
-    if (!ci) return sum;
-    const ciIsKit = Array.isArray(ci.subItems) && ci.subItems.length > 0;
-    const r = ciIsKit ? kitTotalFromInventory(ci, imsInventory) : (Number(ci.price ?? ci.rentalCost) || 0);
-    return sum + r * (Number(c.qty) || 0);
-  }, 0);
-  const partsTotal = kitBase + componentsTotal;
+  // Kit's own sub-category scaling factor — the same multiplier priceForInvItem applies to the whole
+  // kit rental, so per-component "rental × multiplier" and the footer total reflect the real charge.
+  const _fKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
+  const _fRaw = _fKey ? rcSubcatFactors?.[_fKey] : undefined;
+  const kitFactor = (typeof _fRaw === "number" && isFinite(_fRaw) && _fRaw > 0) ? _fRaw : 1;
+  // Recipe (flower) Studio rate for a pattern at the element's size = real mandi cost × markup. Lets a
+  // kit that includes a flower recipe show its flower cost here, priced the same way getElPriceFromInventory does.
+  const _szKey = (() => { const s = String(elSize || "B").toUpperCase(); return (s === "S" || s === "SMALL") ? "small" : (s === "B" || s === "BIG" || s === "LARGE") ? "big" : "medium"; })();
+  const recipeRateFor = (pat) => {
+    if (!pat) return 0;
+    const sizes = pat.sizes || {};
+    const sd = sizes[_szKey] || sizes.big || sizes.medium || sizes[Object.keys(sizes)[0]];
+    const raw = computePatternSizeCost(sd, mandiCatalogue, imsInventory);
+    return raw ? Math.round(raw * (Number(studioMarkup) || 3)) : 0;
+  };
+  // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
+  const rentalMarked = priceForInvItem(item, rcSubcatFactors, imsInventory, isEdited ? comps : undefined);
+  // Flower recipe part — patternId add-ons priced here now (was ₹0 / "priced elsewhere").
+  const flowerTotal = comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat) * (Number(c.qty) || 0); }, 0);
+  const partsTotal = rentalMarked + flowerTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
   return (
@@ -60,7 +71,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
-                <span style={{ color: "#EC4899", fontSize: 9, fontStyle: "italic", whiteSpace: "nowrap" }}>flower recipe — priced in the total above, not here</span>
+                {(() => { const rr = recipeRateFor(pat); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }}>🌸 ₹{rr.toLocaleString("en-IN")} × {patQty} = <b style={{ color: "#EC4899" }}>₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
             );
@@ -96,7 +107,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-                {cItem && <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }}>₹{cRate.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(cRate * qtyEach).toLocaleString("en-IN")}</b></span>}
+                {cItem && (() => { const marked = Math.round(cRate * kitFactor); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title={kitFactor !== 1 ? `rental ₹${cRate.toLocaleString("en-IN")} × ${kitFactor} multiplier` : "rental"}>₹{marked.toLocaleString("en-IN")} × {qtyEach} = <b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
               {/* This component is itself a kit — show what's inside it too, read-only (its own
@@ -161,7 +172,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         })()}
       </div>
       <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-        <span style={{ color: textS }}>Kit rental = {kitBase > 0 ? `base ₹${kitBase.toLocaleString("en-IN")} + ` : ""}components ₹{componentsTotal.toLocaleString("en-IN")} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
+        <span style={{ color: textS }}>Kit = rental ₹{rentalMarked.toLocaleString("en-IN")}{flowerTotal > 0 ? ` + 🌸 flowers ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
         <span style={{ color: "#A5B4FC", fontWeight: 700 }}>{fmt ? fmt(partsTotal * qtyMultiplier) : `₹${(partsTotal * qtyMultiplier).toLocaleString("en-IN")}`}</span>
       </div>
     </div>

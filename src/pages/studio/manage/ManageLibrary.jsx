@@ -1295,6 +1295,7 @@ export default function ManageLibrary({ ctx }) {
                                 flowerPatterns={recipeOnlyPatterns}
                                 qtyMultiplier={el.qty || 1}
                                 rcSubcatFactors={rcSubcatFactors}
+                                elSize={el.size}
                                 textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                               />
                             </div>
