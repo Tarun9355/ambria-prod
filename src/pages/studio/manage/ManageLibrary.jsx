@@ -1295,6 +1295,7 @@ export default function ManageLibrary({ ctx }) {
                                 flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
                                 qtyMultiplier={el.qty || 1}
                                 rcSubcatFactors={rcSubcatFactors}
+                                rcFactorByKey={rcFactorByKey}
                                 elSize={el.size}
                                 mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3}
                                 textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}

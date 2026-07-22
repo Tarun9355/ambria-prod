@@ -1013,6 +1013,7 @@ export default function StudioBuild({ ctx }) {
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                       rcSubcatFactors={rcSubcatFactors}
+                      rcFactorByKey={rcFactorByKey}
                       mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
                       textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                     />}
@@ -1555,6 +1556,7 @@ export default function StudioBuild({ ctx }) {
                     qtyMultiplier={el.qty||1}
                     dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
                     rcSubcatFactors={rcSubcatFactors}
+                    rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
                     textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                   />}

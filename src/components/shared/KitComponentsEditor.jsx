@@ -15,7 +15,10 @@ import ItemHoverThumb from "./ItemHoverThumb";
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, mandiCatalogue = [], studioMarkup = 3, elSize, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, textP, textS, border, cardBg, accent, isDark, fmt }) {
+  // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
+  // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
+  const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
@@ -31,7 +34,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Kit's own sub-category scaling factor — the same multiplier priceForInvItem applies to the whole
   // kit rental, so per-component "rental × multiplier" and the footer total reflect the real charge.
   const _fKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
-  const _fRaw = _fKey ? rcSubcatFactors?.[_fKey] : undefined;
+  const _fRaw = _fKey ? _factorMap[_fKey] : undefined;
   const kitFactor = (typeof _fRaw === "number" && isFinite(_fRaw) && _fRaw > 0) ? _fRaw : 1;
   // Recipe (flower) Studio rate for a pattern at the element's size = real mandi cost × markup. Lets a
   // kit that includes a flower recipe show its flower cost here, priced the same way getElPriceFromInventory does.
@@ -44,7 +47,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
     return rates ? (rates.realRate + rates.extra) : 0;
   };
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
-  const rentalMarked = priceForInvItem(item, rcSubcatFactors, imsInventory, isEdited ? comps : undefined);
+  const rentalMarked = priceForInvItem(item, _factorMap, imsInventory, isEdited ? comps : undefined);
   const kitBaseMarked = Math.round(kitBase * kitFactor);        // the console's OWN charge (base × its factor)
   const itemsMarked = Math.max(0, rentalMarked - kitBaseMarked); // Σ components at their own multipliers
   // Flower recipe part = explicit patternId add-ons + a recipe matched to the kit's OWN sub-category
@@ -92,7 +95,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cItemIsKit = cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0;
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
-          const cRate = cItem ? priceForInvItem(cItem, rcSubcatFactors, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0; // rental × own sub-cat multiplier; honors this instance's sub-kit edits
+          const cRate = cItem ? priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0; // rental × own sub-cat multiplier; honors this instance's sub-kit edits
           return (
             <Fragment key={ci}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -139,6 +142,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     flowerPatterns={flowerPatterns}
                     qtyMultiplier={1}
                     rcSubcatFactors={rcSubcatFactors}
+                    rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={mandiCatalogue}
                     studioMarkup={studioMarkup}
                     textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}

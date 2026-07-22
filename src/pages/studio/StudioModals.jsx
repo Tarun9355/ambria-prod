@@ -619,6 +619,7 @@ export default function StudioModals({ ctx }) {
                               qtyMultiplier={el.qty || 1}
                               dealAwareness={{ getRemaining: (itemId) => zurRemainingForItem(itemId, idx) }}
                               rcSubcatFactors={rcSubcatFactors}
+                              rcFactorByKey={rcFactorByKey}
                               mandiCatalogue={dealCheckData?.mandiCatalogue || []} studioMarkup={Number(dealCheckData?.defaultStudioMarkup) || 3} elSize={el.size}
                               textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                             />
