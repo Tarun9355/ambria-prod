@@ -1446,14 +1446,21 @@ export default function StudioApp() {
   // defaults to the reference's own event type / venue / style / palette / day-night / venue instead
   // of "All". The salesperson can still widen it via the 🔍 filter. `venue` is a string on tags but
   // an array in the filter, so it's wrapped.
-  const zpFiltersFromTags = useCallback((tags) => ({
-    eventType: Array.isArray(tags?.eventType) ? tags.eventType : [],
-    venueType: Array.isArray(tags?.venueType) ? tags.venueType : [],
-    designStyle: Array.isArray(tags?.designStyle) ? tags.designStyle : [],
-    colorPalette: Array.isArray(tags?.colorPalette) ? tags.colorPalette : [],
-    timeSetting: Array.isArray(tags?.timeSetting) ? tags.timeSetting : [],
-    venue: Array.isArray(tags?.venue) ? tags.venue : (tags?.venue ? [tags.venue] : []),
-  }), []);
+  // Accepts BOTH tag schemas: library-photo tags (eventType/venueType/designStyle/colorPalette/
+  // timeSetting/venue) AND inspiration-video tags (fn/io/styles/colors/venue). The values are the
+  // same taxonomy strings — only the key names differ — so a video reference pre-fills EVERY category
+  // (event type, venue type, style, palette, day/night, venue), not just the shared `venue` key.
+  const zpFiltersFromTags = useCallback((tags) => {
+    const arr = (v) => (Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []));
+    return {
+      eventType: arr(tags?.eventType ?? tags?.fn),
+      venueType: arr(tags?.venueType ?? tags?.io ?? tags?.space),
+      designStyle: arr(tags?.designStyle ?? tags?.styles),
+      colorPalette: arr(tags?.colorPalette ?? tags?.colors),
+      timeSetting: arr(tags?.timeSetting ?? tags?.dayNight),
+      venue: arr(tags?.venue),
+    };
+  }, []);
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
