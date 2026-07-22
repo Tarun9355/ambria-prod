@@ -36,7 +36,7 @@ export default function StudioBuild({ ctx }) {
     // date demand
     dateTypes, clientLedger, activeClientId,
     // build canvas
-    showCosts, setShowCosts, grandTotal, totalCost, transportCalc,
+    setShowCosts, grandTotal, totalCost, transportCalc,
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
@@ -76,6 +76,11 @@ export default function StudioBuild({ ctx }) {
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
   } = ctx;
+  // Details & pricing are always shown now (the old global toggle is gone). Each zone is instead
+  // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
+  const showCosts = true;
+  const [zoneCollapsed, setZoneCollapsed] = useState({});
+  const toggleZoneCollapse = (k) => setZoneCollapsed((p) => ({ ...p, [k]: !p[k] }));
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
@@ -555,20 +560,6 @@ export default function StudioBuild({ ctx }) {
 
 
 
-    {/* ═══ DETAILS & PRICING TOGGLE ═══ */}
-    <div onClick={()=>setShowCosts(p=>!p)} style={{borderRadius:14,padding:"12px 18px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",border:showCosts?`2px solid ${accent}`:`2px solid ${border}`,background:showCosts?(isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.06)"):(isDark?"rgba(255,255,255,0.03)":"#FAFAFA"),transition:"all 0.25s ease"}}>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <span style={{fontSize:18}}>{showCosts?"📊":"📋"}</span>
-        <div>
-          <div style={{fontSize:13,fontWeight:600,color:textP}}>{showCosts?"Details & Pricing Visible":"Details & Pricing Hidden"}</div>
-          <div style={{fontSize:11,color:textS,marginTop:1}}>{showCosts?"Item quantities, zone structure & cost breakdown shown":"Tap to reveal items, zones & pricing for all sections"}</div>
-        </div>
-      </div>
-      <div style={{width:44,height:26,borderRadius:13,background:showCosts?accent:"rgba(120,120,120,0.3)",position:"relative",transition:"background 0.25s"}}>
-        <div style={{width:22,height:22,borderRadius:11,background:"#fff",position:"absolute",top:2,left:showCosts?20:2,transition:"left 0.25s",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}/>
-      </div>
-    </div>
-
     {/* ═══ FLORAL RATIO CONTROL — art/real split is a design control, show it even when costs are hidden ═══ */}
     {<div style={{borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12}}>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -611,8 +602,8 @@ export default function StudioBuild({ ctx }) {
       }
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>toggleEl(k)}>
-          <div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : toggleEl(k)}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>{isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={zoneCollapsed[k]?"Expand":"Collapse"}>{zoneCollapsed[k]?"▶":"▼"}</span>}<span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(168,85,247,0.08)"}}>🏭</span>
@@ -627,7 +618,7 @@ export default function StudioBuild({ ctx }) {
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
           </div>
         </div>
-        {isOn&&<div style={{padding:"0 18px 16px"}}>
+        {isOn&&!zoneCollapsed[k]&&<div style={{padding:"0 18px 16px"}}>
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
           {matchedPhotos.length>0 ? (
             <div style={{marginBottom:12}}>
@@ -1403,8 +1394,9 @@ export default function StudioBuild({ ctx }) {
       const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
       const czTotal=czElCost+czStructCost;
       return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=>setEnabledEls(p=>({...p,[k]:!p[k]}))}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : setEnabledEls(p=>({...p,[k]:!p[k]}))}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
+            {isOn&&<span style={{fontSize:12,color:textS,width:12,flexShrink:0}} title={zoneCollapsed[k]?"Expand":"Collapse"}>{zoneCollapsed[k]?"▶":"▼"}</span>}
             <span style={{fontSize:22}}>{cz.icon||"📦"}</span>
             <div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{cz.name}</div>
             <span style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Custom</span>
@@ -1415,7 +1407,7 @@ export default function StudioBuild({ ctx }) {
             <span onClick={e=>{e.stopPropagation();if(confirm("Remove "+cz.name+"?")){setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});}}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>
           </div>
         </div>
-        {isOn&&<div style={{padding:"0 18px 16px"}}>
+        {isOn&&!zoneCollapsed[k]&&<div style={{padding:"0 18px 16px"}}>
           {/* Element card — add items from Rate Card */}
           <div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
