@@ -859,7 +859,7 @@ Rules:
                     <td className="px-3 py-2">
                       {i.img
                         ? <div className="relative w-14 h-14">
-                            <img src={i.img} alt={i.name} className="w-14 h-14 rounded-xl object-cover border shadow-sm" onError={(e) => { e.target.style.display = "none"; e.target.parentElement.querySelector(".img-fallback").style.display = "flex"; }} />
+                            <img src={i.img} alt={i.name} title="Click to view full size" onClick={(e) => { e.stopPropagation(); setBigImg(i.img); }} className="w-14 h-14 rounded-xl object-cover border shadow-sm cursor-zoom-in hover:opacity-90" onError={(e) => { e.target.style.display = "none"; e.target.parentElement.querySelector(".img-fallback").style.display = "flex"; }} />
                             <div className="img-fallback w-14 h-14 rounded-xl border bg-gray-100 flex-col items-center justify-center text-gray-300 absolute top-0 left-0" style={{ display: "none" }}>
                               <span className="text-2xl leading-none">📷</span>
                             </div>
