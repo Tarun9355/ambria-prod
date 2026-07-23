@@ -4822,7 +4822,15 @@ Return ONLY JSON:
       // knowledge base, then sub-category vocabulary), then the base instructions, then the HOUSE RULES
       // LAST so they sit closest to the target image and carry the most weight at generation time.
       // All of this is static per session (only the image below is volatile), so the whole prefix is cached.
-      const promptText = [corrText, kbText, subcatText, prompt, houseRules].filter(Boolean).join("\n\n");
+      // processNote frames the whole message with the explicit 3-step order the team wants: weigh the
+      // learned KB heavily FIRST (strongest prior), enforce the house RULES as hard constraints SECOND
+      // (they override the KB on any conflict — that precedence is the team's call), and only THEN tag
+      // the photo. It leads the prompt (and is echoed in the system prompt) so the model treats it as
+      // the governing procedure, not just another instruction buried mid-message.
+      const processNote = houseRulesRaw
+        ? "TAGGING PROCESS — follow in this exact order every time: (1) LEARN — absorb the HOUSE TAGGING KNOWLEDGE BASE below and weigh it heavily; it is learned from your team's verified photos and is your STRONGEST prior for vocabulary, per-area norms, and typical counts. (2) CONSTRAIN — then apply the HOUSE TAGGING RULES as hard constraints; wherever a rule and the knowledge base disagree, THE RULE WINS. (3) TAG — only after (1) and (2) do you read the photo and produce tags/elements, honouring the rules first and the knowledge base next."
+        : "TAGGING PROCESS — first absorb the HOUSE TAGGING KNOWLEDGE BASE below and weigh it heavily (your strongest prior for how this team tags), then read the photo and produce tags/elements consistent with it.";
+      const promptText = [processNote, corrText, kbText, subcatText, prompt, houseRules].filter(Boolean).join("\n\n");
       const exemplars = (tagKB && Array.isArray(tagKB.exemplars)) ? tagKB.exemplars.slice(0, 4).filter(e => e && e.url) : [];
       const buildContent = (withExamples) => {
         const blocks = [{ type: "text", text: promptText }];
@@ -4843,7 +4851,8 @@ Return ONLY JSON:
         model: "claude-opus-4-8",
         maxTokens: 8000, // room for adaptive thinking + the JSON
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text."
-          + (houseRulesRaw ? " Your team has defined HOUSE TAGGING RULES (in the '════ HOUSE TAGGING RULES' block at the end of the message). Those rules are MANDATORY and take priority over the generic tagging instructions — follow every one of them exactly." : ""),
+          + " Work in this exact order every time: (1) LEARN — first absorb the HOUSE TAGGING KNOWLEDGE BASE (learned from the team's verified photos): its vocabulary, per-area norms, and typical counts are your strongest prior, so lean on them heavily. (2) CONSTRAIN — then apply the team's HOUSE TAGGING RULES as hard constraints; wherever a rule and the knowledge base disagree, THE RULE WINS. (3) TAG — only then read the photo and produce tags/elements that honour both, rules first."
+          + (houseRulesRaw ? " The HOUSE TAGGING RULES are in the '════ HOUSE TAGGING RULES' block at the end of the message; they are MANDATORY and override BOTH the knowledge base and the generic tagging instructions — follow every one of them exactly." : ""),
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
         // display:"summarized" — without it the model still thinks (billed the same) but the
         // thinking block's text comes back empty, so there'd be nothing to show a reviewer.
