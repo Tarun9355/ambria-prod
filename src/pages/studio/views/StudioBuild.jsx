@@ -47,7 +47,7 @@ export default function StudioBuild({ ctx }) {
     setElGallery, setGalleryIdx,
     newCzName, setNewCzName,
     // uploads / ai
-    zoneUploading, handleZoneUpload, zoneAiFilling, setZoneAiFilling, aiTagImage,
+    zoneUploading, handleZoneUpload,
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto,
@@ -825,21 +825,6 @@ export default function StudioBuild({ ctx }) {
                       ✏️ {verified?"Correct & update master":"Correct & save to master"}
                     </button>;
                   })()}
-                  {elSelectedPhoto[k]?.src && <button disabled={zoneAiFilling[k]} onClick={async()=>{
-                    const url=elSelectedPhoto[k]?.src;if(!url)return;
-                    setZoneAiFilling(p=>({...p,[k]:true}));
-                    try{
-                      const result=await Promise.race([aiTagImage(url),new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),25000))]);
-                      if(result){
-                        const {elements:aiEl}=result;
-                        if(Array.isArray(aiEl)&&aiEl.length>0){
-                          setZoneElements(p=>({...p,[k]:aiEl}));
-                          showMsg(`✓ AI found ${aiEl.length} elements`,"green");
-                        }else{showMsg("AI found no elements — add manually","red");}
-                      }else{showMsg("AI tagging failed","red");}
-                    }catch(e){showMsg(e.message==="timeout"?"Timed out — add manually":"AI failed","red");}
-                    setZoneAiFilling(p=>({...p,[k]:false}));
-                  }} style={{...S.btn(false),fontSize:10,padding:"4px 10px",opacity:zoneAiFilling[k]?0.6:1}}>{zoneAiFilling[k]?"🔄 Reading...":"🤖 AI Fill"}</button>}
                   <div style={{position:"relative"}}>
                     <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{

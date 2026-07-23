@@ -4174,7 +4174,11 @@ Return ONLY JSON:
         if (snap.elSelectedPhoto) {
           snap = {
             ...snap,
-            elSelectedPhoto: Object.fromEntries(Object.entries(snap.elSelectedPhoto).map(([ek, v]) => [ek, { src: v?.src, eventName: v?.eventName }]))
+            // isLibrary/eventId ride along (not just src/eventName) — Build's "Correct & update
+            // master" button needs both to know this photo has a real Library row behind it;
+            // dropping them here silently disabled that button for any zone reloaded from a saved
+            // session even though the photo genuinely is a Library photo.
+            elSelectedPhoto: Object.fromEntries(Object.entries(snap.elSelectedPhoto).map(([ek, v]) => [ek, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }]))
           };
         }
         fnSnapshots[i] = snap;
@@ -4195,7 +4199,7 @@ Return ONLY JSON:
       zoneConfig: JSON.parse(JSON.stringify(zoneConfig)),
       zoneElements: JSON.parse(JSON.stringify(zoneElements)),
       elNotes: { ...elNotes },
-      elSelectedPhoto: Object.fromEntries(Object.entries(elSelectedPhoto).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName }])),
+      elSelectedPhoto: Object.fromEntries(Object.entries(elSelectedPhoto).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
       sourceEventId: sourceEvent?.id || null,
       sourceEventName: sourceEvent?.name || null,
       sourceVideoId: sourceVideo?.id || null,
@@ -4314,7 +4318,7 @@ Return ONLY JSON:
           elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
           enabledEls: { ...(fnData.enabledEls || {}) },
           elTiers: { ...(fnData.elTiers || {}) },
-          elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName }])),
+          elSelectedPhoto: Object.fromEntries(Object.entries(fnData.elSelectedPhoto || {}).map(([k, v]) => [k, { src: v?.src, eventName: v?.eventName, isLibrary: v?.isLibrary, eventId: v?.eventId }])),
           dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
           decorCost: bd.decorTotal,
           transportCost: bd.transportTotal,
