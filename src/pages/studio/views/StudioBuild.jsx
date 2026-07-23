@@ -203,7 +203,7 @@ export default function StudioBuild({ ctx }) {
       const target = String(subcat).toLowerCase().trim();
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory) }))
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
@@ -1931,6 +1931,7 @@ export default function StudioBuild({ ctx }) {
                       {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}>🪑</div>}
                       <div style={{padding:"8px 10px"}}>
                         <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
+                        {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}>📐 {it.dims}</div>}
                         <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
                       </div>
                     </div>
