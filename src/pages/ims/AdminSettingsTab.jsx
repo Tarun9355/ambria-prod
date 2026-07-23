@@ -1085,13 +1085,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         Object.keys(groupedBySub).forEach((sub) => {
           groupedBySub[sub].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
         });
-        // Only list groups for sub-categories currently ticked above — an unticked sub's recipes
-        // still exist (nothing here deletes them), they just don't clutter this browsing list.
+        // List groups for sub-categories currently ticked above, PLUS any group that actually has
+        // real patterns in it — a sub can lose its tick (or lose its matching Florals sub-category
+        // entirely, e.g. after a rename/typo fix) while patterns still reference its old `sub` text.
+        // Those patterns don't stop existing or stop being searchable in Studio — hiding their group
+        // here just makes them permanently un-manageable "zombie" recipes nobody can find to fix or
+        // delete. Only a TICKED-BUT-EMPTY group (seeded above so "+ Add Item" has somewhere to go)
+        // is ever hidden by unticking — an empty group has nothing to orphan.
         // "(uncategorized)" has no toggle to control it, so it always stays visible — otherwise a
         // pattern with no sub-category would become permanently unreachable here.
         const recipeSubsTrimmed = new Set(recipeSubs.map((s) => (s || "").trim()));
         const sortedSubs = Object.keys(groupedBySub)
-          .filter((sub) => sub === "(uncategorized)" || recipeSubsTrimmed.has(sub))
+          .filter((sub) => sub === "(uncategorized)" || recipeSubsTrimmed.has(sub) || groupedBySub[sub].length > 0)
           .sort((a, b) => a.localeCompare(b));
 
         const toggleSub = (sub) => {
@@ -1330,14 +1335,26 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               return visibleSubs.map((sub) => {
               const subOpen = !!recipeSubOpen[sub];
               const toggleOpen = () => setRecipeSubOpen((s) => ({ ...s, [sub]: !s[sub] }));
+              const isEmpty = groupedBySub[sub].length === 0;
+              const isTracked = sub === "(uncategorized)" || recipeSubsTrimmed.has(sub);
               return (
               <div key={sub} className="space-y-2 border rounded-xl overflow-hidden">
                 <div onClick={toggleOpen} className="flex items-center gap-2 px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100">
                   <span className="text-gray-400 text-xs w-3">{subOpen ? "▾" : "▸"}</span>
                   <h5 className="text-sm font-semibold text-gray-700">🌸 {sub}</h5>
                   <span className="text-xs text-gray-400">({groupedBySub[sub].length})</span>
-                  <button onClick={(e) => { e.stopPropagation(); setRecipeAddSub(recipeAddSub === sub ? null : sub); setRecipeAddForm({ name: "", unit: "pc" }); if (!subOpen) toggleOpen(); }}
-                    className="ml-auto text-[11px] font-semibold px-2 py-1 rounded-lg border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50">+ Add Item</button>
+                  {!isTracked && (
+                    <span title="This sub-category isn't (or is no longer) a ticked Florals sub-category above — likely a rename/typo left these patterns behind. They're still fully live and searchable in Studio; delete the ones you don't want, or tick the sub-category above to keep tracking it."
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">⚠ not tracked</span>
+                  )}
+                  <span className="ml-auto flex items-center gap-2">
+                    {isEmpty && isTracked && sub !== "(uncategorized)" && (
+                      <button onClick={(e) => { e.stopPropagation(); toggleSub(sub); }} title="Remove this empty group (untick it above) — nothing to delete since it has no recipes"
+                        className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50">🗑️ Remove empty group</button>
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); setRecipeAddSub(recipeAddSub === sub ? null : sub); setRecipeAddForm({ name: "", unit: "pc" }); if (!subOpen) toggleOpen(); }}
+                      className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50">+ Add Item</button>
+                  </span>
                 </div>
                 {!subOpen ? null : (<div className="px-3 pb-3 space-y-2">
                 {recipeAddSub === sub && (
