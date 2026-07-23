@@ -129,5 +129,22 @@ After running: (1) Claude backfills `status`/`tag_source`/`tagged_at` for existi
 
 ---
 
+## Library zone-config-by-type column (migration 021) — ⬜ RUN
+Build's "Correct & update master" saves the full zone build spec (dims, truss, masking, plinth,
+carpet, custom ceiling/masking) back to the master photo, but the zone-matching queries
+(`fetchZoneLibraryPhotos`/`fetchRecentLibraryPhotos`) only select light typed columns for payload
+size — so the correction landed in the `data` JSONB blob but was silently dropped whenever the
+photo got reselected in Build. Adds a typed mirror column (same pattern as migration 008) and
+backfills it from any corrections already saved into `data`.
+```sql
+ALTER TABLE public.library
+  ADD COLUMN IF NOT EXISTS zone_config_by_type JSONB DEFAULT '{}'::jsonb;
+
+UPDATE public.library
+SET zone_config_by_type = COALESCE(data->'zoneConfigByType', '{}'::jsonb)
+WHERE zone_config_by_type IS NULL OR zone_config_by_type = '{}'::jsonb;
+```
+No redeploy needed — this column is only read/written by the client (`src/lib/studio/libraryQueries.js`), not the batch-tagger.
+
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)

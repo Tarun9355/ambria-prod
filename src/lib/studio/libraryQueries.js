@@ -36,6 +36,7 @@ export function rowToLibItem(row) {
   return {
     id: row.id, name: row.name, url: row.url, tags: row.tags || {}, elements: row.elements || [],
     dims: row.dims || {}, prints: row.prints || [], linkedTemplates: row.linked_templates || [],
+    zoneConfigByType: row.zone_config_by_type || {},
     _verified: row.status === "verified",
     tagSource: row.tag_source || undefined,
     _aiTaggedAt: row.tagged_at ? new Date(row.tagged_at).getTime() : undefined,
@@ -60,6 +61,7 @@ export function libItemToRow(it) {
     id: it.id, name: it.name ?? null, url: it.url ?? null,
     tags: it.tags || {}, elements: it.elements || [], dims: it.dims || {}, prints: it.prints || [],
     linked_templates: it.linkedTemplates || it.linked_templates || [],
+    zone_config_by_type: it.zoneConfigByType || {},
     data: it,
     status, tag_source: it.tagSource || null,
     tagged_at: taggedAtMs ? new Date(taggedAtMs).toISOString() : null,
@@ -107,7 +109,7 @@ function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inho
   return q;
 }
 
-const LIST_COLUMNS = "id,name,url,tags,elements,dims,prints,linked_templates,status,tag_source,tagged_at,created_at,verified_by,verified_at";
+const LIST_COLUMNS = "id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,created_at,verified_by,verified_at";
 
 // Cursor-based (keyset) pagination — NOT OFFSET, so page N stays fast at 10k+ rows.
 // `sortCol` is "tagged_at" for verified/review/nightly/manual (most-recently-tagged first)
@@ -211,7 +213,7 @@ export async function fetchZoneLibraryPhotos(zoneList) {
   const zones = (zoneList || []).filter(Boolean);
   if (!zones.length) return [];
   const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,status,tag_source,tagged_at")
+    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at")
     .or(zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(","))
     .limit(1000);
   if (error) throw error;
@@ -222,7 +224,7 @@ export async function fetchZoneLibraryPhotos(zoneList) {
  * (replaces the old "scan the whole library for filler" behavior). */
 export async function fetchRecentLibraryPhotos(limit = 200) {
   const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,status,tag_source,tagged_at")
+    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at")
     .neq("status", "untagged")
     .order("tagged_at", { ascending: false, nullsFirst: false })
     .limit(limit);
