@@ -7,15 +7,20 @@ import ItemHoverThumb from "./ItemHoverThumb";
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
 // a kit shows the same count-customizable breakdown Deal Check already has (DealCheckOverlay.jsx's
-// "📦 Kit — blocks these together" block), scoped down to quantity editing only (no
-// availability/swap-to-alternative — those depend on Deal Check's per-date booking context, which
-// doesn't exist here).
+// "📦 Kit — blocks these together" block), scoped down to quantity editing only.
 //
 // `overrides` (el.kitOverrides), when set, replaces the kit's own global `item.subItems` recipe for
 // THIS element instance only — every other place that kit is used (its own Edit screen, other
 // photos/zones) is unaffected. `onChange(nextOverrides)` persists the edit onto the element;
 // `onChange(undefined)` resets back to the kit's live default recipe.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, textP, textS, border, cardBg, accent, isDark, fmt }) {
+//
+// `onCheckAvailability(cItem, onPick)`, when given, renders a 📦 icon on each real (non-recipe)
+// component that opens the caller's own per-date stock-availability modal — same feature a
+// top-level element already has (Build's own 📦), just reused here to swap a KIT component to an
+// available alternative instead of picking the top-level element. Omit the prop (as Library does —
+// it has no client/event-date context to check availability against) and the icon simply never
+// renders; nothing else about the component changes.
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, onCheckAvailability, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, textP, textS, border, cardBg, accent, isDark, fmt }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
@@ -161,6 +166,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
                   {cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}>📦</span>}
+                  {cItem && onCheckAvailability && (
+                    <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); })}
+                      title="Check stock availability & swap this component" style={{ cursor: "pointer", fontSize: 11, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}>📦</span>
+                  )}
                   {cFloral && (
                     <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>
                       🌸
@@ -195,6 +204,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     imsInventory={imsInventory}
                     flowerPatterns={flowerPatterns}
                     qtyMultiplier={1}
+                    onCheckAvailability={onCheckAvailability}
                     rcSubcatFactors={rcSubcatFactors}
                     rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={mandiCatalogue}

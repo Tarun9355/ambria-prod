@@ -187,13 +187,17 @@ export default function StudioBuild({ ctx }) {
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
-  const openAvailModal = async (zoneKey, idx, el, rc) => {
+  // `onPick(pickedItemOrNull)`, when given, hands the picked item back to the CALLER instead of the
+  // hardcoded zoneElements-by-index update below — lets a kit component row (KitComponentsEditor's
+  // own 📦 icon) reuse this exact same modal/availability-lookup to swap ITS item, without a second
+  // copy of the modal or the availability-fetch logic.
+  const openAvailModal = async (zoneKey, idx, el, rc, onPick) => {
     // Inventory-sourced elements (el.invId) already know their exact real sub-category — no
     // Rate-Card→IMS alias lookup needed, unlike the legacy rc path below.
     const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
     const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
     const date = activeFnMeta?.date || clientDate || "";
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || null });
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || null, onPick: onPick || null });
     try {
       const { inventory, blocksForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
@@ -206,8 +210,9 @@ export default function StudioBuild({ ctx }) {
   };
   const saveAvailPick = () => {
     if (!availModal) return;
-    const { zoneKey, idx, selectedId, items } = availModal;
+    const { zoneKey, idx, selectedId, items, onPick } = availModal;
     const pick = (items || []).find(i => i.id === selectedId);
+    if (onPick) { onPick(selectedId && pick ? pick : null); setAvailModal(null); return; }
     setZoneElements(p => {
       const elems = [...(p[zoneKey] || [])];
       if (!elems[idx]) return p;
@@ -1051,6 +1056,7 @@ export default function StudioBuild({ ctx }) {
                       flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
                       qtyMultiplier={el.qty||1}
                       dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
+                      onCheckAvailability={(cItem,onPick)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick)}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
                       mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
@@ -1612,6 +1618,7 @@ export default function StudioBuild({ ctx }) {
                     flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
                     qtyMultiplier={el.qty||1}
                     dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
+                    onCheckAvailability={(cItem,onPick)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick)}
                     rcSubcatFactors={rcSubcatFactors}
                     rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
@@ -1930,7 +1937,7 @@ export default function StudioBuild({ ctx }) {
             ))}
           </div>
           <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,color:textS}}>{availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."}</span>
+            <span style={{fontSize:10,color:textS}}>{availModal.onPick ? "Pick an item to swap this kit component to." : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin.")}</span>
             <div style={{display:"flex",gap:8}}>
               <button onClick={()=>setAvailModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
               <button onClick={saveAvailPick} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>
