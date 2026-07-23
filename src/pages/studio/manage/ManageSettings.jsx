@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { SPACES, TAX_LABELS, DEFAULT_TAX_KEYS, taxOr, ZONE_META } from "../../../lib/studio/taxonomy";
-import { DEFAULT_FILTER_PRIORITY, BATCH_TAGGER_LAST_RUN_SK } from "../../../lib/studio/keys";
+import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
 import { INV_CATS } from "../../../lib/inventory/constants";
 import { fetchCachedContracts, fetchSeason } from "../../../lib/ims/lms";
-import { kvGet } from "../../../lib/ims/kv";
 import TransportEditor from "../TransportEditor.jsx";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
@@ -24,8 +23,6 @@ export default function ManageSettings({ ctx }) {
     settingsView, setSettingsView,
     // auth
     authUser, isAdmin, hasPerm, studioSettingsAllowed,
-    // library / batch tagger
-    batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused,
     // venues
     customInhouse, customOutdoor, saveVenues,
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
@@ -51,15 +48,6 @@ export default function ManageSettings({ ctx }) {
   } = ctx;
 
   const saveFilterPriority = ctxSaveFilterPriority || setFilterPriority;
-
-  // ═══ Batch tagger — last-run info, re-fetched each time the Tagger tab opens ═══
-  const [taggerLastRun, setTaggerLastRun] = useState(null);
-  useEffect(() => {
-    if (settingsView !== "tagger") return;
-    let alive = true;
-    kvGet(BATCH_TAGGER_LAST_RUN_SK).then((v) => { if (alive && v && typeof v === "object") setTaggerLastRun(v); }).catch(() => {});
-    return () => { alive = false; };
-  }, [settingsView]);
 
   // ═══ §26 CALENDAR DEMAND OVERLAY — source LMS contracts + season from Supabase ═══
   // Faithful behavior: booked contracts (lms_contracts cache) + season categories.
@@ -524,7 +512,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"], ["transport", "🚛 Transport & Power"], ["tagger", "🌙 Library / Tagger"]];
+          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"], ["transport", "🚛 Transport & Power"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
@@ -833,40 +821,6 @@ export default function ManageSettings({ ctx }) {
             })}
           </div>
           <div style={{ fontSize: 10, color: textS, marginTop: 10, lineHeight: 1.5 }}>Tip: a sub-category inherits its category's department. Truss steel → Tenting · masking/drape fabric → Fabric · genset → Lighting · transport → Transport · manpower by worker type — all handled automatically.</div>
-        </div>;
-      })()}
-      {settingsView === "tagger" && (() => {
-        const timeAgo = (iso) => {
-          if (!iso) return null;
-          const ms = Date.now() - new Date(iso).getTime();
-          if (!Number.isFinite(ms)) return null;
-          const min = Math.floor(ms / 60000);
-          if (min < 1) return "just now";
-          if (min < 60) return `${min} min ago`;
-          const hr = Math.floor(min / 60);
-          if (hr < 24) return `${hr} hr ago`;
-          const day = Math.floor(hr / 24);
-          return `${day} day${day === 1 ? "" : "s"} ago`;
-        };
-        return <div style={{ maxWidth: 520 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: textP, marginBottom: 4 }}>🌙 Library / Tagger</div>
-          <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Controls for the 15-minute batch tagger that AI-tags library images. Admin-only.</div>
-          <div style={{ borderRadius: 10, border: `1px solid ${border}`, padding: 14, background: cardBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: textP }}>{batchTaggerPaused ? "🔴 Paused" : "🟢 Running"} — Batch Tagger</div>
-              <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>
-                {taggerLastRun ? `Last run: ${timeAgo(taggerLastRun.at)} · tagged ${taggerLastRun.tagged ?? 0} image${taggerLastRun.tagged === 1 ? "" : "s"}` : "Runs automatically every 15 minutes."}
-              </div>
-              {batchTaggerPaused && (
-                <div style={{ fontSize: 10, color: "#F59E0B", marginTop: 4 }}>Paused by {batchTaggerMeta?.pausedBy || "—"}{batchTaggerMeta?.pausedAt ? ` · ${timeAgo(batchTaggerMeta.pausedAt)}` : ""}</div>
-              )}
-            </div>
-            {toggleBatchTaggerPaused && (
-              <button onClick={toggleBatchTaggerPaused} style={{ ...S.btn(batchTaggerPaused), fontSize: 11, padding: "6px 14px", whiteSpace: "nowrap", background: batchTaggerPaused ? "#16A34A" : "#F59E0B", color: "#fff" }}>
-                {batchTaggerPaused ? "▶ Resume" : "⏸ Pause"}
-              </button>
-            )}
-          </div>
         </div>;
       })()}
     </div>

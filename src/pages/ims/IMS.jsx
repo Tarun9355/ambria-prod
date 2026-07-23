@@ -357,9 +357,9 @@ export default function IMS() {
     }
   }, []);
 
-  // Hides every item in this sub-category from AI photo-tagging's vocabulary (both the client
-  // aiTagImage tagger and the nightly batch-tagger Edge Function read this) — replaces the old
-  // Rate-Card-only "not taggable in Pricing" flag for tagging purposes. Same optimistic pattern.
+  // Hides every item in this sub-category from AI photo-tagging's vocabulary (the client aiTagImage
+  // tagger reads this) — replaces the old Rate-Card-only "not taggable in Pricing" flag for tagging
+  // purposes. Same optimistic pattern.
   const updateSubcatTagHidden = useCallback(async (id, hidden) => {
     setRateCardCategories((prev) => prev.map((r) => (r.id === id ? { ...r, tag_hidden: hidden } : r)));
     try {

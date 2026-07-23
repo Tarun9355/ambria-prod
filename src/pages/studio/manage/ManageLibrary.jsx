@@ -4,8 +4,9 @@ import KitComponentsEditor from "../../../components/shared/KitComponentsEditor"
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS } from "../../../lib/studio/taxonomy";
-import { logTagCorrections } from "../../../lib/studio/tagFeedback";
-import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal } from "../../../lib/studio/libraryQueries";
+import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
+import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
+import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 
@@ -17,7 +18,7 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   const [cursor, setCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, nightly: 0, manual: 0, build: 0 });
+  const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, manual: 0, build: 0 });
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   // A failed page/counts fetch used to be swallowed silently, leaving counts at their zero-
   // initialized state and the grid empty — indistinguishable from "the library is actually empty."
@@ -32,8 +33,12 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
     return () => clearTimeout(t);
   }, [search]);
 
-  const status = (libStatus === "nightly" || libStatus === "manual" || libStatus === "build") ? undefined : libStatus;
-  const tagSource = libStatus === "nightly" ? "nightly" : libStatus === "manual" ? "manual" : libStatus === "build" ? "build" : undefined;
+  // `libStatus` is a UI-only selector that unions the two orthogonal dimensions (lifecycle +
+  // tag source) into one chip row. Split it back into (status, tagSource) for the query — these are
+  // NOT one enum (spec §9-D). See LIB_STATUS / TAG_SOURCE in libraryQueries.js.
+  const isTagSourceChip = libStatus === TAG_SOURCE.MANUAL || libStatus === TAG_SOURCE.BUILD;
+  const status = isTagSourceChip ? undefined : libStatus;
+  const tagSource = isTagSourceChip ? libStatus : undefined;
   const filterKey = JSON.stringify(filters);
   const venueKey = `${venueGroup}|${venueNames.join(",")}`;
 
@@ -162,7 +167,7 @@ export default function ManageLibrary({ ctx }) {
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern, studioFloralData, dealCheckData,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logCorrection, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -239,9 +244,11 @@ export default function ManageLibrary({ ctx }) {
   // Folder-imported photos carry only a seeded zone tag (areasElements) until the AI runs — that
   // alone must NOT read as "tagged", or they hide in Needs-review and bulk skips them. libPhotoIsTagged
   // discounts the seeded zone and keys off the _aiTagged stamp / real tags.
-  const photoStatus = (img) => img?._verified ? "verified"
-    : libPhotoIsTagged(img) ? "review"
-    : "untagged";
+  // Lifecycle only (LIB_STATUS) — the client-side twin of libraryQueries.computeLibStatus; reads
+  // NONE of tag_source, which is a separate/orthogonal attribution dimension (spec §9-D).
+  const photoStatus = (img) => img?._verified ? LIB_STATUS.VERIFIED
+    : libPhotoIsTagged(img) ? LIB_STATUS.REVIEW
+    : LIB_STATUS.UNTAGGED;
   // Same 3-state model for videos: verified (a person confirmed), review (AI/has tags, unconfirmed),
   // or untagged (no tag entry yet). Drives the Videos status folders + bulk video tagging.
   const videoStatus = (v) => {
@@ -251,7 +258,7 @@ export default function ManageLibrary({ ctx }) {
     const hasTag = t._aiTagged || t.venue || t.fn || t.tier || t.io || (t.styles || []).length || (t.colors || []).length || Object.keys(t.zonePhotos || {}).length;
     return hasTag ? "review" : "untagged";
   };
-  const [libStatus, setLibStatus] = useState("review"); // review | verified | untagged | nightly | manual — defaults to review so users don't land on Verified images and accidentally retag them
+  const [libStatus, setLibStatus] = useState(LIB_STATUS.REVIEW); // LIB_STATUS.* | TAG_SOURCE.* (a UI-only union of the two dims) — defaults to review so users don't land on Verified images and accidentally retag them
   const libPage = usePaginatedLibrary({
     libStatus, filters: libFilters, venueGroup: libVenueGroup, venueNames: libVenueNames,
     inhouseVenueNames: allInhouseVenues, search: libSearch, mergeLibItems,
@@ -364,7 +371,7 @@ export default function ManageLibrary({ ctx }) {
 
       setRebuildMsg(`Saving ${newImgs.length} new images…`);
       await saveLib(newImgs);
-      libPage.prependItems(newImgs.filter(i => libStatus === "untagged"));
+      libPage.prependItems(newImgs.filter(i => libStatus === LIB_STATUS.UNTAGGED));
       showMsg(
         `✅ Library rebuilt: ${newImgs.length} added (${skipped} already existed). ` +
         `Run "🤖 Tag all untagged" next.`,
@@ -447,7 +454,7 @@ export default function ManageLibrary({ ctx }) {
   };
 
   // Status filter, search, sidebar filters, and sort (most-recently-tagged first for
-  // review/nightly/manual) all happen server-side now — see usePaginatedLibrary above.
+  // review/manual) all happen server-side now — see usePaginatedLibrary above.
   // Some rows point at a Cloudinary asset that no longer resolves (e.g. a failed/partial import) —
   // rather than the <img> silently going blank and leaving a name-only card, drop the whole card
   // once its image 404s. brokenImgIds is session-local (not persisted) and reset per page load.
@@ -511,12 +518,11 @@ export default function ManageLibrary({ ctx }) {
         {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
-            ["verified", "✅", "Verified", "reviewed by a person", libPage.counts.verified, "#059669"],
-            ["review", "🤖", "Needs review", "AI-tagged — to check", libPage.counts.review, "#7C3AED"],
-            ["untagged", "❓", "Untagged", "no tags yet", libPage.counts.untagged, "#9CA3AF"],
-            ["nightly", "🌙", "Nightly Tagged", "tagged by nightly cron", libPage.counts.nightly, "#0EA5E9"],
-            ["manual", "✋", "Manual Tagged", "tagged via manual selection", libPage.counts.manual, "#F59E0B"],
-            ["build", "🏗️", "Build Added", "uploaded from Build — cross-check before verifying", libPage.counts.build, "#EC4899"],
+            [LIB_STATUS.VERIFIED, "✅", "Verified", "reviewed by a person", libPage.counts.verified, "#059669"],
+            [LIB_STATUS.REVIEW, "🤖", "Needs review", "AI-tagged — to check", libPage.counts.review, "#7C3AED"],
+            [LIB_STATUS.UNTAGGED, "❓", "Untagged", "no tags yet", libPage.counts.untagged, "#9CA3AF"],
+            [TAG_SOURCE.MANUAL, "✋", "Manual Tagged", "tagged via manual selection", libPage.counts.manual, "#F59E0B"],
+            [TAG_SOURCE.BUILD, "🏗️", "Build Added", "uploaded from Build — cross-check before verifying", libPage.counts.build, "#EC4899"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
             return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
@@ -551,7 +557,7 @@ export default function ManageLibrary({ ctx }) {
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libPage.counts[libStatus] ?? libVisible.length}{libPage.loading ? "…" : ""}</span>
-          {libStatus === "untagged" && libVisible.length > 0 && (
+          {libStatus === LIB_STATUS.UNTAGGED && libVisible.length > 0 && (
             <>
               <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>
                 {libSelected.size === libVisible.length ? "Deselect all" : `Select all (${libVisible.length})`}
@@ -589,18 +595,18 @@ export default function ManageLibrary({ ctx }) {
           {libVisible.map(img => {
             const isSel = libSelected.has(img.id);
             return (
-            <div key={img.id} onClick={() => libStatus === "untagged" && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
+            <div key={img.id} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
               <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
-                const m = st === "verified" ? { t: "✅", c: "#059669" } : st === "review" ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
-                const verifier = st === "verified" ? (img._verifiedBy || null) : null;
-                const dateStr = st === "verified" && img._verifiedAt ? new Date(img._verifiedAt).toLocaleDateString() : null;
-                const editedBy = st === "verified" && img._lastEditedBy && img._lastEditedBy !== verifier ? img._lastEditedBy : null;
+                const m = st === LIB_STATUS.VERIFIED ? { t: "✅", c: "#059669" } : st === LIB_STATUS.REVIEW ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
+                const verifier = st === LIB_STATUS.VERIFIED ? (img._verifiedBy || null) : null;
+                const dateStr = st === LIB_STATUS.VERIFIED && img._verifiedAt ? new Date(img._verifiedAt).toLocaleDateString() : null;
+                const editedBy = st === LIB_STATUS.VERIFIED && img._lastEditedBy && img._lastEditedBy !== verifier ? img._lastEditedBy : null;
                 const editDateStr = editedBy && img._lastEditedAt ? new Date(img._lastEditedAt).toLocaleDateString() : null;
-                const tip = st === "verified"
+                const tip = st === LIB_STATUS.VERIFIED
                   ? `Tagged by ${verifier || "unknown"}${dateStr ? ` on ${dateStr}` : ""}${editedBy ? ` · edited by ${editedBy}${editDateStr ? ` on ${editDateStr}` : ""}` : ""}`
-                  : st === "review" ? "AI-tagged — needs review" : "Untagged";
+                  : st === LIB_STATUS.REVIEW ? "AI-tagged — needs review" : "Untagged";
                 return (
                   <div style={{ position: "absolute", top: 6, left: 6, right: 30, display: "flex", alignItems: "center", gap: 3 }}>
                     <div title={tip} style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>
@@ -609,12 +615,12 @@ export default function ManageLibrary({ ctx }) {
                 );
               })()}
               {/* Checkbox — shown in untagged view; clicking it toggles selection without opening detail */}
-              {libStatus === "untagged" && (
+              {libStatus === LIB_STATUS.UNTAGGED && (
                 <div onClick={e => { e.stopPropagation(); setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }); }} style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSel ? "#7C3AED" : "rgba(255,255,255,0.8)"}`, background: isSel ? "#7C3AED" : "rgba(0,0,0,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", fontWeight: 700 }}>
                   {isSel ? "✓" : ""}
                 </div>
               )}
-              {libStatus !== "untagged" && (img.linkedTemplates || []).length > 0 && <div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
+              {libStatus !== LIB_STATUS.UNTAGGED && (img.linkedTemplates || []).length > 0 && <div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
               {(img.elements || []).length > 0 && <div style={{ position: "absolute", top: 28, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(124,58,237,0.8)", fontSize: 9, color: "#fff" }}>📋 {(img.elements || []).length}</div>}
               <div style={{ padding: "6px 8px" }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
@@ -694,24 +700,13 @@ export default function ManageLibrary({ ctx }) {
                       try{
                         const result=await Promise.race([aiTagImage(libEditImg.url),new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),30000))]);
                         if(result){
-                          const updated={...libEditImg};
-                          // Handle tags — support both {tags:{...}} and flat {eventType:[...]} formats
-                          const tagSrc=result.tags||result;
-                          if(tagSrc){updated.tags={...(updated.tags||{})};Object.keys(taxonomy).forEach(k=>{if(Array.isArray(tagSrc[k])&&tagSrc[k].length)updated.tags[k]=tagSrc[k];});}
-                          if(result.name&&(!updated.name||updated.name.startsWith("img ")))updated.name=result.name;
-                          if(Array.isArray(result.elements)&&result.elements.length>0)updated.elements=result.elements;
-                          if(typeof result.lightCount==="number")updated.lightCount=result.lightCount;
-                          if(Array.isArray(result.unrecognized))updated.unrecognized=result.unrecognized;
-                          if(result.tags&&typeof result.tags==="object")updated._aiTags=result.tags; // snapshot AI suggestion for the corrections diff
-                          if(result._aiThinking)updated._aiThinking=result._aiThinking; // model's own reasoning, shown in the panel below
-                          if(result._aiRawResponse)updated._aiRawResponse=result._aiRawResponse; // pristine JSON Claude returned, before matching
-                          updated._aiTagged=true;
-                          updated._aiTaggedAt=Date.now(); // so Needs-review sorts by most-recently-tagged
-                          // Handle dims
+                          // Shared merge — see applyAiTagResult (spec §9-B). Stamps tagSource:"manual"
+                          // (this button used to omit it, so re-tagged photos silently missed the
+                          // "Manual Tagged" chip — now fixed by going through the one helper).
+                          const { patch } = applyAiTagResult(libEditImg, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
+                          setLibEditImg({ ...libEditImg, ...patch });
                           const d=result.dims||{};
                           const hasDims=(d.trussL||d.trussW||d.trussH||d.floorL||d.floorW);
-                          if(hasDims){updated.dims={...(updated.dims||{}),trussL:d.trussL||0,trussW:d.trussW||0,trussH:d.trussH||0,floorL:d.floorL||0,floorW:d.floorW||0,plH:d.plH||updated.dims?.plH||"",mkT:d.mkT||updated.dims?.mkT||"",mkWalls:d.mkWalls||updated.dims?.mkWalls||{}};}
-                          setLibEditImg(updated);
                           showMsg(`✓ AI: ${result.elements?.length||0} elements${hasDims?", dims "+d.trussL+"×"+d.trussW+"×"+d.trussH:"— no dims (fill manually)"}`,"green");
                         }
                         // No else here: aiTagImage already shows the specific reason (rate limit,
@@ -735,15 +730,15 @@ export default function ManageLibrary({ ctx }) {
                         : { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
                       saveLib([verified]);
                       // Already-verified photo re-saved → update in place; newly-verified → it just
-                      // left this tab (review/untagged/nightly/manual), drop it from the visible page.
+                      // left this tab (review/untagged/manual/build), drop it from the visible page.
                       if (wasVerified) libPage.updateItem(verified.id, verified); else libPage.removeItem(verified.id);
                       setLibEditImg(verified);
                       // Only the first verification counts as a contribution — re-saves of an
                       // already-verified photo update _lastEditedBy above but don't log again.
-                      if (!wasVerified) logCorrection?.({ photoId: libEditImg.id, photoName: libEditImg.name, source: "library" });
+                      if (!wasVerified) logVerificationEvent?.({ photoId: libEditImg.id, photoName: libEditImg.name, source: "library" });
                       // Capture per-field corrections (AI suggestion → what the human saved) so future
                       // tagging learns from them; then refresh the in-session corrections feed.
-                      if (libEditImg._aiTags) logTagCorrections(libEditImg.id, libEditImg._aiTags, libEditImg.tags || {}, authUser?.name).then((n) => { if (n) refreshTagCorrections?.(); });
+                      if (libEditImg._aiTags) logFieldCorrections(libEditImg.id, libEditImg._aiTags, libEditImg.tags || {}, authUser?.name).then((n) => { if (n) refreshTagCorrections?.(); });
                       showMsg("✅ Saved & verified", "green");
                     }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px",
                       // Dim the Save button when Full Box + no density to give visual cue
@@ -2204,7 +2199,7 @@ export default function ManageLibrary({ ctx }) {
                     {hasTag&&<button onClick={()=>{const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}
-                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);if(!wasVerified)logCorrection?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
+                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
                     <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
@@ -2368,7 +2363,7 @@ export default function ManageLibrary({ ctx }) {
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🤖 AI Tag"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
-              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); if (!wasVerified) logCorrection?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
+              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>
             <div style={{ padding: "16px 22px" }}>

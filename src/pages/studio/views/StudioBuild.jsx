@@ -72,7 +72,7 @@ export default function StudioBuild({ ctx }) {
     // video modal
     setVideoModal, setVideoPlaying,
     // misc
-    showMsg, saveLib, authUser, logCorrection,
+    showMsg, saveLib, authUser, logVerificationEvent,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
   } = ctx;
@@ -1845,7 +1845,7 @@ export default function StudioBuild({ ctx }) {
         saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
         // Only the first verification counts as a contribution — re-corrections of an already-
         // verified photo update _lastEditedBy above but don't log again.
-        if(!wasVerified) logCorrection?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
+        if(!wasVerified) logVerificationEvent?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
         showMsg("✅ Correction saved to master — thanks!","green");
         setCorrectPhoto(null);
       };

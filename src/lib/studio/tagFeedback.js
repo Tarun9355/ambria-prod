@@ -6,11 +6,15 @@ const asArr = (v) => (Array.isArray(v) ? v : v ? [v] : []);
 const normVal = (v) => asArr(v).map((x) => String(x).trim()).filter(Boolean).sort().join(", ");
 
 /**
- * Record per-field corrections: compare what the AI suggested (aiTags) to what the human saved
- * (finalTags) and write one row per changed field to tag_corrections. No-op if nothing changed or
- * there was no AI suggestion to compare against.
+ * Record the per-field AI-vs-human tag diff: compare what the AI suggested (aiTags) to what the
+ * human saved (finalTags) and write one row per changed field to tag_corrections. This is the
+ * LEARNING signal — recent rows are rendered back into the tagging prompt (see renderCorrectionsText,
+ * below). No-op if nothing changed or there was no AI suggestion to compare.
+ *
+ * NOT to be confused with logVerificationEvent (photoCorrections.js → photo_corrections), which is
+ * the "who verified what, when" audit/leaderboard. Both fire from "Save & Verify".
  */
-export async function logTagCorrections(photoId, aiTags, finalTags, by) {
+export async function logFieldCorrections(photoId, aiTags, finalTags, by) {
   if (!photoId || !aiTags || !finalTags) return 0;
   const rows = [];
   for (const f of FIELDS) {

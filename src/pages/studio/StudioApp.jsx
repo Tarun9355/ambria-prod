@@ -60,7 +60,7 @@ import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
   fetchZoneLibraryPhotos, fetchRecentLibraryPhotos, fetchUntaggedLibraryTargets,
-  fetchVerifiedLibraryPhotos, checkExistingLibraryUrls,
+  fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
@@ -72,11 +72,16 @@ import {
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, TAG_KB_SK,
-  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, BATCH_TAGGER_PAUSED_SK,
+  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
 import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/tagFeedback.js";
 import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/photoCorrections.js";
+// AI-tagging matcher core — extracted from the inline copy that used to live in aiTagImage so the
+// scoring/thresholds sit in one testable module (spec §9-A / §12.1).
+import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
+// One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
+import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -1406,8 +1411,6 @@ export default function StudioApp() {
   const [dcCollapsedZones, setDcCollapsedZones] = useState({});
   const [floralHardPropMap, setFloralHardPropMap] = useState(FLORAL_HARDPROP_DEFAULT);
   const [softHolds, setSoftHolds] = useState({});
-  const [batchTaggerPaused, setBatchTaggerPaused] = useState(false);
-  const [batchTaggerMeta, setBatchTaggerMeta] = useState(null);
   const [trussAlloc, setTrussAlloc] = useState({});
   const [dcAmendDiff, setDcAmendDiff] = useState(null);
   const [amendRequests, setAmendRequests] = useState([]);
@@ -1988,7 +1991,6 @@ export default function StudioApp() {
           for (const id of expiredIds) supabase.from("soft_holds").delete().eq("id", id).then(() => {});
         }
       } catch {}
-      try { const v = await kvGet(BATCH_TAGGER_PAUSED_SK); const meta = v && typeof v === "object" ? v : null; if (!cancelled) { setBatchTaggerPaused(!!meta?.paused); setBatchTaggerMeta(meta); } } catch {}
       try { const v = await kvGet(DC_CACHE_SK); if (v != null) { const dc = parse(v); if (dc && typeof dc === "object" && !Array.isArray(dc) && !cancelled) setDcCache(dc); } } catch {}
       try {
         const rows = await fetchAll("truss_allocations"); // now the shared table (IMS + Studio), off the blob
@@ -2085,7 +2087,7 @@ export default function StudioApp() {
   // ── Realtime: library is a TABLE — patch row-level UPDATE/DELETE live for whatever's already
   // cached (echoes of our own writes are idempotent). Since `libItems` is now a lazy cache rather
   // than the whole table, an INSERT for an id we've never queried is deliberately IGNORED here —
-  // otherwise the nightly cron tagging thousands of rows overnight would silently balloon every
+  // otherwise a bulk import/tag pass inserting thousands of rows would silently balloon every
   // open tab's cache. Screens that need a specific row fetch it themselves (ensureLibItems / the
   // paginated browse query / zone match query), which is what populates the cache in the first place.
   useEffect(() => {
@@ -2240,10 +2242,13 @@ export default function StudioApp() {
       for (const id of dels) await deleteRow("library", id);
     } catch (e) { showMsg?.("Library save failed: " + (e?.message || e), "red"); }
   }, [showMsg]);
-  // Append one human correction to the shared log (who/what/when) for contribution reporting.
-  // A plain INSERT into photo_corrections (see photoCorrections.js) — no read-modify-write, so
-  // concurrent saves from different people can't clobber each other's entries.
-  const logCorrection = useCallback(async (info) => {
+  // Log ONE verification event (who verified/edited which photo/video, when) for contribution
+  // reporting — the "Contributions" leaderboard. A plain INSERT into the photo_corrections table
+  // (see photoCorrections.js), no read-modify-write, so concurrent saves can't clobber each other.
+  // NOT to be confused with logFieldCorrections (tagFeedback.js → tag_corrections), which records
+  // the per-field AI-vs-human tag diff that gets fed back into the tagging prompt. Both fire from
+  // "Save & Verify"; this one is the audit/leaderboard, that one is the learning signal.
+  const logVerificationEvent = useCallback(async (info) => {
     const row = await logPhotoCorrection({
       photoId: info?.photoId || "", photoName: info?.photoName || "",
       source: info?.source || "build", kind: info?.kind || "photo",
@@ -2270,7 +2275,6 @@ export default function StudioApp() {
     if (!verified.length) return null;
     const lightNames = new Set((rcItems || []).filter((i) => String(i.cat || "").toLowerCase() === "lighting").map((i) => String(i.name).toLowerCase().trim()));
     const kb = buildTagKB(verified, lightNames);
-    kb.promptText = renderTagKBText(kb); // persist the rendered text so the nightly edge function can reuse it
     setTagKB(kb);
     reliableSave(TAG_KB_SK, JSON.stringify(kb), "Tag knowledge base").catch(() => {});
     return kb;
@@ -4664,8 +4668,7 @@ Return ONLY JSON:
     // "structure"). Exclude only the raw-scaffold ones by NAME (below), not either whole category —
     // blanket-excluding by category meant specific structure items could never be tagged no matter
     // what the prompt said, regardless of which of these two categories they happened to live in.
-    const STRUCT_KW = /\b(box truss|single u truss|u truss|truss|carpet|wall mask|fabric mask|masking|flex print|vinyl print|acrylic panel|genset|platform|riser|flooring)\b/i;
-    const RAW_SCAFFOLD_CATS = new Set(["structure", "tenting"]);
+    // (STRUCT_KW + RAW_SCAFFOLD_CATS now imported from the shared matcher module.)
     // Sub-categories flagged "hidden from AI tagging" (rate_card_categories.tag_hidden, set in IMS's
     // Sub-Categories admin panel) — replaces the old Rate-Card-only "not taggable in Pricing" flag.
     const invTagHiddenByKey = {};
@@ -4701,8 +4704,18 @@ Return ONLY JSON:
     // Sub-category vocabulary by top-level category (grounds element naming + routing).
     const subByCat = {}; taggableInv.forEach(i => { const c = String(i.cat || i.category || "").trim(); const s = String(i.subCat || i.subcategory || "").trim(); if (!c || !s) return; (subByCat[c] = subByCat[c] || new Set()).add(s); });
     const subcatText = Object.keys(subByCat).length ? ("Sub-category vocabulary by category (use these names and route each element to the right one):\n" + Object.entries(subByCat).map(([c, set]) => `- ${c}: ${[...set].join(", ")}`).join("\n")) : "";
-    // #1 — House tagging rules (admin-editable in Manage → Library), followed strictly.
-    const houseRules = (taxonomy.taggingStandards && String(taxonomy.taggingStandards).trim()) ? ("HOUSE TAGGING RULES (set by your team — follow strictly):\n" + String(taxonomy.taggingStandards).trim()) : "";
+    // House tagging rules (admin-editable in Manage → Library). These are the team's own domain
+    // rules and MUST win over the generic numbered instructions. To actually get the model to obey
+    // them (not just receive them) we lean on three levers: authority (named as mandatory in the
+    // system prompt), recency (placed LAST in the message, nearest the image — see promptText below),
+    // and salience (an override header). Buried at the top of a 15KB prompt they were getting diluted.
+    const houseRulesRaw = (taxonomy.taggingStandards && String(taxonomy.taggingStandards).trim()) ? String(taxonomy.taggingStandards).trim() : "";
+    const houseRules = houseRulesRaw
+      ? ("════════ HOUSE TAGGING RULES — SET BY THE AMBRIA TEAM · ABSOLUTE PRIORITY ════════\n"
+        + "Follow every rule below EXACTLY. Where any of these conflicts with the generic numbered\n"
+        + "instructions earlier in this message, THESE WIN. Apply them to the tags and elements you output.\n\n"
+        + houseRulesRaw)
+      : "";
     const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this IMS Inventory list. Copy the name character-for-character:\n${elemList}\n2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat", picked from the "Sub-category vocabulary by category" list below — this routes the exact-name match to the right bucket instead of the whole catalog, so pick the one that's visually true (e.g. a floral pot is cat "Florals", subCat "Flower Pot Large" — not a Lighting subCat just because a light sits nearby).\n3. For each visible element, estimate quantity and pick size (S/M/B) if available.\n4. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional; still fill "cat"/"subCat" with your best guess.\n5. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n6. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n7. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n8. NEVER tag "artificial flower", "faux flower", "fake flower/greenery/bouquet/garland" or similar as its own element. Real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item itself — it is never a separate physical item. Just tag the flower/floral item normally by its recipe or pot name; do not add an extra "artificial ___" entry for it.\n9. KITS — if what you see is several pieces sold and priced together as ONE bundled inventory item (e.g. a console with its own base pot, a stand with its own topper), tag it ONCE using that bundled item's exact name. Do NOT also separately list its individual component pieces — that double-counts cost and double-blocks inventory.\n10. ATTACHMENT — for EVERY element, also decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle sitting on a console table, a vase on a pedestal, a topper on a stand). If so, set "attachedTo" to the EXACT "name" you used for that other element (copy it character-for-character). If it is freestanding / not attached to anything else you tagged, set "attachedTo" to "". Still tag the item normally (name/qty/size) even when it's attached to something else — do not skip it, just record what it's attached to.\n11. CRITICAL — NAMING IS MANDATORY: "name" must ALWAYS be a specific, human-scannable name (5-9 words) a salesperson could recognize in a list of hundreds of photos — reference the zone/area, the dominant design style, AND one standout hero element, e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier" or "Boho Backdrop with Hanging Marigold Strings". NEVER settle for generic filler alone like "Wedding Decor", "Elegant Setup", "Floral Arrangement", "Event Design", or a bare venue/zone label — every single photo needs its own distinct, descriptive name, not a placeholder.\n12. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The "dims" fields (trussL/trussW/trussH/plH/mkT) capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss) — fill them whenever there's an overhead rig, regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT try to force a Jali into the Arch/Panel naming, it is its own shape). FIRST search the IMS Inventory list above (rule 1) for a SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic label, so use them whenever one visually matches. ONLY if no specific item matches, fall back to the generic sub-category combo name: MATERIAL (Wooden or Wrought Iron) + DEPTH (2D flat / 3D with visible depth) + SHAPE (Arch/Panel) from the sub-category vocabulary below. NEVER invent your own descriptive label (e.g. "Gold Mesh Dome Structure") for a structure element instead of matching it to the inventory list. Filling the truss dims is NEVER a substitute for tagging this — do not skip the structure element just because you already filled trussL/trussW/trussH.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"Mandap Stage — Ivory Drapes & Crystal Chandelier","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","cat":"Lighting","subCat":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal","attachedTo":""},{"name":"Console Table","cat":"Furniture","subCat":"Console Table","qty":1,"unit":"pc","size":"M","detail":"","attachedTo":""},{"name":"Pillar Candle","cat":"Lighting","subCat":"Candle","qty":2,"unit":"pc","size":"","detail":"","attachedTo":"Console Table"},{"name":"Custom Drape Structure","cat":"Fabric","subCat":"","qty":2,"unit":"pc","size":"","detail":"fabric","new":true,"attachedTo":""}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`;
     // Structured-outputs schema — the 7 tag fields are LOCKED to your exact taxonomy values (enums), so
     // Claude can never return an off-list or mis-cased tag (the root of photos not matching their zone).
@@ -4805,9 +4818,11 @@ Return ONLY JSON:
         : { type: "image", source: { type: "url", url } };
       const kbText = renderTagKBText(tagKB);
       const corrText = renderCorrectionsText(tagCorrections);
-      // House rules first (highest authority), then human corrections to learn from, then the learned
-      // knowledge base, then sub-category vocabulary, then the base instructions — all static, cached.
-      const promptText = [houseRules, corrText, kbText, subcatText, prompt].filter(Boolean).join("\n\n");
+      // Order = priority-by-recency: context first (human corrections to learn from, then the learned
+      // knowledge base, then sub-category vocabulary), then the base instructions, then the HOUSE RULES
+      // LAST so they sit closest to the target image and carry the most weight at generation time.
+      // All of this is static per session (only the image below is volatile), so the whole prefix is cached.
+      const promptText = [corrText, kbText, subcatText, prompt, houseRules].filter(Boolean).join("\n\n");
       const exemplars = (tagKB && Array.isArray(tagKB.exemplars)) ? tagKB.exemplars.slice(0, 4).filter(e => e && e.url) : [];
       const buildContent = (withExamples) => {
         const blocks = [{ type: "text", text: promptText }];
@@ -4827,7 +4842,8 @@ Return ONLY JSON:
         contentBlocks: content,
         model: "claude-opus-4-8",
         maxTokens: 8000, // room for adaptive thinking + the JSON
-        system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text.",
+        system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text."
+          + (houseRulesRaw ? " Your team has defined HOUSE TAGGING RULES (in the '════ HOUSE TAGGING RULES' block at the end of the message). Those rules are MANDATORY and take priority over the generic tagging instructions — follow every one of them exactly." : ""),
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
         // display:"summarized" — without it the model still thinks (billed the same) but the
         // thinking block's text comes back empty, so there'd be nothing to show a reviewer.
@@ -4857,6 +4873,10 @@ Return ONLY JSON:
         // response, so that name must survive even after this element's own "name" gets overwritten
         // with its matched inventory name.
         parsed.elements.forEach(el => { if (el) el._origName = el.name; });
+        // Junk-name backstop: the model occasionally emits a stray element with a meaningless name
+        // (e.g. "T") which then substring-matches a random catalog item or just sits as an inert ₹0
+        // row. Drop anything with no real word — nothing alphabetic of length >= 2 — before matching.
+        parsed.elements = parsed.elements.filter(el => normalize(el?.name).split(" ").some(w => /[a-z]/.test(w) && w.length >= 2));
         const ARTIFICIAL_KW = /\b(artificial|faux|fake)\b/i;
         const FLORAL_KW = /\b(flower|floral|greenery|leaves|leaf|petal|bouquet|garland|bunch|foliage|plant)\b/i;
         // House rule: real-vs-artificial is a %-blend the pricing engine (el.realPct) applies
@@ -4872,62 +4892,11 @@ Return ONLY JSON:
           return cleanName ? { ...el, name: cleanName } : el;
         });
         const sizeHints = { heavy: "B", large: "B", big: "B", tall: "B", medium: "M", mid: "M", regular: "M", small: "S", mini: "S", light: "S", short: "S" };
-        const normalize = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
-        // AI Synonym Dictionary (IMS Admin → Settings → 🔤 AI Synonyms) — ops-editable groups of words
-        // that mean the same physical thing (e.g. "Jali"/"Lattice"/"Mesh"/"Screen"). Maps every word in
-        // a group to that group's first word, so two synonym-equivalent words normalize to the same
-        // token before keyword-overlap scoring — letting ops teach the matcher new equivalences without
-        // a code/prompt change every time a naming mismatch turns up.
-        const synonymOf = {};
-        (imsSynonymDictionary || []).forEach(g => {
-          const words = Array.isArray(g?.words) ? g.words : [];
-          if (words.length < 2) return;
-          const canon = normalize(words[0]);
-          words.forEach(w => { synonymOf[normalize(w)] = canon; });
-        });
-        const canonWord = (w) => synonymOf[w] || w;
-        // Generic words that inflate keyword-overlap scores between UNRELATED items (colors/sizes/
-        // filler adjectives shared across many catalog names) — excluded so overlap only counts
-        // words that actually identify what the thing IS.
-        const stopWords = new Set([
-          "the", "a", "an", "of", "for", "with", "and", "in", "on", "to", "custom", "special", "premium",
-          "standard", "basic", "indian", "wedding", "event", "decor", "decorative", "piece", "item", "set",
-          "style", "design", "type", "look", "variant", "large", "small", "big", "mini", "tall", "short",
-          "medium", "huge", "giant", "tiny", "gold", "golden", "white", "silver", "black", "red", "pink",
-          "green", "blue", "ivory", "cream", "rose", "peach", "purple", "yellow", "orange", "maroon", "copper",
-        ]);
-        const keywords = (s) => normalize(s).split(" ").filter(w => !stopWords.has(w) && w.length > 1).map(canonWord);
-        // Best-effort match of one AI-proposed name against a candidate pool (exact → substring →
-        // keyword-overlap ≥40%). Shared by both the sub-cat-scoped and full-catalog passes below.
-        // Returns { item, method, score } (method: "exact"|"substring"|"overlap") so the caller can
-        // flag weak overlap-only matches for human review instead of silently trusting every match
-        // the same way a "new":true flag would.
-        const bestOf = (name, pool, keyOf) => {
-          const nameNorm = normalize(name);
-          const exact = pool.find(c => normalize(keyOf(c)) === nameNorm);
-          if (exact) return { item: exact, method: "exact", score: 100 };
-          const nameKw = keywords(name);
-          let bestScore = 0, best = null;
-          for (const c of pool) {
-            const cNorm = normalize(keyOf(c));
-            if (nameNorm.includes(cNorm) || cNorm.includes(nameNorm)) return { item: c, method: "substring", score: 90 }; // near-certain, stop here
-            const cKw = keywords(keyOf(c));
-            const overlap = nameKw.filter(w => cKw.some(cw => cw.includes(w) || w.includes(cw))).length;
-            // Denominator is the SMALLER keyword count, not the larger — a short, precise catalog
-            // name (e.g. "iron Jali", 2 keywords) fully contained inside a long AI-invented
-            // description (e.g. 7 keywords) should score as a strong match ("does this description
-            // contain everything that identifies this item?"), not get penalized to ~28% just
-            // because the AI's own phrasing was verbose. Using the larger count systematically
-            // under-scored short catalog names against wordy proposals — the exact failure mode that
-            // let the Jali structure fall through as unmatched.
-            const score = overlap > 0 ? (overlap / Math.min(nameKw.length, cKw.length)) * 100 : 0;
-            if (score > bestScore) { bestScore = score; best = c; }
-          }
-          return bestScore >= 40 ? { item: best, method: "overlap", score: bestScore } : null;
-        };
-        // Below this overlap-match score, flag the tagged element as low-confidence so a human
-        // reviewer can spot-check it — an exact/substring match, or a strong overlap, needs no flag.
-        const LOW_CONFIDENCE_BELOW = 65;
+        // Element-name → inventory matcher (exact → substring → keyword-overlap ≥40%), bound to the
+        // ops-editable AI Synonym Dictionary. Extracted to src/lib/studio/tagging/matcher.js so the
+        // scoring/thresholds live in one testable module (spec §9-A / §12.1).
+        // Overlap matches below MATCH.LOW_CONFIDENCE_BELOW are flagged low-confidence for review.
+        const { bestOf } = createMatcher(imsSynonymDictionary);
         // Matches an AI-proposed element name against a real IMS inventory item and, on a match,
         // sets invId so it prices via getElPriceFromInventory (floral-recipe Studio rate, SMB
         // toggle, sub-category scaling factor) exactly like a manually-added element.
@@ -4946,7 +4915,7 @@ Return ONLY JSON:
           const scopedInv = elSubKey ? taggableInv.filter(it => normalize(it.subCat || it.subcategory) === elSubKey) : [];
           const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, it => it.name)) || bestOf(el.name, taggableInv, it => it.name);
           if (invMatch) {
-            const lowConfidence = invMatch.method === "overlap" && invMatch.score < LOW_CONFIDENCE_BELOW;
+            const lowConfidence = invMatch.method === "overlap" && invMatch.score < MATCH.LOW_CONFIDENCE_BELOW;
             return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
           }
 
@@ -4954,7 +4923,7 @@ Return ONLY JSON:
           const scopedPat = elSubKey ? taggableRecipePatterns.filter(p => normalize(p.sub) === elSubKey) : [];
           const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, taggableRecipePatterns, p => p.name);
           if (patMatch) {
-            const lowConfidence = patMatch.method === "overlap" && patMatch.score < LOW_CONFIDENCE_BELOW;
+            const lowConfidence = patMatch.method === "overlap" && patMatch.score < MATCH.LOW_CONFIDENCE_BELOW;
             return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
           }
 
@@ -5052,6 +5021,37 @@ Return ONLY JSON:
           newNames.forEach(n => { if (!seenUnrec.has(n.toLowerCase())) { parsed.unrecognized = [...(parsed.unrecognized || []), n]; seenUnrec.add(n.toLowerCase()); } });
         }
         parsed.elements = parsed.elements.filter(el => !el.new);
+        // House-rule backstop (Rule 9): a lounge with sofas needs coffee tables — 1 per 3 sofas.
+        // This is a deterministic "always add N" rule the model skips even when it correctly counts
+        // the sofas in its own reasoning, so it's enforced in code (like the artificial-flower and
+        // naming backstops) instead of trusting the prompt. Only 3+ sofas trigger it — the L-shaped
+        // 2-sofa case (Rule 10) stays in the prompt since code can't see the seating layout. Tops up
+        // only the shortfall so an already-tagged coffee table is never doubled.
+        try {
+          const SOFA_RE = /\bsofa\b/i, COFFEE_TABLE_RE = /\bcoffee table\b/i;
+          const invById = (id) => imsInventory.find(i => i.id === id);
+          const catOf = (el) => { const it = el.invId ? invById(el.invId) : null; return `${it?.subCat || it?.subcategory || ""} ${el.name || ""}`; };
+          const qtyOf = (el) => Number(el.qty) || 1;
+          const sofaCount = parsed.elements.filter(el => SOFA_RE.test(catOf(el))).reduce((n, el) => n + qtyOf(el), 0);
+          const needed = Math.floor(sofaCount / 3);
+          if (needed > 0) {
+            const haveTables = parsed.elements.filter(el => COFFEE_TABLE_RE.test(catOf(el))).reduce((n, el) => n + qtyOf(el), 0);
+            const shortfall = needed - haveTables;
+            if (shortfall > 0) {
+              // Scope to the "Coffee Table" sub-category first so a name match can't grab a
+              // lookalike (e.g. "Moroccan pedestal / coffee table" filed under Florals/Pedestals);
+              // fall back to a name match only if that sub-cat isn't taggable.
+              const ctPool = taggableInv.filter(it => normalize(it.subCat || it.subcategory) === "coffee table");
+              const ct = (ctPool.length && bestOf("Coffee Table", ctPool, it => it.name)) || bestOf("Coffee Table", taggableInv, it => it.name);
+              if (ct) parsed.elements.push({
+                name: ct.item.name, cat: ct.item.cat || ct.item.category || "", subCat: ct.item.subCat || ct.item.subcategory || "",
+                qty: shortfall, unit: ct.item.unit || "pc", size: "", detail: "", invId: ct.item.id,
+                matchMethod: ct.method, matchScore: Math.round(ct.score),
+                _autoAdded: "house rule: 1 coffee table per 3 sofas",
+              });
+            }
+          }
+        } catch {}
         // Lightweight match-stats — no aggregate visibility existed into how often each dedup/match
         // tier actually fires; without it, tuning LOW_CONFIDENCE_BELOW/the 40% overlap floor is pure
         // guesswork. Persisted alongside _aiRawResponse so it can be queried/audited later.
@@ -5085,17 +5085,6 @@ Return ONLY JSON:
     } catch (e) { showMsg("Tag error: " + e.message, "red"); return null; }
   };
 
-  // ── Pause / resume the 15-min batch tagger ────────────────────────────────────
-  const toggleBatchTaggerPaused = useCallback(async () => {
-    const next = !batchTaggerPaused;
-    const meta = { paused: next, pausedBy: authUser?.name || "—", pausedAt: new Date().toISOString() };
-    setBatchTaggerPaused(next);
-    setBatchTaggerMeta(meta);
-    const res = await kvSet(BATCH_TAGGER_PAUSED_SK, meta);
-    if (res?.ok) showMsg(next ? "Batch tagger paused" : "Batch tagger resumed", "green");
-    else showMsg("Failed to save batch tagger state: " + (res?.error || "unknown error"), "red");
-  }, [batchTaggerPaused, authUser]);
-
   // ── Tag a specific selection of images (manual select in Library UI) ──────────
   // Same AI flow as runBulkTag but operates only on the caller-provided IDs.
   // Sets tagSource:"manual" so results appear in the Manual Tagged chip.
@@ -5116,22 +5105,9 @@ Return ONLY JSON:
       const img = targets[n];
       try {
         const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        const upd = {};
-        let gotTags = false;
-        if (result) {
-          const tagSrc = result.tags || result;
-          if (tagSrc) { const t = { ...(img.tags || {}) }; let any = false; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) { t[k] = tagSrc[k]; any = true; } }); if (any) { upd.tags = t; gotTags = true; } }
-          if (result.name && (!img.name || img.name.startsWith("img ") || img.name === "Untitled")) upd.name = result.name;
-          if (Array.isArray(result.elements) && result.elements.length > 0) { upd.elements = result.elements; gotTags = true; }
-          if (typeof result.lightCount === "number") upd.lightCount = result.lightCount;
-          if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
-          if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags;
-          if (result._aiThinking) upd._aiThinking = result._aiThinking;
-          if (result._aiRawResponse) upd._aiRawResponse = result._aiRawResponse;
-          const d = result.dims || {};
-          if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
-        }
-        if (gotTags) { upd._aiTagged = true; upd._aiTaggedAt = Date.now(); upd.tagSource = "manual"; ok++; }
+        // Shared merge — see applyAiTagResult (spec §9-B). Bulk paths add their own _aiFailed stamp.
+        const { patch: upd, gotTags } = applyAiTagResult(img, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
+        if (gotTags) ok++;
         else { upd._aiFailed = true; upd._aiFailedAt = Date.now(); fail++; }
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
@@ -5191,24 +5167,10 @@ Return ONLY JSON:
       const img = targets[n];
       try {
         const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        const upd = {};
-        let gotTags = false; // did the AI actually return usable tags/elements?
-        if (result) {
-          const tagSrc = result.tags || result;
-          if (tagSrc) { const t = { ...(img.tags || {}) }; let any = false; Object.keys(taxonomy).forEach(k => { if (Array.isArray(tagSrc[k]) && tagSrc[k].length) { t[k] = tagSrc[k]; any = true; } }); if (any) { upd.tags = t; gotTags = true; } }
-          if (result.name && (!img.name || img.name.startsWith("img ") || img.name === "Untitled")) upd.name = result.name;
-          if (Array.isArray(result.elements) && result.elements.length > 0) { upd.elements = result.elements; gotTags = true; }
-          if (typeof result.lightCount === "number") upd.lightCount = result.lightCount;
-          if (Array.isArray(result.unrecognized)) upd.unrecognized = result.unrecognized;
-          if (result.tags && typeof result.tags === "object") upd._aiTags = result.tags; // snapshot for the corrections diff at review time
-          if (result._aiThinking) upd._aiThinking = result._aiThinking;
-          if (result._aiRawResponse) upd._aiRawResponse = result._aiRawResponse;
-          const d = result.dims || {};
-          if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) upd.dims = { ...(img.dims || {}), trussL: d.trussL || 0, trussW: d.trussW || 0, trussH: d.trussH || 0, floorL: d.floorL || 0, floorW: d.floorW || 0, plH: d.plH || img.dims?.plH || "", mkT: d.mkT || img.dims?.mkT || "", mkWalls: d.mkWalls || img.dims?.mkWalls || {} };
-        }
-        // Only mark "AI-tagged" when we actually got tags — a failed/empty pass (e.g. credits out)
-        // stays untagged so it's retried on the next run instead of looking done-but-blank.
-        if (gotTags) { upd._aiTagged = true; upd._aiTaggedAt = Date.now(); upd.tagSource = "manual"; ok++; }
+        // Shared merge — see applyAiTagResult (spec §9-B). Only marks "AI-tagged" when tags actually
+        // landed; a failed/empty pass stays untagged (gotTags=false) so it's retried next run.
+        const { patch: upd, gotTags } = applyAiTagResult(img, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
+        if (gotTags) ok++;
         else { upd._aiFailed = true; upd._aiFailedAt = Date.now(); fail++; }
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
@@ -6106,7 +6068,7 @@ Return ONLY JSON:
   const applyZoneUpload = () => {
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: "build", _aiTagged: true, _aiTaggedAt: Date.now() };
+    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
     mergeLibItems([libImg]); saveLib([libImg]);
     logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
@@ -6154,7 +6116,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logCorrection, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, batchTaggerPaused, batchTaggerMeta, toggleBatchTaggerPaused, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch,
     zonePrintSearch, setZonePrintSearch,
