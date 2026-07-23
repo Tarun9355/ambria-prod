@@ -4822,14 +4822,13 @@ Return ONLY JSON:
       // knowledge base, then sub-category vocabulary), then the base instructions, then the HOUSE RULES
       // LAST so they sit closest to the target image and carry the most weight at generation time.
       // All of this is static per session (only the image below is volatile), so the whole prefix is cached.
-      // processNote frames the whole message with the explicit 3-step order the team wants: weigh the
-      // learned KB heavily FIRST (strongest prior), enforce the house RULES as hard constraints SECOND
-      // (they override the KB on any conflict — that precedence is the team's call), and only THEN tag
-      // the photo. It leads the prompt (and is echoed in the system prompt) so the model treats it as
-      // the governing procedure, not just another instruction buried mid-message.
+      // processNote frames the whole message with a photo-FIRST order: identify what is actually in the
+      // image, then use the learned KB only as a naming/count reference (never as a reason to tag the
+      // area's "usual" items when they aren't present — over-weighting the KB caused it to hallucinate
+      // typical elements), then enforce the house RULES as hard constraints that win any KB conflict.
       const processNote = houseRulesRaw
-        ? "TAGGING PROCESS — follow in this exact order every time: (1) LEARN — absorb the HOUSE TAGGING KNOWLEDGE BASE below and weigh it heavily; it is learned from your team's verified photos and is your STRONGEST prior for vocabulary, per-area norms, and typical counts. (2) CONSTRAIN — then apply the HOUSE TAGGING RULES as hard constraints; wherever a rule and the knowledge base disagree, THE RULE WINS. (3) TAG — only after (1) and (2) do you read the photo and produce tags/elements, honouring the rules first and the knowledge base next."
-        : "TAGGING PROCESS — first absorb the HOUSE TAGGING KNOWLEDGE BASE below and weigh it heavily (your strongest prior for how this team tags), then read the photo and produce tags/elements consistent with it.";
+        ? "TAGGING PROCESS — follow in this order every time: (1) READ THE PHOTO — identify ONLY what is actually visible in THIS image. (2) NAME — use the HOUSE TAGGING KNOWLEDGE BASE below and the vocabulary lists only to pick the correct names/counts for what you saw; NEVER tag an item just because it is common for this area when it is not in the photo. (3) CONSTRAIN — apply the HOUSE TAGGING RULES as hard constraints; wherever a rule and the knowledge base disagree, THE RULE WINS."
+        : "TAGGING PROCESS — first read the photo and identify what is ACTUALLY visible, then use the HOUSE TAGGING KNOWLEDGE BASE below only as a naming/count reference for what you saw — do not tag items just because they are common for this area.";
       const promptText = [processNote, corrText, kbText, subcatText, prompt, houseRules].filter(Boolean).join("\n\n");
       const exemplars = (tagKB && Array.isArray(tagKB.exemplars)) ? tagKB.exemplars.slice(0, 4).filter(e => e && e.url) : [];
       const buildContent = (withExamples) => {
@@ -4851,8 +4850,8 @@ Return ONLY JSON:
         model: "claude-opus-4-8",
         maxTokens: 8000, // room for adaptive thinking + the JSON
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text."
-          + " Work in this exact order every time: (1) LEARN — first absorb the HOUSE TAGGING KNOWLEDGE BASE (learned from the team's verified photos): its vocabulary, per-area norms, and typical counts are your strongest prior, so lean on them heavily. (2) CONSTRAIN — then apply the team's HOUSE TAGGING RULES as hard constraints; wherever a rule and the knowledge base disagree, THE RULE WINS. (3) TAG — only then read the photo and produce tags/elements that honour both, rules first."
-          + (houseRulesRaw ? " The HOUSE TAGGING RULES are in the '════ HOUSE TAGGING RULES' block at the end of the message; they are MANDATORY and override BOTH the knowledge base and the generic tagging instructions — follow every one of them exactly." : ""),
+          + " Tag what is ACTUALLY visible in the photo. Use the HOUSE TAGGING KNOWLEDGE BASE (learned from the team's verified photos) ONLY as a reference for correct names, vocabulary, and typical counts — never tag an item just because it is common for that area when it is not present in the image."
+          + (houseRulesRaw ? " The HOUSE TAGGING RULES are in the '════ HOUSE TAGGING RULES' block at the end of the message; they are MANDATORY and override both the knowledge base and the generic tagging instructions — follow every one of them exactly." : ""),
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
         // display:"summarized" — without it the model still thinks (billed the same) but the
         // thinking block's text comes back empty, so there'd be nothing to show a reviewer.
@@ -4920,20 +4919,27 @@ Return ONLY JSON:
           // generic word (or a plausible-but-wrong name) can't collide across categories. Falls
           // back to the full catalog if the guess didn't narrow to anything, so a wrong/blank
           // category guess never costs recall.
+          // A keyword-overlap match below LOW_CONFIDENCE_BELOW is a WEAK guess. It used to still be
+          // committed — renamed + priced — with only a ❓VERIFY flag, which is exactly how a floral
+          // proposal got silently priced as the wrong physical item ("Phool Ki Chaadar ×110"). Treat a
+          // weak overlap as NOT a match: (a) a weak inventory guess falls THROUGH so a strong flower-
+          // recipe match can win instead (dense structural florals → "Flower Reet"), and (b) if nothing
+          // matches confidently the element drops to "unrecognized" for review — keeping the AI's
+          // ORIGINAL proposed name, never a confidently-wrong priced row. A weak guess should surface
+          // for a human to add/correct, not masquerade as a matched, priced element.
+          const isWeak = (m) => m && m.method === "overlap" && m.score < MATCH.LOW_CONFIDENCE_BELOW;
           const elSubKey = normalize(el.subCat);
           const scopedInv = elSubKey ? taggableInv.filter(it => normalize(it.subCat || it.subcategory) === elSubKey) : [];
           const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, it => it.name)) || bestOf(el.name, taggableInv, it => it.name);
-          if (invMatch) {
-            const lowConfidence = invMatch.method === "overlap" && invMatch.score < MATCH.LOW_CONFIDENCE_BELOW;
-            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
+          if (invMatch && !isWeak(invMatch)) {
+            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
           }
 
-          // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
+          // No confident inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
           const scopedPat = elSubKey ? taggableRecipePatterns.filter(p => normalize(p.sub) === elSubKey) : [];
           const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, taggableRecipePatterns, p => p.name);
-          if (patMatch) {
-            const lowConfidence = patMatch.method === "overlap" && patMatch.score < MATCH.LOW_CONFIDENCE_BELOW;
-            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
+          if (patMatch && !isWeak(patMatch)) {
+            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
           }
 
           return { ...el, new: true };

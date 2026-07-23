@@ -76,8 +76,7 @@ export function buildTagKB(verifiedPhotos, lightNames) {
 export function renderTagKBText(kb) {
   if (!kb || !kb.fromCount) return "";
   const lines = [];
-  lines.push(`════════ HOUSE TAGGING KNOWLEDGE BASE — WEIGH THIS HEAVILY · learned from ${kb.fromCount} of your team's VERIFIED (human-confirmed) photos ════════`);
-  lines.push(`This is your STRONGEST prior — it captures exactly how this company tags: the vocabulary in use, per-area style/palette/element norms, and typical counts. Default to these conventions, names, and counts unless the photo clearly shows otherwise. (The HOUSE TAGGING RULES still override this wherever the two disagree.)`);
+  lines.push(`HOUSE TAGGING KNOWLEDGE BASE — learned from ${kb.fromCount} of your team's VERIFIED (human-confirmed) photos. Use these only as a REFERENCE for the correct names/vocabulary and typical counts your team uses — always tag what is ACTUALLY visible in THIS photo. Never add an item just because it is common for this area if it is not present in the image.`);
   const vb = kb.vocab || {};
   const vline = (f, label) => (vb[f] && vb[f].length) ? `${label}: ${vb[f].join(", ")}` : "";
   const vparts = [vline("eventType", "Event"), vline("venueType", "Venue"), vline("designStyle", "Style"), vline("colorPalette", "Palette"), vline("timeSetting", "Time")].filter(Boolean);
