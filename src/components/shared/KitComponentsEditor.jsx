@@ -54,6 +54,38 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
     const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
     return Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
   };
+  // A PLAIN component (an ordinary {itemId,qty} entry, not a patternId add-on) can itself be a
+  // floral item (e.g. a pot/planter whose own sub-category carries a flower recipe) — same as a
+  // standalone floral element getElPriceFromInventory prices. Unlike a patternId add-on (always
+  // priced separately, on top), this component's OWN rental already gets counted by
+  // kitTotalFromInventory/priceForInvItem at a flat rate; `blendedUnit` recomputes it the real
+  // way (recipe blend + extra + its own rental) so `subOverride.realPct` — this instance's own
+  // override, defaulting to the sub-category's mode or the deal's global floralRatio — actually
+  // changes its price, exactly like the top-level 🌐 Ratio / 🎯 100% controls do.
+  const compFloralInfo = (cItem, override) => {
+    if (!cItem) return null;
+    const pat = matchFlowerPattern(cItem, flowerPatterns || []);
+    if (!pat) return null;
+    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, _floralSettings, imsInventory);
+    if (!rates) return null;
+    const sk = String(cItem.subCat || cItem.subcategory || pat.sub || "").trim().toLowerCase();
+    const subMode = sk ? rcFloralModeByKey[sk] : undefined;
+    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+    const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
+    const flatRental = priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(override?.subOverrides) ? override.subOverrides : undefined);
+    const blendedUnit = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + flatRental;
+    return { pattern: pat, realPct, modeDefault, blendedUnit, flatRental, patternSMB: pat.mode === "smb" };
+  };
+  // Delta between the blended price and the flat rental kitTotalFromInventory already counted for
+  // any floral-matched plain component — folded into `flowerTotal` (below) rather than double-
+  // counting, and a true no-op for the vast majority of components that aren't floral.
+  const floralCompDelta = comps.reduce((s, c) => {
+    if (c.patternId) return s;
+    const cItem = (imsInventory || []).find(i => i.id === c.itemId);
+    const info = cItem ? compFloralInfo(cItem, c) : null;
+    if (!info) return s;
+    return s + (info.blendedUnit - info.flatRental) * (Number(c.qty) || 0);
+  }, 0);
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
   const rentalMarked = priceForInvItem(item, _factorMap, imsInventory, isEdited ? comps : undefined);
   const kitBaseMarked = Math.round(kitBase * kitFactor);        // the console's OWN charge (base × its factor)
@@ -62,7 +94,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // (same two sources getElPriceFromInventory sums), each at the recipe's Studio rate.
   const subCatPattern = matchFlowerPattern(item, flowerPatterns || []);
   const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern, item.subCat || item.subcategory) : 0;
-  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub) * (Number(c.qty) || 0); }, 0);
+  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
   const partsTotal = rentalMarked + flowerTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
@@ -103,7 +135,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cItemIsKit = cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0;
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
-          const cRate = cItem ? priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0; // rental × own sub-cat multiplier; honors this instance's sub-kit edits
+          const cFloral = cItem ? compFloralInfo(cItem, c) : null;
+          // Floral-matched component prices via the recipe blend (real/artificial ratio); everything
+          // else keeps the plain rental × own sub-cat multiplier, honoring this instance's sub-kit edits.
+          const cRate = cFloral ? cFloral.blendedUnit : (cItem ? priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0);
           return (
             <Fragment key={ci}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -123,7 +158,18 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     </div>
                   )}
                 </div>
-                <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}{cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}> 📦</span>}</span>
+                <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
+                  {cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}>📦</span>}
+                  {cFloral && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>
+                      🌸
+                      <button onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, realPct: undefined } : x))} title="Use this sub-category's default real/artificial ratio" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof c.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof c.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button>
+                      <button onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, realPct: 100 } : x))} title="Price this component at 100% the recipe's Studio rate, overriding the sub-category's default" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: c.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: c.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button>
+                      <input type="number" min="0" max="100" value={c.realPct ?? ""} placeholder={String(cFloral.modeDefault)} onChange={(e) => { const v = e.target.value; setComps(comps.map((x, i) => i === ci ? { ...x, realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) } : x)); }} title="Manually set the exact % real — overrides Ratio/100%" style={{ width: 38, padding: "1px 4px", borderRadius: 3, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 9, textAlign: "center" }} />
+                    </span>
+                  )}
+                </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
                   <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{qtyEach}</span>
@@ -153,6 +199,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     rcFactorByKey={rcFactorByKey}
                     mandiCatalogue={mandiCatalogue}
                     studioMarkup={studioMarkup}
+                    elSize={elSize} floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={floralSettings}
                     textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                   />
                 </div>
