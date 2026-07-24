@@ -56,6 +56,7 @@ export function rowToLibItem(row) {
     zoneConfigByType: row.zone_config_by_type || {},
     _verified: row.status === LIB_STATUS.VERIFIED,
     tagSource: row.tag_source || undefined,
+    _aiConfidence: (row.ai_confidence != null && row.ai_confidence !== "") ? Number(row.ai_confidence) : undefined,
     _aiTaggedAt: row.tagged_at ? new Date(row.tagged_at).getTime() : undefined,
     _verifiedBy: row.verified_by || undefined,
     _verifiedAt: row.verified_at ? new Date(row.verified_at).getTime() : undefined,
@@ -128,7 +129,7 @@ function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inho
   return q;
 }
 
-const LIST_COLUMNS = "id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,created_at,verified_by,verified_at";
+const LIST_COLUMNS = "id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,created_at,verified_by,verified_at,ai_confidence:data->>_aiConfidence";
 
 // Cursor-based (keyset) pagination — NOT OFFSET, so page N stays fast at 10k+ rows.
 // `sortCol` is "tagged_at" for verified/review/manual/build (most-recently-tagged first)
@@ -231,7 +232,7 @@ export async function fetchZoneLibraryPhotos(zoneList) {
   const zones = (zoneList || []).filter(Boolean);
   if (!zones.length) return [];
   const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at")
+    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
     .or(zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(","))
     .limit(1000);
   if (error) throw error;
@@ -242,7 +243,7 @@ export async function fetchZoneLibraryPhotos(zoneList) {
  * (replaces the old "scan the whole library for filler" behavior). */
 export async function fetchRecentLibraryPhotos(limit = 200) {
   const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at")
+    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
     .neq("status", LIB_STATUS.UNTAGGED)
     .order("tagged_at", { ascending: false, nullsFirst: false })
     .limit(limit);

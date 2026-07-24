@@ -521,7 +521,6 @@ export default function ManageLibrary({ ctx }) {
             [LIB_STATUS.VERIFIED, "✅", "Verified", "reviewed by a person", libPage.counts.verified, "#059669"],
             [LIB_STATUS.REVIEW, "🤖", "Needs review", "AI-tagged — to check", libPage.counts.review, "#7C3AED"],
             [LIB_STATUS.UNTAGGED, "❓", "Untagged", "no tags yet", libPage.counts.untagged, "#9CA3AF"],
-            [TAG_SOURCE.MANUAL, "✋", "Manual Tagged", "tagged via manual selection", libPage.counts.manual, "#F59E0B"],
             [TAG_SOURCE.BUILD, "🏗️", "Build Added", "uploaded from Build — cross-check before verifying", libPage.counts.build, "#EC4899"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
@@ -622,6 +621,14 @@ export default function ManageLibrary({ ctx }) {
               )}
               {libStatus !== LIB_STATUS.UNTAGGED && (img.linkedTemplates || []).length > 0 && <div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
               {(img.elements || []).length > 0 && <div style={{ position: "absolute", top: 28, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(124,58,237,0.8)", fontSize: 9, color: "#fff" }}>📋 {(img.elements || []).length}</div>}
+              {/* AI tag confidence badge — tag-TIME estimate (match strength + completeness), NOT verified
+                  accuracy. Green ≥80 / amber ≥60 / red <60 flags photos that most need a human review. */}
+              {typeof img._aiConfidence === "number" && (
+                <div title={`AI tag confidence: ${img._aiConfidence}% — a tag-time estimate from match strength + how many items it could place. Not verified accuracy; a reviewer still confirms.`}
+                  style={{ position: "absolute", top: 28, right: 6, padding: "3px 9px", borderRadius: 7, fontSize: 12, fontWeight: 800, color: "#fff", background: img._aiConfidence >= 80 ? "rgba(5,150,105,0.92)" : img._aiConfidence >= 60 ? "rgba(217,119,6,0.92)" : "rgba(225,29,72,0.92)" }}>
+                  {img._aiConfidence}%
+                </div>
+              )}
               <div style={{ padding: "6px 8px" }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginTop: 3 }}>
@@ -751,16 +758,18 @@ export default function ManageLibrary({ ctx }) {
                 {/* Review status (🤖 AI suggested / ✓ Reviewed) + light count (💡) + missing items (⚠) */}
                 {(() => {
                   const lc = (typeof libEditImg.lightCount === "number") ? libEditImg.lightCount : null;
+                  const conf = (typeof libEditImg._aiConfidence === "number") ? libEditImg._aiConfidence : null;
                   const newEls = (libEditImg.elements || []).filter(e => e && e.new).map(e => e.name).filter(Boolean);
                   const unrec = Array.isArray(libEditImg.unrecognized) ? libEditImg.unrecognized : [];
                   const attention = [...newEls, ...unrec];
                   const reviewed = !!libEditImg._verified;
                   const aiSuggested = !!libEditImg._aiTagged && !reviewed;
-                  if (lc == null && attention.length === 0 && !reviewed && !aiSuggested) return null;
+                  if (lc == null && attention.length === 0 && !reviewed && !aiSuggested && conf == null) return null;
                   return (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "2px 0 8px" }}>
                       {reviewed && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#05966922", color: "#059669" }}>✓ Tagged by {libEditImg._verifiedBy || "—"}{libEditImg._verifiedAt ? ` on ${new Date(libEditImg._verifiedAt).toLocaleDateString()}` : ""}{libEditImg._lastEditedBy && libEditImg._lastEditedBy !== libEditImg._verifiedBy ? ` · edited by ${libEditImg._lastEditedBy}${libEditImg._lastEditedAt ? ` on ${new Date(libEditImg._lastEditedAt).toLocaleDateString()}` : ""}` : ""}</span>}
                       {aiSuggested && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#7C3AED22", color: "#7C3AED" }}>🤖 AI suggested — review</span>}
+                      {conf != null && <span title="AI tag confidence — a tag-time estimate from match strength + how many items it could place. Not verified accuracy; a reviewer still confirms." style={{ fontSize: 15, fontWeight: 800, padding: "6px 14px", borderRadius: 9, background: conf >= 80 ? "#05966922" : conf >= 60 ? "#D9770622" : "#E11D4822", color: conf >= 80 ? "#059669" : conf >= 60 ? "#D97706" : "#E11D48" }}>🎯 {conf}% confidence</span>}
                       {lc != null && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 7, background: "#F59E0B22", color: "#F59E0B" }}>💡 {lc} light{lc === 1 ? "" : "s"}</span>}
                       {attention.length > 0 && <span style={{ fontSize: 10, color: "#EF4444", display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>⚠ Needs attention: {attention.map((a, i) => <span key={i} style={{ padding: "1px 6px", borderRadius: 6, background: "#EF444418" }}>{a}</span>)}</span>}
                     </div>
@@ -849,11 +858,11 @@ export default function ManageLibrary({ ctx }) {
                   <div><div style={cell}>Truss Width (ft)</div><input type="number" value={d.trussW || ""} onChange={e => setD({ trussW: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
                   <div><div style={cell}>Truss Height (ft)</div><input type="number" value={d.trussH || ""} onChange={e => setD({ trussH: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
                   <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={d.trussQty || ""} placeholder="1" onChange={e => setD({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
-                  {(d.trussW && d.trussH) && <div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={d.trussFrontExt || ""} placeholder="0" onChange={e => setD({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
-                  {(d.trussW && d.trussH) && (Number(d.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                  {!!(d.trussW && d.trussH) &&<div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={d.trussFrontExt || ""} placeholder="0" onChange={e => setD({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                  {!!(d.trussW && d.trussH) &&(Number(d.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={d.trussFrontExtH || ""} placeholder={String(d.trussH || 0)} onChange={e => setD({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
                 </div>;
               })()}
-              {(libEditImg.dims?.trussW && libEditImg.dims?.trussH) && (() => {
+              {!!(libEditImg.dims?.trussW && libEditImg.dims?.trussH) && (() => {
                 const d = libEditImg.dims || {};
                 const isFullBox = !!(d.trussL && d.trussW && d.trussH);
                 const missing = false;
@@ -954,8 +963,8 @@ export default function ManageLibrary({ ctx }) {
                       <div><div style={cell}>Truss Width (ft)</div><input type="number" value={row.trussW || ""} onChange={e => setRow({ trussW: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
                       <div><div style={cell}>Truss Height (ft)</div><input type="number" value={row.trussH || ""} onChange={e => setRow({ trussH: parseFloat(e.target.value) || 0 })} style={inp} placeholder="—" /></div>
                       <div><div style={cell}>Truss Qty</div><input type="number" min={1} value={row.trussQty || ""} placeholder="1" onChange={e => setRow({ trussQty: Math.max(1, parseInt(e.target.value) || 1) })} style={inp} /></div>
-                      {(row.trussW && row.trussH) && <div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={row.trussFrontExt || ""} placeholder="0" onChange={e => setRow({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
-                      {(row.trussW && row.trussH) && (Number(row.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={row.trussFrontExtH || ""} placeholder={String(row.trussH || 0)} onChange={e => setRow({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                      {!!(row.trussW && row.trussH) &&<div><div style={cell} title="Box front extended both sides — priced as 2× Single U truss">Front ext (ft/side)</div><input type="number" min={0} step="0.5" value={row.trussFrontExt || ""} placeholder="0" onChange={e => setRow({ trussFrontExt: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
+                      {!!(row.trussW && row.trussH) &&(Number(row.trussFrontExt) || 0) > 0 && <div><div style={cell}>Ext height (ft)</div><input type="number" min={0} step="0.5" value={row.trussFrontExtH || ""} placeholder={String(row.trussH || 0)} onChange={e => setRow({ trussFrontExtH: Math.max(0, parseFloat(e.target.value) || 0) })} style={inp} /></div>}
                     </div>
                     {(row.trussW || row.trussH) && (
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" }}>

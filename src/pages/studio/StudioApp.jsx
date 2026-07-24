@@ -4892,11 +4892,13 @@ Return ONLY JSON:
             + "2. HALLUCINATIONS — remove any element that is NOT clearly, actually visible. In particular do NOT keep a mattress/pouffe/takhat/floor-cushion unless it is unmistakably that item (pooled fabric, drapes, carpet, and shadows are NOT mattresses).\n"
             + "3. FLORALS — dense florals wrapped/arranged on a structure, arch, drape, or pillar must be named \"Flower Reet\", never a \"flower wall/bedding\" or \"Phool Ki Chaadar\".\n"
             + "4. QUANTITIES — fix absurd counts (never count individual flowers; florals are a Flower Reet in its own unit).\n"
-            + "Keep every genuinely-correct element as-is. Return ONLY JSON: {\"elements\":[{name,cat,subCat,qty,unit,size,detail,new,attachedTo}],\"lightCount\":<int>}.";
+            + "5. CONFIDENCE — after correcting, rate your confidence 0-100 that this FINAL list completely AND correctly captures the decor actually in the photo. Be strict and self-critical: lower the score when the scene is dense/cluttered, when items overlap or are partly hidden, or when you are unsure you caught every seating / structure / floral element. Reserve 90-100 only for simple, clearly-lit photos where you are certain nothing is missed or mis-identified. Do not default to 100.\n"
+            + "Keep every genuinely-correct element as-is. Return ONLY JSON: {\"elements\":[{name,cat,subCat,qty,unit,size,detail,new,attachedTo}],\"lightCount\":<int>,\"confidence\":<int 0-100>}.";
           const verifySchema = {
-            type: "object", additionalProperties: false, required: ["elements", "lightCount"],
+            type: "object", additionalProperties: false, required: ["elements", "lightCount", "confidence"],
             properties: {
               lightCount: { type: "integer" },
+              confidence: { type: "integer" },
               elements: { type: "array", items: {
                 type: "object", additionalProperties: false,
                 required: ["name", "cat", "subCat", "qty", "unit", "size", "detail", "new", "attachedTo"],
@@ -4916,6 +4918,7 @@ Return ONLY JSON:
           if (vparsed && Array.isArray(vparsed.elements) && vparsed.elements.length) {
             parsed.elements = vparsed.elements;
             if (typeof vparsed.lightCount === "number") parsed.lightCount = vparsed.lightCount;
+            if (typeof vparsed.confidence === "number") parsed._verifyConfidence = Math.max(0, Math.min(100, Math.round(vparsed.confidence)));
             parsed._selfVerified = true;
           }
         } catch (e) { console.warn("[aiTag] self-verify pass skipped:", e?.message || e); }
@@ -5122,6 +5125,24 @@ Return ONLY JSON:
           lowConfidence: parsed.elements.filter(el => el.lowConfidence).length,
           unrecognized: (parsed.unrecognized || []).length,
         };
+        // Per-photo AI confidence (0-100): a tag-TIME quality estimate, NOT verified accuracy. Averages
+        // match strength across matched elements (exact=100, substring=90, overlap=its own %), counting
+        // each "unrecognized" item as 0 — the AI saw something it couldn't place, which drags confidence
+        // down for both weak matching and incompleteness. A reviewer still confirms the real tags.
+        {
+          // Prefer the model's OWN self-assessed confidence from the verify pass — it looked at the photo
+          // and judged completeness/correctness, so it can account for MISSED items (which pure match-
+          // quality cannot — that's why match-quality inflated to 100% on incomplete tags). Fall back to a
+          // match-strength + completeness heuristic only when the verify pass didn't run.
+          if (typeof parsed._verifyConfidence === "number") {
+            parsed._aiConfidence = parsed._verifyConfidence;
+          } else {
+            const matched = parsed.elements.filter(el => el.invId || el.patternId);
+            const scores = matched.map(el => (typeof el.matchScore === "number" ? el.matchScore : 90));
+            const denom = scores.length + (parsed.unrecognized || []).length;
+            parsed._aiConfidence = denom ? Math.round(scores.reduce((a, b) => a + b, 0) / denom) : (matched.length ? 100 : 0);
+          }
+        }
         // Scratch fields used only for the matching/dedup above — don't persist them onto the saved
         // element objects.
         parsed.elements.forEach(el => { delete el._origName; delete el.attachedTo; });
@@ -5177,7 +5198,7 @@ Return ONLY JSON:
     flush();
     const stopped = bulkTagStop.current;
     setBulkTag({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
-    showMsg(`🤖 Done — ${ok} tagged, ${fail} failed. See Manual Tagged chip.`, "green");
+    showMsg(`🤖 Done — ${ok} tagged, ${fail} failed. See Needs review.`, "green");
     return { ok, fail };
   }, [bulkTag.running, aiTagImage, saveLib, showMsg, taxonomy, ensureLibItems]);
 
