@@ -55,12 +55,13 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, retryTick]);
 
-  useEffect(() => {
+  const refreshCounts = useCallback(() => {
     fetchLibraryCounts({ filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
       .then(setCounts)
       .catch((e) => setError((prev) => prev || e?.message || "Failed to load counts"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, venueGroup, venueKey, debouncedSearch, retryTick]);
+  }, [filterKey, venueGroup, venueKey, debouncedSearch]);
+  useEffect(() => { refreshCounts(); }, [refreshCounts, retryTick]);
 
   const loadMore = useCallback(() => {
     if (loading || !hasMore || !cursor) return;
@@ -74,11 +75,27 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, cursor, hasMore, loading]);
 
+  // Live "new tags stream in" during batch tagging: refetch page 1 (which is ordered most-recently-
+  // tagged first) and PREPEND any rows not already shown — so freshly-tagged photos appear at the top
+  // of Needs review as the batch runs, without resetting scroll or the loadMore cursor. Guarded by the
+  // request id so it no-ops if a full reload (status/filter change) happened meanwhile.
+  const refreshNew = useCallback(() => {
+    const id = reqIdRef.current;
+    fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
+      .then(({ items: page }) => {
+        if (id !== reqIdRef.current) return;
+        mergeLibItems(page);
+        setItems((prev) => { const have = new Set(prev.map((i) => i.id)); const fresh = page.filter((p) => !have.has(p.id)); return fresh.length ? [...fresh, ...prev] : prev; });
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch]);
+
   const updateItem = useCallback((id, patch) => setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it))), []);
   const removeItem = useCallback((id) => setItems((prev) => prev.filter((it) => it.id !== id)), []);
   const prependItems = useCallback((newItems) => setItems((prev) => [...newItems, ...prev]), []);
 
-  return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems, error, retry };
+  return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems, error, retry, refreshCounts, refreshNew };
 }
 
 // Real component (not a plain helper function) so its hooks are safe even though the grid that
@@ -263,6 +280,15 @@ export default function ManageLibrary({ ctx }) {
     libStatus, filters: libFilters, venueGroup: libVenueGroup, venueNames: libVenueNames,
     inhouseVenueNames: allInhouseVenues, search: libSearch, mergeLibItems,
   });
+  // Keep the folder counts (esp. "Needs review") live during and after batch tagging. The count query
+  // is otherwise static after load, so untagged→review moves during a batch wouldn't show until you
+  // switch folders. Refresh on each running/finished transition, and poll every 4s while a batch runs.
+  useEffect(() => { libPage.refreshCounts(); libPage.refreshNew(); }, [bulkTag?.running, bulkTag?.finishedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!bulkTag?.running) return;
+    const id = setInterval(() => { libPage.refreshCounts(); libPage.refreshNew(); }, 4000);
+    return () => clearInterval(id);
+  }, [bulkTag?.running]); // eslint-disable-line react-hooks/exhaustive-deps
   const getZoneMatches = useZoneMatchCache(getLibPhotosForZone);
   const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
   useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs

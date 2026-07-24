@@ -5193,7 +5193,7 @@ Return ONLY JSON:
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
       setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
-      if ((n + 1) % 8 === 0) flush();
+      flush(); // flush after EACH photo so it lands in the DB and surfaces in Needs review promptly — two-pass tagging is ~45s/photo, so the old batch-of-8 checkpoint delayed visibility by minutes (saveLib only upserts actually-changed rows, so re-flushing is cheap)
     }
     flush();
     const stopped = bulkTagStop.current;
@@ -5256,7 +5256,7 @@ Return ONLY JSON:
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
       setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
-      if ((n + 1) % 8 === 0) flush();
+      flush(); // flush after EACH photo so it lands in the DB and surfaces in Needs review promptly — two-pass tagging is ~45s/photo, so the old batch-of-8 checkpoint delayed visibility by minutes (saveLib only upserts actually-changed rows, so re-flushing is cheap)
     }
     flush();
     const stopped = bulkTagStop.current;
