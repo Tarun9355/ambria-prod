@@ -43,6 +43,8 @@ export default function ManageSettings({ ctx }) {
     // photo priority — saveFilterPriority is the reference handler; fall back to
     // setFilterPriority (the name present in StudioApp's ctx literal) if absent.
     filterPriority, setFilterPriority, saveFilterPriority: ctxSaveFilterPriority,
+    // batch AI tagging — shared app-wide state + controls (same ctx values ManageLibrary uses)
+    bulkTag, runBulkTag, stopBulkTag,
     // sub-views rendered as functions on the parent (AdminUsers not in ctx — guarded)
     AdminUsers,
   } = ctx;
@@ -518,6 +520,22 @@ export default function ManageSettings({ ctx }) {
           ));
         })()}
       </div>
+      {/* AI batch-tagging start/stop control (restored to admin Settings — replaces the old nightly
+          toggle; drives the SAME app-wide runBulkTag as the Library button, so it uses the current
+          two-pass tagger, not a separate/drifting job). */}
+      {isAdmin && (runBulkTag || bulkTag?.running) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, padding: "10px 14px", borderRadius: 8, border: `1px solid ${border}`, background: "rgba(124,58,237,0.06)" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: accent, whiteSpace: "nowrap" }}>🤖 AI Batch Tagging</span>
+          {bulkTag?.running ? (<>
+            <span style={{ fontSize: 11, color: textS, whiteSpace: "nowrap" }}>Tagging {bulkTag.done}/{bulkTag.total} · {bulkTag.ok}✓ {bulkTag.fail}✕</span>
+            <div style={{ flex: 1, height: 4, background: border, borderRadius: 2 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>
+            <button onClick={() => stopBulkTag?.()} style={{ ...S.btn(false), fontSize: 11, padding: "6px 14px", color: "#E11D48", whiteSpace: "nowrap" }}>■ Stop</button>
+          </>) : (<>
+            <span style={{ fontSize: 11, color: textS, flex: 1 }}>Tags every untagged Library photo in the background (two-pass self-verify on). Resumes where it left off; a person still reviews after.</span>
+            <button onClick={() => { if (window.confirm("Start AI batch tagging of ALL untagged Library photos?\n\nRuns in the background — keep working in the app. Two Opus passes per photo (slower, higher accuracy). Stop anytime; it resumes on the next run.")) runBulkTag?.(); }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 14px", background: "#7C3AED", whiteSpace: "nowrap" }}>▶ Start batch tagging</button>
+          </>)}
+        </div>
+      )}
       {settingsView === "transport" && <TransportEditor ctx={ctx} />}
       {settingsView === "zones" && <div style={{maxWidth:800}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
