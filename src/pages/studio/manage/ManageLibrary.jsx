@@ -85,7 +85,15 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
       .then(({ items: page }) => {
         if (id !== reqIdRef.current) return;
         mergeLibItems(page);
-        setItems((prev) => { const have = new Set(prev.map((i) => i.id)); const fresh = page.filter((p) => !have.has(p.id)); return fresh.length ? [...fresh, ...prev] : prev; });
+        setItems((prev) => {
+          // Update rows already shown (so a re-tagged photo's confidence/tags refresh in place) AND
+          // prepend any genuinely new ones. Page 1 is newest-tagged first, so re-tags land here.
+          const byId = new Map(page.map((p) => [p.id, p]));
+          const merged = prev.map((it) => (byId.has(it.id) ? { ...it, ...byId.get(it.id) } : it));
+          const have = new Set(prev.map((i) => i.id));
+          const fresh = page.filter((p) => !have.has(p.id));
+          return fresh.length ? [...fresh, ...merged] : merged;
+        });
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -738,6 +746,7 @@ export default function ManageLibrary({ ctx }) {
                           // "Manual Tagged" chip — now fixed by going through the one helper).
                           const { patch } = applyAiTagResult(libEditImg, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
                           setLibEditImg({ ...libEditImg, ...patch });
+                          libPage.updateItem?.(libEditImg.id, patch); // refresh the grid card (confidence/tags) after a single re-tag, not just the modal
                           const d=result.dims||{};
                           const hasDims=(d.trussL||d.trussW||d.trussH||d.floorL||d.floorW);
                           showMsg(`✓ AI: ${result.elements?.length||0} elements${hasDims?", dims "+d.trussL+"×"+d.trussW+"×"+d.trussH:"— no dims (fill manually)"}`,"green");
