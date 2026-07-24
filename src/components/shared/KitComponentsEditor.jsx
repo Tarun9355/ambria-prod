@@ -231,9 +231,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         {addSearch.trim() && (() => {
           const tokens = addSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
           const matches = (imsInventory || []).filter((x) => x.id !== item.id && !comps.some((c) => c.itemId === x.id) && !isHiddenSubcat(x, rcSubcatFactors) && tokens.every((t) => (x.name + " " + (x.subCat || x.subcategory || "") + " " + (x.cat || x.category || "")).toLowerCase().includes(t))).slice(0, 40);
+          // Flower recipes (patterns) are addable to a kit too — add them to the same results so the box
+          // searches BOTH physical items and recipes. Picked → a {patternId, qty} component (priced as a recipe).
+          const patMatches = (flowerPatterns || []).filter((p) => p && p.id && p.name && !comps.some((c) => c.patternId === p.id) && tokens.every((t) => (p.name + " " + (p.sub || "")).toLowerCase().includes(t))).slice(0, 20);
           return (
             <div style={{ position: "absolute", zIndex: 50, top: "100%", left: 0, right: 0, marginTop: 2, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
-              {matches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 10, color: textS }}>No matches</div>}
+              {matches.length === 0 && patMatches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 10, color: textS }}>No matches</div>}
               {matches.map((x) => {
                 const src = x.img || x.photoUrls?.[0];
                 const remaining = dealAwareness?.getRemaining ? dealAwareness.getRemaining(x.id) : null;
@@ -253,6 +256,16 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   </div>
                 );
               })}
+              {patMatches.map((p) => (
+                <div key={"pat-" + p.id} onClick={() => { setComps([...comps, { patternId: p.id, qty: 1 }]); setAddSearch(""); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: "pointer", borderBottom: `1px solid ${border}` }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(236,72,153,0.15)", flexShrink: 0, fontSize: 12 }}>🌸</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                    <div style={{ fontSize: 9, color: "#EC4899" }}>flower recipe{p.sub ? ` · ${p.sub}` : ""} — no rental, priced separately</div>
+                  </div>
+                </div>
+              ))}
             </div>
           );
         })()}
