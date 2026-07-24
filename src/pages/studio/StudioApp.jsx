@@ -4875,6 +4875,51 @@ Return ONLY JSON:
       // vs. what it ended up matched to.
       const aiRawResponse = JSON.parse(JSON.stringify(parsed));
       if (aiThinking) parsed._aiThinking = aiThinking;
+      // ── Self-verify pass ─────────────────────────────────────────────────────────
+      // A second look at the SAME photo, handed the model's own first-pass elements, to catch the two
+      // things the first pass is worst at: (1) MISSED visible seating (a sofa/couch often half-hidden
+      // by drapes/tables/people), and (2) HALLUCINATED items inferred from context but not actually
+      // present (phantom mattress/pouffe). Also steers structural florals → Flower Reet and kills
+      // absurd counts. Returns a corrected element list that replaces the first pass BEFORE matching.
+      // Best-effort: any failure leaves the first-pass elements untouched (aiRawResponse already
+      // snapshotted the pristine first pass above).
+      if (Array.isArray(parsed.elements) && parsed.elements.length && imageBlock) {
+        try {
+          const proposed = parsed.elements.map(e => `- ${e.name} (${e.cat || "?"}/${e.subCat || "?"}) x${e.qty || 1}`).join("\n");
+          const verifyText = "You already tagged the decor photo below. Here are the elements you proposed:\n" + proposed
+            + "\n\nLook at the photo again, carefully, and return a CORRECTED element list. Fix these specific mistakes:\n"
+            + "1. MISSED SEATING — if a sofa, couch, chair, or bench is visible (even partly hidden by drapes, tables, flowers, or people) and it is NOT in the list, ADD it.\n"
+            + "2. HALLUCINATIONS — remove any element that is NOT clearly, actually visible. In particular do NOT keep a mattress/pouffe/takhat/floor-cushion unless it is unmistakably that item (pooled fabric, drapes, carpet, and shadows are NOT mattresses).\n"
+            + "3. FLORALS — dense florals wrapped/arranged on a structure, arch, drape, or pillar must be named \"Flower Reet\", never a \"flower wall/bedding\" or \"Phool Ki Chaadar\".\n"
+            + "4. QUANTITIES — fix absurd counts (never count individual flowers; florals are a Flower Reet in its own unit).\n"
+            + "Keep every genuinely-correct element as-is. Return ONLY JSON: {\"elements\":[{name,cat,subCat,qty,unit,size,detail,new,attachedTo}],\"lightCount\":<int>}.";
+          const verifySchema = {
+            type: "object", additionalProperties: false, required: ["elements", "lightCount"],
+            properties: {
+              lightCount: { type: "integer" },
+              elements: { type: "array", items: {
+                type: "object", additionalProperties: false,
+                required: ["name", "cat", "subCat", "qty", "unit", "size", "detail", "new", "attachedTo"],
+                properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, unit: { type: "string" }, size: { type: "string", enum: ["S", "M", "B", ""] }, detail: { type: "string" }, new: { type: "boolean" }, attachedTo: { type: "string" } },
+              } },
+            },
+          };
+          const vres = await callClaudeStreaming({
+            contentBlocks: [{ type: "text", text: verifyText }, imageBlock],
+            model: "claude-opus-4-8", maxTokens: 6000,
+            system: "You are a meticulous decor-photo tag reviewer. Respond ONLY with valid JSON, no other text.",
+            outputConfig: { format: { type: "json_schema", schema: verifySchema } },
+            thinking: { type: "adaptive", display: "summarized" },
+          });
+          const vclean = String(vres || "").replace(/```json|```/g, "").trim();
+          const vparsed = vclean ? JSON.parse(vclean) : null;
+          if (vparsed && Array.isArray(vparsed.elements) && vparsed.elements.length) {
+            parsed.elements = vparsed.elements;
+            if (typeof vparsed.lightCount === "number") parsed.lightCount = vparsed.lightCount;
+            parsed._selfVerified = true;
+          }
+        } catch (e) { console.warn("[aiTag] self-verify pass skipped:", e?.message || e); }
+      }
       if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         // Stamp each element's ORIGINAL AI-proposed name before any filtering/matching renames it —
         // "attachedTo" (below) references another element by the name Claude gave it in its own
@@ -5119,7 +5164,7 @@ Return ONLY JSON:
       if (bulkTagStop.current) break;
       const img = targets[n];
       try {
-        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 75000))]); // 75s: allows the two-call self-verify pass to finish
         // Shared merge — see applyAiTagResult (spec §9-B). Bulk paths add their own _aiFailed stamp.
         const { patch: upd, gotTags } = applyAiTagResult(img, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
         if (gotTags) ok++;
@@ -5181,7 +5226,7 @@ Return ONLY JSON:
       if (bulkTagStop.current) break;
       const img = targets[n];
       try {
-        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 75000))]); // 75s: allows the two-call self-verify pass to finish
         // Shared merge — see applyAiTagResult (spec §9-B). Only marks "AI-tagged" when tags actually
         // landed; a failed/empty pass stays untagged (gotTags=false) so it's retried next run.
         const { patch: upd, gotTags } = applyAiTagResult(img, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });

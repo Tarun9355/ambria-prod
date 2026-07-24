@@ -698,7 +698,7 @@ export default function ManageLibrary({ ctx }) {
                     <button disabled={libAiLoading} onClick={async() => {
                       setLibAiLoading(true); showMsg("🤖 Analyzing image...","green");
                       try{
-                        const result=await Promise.race([aiTagImage(libEditImg.url),new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),30000))]);
+                        const result=await Promise.race([aiTagImage(libEditImg.url),new Promise((_,r)=>setTimeout(()=>r(new Error("timeout")),75000))]); // 75s: allows the two-call self-verify pass to finish
                         if(result){
                           // Shared merge — see applyAiTagResult (spec §9-B). Stamps tagSource:"manual"
                           // (this button used to omit it, so re-tagged photos silently missed the
