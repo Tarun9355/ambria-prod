@@ -31,20 +31,10 @@ import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescrip
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
-  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
+  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS, DRAPE_DENSITIES,
 } from "../../lib/studio/taxonomy";
 
-// Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
-// A video's zonePhotos are keyed by area name; the Build page keys zones by elKey — without this
-// map the per-zone photo a salesperson assigned to a video never pre-selects on Build.
-const AREA_TO_ZONEKEY = (() => {
-  const m = {};
-  Object.entries(ZONE_TYPE_TO_AREA).forEach(([zk, areas]) => {
-    (Array.isArray(areas) ? areas : [areas]).forEach((a) => { if (!(a in m)) m[a] = zk; });
-  });
-  return m;
-})();
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
@@ -60,7 +50,7 @@ import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rate
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
-  fetchZoneLibraryPhotos, fetchRecentLibraryPhotos, fetchUntaggedLibraryTargets,
+  fetchZoneLibraryPhotos, fetchUntaggedLibraryTargets,
   fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
@@ -1443,28 +1433,11 @@ export default function StudioApp() {
   const [floralRatio, setFloralRatio] = useState(70);
   const [floralOverrides, setFloralOverrides] = useState({ note: "", rows: [] });
 
-  // ═══ ZONE PHOTO FILTERS (Build canvas) — VERBATIM ═══
+  // ═══ ZONE PHOTO FILTERS (Build canvas) — explicit, user-controlled only. No longer auto-seeded
+  // from a reference video/event's own tags — every zone shows its full tagged photo set by
+  // default; the salesperson opts in to narrowing it via the 🔍 filter. ═══
   const [zpFilterOpen, setZpFilterOpen] = useState(false);
   const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
-  // Build the zone photo-filter selection from a reference's tags (video or event) so every zone
-  // defaults to the reference's own event type / venue / style / palette / day-night / venue instead
-  // of "All". The salesperson can still widen it via the 🔍 filter. `venue` is a string on tags but
-  // an array in the filter, so it's wrapped.
-  // Accepts BOTH tag schemas: library-photo tags (eventType/venueType/designStyle/colorPalette/
-  // timeSetting/venue) AND inspiration-video tags (fn/io/styles/colors/venue). The values are the
-  // same taxonomy strings — only the key names differ — so a video reference pre-fills EVERY category
-  // (event type, venue type, style, palette, day/night, venue), not just the shared `venue` key.
-  const zpFiltersFromTags = useCallback((tags) => {
-    const arr = (v) => (Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []));
-    return {
-      eventType: arr(tags?.eventType ?? tags?.fn),
-      venueType: arr(tags?.venueType ?? tags?.io ?? tags?.space),
-      designStyle: arr(tags?.designStyle ?? tags?.styles),
-      colorPalette: arr(tags?.colorPalette ?? tags?.colors),
-      timeSetting: arr(tags?.timeSetting ?? tags?.dayNight),
-      venue: arr(tags?.venue),
-    };
-  }, []);
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
@@ -1787,9 +1760,6 @@ export default function StudioApp() {
   const [cldVideoPath, setCldVideoPath] = useState([]);
   const [cldVideoList, setCldVideoList] = useState([]);
   const [cldVideoLoading, setCldVideoLoading] = useState(false);
-  // ═══ ZONE PICKER MODAL STATE (reference ~3601) ═══
-  const [zonePickerVid, setZonePickerVid] = useState(null); // video id for zone picker modal
-  const [zonePickerZone, setZonePickerZone] = useState(null); // zone name being picked
 
   // ═══ PINTEREST SEARCH STATE ═══
   const [pinResults, setPinResults] = useState([]);
@@ -3393,98 +3363,25 @@ export default function StudioApp() {
     await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
   }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
-  // ── Library photo scoring for a zone ──
-  // Async: fetches its zone-tagged candidate pool from the server (`tags->areasElements` overlap)
-  // instead of scanning the whole in-memory library — callers must await/`.then()` this now.
-  const getLibPhotosForZone = useCallback(async (zone, videoTag, filterFn) => {
-    // `zone` may be a single tag name (Manage Library) or an array of synonym names (Build page).
-    // filterFn (optional): a predicate applied to the zone matches BEFORE scoring/capping — so active
-    // photo filters (event type, palette, etc.) constrain the pool first and matching photos aren't
-    // lost to the 50-cap by higher-scoring but filtered-out photos.
+  // ── Library photos for a zone ──
+  // Async: fetches the zone-tagged candidate pool from the server (`tags->areasElements` overlap)
+  // instead of scanning the whole in-memory library. Returns every photo tagged for this zone,
+  // unranked — no video-taxonomy or palette-based scoring. Build shows the full zone-tagged set
+  // and the user always picks manually; nothing is auto-preselected.
+  const getLibPhotosForZone = useCallback(async (zone, filterFn) => {
+    // `zone` may be a single tag name or an array of synonym names (Build page).
+    // filterFn (optional): a predicate applied to the zone matches — e.g. Build's explicit
+    // "Filter whole build" photo filters (event type, palette, etc.), a user-initiated filter,
+    // not automatic taxonomy scoring.
     const zoneList = (Array.isArray(zone) ? zone : [zone]).filter(Boolean);
-    if (!zoneList.length) return { exact: [], similar: [], fallback: [] };
+    if (!zoneList.length) return [];
     const zoneCandidates = await fetchZoneLibraryPhotos(zoneList);
     mergeLibItems(zoneCandidates);
-    const tier = videoTag?.tier;
-    const libTier = tier === "Silver" ? "Simple" : tier === "Gold" ? "Enhanced" : null;
-    // Resolve the active palette (per function) → its anchor colours + the ★ primary.
-    // When a palette is chosen its colours drive matching (the Build screen has no video
-    // colours otherwise); a photo whose colours include the PRIMARY ranks above one that
-    // matches only a secondary anchor, which falls into the queue below.
-    const activePaletteName = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx - 1]?.palette || "");
-    const activePalette = (imsPaletteCatalogue || []).find(p => p.name === activePaletteName);
-    const paletteColors = activePalette ? (activePalette.anchorColours || []) : [];
-    // A palette can have MULTIPLE primary colours; a photo carrying ANY of them is a
-    // full (primary) match. (Legacy single `primaryColour` still read.)
-    const primaryColors = activePalette
-      ? (Array.isArray(activePalette.primaryColours) ? activePalette.primaryColours : (activePalette.primaryColour ? [activePalette.primaryColour] : []))
-      : [];
-    const colors = paletteColors.length ? paletteColors : (videoTag?.colors || []);
-    const styles = videoTag?.styles || [];
-    const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
-    const io = videoTag?.io || "";
-    const zoneMatches = zoneCandidates.filter(li => {
+    return zoneCandidates.filter(li => {
       const ae = li.tags?.areasElements || [];
       return zoneList.some(z => ae.includes(z)) && (!filterFn || filterFn(li));
     });
-    const scorePhoto = (li) => {
-      let score = 0;
-      const liTier = li.tags?.categoryTier || [];
-      const liColor = li.tags?.colorPalette || [];
-      const liStyle = li.tags?.designStyle || [];
-      const liFn = li.tags?.eventType || [];
-      const liIO = li.tags?.venueType || [];
-      // §Palette-first — when an active palette context exists (e.g. arrived via an Ivory-tagged
-      // video / client palette set), photos carrying a palette colour LEAD their zone regardless
-      // of where "color" sits in the settings priority; the priority score below is the tiebreaker.
-      if (colors.length) {
-        if (primaryColors.length && primaryColors.some(pc => liColor.includes(pc))) score += 1000;
-        else if (colors.some(c => liColor.includes(c))) score += 500;
-      }
-      filterPriority.forEach((p, idx) => {
-        const weight = (filterPriority.length - idx) * 10;
-        switch (p.id) {
-          case "tier": if (libTier && liTier.includes(libTier)) score += weight; break;
-          case "style": if (styles.length && styles.some(s => liStyle.includes(s))) score += weight; break;
-          case "color":
-            if (colors.length) {
-              if (primaryColors.length) {
-                // Designated ★ primaries: full weight when the photo carries ANY primary
-                // colour; a secondary-anchor-only match gets a small weight so those
-                // photos queue below the primary-colour ones.
-                if (primaryColors.some(pc => liColor.includes(pc))) score += weight;
-                else if (colors.some(c => liColor.includes(c))) score += Math.round(weight * 0.2);
-              } else if (colors.some(c => liColor.includes(c))) {
-                score += weight;
-              }
-            }
-            break;
-          case "fn": if (fns.length && fns.some(f => liFn.includes(f))) score += weight; break;
-          case "io": if (io && liIO.includes(io)) score += weight; break;
-        }
-      });
-      return score;
-    };
-    const scored = zoneMatches.map(li => ({ li, score: scorePhoto(li) })).sort((a, b) => b.score - a.score);
-    const exact = scored.filter(s => s.score >= 40).map(s => s.li).slice(0, 50);
-    const similar = scored.filter(s => s.score >= 10 && s.score < 40).map(s => s.li).slice(0, 50 - exact.length);
-    const fallback = scored.filter(s => s.score < 10).map(s => s.li).slice(0, 50 - exact.length - similar.length);
-    const total = exact.length + similar.length + fallback.length;
-    let overflow = [];
-    if (total < 50) {
-      const usedIds = new Set([...exact, ...similar, ...fallback].map(li => li.id));
-      // "Rest" (non-zone fillers) — a bounded recently-tagged pool instead of the whole library,
-      // still following the settings priority + palette-first ordering.
-      const recentPool = await fetchRecentLibraryPhotos(200);
-      mergeLibItems(recentPool);
-      overflow = recentPool.filter(li => !usedIds.has(li.id) && (!filterFn || filterFn(li)))
-        .map(li => ({ li, score: scorePhoto(li) }))
-        .sort((a, b) => b.score - a.score)
-        .map(s => s.li)
-        .slice(0, 50 - total);
-    }
-    return { exact, similar, fallback: [...fallback, ...overflow] };
-  }, [filterPriority, clientPalette, activeFnIdx, extraFunctions, imsPaletteCatalogue, mergeLibItems]);
+  }, [mergeLibItems]);
 
   // ── All videos (youtube + manual), newest first — VERBATIM ──
   const allVideos = useMemo(() => {
@@ -3776,8 +3673,10 @@ export default function StudioApp() {
   // ..."), so extracting tags is deterministic parsing, not AI inference — no Claude call, no
   // cost/latency, no ambiguity. A label with no match in its taxonomy list (or missing from the
   // description) is simply left untagged; there is no AI fallback.
-  // Core: fetch a video's details, tag from its description, and auto-assign the best-match
-  // library photo per zone. Returns the tag object (with _aiTagged) or null. Used by single + bulk taggers.
+  // Core: fetch a video's details and tag it from its description. Returns the tag object
+  // (with _aiTagged) or null. Used by single + bulk taggers. Per-zone photos are no longer
+  // pinned per-video — Build shows every zone-tagged library photo live instead (see
+  // getLibPhotosForZone / StudioBuild.jsx's getMatchedPhotos).
   const buildVideoTagFromAI = useCallback(async (videoId) => {
       const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
       const snippet = ytData.items?.[0]?.snippet;
@@ -3807,19 +3706,9 @@ export default function StudioApp() {
         styles: matchedStyle ? [matchedStyle] : (existingTag.styles || []),
         palette: matchedColor || existingTag.palette || "",
       };
-      // Auto-assign the best-matching library photo to each zone (kept if the admin already picked
-      // one). Gives the video a build cost so it shows priced on Browse once saved.
-      const autoZonePhotos = { ...(existingTag.zonePhotos || {}) };
-      for (const area of (taxonomy.areasElements || [])) {
-        if (autoZonePhotos[area]) continue;
-        const { exact, similar } = await getLibPhotosForZone(area, newTag);
-        const top = exact[0] || similar[0];
-        if (top) autoZonePhotos[area] = top.id;
-      }
-      newTag.zonePhotos = autoZonePhotos;
       newTag._aiTagged = true;
       return newTag;
-  }, [ytVideoTags, allInhouseVenues, customOutdoor, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
+  }, [ytVideoTags, allInhouseVenues, customOutdoor, taxonomy, imsPaletteCatalogue]);
 
   const aiTagVideo = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
@@ -3828,10 +3717,9 @@ export default function StudioApp() {
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
-      const assigned = Object.keys(newTag.zonePhotos || {}).length;
       setAiVideoDraft({ videoId, tags: newTag });
       setYtTagEdit(videoId);
-      showMsg(`✓ Tagged from description + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
+      showMsg("✓ Tagged from description — review & save", "green");
     } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI]);
@@ -3845,9 +3733,8 @@ export default function StudioApp() {
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
-      const assigned = Object.keys(newTag.zonePhotos || {}).length;
       await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "Auto", _savedAt: Date.now() } });
-      showMsg(`✓ Tagged from description + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & adjust below`, "green");
+      showMsg("✓ Tagged from description — review & adjust below", "green");
     } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI, ytVideoTags, saveYtTags, authUser]);
@@ -4065,56 +3952,21 @@ export default function StudioApp() {
 
   const pickAndLoad = useCallback((ev, targetStep, videoUrl) => {
     const vidId = (videoUrl || ev.video)?.match(/embed\/([a-zA-Z0-9_-]{11})/)?.[1];
-    let videoZoneKeys = [];
     if (vidId) {
       const vTag = ytVideoTags[vidId] || {};
       const vid = allVideos.find(v => v.id === vidId);
       setSourceVideo({ id: vidId, title: vid?.title || ev.name, tags: vTag });
-      // Default every zone's photo filter to this reference's tags (event type/venue/style/palette/
-      // day-night/venue) so the strips show reference-specific photos, not everything.
-      setZpFilters(zpFiltersFromTags(vTag));
       // Default the Build palette to the one tagged on the video (salesperson can still change it).
+      // Zone photos are no longer pinned per-video or auto-populated — every zone starts empty and
+      // the salesperson picks from the zone's full tagged photo set in Build.
       const vidPalette = vTag.palette || (Array.isArray(vTag.colors) ? vTag.colors[0] : "") || "";
       if (vidPalette) {
         if (activeFnIdx === 0) setClientPalette(vidPalette);
         else setExtraFunctions(prev => prev.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: vidPalette } : f));
       }
-      const zonePhotos = vTag.zonePhotos || {};
-      const autoZE = {};
-      const autoSP = {};
-      const autoZC = {};
-      Object.entries(zonePhotos).forEach(([area, libId]) => {
-        const li = libItems.find(l => l.id === libId);
-        if (!li) return;
-        // Map the photo-tag area name → the Build zone key so the selection lands on the right card.
-        const zk = AREA_TO_ZONEKEY[area] || area;
-        if ((li.elements || []).length > 0) {
-          autoZE[zk] = JSON.parse(JSON.stringify(li.elements));
-        }
-        autoSP[zk] = { src: li.url, eventName: li.name || "Library photo" };
-        const pd = li.dims || {};
-        if (pd.trussW || pd.trussL || pd.trussH || pd.floorL || pd.floorW) {
-          const cfg = buildZoneConfig(zk, pd);
-          if (cfg) autoZC[zk] = cfg;
-        }
-      });
-      if (Object.keys(autoZE).length > 0) setZoneElements(autoZE);
-      if (Object.keys(autoSP).length > 0) setElSelectedPhoto(autoSP);
-      if (Object.keys(autoZC).length > 0) {
-        setZoneConfig(prev => ({ ...prev, ...autoZC }));
-        setActiveZones([]);
-      }
-      videoZoneKeys = Object.keys(zonePhotos).map(area => AREA_TO_ZONEKEY[area] || area);
     }
     loadEvent(ev, targetStep);
-    if (videoZoneKeys.length > 0) {
-      setEnabledEls(prev => {
-        const updated = { ...prev };
-        videoZoneKeys.forEach(zk => { updated[zk] = true; });
-        return updated;
-      });
-    }
-  }, [loadEvent, ytVideoTags, allVideos, libItems, activeFnIdx, setClientPalette, setExtraFunctions]);
+  }, [loadEvent, ytVideoTags, allVideos, activeFnIdx, setClientPalette, setExtraFunctions]);
 
   const pickAndLoadFromVideo = useCallback((videoId, targetStep) => {
     const tag = ytVideoTags[videoId] || {};
@@ -4133,7 +3985,9 @@ export default function StudioApp() {
       photos: [],
       video: `https://www.youtube.com/embed/${videoId}`,
       desc: "",
-      enabledEls: Object.keys(tag.zonePhotos || {}).map(area => AREA_TO_ZONEKEY[area] || area),
+      // No zones pre-enabled — the salesperson turns on whichever zones this deal needs and
+      // picks each zone's photo manually from the Library (no per-video zone pinning anymore).
+      enabledEls: [],
       itemQtys: {},
       itemGrades: {},
       tags: [...(tag.styles || []), ...(tag.colors || [])].slice(0, 3)
@@ -4438,7 +4292,6 @@ export default function StudioApp() {
         const vid = allVideos.find(v => v.id === session.sourceVideoId);
         const vTag = ytVideoTags[session.sourceVideoId] || {};
         setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      setZpFilters(zpFiltersFromTags(vTag));
       }
       setStep(landingStep);
       const fnCount = Object.keys(session.fnSnapshots).length;
@@ -4467,7 +4320,6 @@ export default function StudioApp() {
       const vid = allVideos.find(v => v.id === session.sourceVideoId);
       const vTag = ytVideoTags[session.sourceVideoId] || {};
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      setZpFilters(zpFiltersFromTags(vTag));
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
     setStep(landingStep);
@@ -4626,7 +4478,6 @@ export default function StudioApp() {
       const vid = allVideos.find(v => v.id === session.sourceVideoId);
       const vTag = ytVideoTags[session.sourceVideoId] || {};
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      setZpFilters(zpFiltersFromTags(vTag));
     } else {
       setSourceVideo(null);
     }
@@ -6264,8 +6115,6 @@ export default function StudioApp() {
     addVideoOpen, setAddVideoOpen, cldVideoFolders, setCldVideoFolders, cldVideoPath, setCldVideoPath,
     cldVideoList, setCldVideoList, cldVideoLoading, setCldVideoLoading,
     openCldVideoBrowser, cldVideoNavigate, cldVideoGoBack, addCldVideo,
-    // zone picker modal
-    zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
     // notifications
     notifications, setNotifications, notifOpen, setNotifOpen, notifLastRead, setNotifLastRead, unreadCount, markAllRead,
     filterPriority, setFilterPriority, saveFilterPriority,

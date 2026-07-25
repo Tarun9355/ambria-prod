@@ -106,31 +106,6 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems, error, retry, refreshCounts, refreshNew };
 }
 
-// Real component (not a plain helper function) so its hooks are safe even though the grid that
-// renders it is itself toggled on/off by a parent condition — a genuine mount/unmount, not a
-// conditional hook call.
-// getLibPhotosForZone is async (server-queried) now — this bridges it back to the synchronous
-// "just read {exact,similar,fallback}" shape the video zone-photo pickers render inline, by caching
-// results keyed on (zone list + the bits of videoTag that affect scoring) and kicking off a fetch
-// on first read. Returns empty arrays (never null) while a key's fetch is in flight.
-function useZoneMatchCache(getLibPhotosForZone) {
-  const [cache, setCache] = useState({});
-  const inFlight = useRef(new Set());
-  const get = useCallback((zone, videoTag) => {
-    const key = JSON.stringify([Array.isArray(zone) ? zone : [zone], videoTag?.tier, videoTag?.colors, videoTag?.styles, videoTag?.fn, videoTag?.io]);
-    const hit = cache[key];
-    if (hit) return hit;
-    if (!inFlight.current.has(key)) {
-      inFlight.current.add(key);
-      getLibPhotosForZone(zone, videoTag).then((result) => {
-        setCache((prev) => ({ ...prev, [key]: result }));
-      }).finally(() => inFlight.current.delete(key));
-    }
-    return { exact: [], similar: [], fallback: [] };
-  }, [cache, getLibPhotosForZone]);
-  return get;
-}
-
 function LoadMoreSentinel({ onIntersect }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -212,10 +187,6 @@ export default function ManageLibrary({ ctx }) {
     // cloudinary video browser
     addVideoOpen, setAddVideoOpen, cldVideoFolders, cldVideoPath, cldVideoList, cldVideoLoading,
     openCldVideoBrowser, cldVideoNavigate, cldVideoGoBack, addCldVideo,
-    // zone picker modal
-    zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
-    getLibPhotosForZone, calcElsCost, filterPriority,
-    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
 
   // Element Breakdown hover previews: enlarged thumbnail on hover, and — for a kit — its component
@@ -2209,38 +2180,6 @@ export default function ManageLibrary({ ctx }) {
                       })}
                     </div>
                   </div>
-                  {/* ═══ PHOTOS BY ZONE (Phase 2) — every zone on one screen, ranked candidates, one-click assign ═══ */}
-                  <div style={{marginBottom:8,borderTop:`1px solid ${border}`,paddingTop:10}}>
-                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — tap a thumbnail to assign, or hit <span style={{color:accent,fontWeight:700}}>🔍 Big view</span> to pick from large photos in a full-screen popup.</div>
-                    {(taxonomy.areasElements||[]).map((zone,zi)=>{
-                      const zp=tag.zonePhotos||{};
-                      const libId=zp[zone];
-                      const chosen=libId?libItems.find(li=>li.id===libId):null;
-                      const {exact,similar}=getZoneMatches(zone,tag);
-                      const cands=[...exact,...similar];
-                      // keep the chosen photo visible even if it isn't in the top matches
-                      const stripList=[...(chosen&&!cands.find(c=>c.id===chosen.id)?[chosen]:[]),...cands].slice(0,14);
-                      const setZonePhoto=(id)=>{const np={...zp};if(id)np[zone]=id;else delete np[zone];const nt={...ytVideoTags,[v.id]:{...tag,zonePhotos:np}};saveYtTags(nt);};
-                      return <div key={zone} style={{padding:"8px 0",borderBottom:zi<(taxonomy.areasElements||[]).length-1?`1px solid ${border}`:"none"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                          <span style={{fontSize:14,width:20,textAlign:"center"}}>{ZONE_ICONS[zone]||"📍"}</span>
-                          <span style={{fontSize:11,fontWeight:600,color:textP,flex:1}}>{zone}</span>
-                          {chosen?<span style={{fontSize:9,color:"#059669",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {chosen.name||"selected"}</span>:<span style={{fontSize:9,color:textS}}>{cands.length} match{cands.length===1?"":"es"}</span>}
-                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});}} title="Open the big full-screen picker for this zone" style={{fontSize:9,fontWeight:700,cursor:"pointer",flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${accent}`,color:accent,background:`${accent}12`}}>🔍 Big view</span>
-                          {chosen&&<span onClick={(e)=>{e.stopPropagation();setZonePhoto(null);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>× clear</span>}
-                        </div>
-                        {stripList.length===0
-                          ? <div style={{fontSize:9,color:textS,paddingLeft:28}}>No matching photos yet — use "More…" or tag more library photos for this zone.</div>
-                          : <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,paddingLeft:28}} onClick={e=>e.stopPropagation()}>
-                              {stripList.map(li=>{const isSel=li.id===libId;return <div key={li.id} onClick={()=>setZonePhoto(isSel?null:li.id)} title={li.name||""} style={{flexShrink:0,width:92,borderRadius:8,overflow:"hidden",cursor:"pointer",border:isSel?"2px solid #059669":`1px solid ${border}`,background:cardBg}}>
-                                <img src={li.url} alt="" loading="lazy" style={{width:92,height:60,objectFit:"cover",display:"block",opacity:isSel?1:0.92}} onError={e=>{e.target.style.display="none"}}/>
-                                <div style={{padding:"3px 5px",fontSize:8,fontWeight:isSel?700:500,color:isSel?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isSel?"✓ ":""}{li.name||"Untitled"}</div>
-                              </div>;})}
-                            </div>}
-                      </div>;
-                    })}
-                    {Object.keys(tag.zonePhotos||{}).length>0&&<div style={{fontSize:9,color:textS,marginTop:6}}>{Object.keys(tag.zonePhotos||{}).length} of {(taxonomy.areasElements||[]).length} zones assigned</div>}
-                  </div>
                   {/* Quick actions */}
                   <div style={{display:"flex",gap:6,justifyContent:"flex-end",flexWrap:"wrap"}}>
                     <button onClick={(e)=>{e.stopPropagation();const nh={...hiddenVideos};if(nh[v.id])delete nh[v.id];else nh[v.id]=true;saveHiddenVideos(nh);showMsg(nh[v.id]?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
@@ -2260,148 +2199,14 @@ export default function ManageLibrary({ ctx }) {
           </div>
         </div>
       )}
-      {/* ═══ FULL-SCREEN LIBRARY PICKER MODAL ═══ */}
-      {zonePickerVid&&zonePickerZone&&(()=>{
-        const vTag=ytVideoTags[zonePickerVid]||{};
-        const {exact:rawExact,similar:rawSimilar,fallback:rawFallback}=getZoneMatches(zonePickerZone,vTag);
-        const exact=zpHasFilters?rawExact.filter(zpFilterPhoto):rawExact;
-        const similar=zpHasFilters?rawSimilar.filter(zpFilterPhoto):rawSimilar;
-        const fallback=zpHasFilters?rawFallback.filter(zpFilterPhoto):rawFallback;
-        const totalRaw=rawExact.length+rawSimilar.length+rawFallback.length;
-        const totalFiltered=exact.length+similar.length+fallback.length;
-        const currentLibId=(vTag.zonePhotos||{})[zonePickerZone];
-        const selectPhoto=(libId)=>{
-          const zp={...(vTag.zonePhotos||{}), [zonePickerZone]:libId};
-          const nt={...ytVideoTags,[zonePickerVid]:{...vTag,zonePhotos:zp}};
-          saveYtTags(nt);
-          setZonePickerVid(null);setZonePickerZone(null);
-        };
-        const calcElCost=(li)=>{
-          if(!(li.elements||[]).length)return 0;
-          return calcElsCost(li.elements, true, null);
-        };
-        const renderCard=(li)=>{
-          const isCurrent=li.id===currentLibId;
-          const cost=calcElCost(li);
-          return <div key={li.id} onClick={()=>selectPhoto(li.id)} style={{borderRadius:10,border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,overflow:"hidden",cursor:"pointer",background:cardBg,position:"relative"}}>
-            <div style={{position:"relative"}}>
-              <img src={li.url} alt={li.name||""} style={{width:"100%",height:200,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="200px";}}/>
-              {isCurrent&&<div style={{position:"absolute",top:4,right:4,background:accent,color:"#fff",fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700}}>Current</div>}
-              {cost>0&&<div style={{position:"absolute",top:4,left:4,background:"rgba(0,0,0,0.75)",color:"#fff",fontSize:10,padding:"2px 8px",borderRadius:4,fontWeight:700}}>{fmt(cost)}</div>}
-            </div>
-            <div style={{padding:"6px 8px"}}>
-              <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{li.name||"Untitled"}</div>
-              <div style={{fontSize:9,color:textS}}>{(li.elements||[]).length} elements</div>
-              <div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:3}}>
-                {(li.tags?.colorPalette||[]).map(c=><span key={c} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(249,115,22,0.12)",color:"#F97316"}}>{c}</span>)}
-                {(li.tags?.designStyle||[]).map(s=><span key={s} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(236,72,153,0.12)",color:"#EC4899"}}>{s}</span>)}
-                {(li.tags?.categoryTier||[]).map(t=><span key={t} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(148,163,184,0.15)",color:textS}}>{t}</span>)}
-              </div>
-            </div>
-          </div>;
-        };
-        const priorityLabels = filterPriority.map(p=>p.label).join(" > ");
-        return <div style={{position:"fixed",inset:0,zIndex:9999,background:isDark?"rgba(0,0,0,0.92)":"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}} onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:bg,borderRadius:16,width:"96vw",maxWidth:1500,maxHeight:"94vh",overflow:"auto",border:`1px solid ${border}`}}>
-            <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:bg,zIndex:1}}>
-              <div>
-                <div style={{fontSize:18,fontWeight:700,color:textP}}>{ZONE_ICONS[zonePickerZone]||"📍"} Select photo for {zonePickerZone}</div>
-                <div style={{fontSize:12,color:textS,marginTop:2}}>Priority: {priorityLabels}</div>
-              </div>
-              <span onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700,padding:"4px 8px"}}>✕</span>
-            </div>
-            <div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-              <span style={{fontSize:10,color:textS}}>Video tags:</span>
-              {vTag.tier&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(148,163,184,0.2)",color:textP,fontWeight:600}}>{vTag.tier}</span>}
-              {(vTag.colors||[]).map(c=><span key={c} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(249,115,22,0.15)",color:"#F97316",fontWeight:600}}>{c}</span>)}
-              {(vTag.styles||[]).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600}}>{s}</span>)}
-              {(Array.isArray(vTag.fn)?vTag.fn:(vTag.fn?[vTag.fn]:[])).map(f=><span key={f} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(168,85,247,0.15)",color:"#A855F7",fontWeight:600}}>{f}</span>)}
-              {vTag.io&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>{vTag.io}</span>}
-            </div>
-            {/* Filter toggle + panel */}
-            <div style={{padding:"8px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <span onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 12px",borderRadius:8,background:zpFilterOpen?`${accent}22`:"transparent",border:`1px solid ${zpFilterOpen?accent:border}`,color:zpFilterOpen?accent:textS,fontSize:11,fontWeight:500,cursor:"pointer"}}>🔍 Filters {zpFilterOpen?"▲":"▼"}</span>
-              {zpHasFilters&&<span style={{fontSize:10,color:textS}}>{totalFiltered} of {totalRaw}</span>}
-              {zpHasFilters&&<span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:10,color:"#E11D48",cursor:"pointer"}}>Clear</span>}
-            </div>
-            {zpFilterOpen&&<div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Event type</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,eventType:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.length===0?accent:"transparent",color:zpFilters.eventType.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.length===0?accent:border}`,fontWeight:zpFilters.eventType.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.includes(v)?accent:"transparent",color:zpFilters.eventType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.includes(v)?accent:border}`,fontWeight:zpFilters.eventType.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Venue type</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.length===0?accent:"transparent",color:zpFilters.venueType.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.length===0?accent:border}`,fontWeight:zpFilters.venueType.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.includes(v)?accent:"transparent",color:zpFilters.venueType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.includes(v)?accent:border}`,fontWeight:zpFilters.venueType.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Design style</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,designStyle:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.length===0?accent:"transparent",color:zpFilters.designStyle.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.length===0?accent:border}`,fontWeight:zpFilters.designStyle.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.includes(v)?accent:"transparent",color:zpFilters.designStyle.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.includes(v)?accent:border}`,fontWeight:zpFilters.designStyle.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Color palette</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.length===0?accent:"transparent",color:zpFilters.colorPalette.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.length===0?accent:border}`,fontWeight:zpFilters.colorPalette.length===0?600:400}}>All</span>
-                    {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.includes(v)?accent:"transparent",color:zpFilters.colorPalette.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.includes(v)?accent:border}`,fontWeight:zpFilters.colorPalette.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Day / Night</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,timeSetting:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.timeSetting.length===0?accent:"transparent",color:zpFilters.timeSetting.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.timeSetting.length===0?accent:border}`,fontWeight:zpFilters.timeSetting.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.timeSetting.includes(v)?accent:"transparent",color:zpFilters.timeSetting.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.timeSetting.includes(v)?accent:border}`,fontWeight:zpFilters.timeSetting.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-              </div>
-            </div>}
-            <div style={{padding:20}}>
-              {exact.length>0&&<>
-                <div style={{fontSize:12,fontWeight:700,color:accent,marginBottom:8}}>Best matches ({exact.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
-                  {exact.map(renderCard)}
-                </div>
-              </>}
-              {similar.length>0&&<>
-                <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>Similar options ({similar.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
-                  {similar.map(renderCard)}
-                </div>
-              </>}
-              {fallback.length>0&&<>
-                <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>More options ({fallback.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
-                  {fallback.map(renderCard)}
-                </div>
-              </>}
-              {exact.length===0&&similar.length===0&&fallback.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>
-                <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>No photos in Library yet</div>
-                <div style={{fontSize:12}}>Add photos to Library and tag them to see options here.</div>
-              </div>}
-            </div>
-          </div>
-        </div>;
-      })()}
-
       {/* ═══ FULL-SCREEN VIDEO TAG EDITOR — all metadata + a left/right photo scroller per zone ═══ */}
       {bigTagVid && (() => {
         const v = allVideos.find(x => x.id === bigTagVid) || {};
         const vTag = ytVideoTags[bigTagVid] || {};
         const updTag = (patch) => saveYtTags({ ...ytVideoTags, [bigTagVid]: { ...vTag, ...patch } });
-        const setZP = (zone, id) => { const zp = { ...(vTag.zonePhotos || {}) }; if (id) zp[zone] = id; else delete zp[zone]; updTag({ zonePhotos: zp }); };
         const toggleArr = (field, val) => { const cur = Array.isArray(vTag[field]) ? vTag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
         const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
         const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
-        const zones = taxonomy.areasElements || [];
-        const assigned = Object.keys(vTag.zonePhotos || {}).length;
         const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 5 };
         const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
         const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
@@ -2410,7 +2215,7 @@ export default function ManageLibrary({ ctx }) {
             <div style={{ position: "sticky", top: 0, zIndex: 2, background: bg, borderBottom: `1px solid ${border}`, padding: "14px 22px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🎬 {v.title || "Video"}</div>
-                <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>{assigned} of {zones.length} zones have a photo · changes save instantly</div>
+                <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>changes save instantly</div>
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
@@ -2433,33 +2238,6 @@ export default function ManageLibrary({ ctx }) {
                 <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
                 <div><div style={lbl}>Time / Setting</div><div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div></div>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 8 }}>📸 Photo per zone — scroll ◀ ▶ and click to pick</div>
-              {zones.map(zone => {
-                const zp = vTag.zonePhotos || {};
-                const chosenId = zp[zone];
-                const { exact, similar, fallback } = getZoneMatches(zone, vTag);
-                const cands = [...exact, ...similar, ...fallback];
-                const chosen = chosenId ? libItems.find(l => l.id === chosenId) : null;
-                const strip = [...(chosen && !cands.find(c => c.id === chosen.id) ? [chosen] : []), ...cands].slice(0, 40);
-                return <div key={zone} style={{ padding: "10px 0", borderBottom: `1px solid ${border}` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 18 }}>{ZONE_ICONS[zone] || "📍"}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: textP, flex: 1 }}>{zone}</span>
-                    {chosen ? <span style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>✓ {chosen.name || "selected"}</span> : <span style={{ fontSize: 11, color: textS }}>{strip.length} options</span>}
-                    {chosen && <span onClick={() => setZP(zone, null)} style={{ fontSize: 11, color: "#E11D48", cursor: "pointer", fontWeight: 700 }}>× clear</span>}
-                  </div>
-                  {strip.length === 0 ? <div style={{ fontSize: 11, color: textS, paddingLeft: 28 }}>No matching photos for this zone yet — tag more library photos for it.</div> :
-                    <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
-                      {strip.map(li => { const isSel = li.id === chosenId; return <div key={li.id} onClick={() => setZP(zone, isSel ? null : li.id)} title={li.name || ""} style={{ flexShrink: 0, width: 190, borderRadius: 10, overflow: "hidden", cursor: "pointer", border: isSel ? `3px solid #059669` : `1px solid ${border}`, background: cardBg }}>
-                        <img src={li.url} alt="" loading="lazy" style={{ width: 190, height: 130, objectFit: "cover", display: "block", opacity: isSel ? 1 : 0.9 }} onError={e => { e.target.style.display = "none"; }} />
-                        <div style={{ padding: "5px 8px" }}>
-                          <div style={{ fontSize: 11, fontWeight: isSel ? 700 : 600, color: isSel ? "#059669" : textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{isSel ? "✓ " : ""}{li.name || "Untitled"}</div>
-                          <div style={{ fontSize: 9, color: textS }}>{(li.elements || []).length} elements</div>
-                        </div>
-                      </div>; })}
-                    </div>}
-                </div>;
-              })}
             </div>
           </div>
         </div>;
