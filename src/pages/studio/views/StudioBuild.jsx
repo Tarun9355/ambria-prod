@@ -28,7 +28,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
-    clientPalette, setClientPalette, activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
+    activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
@@ -437,76 +437,6 @@ export default function StudioBuild({ ctx }) {
       {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
     </div>}
 
-    {/* ═══ §23 Phase 2.9c — PALETTE STRIP ═══
-        Auto-set from selected video's YT tag. Salesperson can override here if client requests a different palette. */}
-    {(()=>{
-      const activePalette = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx-1]?.palette || "");
-      const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue : [];
-      const pObj = palettes.find(p => p.name === activePalette);
-      const isUnset = !activePalette || activePalette === "Custom";
-      const updatePalette = (v) => activeFnIdx === 0
-        ? setClientPalette(v)
-        : setExtraFunctions(prev => { const n=[...prev]; if (n[activeFnIdx-1]) n[activeFnIdx-1] = {...n[activeFnIdx-1], palette: v}; return n; });
-      return (
-        <div style={{
-          padding:"12px 16px",
-          borderRadius:12,
-          marginBottom:16,
-          background: isUnset ? (isDark?"rgba(245,158,11,0.10)":"#FFFBEB") : (isDark?"rgba(124,58,237,0.10)":"#FAF5FF"),
-          border: `2px solid ${isUnset ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.35)"}`,
-          display:"flex",
-          alignItems:"center",
-          gap:14,
-          flexWrap:"wrap"
-        }}>
-          {isUnset ? (
-            <>
-              <span style={{fontSize:18}}>⚠️</span>
-              <div style={{flex:1,minWidth:200}}>
-                <div style={{fontSize:13,fontWeight:700,color:"#92400E"}}>Pick a Colour Palette to continue</div>
-                <div style={{fontSize:10,color:"#B45309",marginTop:2}}>
-                  {sourceVideo?.tags?.palette === undefined && sourceVideo
-                    ? `Selected video has no palette tagged. Ops can add one in Browse → Tag Editor.`
-                    : `No video selected, or video has no palette set.`}
-                </div>
-              </div>
-              <select value={activePalette||""} onChange={e=>updatePalette(e.target.value)}
-                style={{padding:"8px 12px",borderRadius:8,border:"2px solid #F59E0B",background:"#fff",fontSize:12,fontWeight:600,minWidth:180,cursor:"pointer"}}>
-                <option value="">— Choose palette —</option>
-                {palettes.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
-              </select>
-            </>
-          ) : (
-            <>
-              <span style={{fontSize:18}}>🎨</span>
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                <div style={{fontSize:11,color:textS,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>Event Palette</div>
-                <div style={{fontSize:15,fontWeight:700,color:"#7c3aed"}}>{activePalette}</div>
-              </div>
-              {pObj && pObj.anchorColours && pObj.anchorColours.length > 0 && (
-                <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",flex:1}}>
-                  {pObj.anchorColours.map(cn => {
-                    const cObj = imsColourCatalogue.find(c => c.name === cn);
-                    const _prim = Array.isArray(pObj.primaryColours) ? pObj.primaryColours : (pObj.primaryColour ? [pObj.primaryColour] : []);
-                    const isPrimary = _prim.includes(cn);
-                    return (
-                      <div key={cn} title={isPrimary ? "Primary colour — drives photo order" : ""} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",background:isPrimary?"rgba(201,169,110,0.18)":(isDark?"rgba(255,255,255,0.05)":"#fff"),border:`1px solid ${isPrimary?"#C9A96E":"rgba(124,58,237,0.2)"}`,borderRadius:12,fontSize:10}}>
-                        <span style={{width:11,height:11,borderRadius:6,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc"}} />
-                        <span style={{color:isPrimary?"#C9A96E":textP,fontWeight:isPrimary?700:500}}>{cn}{isPrimary?" ★":""}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <select value={activePalette} onChange={e=>updatePalette(e.target.value)}
-                style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.04)":"#fff",fontSize:11,color:textS,cursor:"pointer"}}>
-                {palettes.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
-              </select>
-            </>
-          )}
-        </div>
-      );
-    })()}
 
     {/* ═══ DATE DEMAND BANNER ═══ */}
     {clientDate&&(()=>{
