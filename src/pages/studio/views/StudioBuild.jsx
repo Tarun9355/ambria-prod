@@ -1102,7 +1102,10 @@ export default function StudioBuild({ ctx }) {
               <div style={{fontSize:12,marginBottom:6}}>
                 {zm.defaultTruss&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span>{"🔩"} Truss</span>
-                    {["box","singleU"].map(tt=><button key={tt} onClick={()=>sZ({trT:tt})} style={{padding:"2px 8px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.trT===tt?700:400,background:zc.trT===tt?"rgba(0,0,0,0.08)":"transparent",color:zc.trT===tt?textP:textS}}>{tt==="box"?"Box"+(showCosts?" ₹50":""):"Single U"+(showCosts?" ₹30":"")}{showCosts?"/sqft":""}</button>)}
+                    {/* Box vs Single U is set by how many Truss dims are filled below (2 ⇒ Single U,
+                        3 ⇒ Box) — this used to also be a manual toggle here, but any dim edit
+                        silently overrode it, so it never actually held a manual choice. Read-only. */}
+                    {zc.trT&&<span style={{fontSize:10,fontWeight:600,color:textS}} title="Set by how many Truss dims are filled below — 2 dims = Single U, 3 dims = Box">{zc.trT==="box"?"Box":"Single U"}{showCosts?` · ₹${zc.trT==="box"?50:30}/sqft`:""}</span>}
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
                 </div>}
                 {zm.hasMasking&&(()=>{
@@ -1556,9 +1559,12 @@ export default function StudioBuild({ ctx }) {
                 <div style={{fontSize:11,fontWeight:600,color:textS}}>📐 Zone Structure</div>
                 {showCosts&&st.total>0&&<div style={{fontWeight:600,color:textP}}>{fmt(st.total)}</div>}
               </div>
-              {/* Truss type */}
-              <div style={{display:"flex",gap:4,marginBottom:8}}>
-                {[{id:"box",l:"Box Truss"},{id:"singleU",l:"Single U Truss"},{id:null,l:"None"}].map(o=><button key={o.id||"none"} onClick={()=>sZ({trT:o.id})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${zc.trT===o.id?textP:border}`,background:zc.trT===o.id?"rgba(0,0,0,0.06)":"transparent",color:zc.trT===o.id?textP:textS,fontSize:10,cursor:"pointer",fontWeight:zc.trT===o.id?600:400}}>{o.l}{showCosts&&o.id?` ₹${o.id==="box"?50:30}/sqft`:""}</button>)}
+              {/* Truss type — Box vs Single U is set by how many dims are filled below (2 ⇒ Single
+                  U, 3 ⇒ Box), so that choice is read-only here; "None" is the one real manual
+                  action (turns truss off regardless of dims). */}
+              <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
+                {zc.trT&&<span style={{fontSize:10,fontWeight:600,color:textS}} title="Set by how many Truss dims are filled below — 2 dims = Single U, 3 dims = Box">{zc.trT==="box"?"Box Truss":"Single U Truss"}{showCosts?` · ₹${zc.trT==="box"?50:30}/sqft`:""}</span>}
+                <button onClick={()=>sZ({trT:null})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${!zc.trT?textP:border}`,background:!zc.trT?"rgba(0,0,0,0.06)":"transparent",color:!zc.trT?textP:textS,fontSize:10,cursor:"pointer",fontWeight:!zc.trT?600:400}}>None</button>
               </div>
               {/* Truss dims: L, W, H + Qty */}
               <div style={{display:"flex",gap:8,marginBottom:8}}>
