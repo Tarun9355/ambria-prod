@@ -3270,8 +3270,13 @@ export default function StudioApp() {
       let ic = 0, itemCount = 0;
       if (ze && ze.length > 0) {
         (ze || []).forEach(el2 => {
+          // `priceInfo.rc` is only ever set for a legacy Rate-Card name match — every IMS
+          // inventory-backed, kit, and pure flower-recipe element prices through
+          // getElPriceFromInventory/getElPriceFromPattern instead, which always return `rc: null`
+          // (it's not an error signal; lineCost is already 0 in the genuinely-unpriced case). This
+          // used to skip counting ANY of those elements' cost here — the single biggest reason
+          // Summary's own per-zone accordion could show a fraction of Build's/Deal Check's total.
           const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio);
-          if (!priceInfo.rc) return;
           ic += priceInfo.lineCost;
           itemCount += (el2.qty || 0);
         });
