@@ -184,11 +184,6 @@ const TPL_DEFAULTS = [
 // ═══ DEFAULT SAMPLE EVENTS — sample events removed; team loads real events via UI ═══
 const DEFAULTS = [];
 
-// Old per-item catalogue fully removed — element-card pricing only. ITEMS is retained as
-// an empty stub so the (never-reached) legacy itemQty loop in calcFunctionCost compiles.
-// The loop body only runs when fItemQty has entries, which never happens in the new model.
-const ITEMS = [];
-
 // §7.9.5 — RC floral element → IMS hard-prop default map.
 const FLORAL_HARDPROP_DEFAULT = {
   "F01": [], "F02": [], "F03": [], "F04": [],
@@ -2930,23 +2925,23 @@ export default function StudioApp() {
 
   const totalCost = useCallback(() => {
     let c = 0;
-    const zones = activeZones.length > 0 ? activeZones : Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
+    // Always derive zones fresh from the live zoneConfig/enabledEls — matches calcFunctionCost and
+    // calcFunctionBreakdown below. `activeZones` used to take priority here when non-empty, but it's
+    // stale legacy state (only ever repopulated from an old restored session, reset to [] on almost
+    // every edit) — letting it override the live config silently priced a deal from an out-of-date
+    // zone list whenever a session happened to still be carrying one.
+    const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
-    });
-    const grades = itemGrades || {};
-    Object.entries(itemQty || {}).forEach(([itemId, qty]) => {
-      if (!qty) return;
-      // old catalogue items fully removed — element card pricing only
     });
     const fnIdx = activeFnIdx || 0;
     dcCustomItems.filter(ci => ci.fnIdx === fnIdx).forEach(ci => {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, itemQty, itemGrades, activeZones, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
@@ -3019,26 +3014,19 @@ export default function StudioApp() {
     const fZoneElements = fnData.zoneElements || {};
     const fZoneConfig = fnData.zoneConfig || {};
     const fEnabledEls = fnData.enabledEls || {};
-    const fActiveZones = fnData.activeZones || [];
-    const fItemQty = fnData.itemQty || {};
-    const fItemGrades = fnData.itemGrades || {};
     const fVenue = fnData.fnVenue || "";
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     let decor = 0;
-    const zones = fActiveZones.length > 0 ? fActiveZones : Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
+    // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
+    // comment. `activeZones` no longer takes priority here. Also dropped the legacy itemQty
+    // catalogue loop that used to sit here — it looked items up in the old per-item catalogue,
+    // which was already emptied out elsewhere, so the loop never actually added any cost;
+    // removing it just retires visibly-dead code, it doesn't change any computed total.
+    const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates).total; });
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
       decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio);
-    });
-    const grades = fItemGrades || {};
-    Object.entries(fItemQty || {}).forEach(([itemId, qty]) => {
-      if (!qty) return;
-      const it = ITEMS.find(x => x.id === itemId);
-      if (!it) return;
-      const grade = grades[itemId] || "P";
-      const unit = it[grade === "P" ? "premium" : grade === "E" ? "elegant" : "simple"] || it.premium || 0;
-      decor += qty * unit;
     });
     dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx).forEach(ci => {
       decor += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
