@@ -4801,7 +4801,14 @@ export default function StudioApp() {
       // knowledge base, then sub-category vocabulary), then the base instructions, then the HOUSE RULES
       // LAST so they sit closest to the target image and carry the most weight at generation time.
       // All of this is static per session (only the image below is volatile), so the whole prefix is cached.
-      const promptText = [corrText, kbText, subcatText, prompt, houseRules].filter(Boolean).join("\n\n");
+      // processNote frames the whole message with a photo-FIRST order: identify what is actually in the
+      // image, then use the learned KB only as a naming/count reference (never as a reason to tag the
+      // area's "usual" items when they aren't present — over-weighting the KB caused it to hallucinate
+      // typical elements), then enforce the house RULES as hard constraints that win any KB conflict.
+      const processNote = houseRulesRaw
+        ? "TAGGING PROCESS — follow in this order every time: (1) READ THE PHOTO — identify ONLY what is actually visible in THIS image. (2) NAME — use the HOUSE TAGGING KNOWLEDGE BASE below and the vocabulary lists only to pick the correct names/counts for what you saw; NEVER tag an item just because it is common for this area when it is not in the photo. (3) CONSTRAIN — apply the HOUSE TAGGING RULES as hard constraints; wherever a rule and the knowledge base disagree, THE RULE WINS."
+        : "TAGGING PROCESS — first read the photo and identify what is ACTUALLY visible, then use the HOUSE TAGGING KNOWLEDGE BASE below only as a naming/count reference for what you saw — do not tag items just because they are common for this area.";
+      const promptText = [processNote, corrText, kbText, subcatText, prompt, houseRules].filter(Boolean).join("\n\n");
       const exemplars = (tagKB && Array.isArray(tagKB.exemplars)) ? tagKB.exemplars.slice(0, 4).filter(e => e && e.url) : [];
       const buildContent = (withExamples) => {
         const blocks = [{ type: "text", text: promptText }];
@@ -4822,7 +4829,8 @@ export default function StudioApp() {
         model: "claude-opus-4-8",
         maxTokens: 8000, // room for adaptive thinking + the JSON
         system: "You are a wedding/event decor image tagger. Respond ONLY with valid JSON, no other text."
-          + (houseRulesRaw ? " Your team has defined HOUSE TAGGING RULES (in the '════ HOUSE TAGGING RULES' block at the end of the message). Those rules are MANDATORY and take priority over the generic tagging instructions — follow every one of them exactly." : ""),
+          + " Tag what is ACTUALLY visible in the photo. Use the HOUSE TAGGING KNOWLEDGE BASE (learned from the team's verified photos) ONLY as a reference for correct names, vocabulary, and typical counts — never tag an item just because it is common for that area when it is not present in the image."
+          + (houseRulesRaw ? " The HOUSE TAGGING RULES are in the '════ HOUSE TAGGING RULES' block at the end of the message; they are MANDATORY and override both the knowledge base and the generic tagging instructions — follow every one of them exactly." : ""),
         outputConfig: { format: { type: "json_schema", schema: tagSchema } },
         // display:"summarized" — without it the model still thinks (billed the same) but the
         // thinking block's text comes back empty, so there'd be nothing to show a reviewer.
@@ -4846,6 +4854,54 @@ export default function StudioApp() {
       // vs. what it ended up matched to.
       const aiRawResponse = JSON.parse(JSON.stringify(parsed));
       if (aiThinking) parsed._aiThinking = aiThinking;
+      // ── Self-verify pass ─────────────────────────────────────────────────────────
+      // A second look at the SAME photo, handed the model's own first-pass elements, to catch the two
+      // things the first pass is worst at: (1) MISSED visible seating (a sofa/couch often half-hidden
+      // by drapes/tables/people), and (2) HALLUCINATED items inferred from context but not actually
+      // present (phantom mattress/pouffe). Also steers structural florals → Flower Reet and kills
+      // absurd counts. Returns a corrected element list that replaces the first pass BEFORE matching.
+      // Best-effort: any failure leaves the first-pass elements untouched (aiRawResponse already
+      // snapshotted the pristine first pass above).
+      if (Array.isArray(parsed.elements) && parsed.elements.length && imageBlock) {
+        try {
+          const proposed = parsed.elements.map(e => `- ${e.name} (${e.cat || "?"}/${e.subCat || "?"}) x${e.qty || 1}`).join("\n");
+          const verifyText = "You already tagged the decor photo below. Here are the elements you proposed:\n" + proposed
+            + "\n\nLook at the photo again, carefully, and return a CORRECTED element list. Fix these specific mistakes:\n"
+            + "1. MISSED SEATING — if a sofa, couch, chair, or bench is visible (even partly hidden by drapes, tables, flowers, or people) and it is NOT in the list, ADD it.\n"
+            + "2. HALLUCINATIONS — remove any element that is NOT clearly, actually visible. In particular do NOT keep a mattress/pouffe/takhat/floor-cushion unless it is unmistakably that item (pooled fabric, drapes, carpet, and shadows are NOT mattresses).\n"
+            + "3. FLORALS — dense florals wrapped/arranged on a structure, arch, drape, or pillar must be named \"Flower Reet\", never a \"flower wall/bedding\" or \"Phool Ki Chaadar\".\n"
+            + "4. QUANTITIES — fix absurd counts (never count individual flowers; florals are a Flower Reet in its own unit).\n"
+            + "5. CONFIDENCE — after correcting, rate your confidence 0-100 that this FINAL list completely AND correctly captures the decor actually in the photo. Be strict and self-critical: lower the score when the scene is dense/cluttered, when items overlap or are partly hidden, or when you are unsure you caught every seating / structure / floral element. Reserve 90-100 only for simple, clearly-lit photos where you are certain nothing is missed or mis-identified. Do not default to 100.\n"
+            + "Keep every genuinely-correct element as-is. Return ONLY JSON: {\"elements\":[{name,cat,subCat,qty,unit,size,detail,new,attachedTo}],\"lightCount\":<int>,\"confidence\":<int 0-100>}.";
+          const verifySchema = {
+            type: "object", additionalProperties: false, required: ["elements", "lightCount", "confidence"],
+            properties: {
+              lightCount: { type: "integer" },
+              confidence: { type: "integer" },
+              elements: { type: "array", items: {
+                type: "object", additionalProperties: false,
+                required: ["name", "cat", "subCat", "qty", "unit", "size", "detail", "new", "attachedTo"],
+                properties: { name: { type: "string" }, cat: { type: "string" }, subCat: { type: "string" }, qty: { type: "number" }, unit: { type: "string" }, size: { type: "string", enum: ["S", "M", "B", ""] }, detail: { type: "string" }, new: { type: "boolean" }, attachedTo: { type: "string" } },
+              } },
+            },
+          };
+          const vres = await callClaudeStreaming({
+            contentBlocks: [{ type: "text", text: verifyText }, imageBlock],
+            model: "claude-opus-4-8", maxTokens: 6000,
+            system: "You are a meticulous decor-photo tag reviewer. Respond ONLY with valid JSON, no other text.",
+            outputConfig: { format: { type: "json_schema", schema: verifySchema } },
+            thinking: { type: "adaptive", display: "summarized" },
+          });
+          const vclean = String(vres || "").replace(/```json|```/g, "").trim();
+          const vparsed = vclean ? JSON.parse(vclean) : null;
+          if (vparsed && Array.isArray(vparsed.elements) && vparsed.elements.length) {
+            parsed.elements = vparsed.elements;
+            if (typeof vparsed.lightCount === "number") parsed.lightCount = vparsed.lightCount;
+            if (typeof vparsed.confidence === "number") parsed._verifyConfidence = Math.max(0, Math.min(100, Math.round(vparsed.confidence)));
+            parsed._selfVerified = true;
+          }
+        } catch (e) { console.warn("[aiTag] self-verify pass skipped:", e?.message || e); }
+      }
       if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         // Stamp each element's ORIGINAL AI-proposed name before any filtering/matching renames it —
         // "attachedTo" (below) references another element by the name Claude gave it in its own
@@ -4890,20 +4946,27 @@ export default function StudioApp() {
           // generic word (or a plausible-but-wrong name) can't collide across categories. Falls
           // back to the full catalog if the guess didn't narrow to anything, so a wrong/blank
           // category guess never costs recall.
+          // A keyword-overlap match below LOW_CONFIDENCE_BELOW is a WEAK guess. It used to still be
+          // committed — renamed + priced — with only a ❓VERIFY flag, which is exactly how a floral
+          // proposal got silently priced as the wrong physical item ("Phool Ki Chaadar ×110"). Treat a
+          // weak overlap as NOT a match: (a) a weak inventory guess falls THROUGH so a strong flower-
+          // recipe match can win instead (dense structural florals → "Flower Reet"), and (b) if nothing
+          // matches confidently the element drops to "unrecognized" for review — keeping the AI's
+          // ORIGINAL proposed name, never a confidently-wrong priced row. A weak guess should surface
+          // for a human to add/correct, not masquerade as a matched, priced element.
+          const isWeak = (m) => m && m.method === "overlap" && m.score < MATCH.LOW_CONFIDENCE_BELOW;
           const elSubKey = normalize(el.subCat);
           const scopedInv = elSubKey ? taggableInv.filter(it => normalize(it.subCat || it.subcategory) === elSubKey) : [];
           const invMatch = (scopedInv.length && bestOf(el.name, scopedInv, it => it.name)) || bestOf(el.name, taggableInv, it => it.name);
-          if (invMatch) {
-            const lowConfidence = invMatch.method === "overlap" && invMatch.score < MATCH.LOW_CONFIDENCE_BELOW;
-            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
+          if (invMatch && !isWeak(invMatch)) {
+            return { ...el, name: invMatch.item.name, unit: invMatch.item.unit, size: size(), invId: invMatch.item.id, new: undefined, matchMethod: invMatch.method, matchScore: Math.round(invMatch.score) };
           }
 
-          // No inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
+          // No confident inventory match — try a pure flower-recipe pattern (e.g. "Flower Garden") the same way.
           const scopedPat = elSubKey ? taggableRecipePatterns.filter(p => normalize(p.sub) === elSubKey) : [];
           const patMatch = (scopedPat.length && bestOf(el.name, scopedPat, p => p.name)) || bestOf(el.name, taggableRecipePatterns, p => p.name);
-          if (patMatch) {
-            const lowConfidence = patMatch.method === "overlap" && patMatch.score < MATCH.LOW_CONFIDENCE_BELOW;
-            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, lowConfidence: lowConfidence || undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
+          if (patMatch && !isWeak(patMatch)) {
+            return { ...el, name: patMatch.item.name, unit: patMatch.item.unit, size: size(), patternId: patMatch.item.id, new: undefined, matchMethod: patMatch.method, matchScore: Math.round(patMatch.score) };
           }
 
           return { ...el, new: true };
@@ -5041,6 +5104,24 @@ export default function StudioApp() {
           lowConfidence: parsed.elements.filter(el => el.lowConfidence).length,
           unrecognized: (parsed.unrecognized || []).length,
         };
+        // Per-photo AI confidence (0-100): a tag-TIME quality estimate, NOT verified accuracy. Averages
+        // match strength across matched elements (exact=100, substring=90, overlap=its own %), counting
+        // each "unrecognized" item as 0 — the AI saw something it couldn't place, which drags confidence
+        // down for both weak matching and incompleteness. A reviewer still confirms the real tags.
+        {
+          // Prefer the model's OWN self-assessed confidence from the verify pass — it looked at the photo
+          // and judged completeness/correctness, so it can account for MISSED items (which pure match-
+          // quality cannot — that's why match-quality inflated to 100% on incomplete tags). Fall back to a
+          // match-strength + completeness heuristic only when the verify pass didn't run.
+          if (typeof parsed._verifyConfidence === "number") {
+            parsed._aiConfidence = parsed._verifyConfidence;
+          } else {
+            const matched = parsed.elements.filter(el => el.invId || el.patternId);
+            const scores = matched.map(el => (typeof el.matchScore === "number" ? el.matchScore : 90));
+            const denom = scores.length + (parsed.unrecognized || []).length;
+            parsed._aiConfidence = denom ? Math.round(scores.reduce((a, b) => a + b, 0) / denom) : (matched.length ? 100 : 0);
+          }
+        }
         // Scratch fields used only for the matching/dedup above — don't persist them onto the saved
         // element objects.
         parsed.elements.forEach(el => { delete el._origName; delete el.attachedTo; });
@@ -5083,7 +5164,7 @@ export default function StudioApp() {
       if (bulkTagStop.current) break;
       const img = targets[n];
       try {
-        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 75000))]); // 75s: allows the two-call self-verify pass to finish
         // Shared merge — see applyAiTagResult (spec §9-B). Bulk paths add their own _aiFailed stamp.
         const { patch: upd, gotTags } = applyAiTagResult(img, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
         if (gotTags) ok++;
@@ -5091,12 +5172,12 @@ export default function StudioApp() {
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
       setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
-      if ((n + 1) % 8 === 0) flush();
+      flush(); // flush after EACH photo so it lands in the DB and surfaces in Needs review promptly — two-pass tagging is ~45s/photo, so the old batch-of-8 checkpoint delayed visibility by minutes (saveLib only upserts actually-changed rows, so re-flushing is cheap)
     }
     flush();
     const stopped = bulkTagStop.current;
     setBulkTag({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
-    showMsg(`🤖 Done — ${ok} tagged, ${fail} failed. See Manual Tagged chip.`, "green");
+    showMsg(`🤖 Done — ${ok} tagged, ${fail} failed. See Needs review.`, "green");
     return { ok, fail };
   }, [bulkTag.running, aiTagImage, saveLib, showMsg, taxonomy, ensureLibItems]);
 
@@ -5145,7 +5226,7 @@ export default function StudioApp() {
       if (bulkTagStop.current) break;
       const img = targets[n];
       try {
-        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const result = await Promise.race([aiTagImage(img.url), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 75000))]); // 75s: allows the two-call self-verify pass to finish
         // Shared merge — see applyAiTagResult (spec §9-B). Only marks "AI-tagged" when tags actually
         // landed; a failed/empty pass stays untagged (gotTags=false) so it's retried next run.
         const { patch: upd, gotTags } = applyAiTagResult(img, result, { taxonomy, tagSource: TAG_SOURCE.MANUAL });
@@ -5154,7 +5235,7 @@ export default function StudioApp() {
         patch[img.id] = upd;
       } catch { patch[img.id] = { _aiFailed: true, _aiFailedAt: Date.now() }; fail++; }
       setBulkTag({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
-      if ((n + 1) % 8 === 0) flush();
+      flush(); // flush after EACH photo so it lands in the DB and surfaces in Needs review promptly — two-pass tagging is ~45s/photo, so the old batch-of-8 checkpoint delayed visibility by minutes (saveLib only upserts actually-changed rows, so re-flushing is cheap)
     }
     flush();
     const stopped = bulkTagStop.current;

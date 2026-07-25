@@ -48,6 +48,7 @@ export function applyAiTagResult(existing, result, { taxonomy, tagSource } = {})
     if (result.tags && typeof result.tags === "object") patch._aiTags = result.tags; // snapshot for the corrections diff at review time
     if (result._aiThinking) patch._aiThinking = result._aiThinking;
     if (result._aiRawResponse) patch._aiRawResponse = result._aiRawResponse;
+    if (typeof result._aiConfidence === "number") patch._aiConfidence = result._aiConfidence; // tag-time confidence estimate (shown as a per-photo badge)
 
     const d = result.dims || {};
     if (d.trussL || d.trussW || d.trussH || d.floorL || d.floorW) {
