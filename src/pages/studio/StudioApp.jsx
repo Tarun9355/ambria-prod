@@ -914,10 +914,13 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
     if (!enabledEls[zk] || !cfg) return;
-    const dims = cfg.dims || {}; const sqft = (Number(dims.w) || 0) * (Number(dims.d) || 0); if (sqft <= 0) return;
-    if (cfg.trT) addSub("Truss", sqft * Math.max(1, Number(cfg.trussQty) || 1));
-    if (cfg.plH) addSub("Platform", sqft);
-    if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft);
+    // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
+    // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
+    // silently dropped out of Build's transport total (only element-based items ever counted).
+    const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+    const sqft = (fd.L || 0) * (fd.W || 0);
+    if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
   });
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
