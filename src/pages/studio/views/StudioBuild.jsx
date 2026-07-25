@@ -381,7 +381,10 @@ export default function StudioBuild({ ctx }) {
     )}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:6}}>
       <div style={{fontSize:28,fontWeight:700}}>Build Your Decor</div>
-      <button onClick={()=>setTopZpFilterOpen(!topZpFilterOpen)} title="Set the photo filter for every zone at once (same filter each zone's own 🔍 uses)" style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${topZpFilterOpen||zpHasFilters?accent:border}`,background:topZpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:topZpFilterOpen||zpHasFilters?accent:textS,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>🔍 Filter whole build{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        <button onClick={()=>setTopZpFilterOpen(!topZpFilterOpen)} title="Set the photo filter for every zone at once (same filter each zone's own 🔍 uses)" style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${topZpFilterOpen||zpHasFilters?accent:border}`,background:topZpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:topZpFilterOpen||zpHasFilters?accent:textS,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>🔍 Filter whole build{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
+        {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} title="Reset every filter section back to All" style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>All</button>}
+      </div>
     </div>
     <div style={{fontSize:14,color:textS,marginBottom:clientDate?8:24,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
       {clientName&&<strong>{clientName} · </strong>}
