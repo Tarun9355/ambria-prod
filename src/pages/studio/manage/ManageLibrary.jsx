@@ -268,7 +268,6 @@ export default function ManageLibrary({ ctx }) {
     const id = setInterval(() => { libPage.refreshCounts(); libPage.refreshNew(); }, 4000);
     return () => clearInterval(id);
   }, [bulkTag?.running]); // eslint-disable-line react-hooks/exhaustive-deps
-  const getZoneMatches = useZoneMatchCache(getLibPhotosForZone);
   const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
   useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
