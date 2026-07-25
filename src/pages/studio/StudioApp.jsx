@@ -1431,9 +1431,9 @@ export default function StudioApp() {
   const [floralRatio, setFloralRatio] = useState(70);
   const [floralOverrides, setFloralOverrides] = useState({ note: "", rows: [] });
 
-  // ═══ ZONE PHOTO FILTERS (Build canvas) — explicit, user-controlled only. No longer auto-seeded
-  // from a reference video/event's own tags — every zone shows its full tagged photo set by
-  // default; the salesperson opts in to narrowing it via the 🔍 filter. ═══
+  // ═══ ZONE PHOTO FILTERS (Build canvas) — seeded from a reference video's own taxonomy when
+  // customizing off it (see pickAndLoad), otherwise starts at "All"; always user-adjustable from
+  // here via the 🔍 filter, never auto-reapplied afterwards. ═══
   const [zpFilterOpen, setZpFilterOpen] = useState(false);
   const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
   const zpToggleFilter = useCallback((cat, val) => {
@@ -3960,9 +3960,19 @@ export default function StudioApp() {
       const vTag = ytVideoTags[vidId] || {};
       const vid = allVideos.find(v => v.id === vidId);
       setSourceVideo({ id: vidId, title: vid?.title || ev.name, tags: vTag });
+      // Seed the "Filter whole build" panel from this reference video's own taxonomy (event type/
+      // venue type/style/palette/day-night/venue) — customizing off a video starts the zone photo
+      // strips narrowed to photos matching it, instead of showing the whole library; the
+      // salesperson can still widen/clear the filter from here. Video tags use fn/io/styles/colors
+      // (vs a library photo's own eventType/venueType/designStyle/colorPalette) — same taxonomy
+      // strings, different key names. Zone photos themselves are still never pinned/auto-picked —
+      // every zone starts empty and the salesperson picks manually from the (now filtered) set.
+      const arr = (v) => (Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []));
+      setZpFilters({
+        eventType: arr(vTag.fn), venueType: arr(vTag.io), designStyle: arr(vTag.styles),
+        colorPalette: arr(vTag.colors), timeSetting: arr(vTag.timeSetting), venue: arr(vTag.venue),
+      });
       // Default the Build palette to the one tagged on the video (salesperson can still change it).
-      // Zone photos are no longer pinned per-video or auto-populated — every zone starts empty and
-      // the salesperson picks from the zone's full tagged photo set in Build.
       const vidPalette = vTag.palette || (Array.isArray(vTag.colors) ? vTag.colors[0] : "") || "";
       if (vidPalette) {
         if (activeFnIdx === 0) setClientPalette(vidPalette);
