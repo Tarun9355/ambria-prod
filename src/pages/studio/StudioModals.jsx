@@ -32,7 +32,7 @@ export default function StudioModals({ ctx }) {
     // Element Breakdown + Print — same IMS-inventory-driven pricing/search the Library editor and
     // Build's zone editor use, so the upload-review modal reflects the same live system instead of
     // its own smaller Rate-Card-only copy.
-    getElPriceFromInventory, getElPriceFromPattern, recipeOnlyPatterns, imsPrintMaterials,
+    getElPriceFromInventory, getElPriceFromPattern, recipeOnlyPatterns, imsPrintMaterials, imsCarpetMaterials,
     imsTrussRates, imsMaskingRates,
     // previewImg
     previewImg, setPreviewImg,
@@ -360,9 +360,9 @@ export default function StudioModals({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={zoneUploadReview.dims?.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={zoneUploadReview.dims?.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
                 </div>
               </div>
@@ -394,9 +394,9 @@ export default function StudioModals({ ctx }) {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                        <select value={row.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <select value={row.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                           <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                          {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                          {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                         </select>
                       </div>
                     </div>
@@ -447,7 +447,7 @@ export default function StudioModals({ ctx }) {
                   const flSqft=fL*fW;
                   const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                   const plCost=flSqft*plRate;
-                  const cp=carpetPricingFor(row.cpT, imsPrintMaterials);
+                  const cp=carpetPricingFor(row.cpT, imsCarpetMaterials);
                   const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                   return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
                 };

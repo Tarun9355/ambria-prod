@@ -57,6 +57,8 @@ export default function StudioBuild({ ctx }) {
     imsInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials)
     imsPrintMaterials,
+    // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — own master list
+    imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + bundled calcStructCost input
     imsTrussRates, imsMaskingRates, structRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
@@ -1301,9 +1303,9 @@ export default function StudioBuild({ ctx }) {
                 </div>}
                 {zm.hasCarpet&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🟫"} Carpet</span>
-                    <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                    <select value={zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                       <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                      {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                      {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                     </select>
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
                 </div>}
@@ -1651,9 +1653,9 @@ export default function StudioBuild({ ctx }) {
               {/* Carpet */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:11}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}><span>🟫 Carpet</span>
-                  <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                 </div>{showCosts&&st.carpet>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
               </div>

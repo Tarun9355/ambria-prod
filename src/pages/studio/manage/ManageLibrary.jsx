@@ -161,6 +161,8 @@ export default function ManageLibrary({ ctx }) {
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — per-element Print section
     imsPrintMaterials,
+    // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — own master list
+    imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates)
     imsTrussRates, imsMaskingRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
@@ -1040,9 +1042,9 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={libEditImg.dims?.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={libEditImg.dims?.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
                 </div>
               </div>
@@ -1074,9 +1076,9 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                        <select value={row.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <select value={row.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                           <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                          {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                          {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                         </select>
                       </div>
                     </div>
@@ -1123,7 +1125,7 @@ export default function ManageLibrary({ ctx }) {
                 const flSqft=fL*fW;
                 const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                 const plCost=flSqft*plRate;
-                const cp=carpetPricingFor(row.cpT, imsPrintMaterials);
+                const cp=carpetPricingFor(row.cpT, imsCarpetMaterials);
                 const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                 return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
               };

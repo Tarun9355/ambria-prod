@@ -278,7 +278,7 @@ function platformRowCost(row, rates) {
   const fd = row.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
-  const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, rates?.printMaterials).rate;
+  const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, rates?.carpetMaterials).rate;
   return { platform, carpet };
 }
 function calcStructCost(zk, zc, rates) {
@@ -1341,6 +1341,9 @@ export default function StudioApp() {
   // Print material rates (IMS Admin → Settings → 🖨️ Print Materials, e.g. Flex/Vinyl/Sunboard
   // ₹/sqft) — read by Library's per-element Print section to price a print job.
   const [imsPrintMaterials, setImsPrintMaterials] = useState([]);
+  // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — its own master list, no
+  // longer piggybacking on Print Materials (a real print-job catalogue with an unrelated purpose).
+  const [imsCarpetMaterials, setImsCarpetMaterials] = useState([]);
   // IMS Admin → Settings → 🏗️ Truss & Masking Rates (settings.trussRates/maskingRates) — falls back
   // to DEFAULT_TRUSS_RATES/DEFAULT_MASKING_RATES via trussRateFor/maskingRateFor until customized.
   const [imsTrussRates, setImsTrussRates] = useState([]);
@@ -1942,6 +1945,7 @@ export default function StudioApp() {
       try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {}
       // Print Materials — same per-field kv row pattern as synonymDictionary above.
       try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {}
+      try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {}
       // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
       try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
       try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
@@ -2045,6 +2049,7 @@ export default function StudioApp() {
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
+          else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
@@ -2413,7 +2418,7 @@ export default function StudioApp() {
   // Bundled settings-driven rates passed to calcStructCost everywhere — imsInventory/rcFactorByKey
   // ride along so trussRowCost can price a "custom ceiling/masking" inventory item (rental × its
   // sub-category's scaling factor) the same way any other IMS-sourced element prices.
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsTrussRates, imsMaskingRates, imsInventory, rcFactorByKey]);
+  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsInventory, rcFactorByKey]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -5345,7 +5350,7 @@ export default function StudioApp() {
         structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       }
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
-      if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsPrintMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
+      if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
       if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
       if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });
@@ -6119,7 +6124,7 @@ export default function StudioApp() {
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — Library's per-element Print section
-    imsPrintMaterials,
+    imsPrintMaterials, imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + the bundled object
     // passed to calcStructCost everywhere
     imsTrussRates, imsMaskingRates, structRates,
