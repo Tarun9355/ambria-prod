@@ -27,6 +27,7 @@ import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
+import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { makeS } from "../../lib/studio/styles";
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
@@ -3770,64 +3771,41 @@ export default function StudioApp() {
     saveManualVideos([vid, ...manualVideos]);
   }, [manualVideos, saveManualVideos]);
 
-  // ═══ AI TAG VIDEO (reference ~4762) — /api/youtube → ytApi, /api/anthropic → callClaudeStreaming ═══
-  // Core: fetch a video's details, AI-tag the metadata, and auto-assign the best-match library
-  // photo per zone. Returns the tag object (with _aiTagged) or null. Used by single + bulk taggers.
+  // ═══ TAG VIDEO FROM DESCRIPTION — /api/youtube → ytApi, then plain-JS taxonomy matching ═══
+  // Ambria's video descriptions carry explicit labeled lines ("Venue: ...", "Package Category:
+  // ..."), so extracting tags is deterministic parsing, not AI inference — no Claude call, no
+  // cost/latency, no ambiguity. A label with no match in its taxonomy list (or missing from the
+  // description) is simply left untagged; there is no AI fallback.
+  // Core: fetch a video's details, tag from its description, and auto-assign the best-match
+  // library photo per zone. Returns the tag object (with _aiTagged) or null. Used by single + bulk taggers.
   const buildVideoTagFromAI = useCallback(async (videoId) => {
       const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
       const snippet = ytData.items?.[0]?.snippet;
       if (!snippet) return null;
-      const title = snippet.title || "";
       const desc = snippet.description || "";
-      const ytTags = (snippet.tags || []).join(", ");
-      const venueList = allInhouseVenues.join(", ");
-      const venueAliases = allInhouseVenues.map(v => {
-        const parts = v.toLowerCase().split(/\s+/);
-        return `"${v}" (match if text contains: ${parts.filter(p => p.length > 3).join(", ")})`;
-      }).join("; ");
-      const fnList = taxOr(taxonomy.eventType, FUNCTIONS).map(f => `"${f}"`).join(", ");
-      const styleList = (taxonomy.designStyle || []).map(s => `"${s}"`).join(", ");
-      const colorList = (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || [])).map(c => `"${c}"`).join(", ");
-      const prompt = `You are a wedding/event decor video tagger. Respond ONLY with valid JSON.
-
-Analyze this YouTube video about Indian wedding/event decoration and extract tags.
-
-VIDEO TITLE: ${title}
-VIDEO DESCRIPTION: ${desc.slice(0, 1500)}
-VIDEO TAGS: ${ytTags}
-
-SMART VENUE MATCHING — match against these known venues: ${venueList}
-Aliases: ${venueAliases}
-Rules: If the title/description mentions "Pushpanjali" → venue is "Pushpanjali". If it mentions "Exotica" → "Exotica". If it mentions "Manaktala" → "Manaktala". Match partial names intelligently. Also match abbreviations or variations.
-
-Extract these fields using ONLY these exact values:
-- venue: one of [${allInhouseVenues.map(v => `"${v}"`).join(", ")}] or "" if unknown
-- fn: function type, array from [${fnList}]
-- tier: "Silver" (simple/basic decor) or "Gold" (premium/enhanced/luxury decor) — infer from description/quality/scale
-- io: "Indoor" or "Outdoor" or "" — infer from venue name, description, or visual cues mentioned
-- colors: array from [${colorList}] — pick values that match colors mentioned or implied
-- styles: array from [${styleList}] — pick values that match the decor style described
-
-Return ONLY JSON:
-{"venue":"...","fn":["..."],"tier":"...","io":"...","colors":["..."],"styles":["..."]}`;
-
-      const txt = await callClaudeStreaming({
-        contentBlocks: prompt,
-        model: "claude-sonnet-4-6",
-        maxTokens: 500,
-      });
-      const clean = (txt || "").replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
       const existingTag = ytVideoTags[videoId] || {};
+
+      const colorList = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || []);
+      const allVenues = [...allInhouseVenues, ...customOutdoor.map(o => o.name)];
+
+      const venueRaw = extractLabeledValue(desc, "Venue");
+      const matchedVenue = bestTaxMatch(venueRaw, allVenues);
+      const matchedFn = bestTaxMatch(extractLabeledValue(desc, "Event Type"), taxOr(taxonomy.eventType, FUNCTIONS));
+      const matchedIo = bestTaxMatch(extractLabeledValue(desc, "Setup Type"), taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]));
+      const matchedColor = bestTaxMatch(extractLabeledValue(desc, "Color Palette"), colorList);
+      const matchedTier = bestTaxMatch(extractLabeledValue(desc, "Package Category"), taxOr(taxonomy.tier, CATEGORIES));
+      const matchedStyle = bestTaxMatch(extractLabeledValue(desc, "Design Style"), taxonomy.designStyle || []);
+
       const newTag = {
         ...existingTag,
-        venue: parsed.venue || existingTag.venue || "",
-        fn: Array.isArray(parsed.fn) ? (parsed.fn.length === 1 ? parsed.fn[0] : parsed.fn) : parsed.fn || existingTag.fn,
-        tier: parsed.tier || existingTag.tier,
-        io: parsed.io || existingTag.io,
-        colors: (parsed.colors || []).length ? parsed.colors : existingTag.colors || [],
-        styles: (parsed.styles || []).length ? parsed.styles : existingTag.styles || [],
-        palette: parsed.colors?.[0] || existingTag.palette || "",
+        venue: matchedVenue || (venueRaw ? venueRaw : existingTag.venue || ""),
+        venueCustom: matchedVenue ? undefined : (venueRaw ? true : existingTag.venueCustom),
+        fn: matchedFn ? [matchedFn] : existingTag.fn,
+        tier: matchedTier || existingTag.tier,
+        io: matchedIo || existingTag.io,
+        colors: matchedColor ? [matchedColor] : (existingTag.colors || []),
+        styles: matchedStyle ? [matchedStyle] : (existingTag.styles || []),
+        palette: matchedColor || existingTag.palette || "",
       };
       // Auto-assign the best-matching library photo to each zone (kept if the admin already picked
       // one). Gives the video a build cost so it shows priced on Browse once saved.
@@ -3841,41 +3819,42 @@ Return ONLY JSON:
       newTag.zonePhotos = autoZonePhotos;
       newTag._aiTagged = true;
       return newTag;
-  }, [ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
+  }, [ytVideoTags, allInhouseVenues, customOutdoor, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
 
   const aiTagVideo = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
     setAiTaggingVideo(videoId);
-    showMsg("🤖 AI analyzing video...", "blue");
+    showMsg("📋 Parsing description...", "blue");
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
       const assigned = Object.keys(newTag.zonePhotos || {}).length;
       setAiVideoDraft({ videoId, tags: newTag });
       setYtTagEdit(videoId);
-      showMsg(`✓ AI tagged + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
-    } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
+      showMsg(`✓ Tagged from description + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
+    } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI]);
 
-  // Direct-save variant for the full-screen editor: AI-tag a single video and save immediately
-  // (no draft step), so the big editor just shows the filled tags to review/adjust.
+  // Direct-save variant for the full-screen editor: tag a single video from its description and
+  // save immediately (no draft step), so the big editor just shows the filled tags to review/adjust.
   const aiTagVideoSave = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
     setAiTaggingVideo(videoId);
-    showMsg("🤖 AI analyzing video...", "blue");
+    showMsg("📋 Parsing description...", "blue");
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
       const assigned = Object.keys(newTag.zonePhotos || {}).length;
-      await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "AI", _savedAt: Date.now() } });
-      showMsg(`✓ AI tagged + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & adjust below`, "green");
-    } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
+      await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "Auto", _savedAt: Date.now() } });
+      showMsg(`✓ Tagged from description + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & adjust below`, "green");
+    } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI, ytVideoTags, saveYtTags, authUser]);
 
-  // Bulk AI-tag every untagged video (app-wide, like photo bulk). Saves directly with _aiTagged so
-  // the team reviews/verifies after — keeps going while you move around; stoppable; resumable.
+  // Bulk-tag every untagged video from its description (app-wide, like photo bulk). Saves
+  // directly with _aiTagged so the team reviews/verifies after — keeps going while you move
+  // around; stoppable; resumable.
   const stopBulkTagVideos = useCallback(() => { bulkVidStop.current = true; }, []);
   const runBulkTagVideos = useCallback(async () => {
     const targets = allVideos.filter(v => !hiddenVideos[v.id] && !ytVideoTags[v.id]);
@@ -3888,7 +3867,7 @@ Return ONLY JSON:
       if (bulkVidStop.current) break;
       try {
         const tag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        if (tag) { merged = { ...merged, [targets[n].id]: { ...tag, _savedBy: "AI (bulk)", _savedAt: Date.now() } }; ok++; }
+        if (tag) { merged = { ...merged, [targets[n].id]: { ...tag, _savedBy: "Auto (bulk)", _savedAt: Date.now() } }; ok++; }
         else fail++;
       } catch { fail++; }
       if ((n + 1) % 4 === 0) await saveYtTags(merged);
@@ -3897,7 +3876,7 @@ Return ONLY JSON:
     await saveYtTags(merged);
     const stopped = bulkVidStop.current;
     setBulkVid({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
-    showMsg(`🎬 Video AI tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
+    showMsg(`🎬 Video tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
     return { ok, fail };
   }, [allVideos, hiddenVideos, ytVideoTags, buildVideoTagFromAI, saveYtTags]);
 

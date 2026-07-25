@@ -1849,7 +1849,7 @@ export default function ManageLibrary({ ctx }) {
                   {bulkVid?.running ? (
                     <span style={{ fontSize: 10, color: textS }}>🎬 Tagging {bulkVid.done}/{bulkVid.total} · {bulkVid.ok}✓ {bulkVid.fail}✕</span>
                   ) : untaggedN > 0 ? (
-                    <button onClick={() => { if (window.confirm(`AI-tag ${untaggedN} untagged video${untaggedN === 1 ? "" : "s"}?\n\nRuns in the background — keep working; progress shows in the corner. Each video is metadata-tagged and gets best-match zone photos. The team reviews/verifies after, and tagged videos appear on Browse.`)) runBulkTagVideos?.(); }} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#0EA5E9" }}>🎬 Tag all untagged ({untaggedN})</button>
+                    <button onClick={() => { if (window.confirm(`Tag ${untaggedN} untagged video${untaggedN === 1 ? "" : "s"} from their description?\n\nRuns in the background — keep working; progress shows in the corner. Each video's description is parsed for venue/event/tier/etc. and gets best-match zone photos. The team reviews/verifies after, and tagged videos appear on Browse.`)) runBulkTagVideos?.(); }} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#0EA5E9" }}>🎬 Tag all untagged ({untaggedN})</button>
                   ) : null}
                 </div>
               </div>
@@ -2044,7 +2044,7 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                   {/* AI Draft banner */}
                   {hasDraft&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",marginBottom:10,borderRadius:8,background:"rgba(201,169,110,0.12)",border:`1px solid ${accent}40`}}>
-                    <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>🤖 AI suggested — review & save</span>
+                    <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>📋 Parsed from description — review & save</span>
                     <button onClick={()=>{const nt={...ytVideoTags,[v.id]:{...aiVideoDraft.tags,_aiTagged:true,_savedBy:authUser?.name||"—",_savedAt:Date.now()}};saveYtTags(nt);setAiVideoDraft(null);showMsg("✓ AI tags saved — video now live on Browse","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
                     <button onClick={()=>{setAiVideoDraft(null);setYtTagEdit(null);}} style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>✕ Discard</button>
                   </div>}
@@ -2083,7 +2083,7 @@ export default function ManageLibrary({ ctx }) {
                       </>;
                     })()}
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Tier</div>
                       <select value={tag.tier||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,tier:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,tier:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
@@ -2096,6 +2096,13 @@ export default function ManageLibrary({ ctx }) {
                       <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,io:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Time / Setting</div>
+                      <select value={tag.timeSetting||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,timeSetting:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,timeSetting:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                        <option value="">—</option>
+                        {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
                     {/* §23 Phase 2.9c — palette per video (drives Build screen paint picker grouping) */}
@@ -2200,7 +2207,7 @@ export default function ManageLibrary({ ctx }) {
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}
                     <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
-                    <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
+                    <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"📋 Tag from description"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
                 </div>}
@@ -2361,7 +2368,7 @@ export default function ManageLibrary({ ctx }) {
                 <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🎬 {v.title || "Video"}</div>
                 <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>{assigned} of {zones.length} zones have a photo · changes save instantly</div>
               </div>
-              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🤖 AI Tag"}</button>
+              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
               <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
@@ -2374,12 +2381,13 @@ export default function ManageLibrary({ ctx }) {
                   : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} />}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginBottom: 18 }}>
-                <div><div style={lbl}>Tier</div><div style={chipRow}>{["Silver", "Gold", "Platinum"].map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
+                <div><div style={lbl}>Tier</div><div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
                 <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                 <div><div style={lbl}>Event type</div><div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div></div>
-                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor"]).map(io => chip(io, vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
+                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(io, vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
                 <div><div style={lbl}>Colors</div><div style={chipRow}>{palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}</div></div>
                 <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
+                <div><div style={lbl}>Time / Setting</div><div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div></div>
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 8 }}>📸 Photo per zone — scroll ◀ ▶ and click to pick</div>
               {zones.map(zone => {
