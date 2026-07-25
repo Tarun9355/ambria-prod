@@ -1,6 +1,6 @@
 import { Fragment, useState, useRef, useEffect } from "react";
 import {
-  TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
+  ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -40,7 +40,7 @@ export default function StudioBuild({ ctx }) {
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
-    enabledEls, setEnabledEls, elTiers, setElTiers, customMode, toggleEl,
+    enabledEls, setEnabledEls, customMode, toggleEl,
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
     elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
@@ -275,10 +275,7 @@ export default function StudioBuild({ ctx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneKeys, customZones, matchGen]);
 
-  // Strict category filter: Simple=Silver ONLY, Enhanced=Gold ONLY
-  // No mixing — each tab shows ONLY its category's photos
-  const getMatchedPhotos = (elKey, tier) => {
-    const targetCat = TIER_TO_CAT[tier] || "Silver";
+  const getMatchedPhotos = (elKey) => {
     const areaNamesRaw = ZONE_TYPE_TO_AREA[elKey];
     let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
     // Custom / renamed zones (keys living in zoneDefs.meta, not the static map) have no direct
@@ -297,10 +294,8 @@ export default function StudioBuild({ ctx }) {
     const seen = new Set();
 
     // LIBRARY PHOTOS — every photo tagged for this zone, unranked, capped at 50. No source-video
-    // default, no relevance scoring — the salesperson always picks manually from the full set.
-    // Strict tier tab: Silver shows only Simple-tagged photos, Gold only Enhanced.
-    // Photos tagged the OPPOSITE tier are excluded; untagged photos appear under either tab.
-    const tabTier = tier === "enhanced" ? "Enhanced" : tier === "premium" ? "Premium" : "Simple";
+    // default, no relevance scoring, no Silver/Gold split — the salesperson always picks manually
+    // from the zone's full tagged set regardless of a photo's categoryTier tag.
     if (areaNames.length) {
       // Async zone match (getLibPhotosForZone) — read from the cache populated by the effect above
       // (empty array until it resolves, same render cost as before once warm).
@@ -308,12 +303,10 @@ export default function StudioBuild({ ctx }) {
       for (const img of allMatches) {
         if (photos.length >= 50) break;
         if (!img.url || seen.has(img.url)) continue;
-        const liTier = img.tags?.categoryTier || [];
-        if (liTier.length && !liTier.includes(tabTier)) continue; // tagged opposite tier → hide
         seen.add(img.url);
         photos.push({
           src: img.url, eventId: img.id, eventName: img.name || "Library",
-          category: targetCat, fn: "", space: "", mood: "", venue: "", video: "",
+          fn: "", space: "", mood: "", venue: "", video: "",
           tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
           isLibrary: true, elements: img.elements || [], dims: img.dims || {},
         });
@@ -324,10 +317,7 @@ export default function StudioBuild({ ctx }) {
     // For mapped zones we deliberately stop at zone-tagged library photos above; event
     // photos aren't tagged per-zone, so padding with them re-introduces wrong-zone images.
     if (!areaNames.length && photos.length < 50) {
-      const catEvents = events.filter(ev => {
-        if (getCat(getFullCost(ev)).label !== targetCat) return false;
-        return (ev.enabledEls || []).includes(elKey) || (ev.elements && ev.elements[elKey]);
-      });
+      const catEvents = events.filter(ev => (ev.enabledEls || []).includes(elKey) || (ev.elements && ev.elements[elKey]));
       const sorted = catEvents.map(ev => {
         let relevance = 0;
         if (fn && ev.fn === fn) relevance += 4;
@@ -363,7 +353,7 @@ export default function StudioBuild({ ctx }) {
         seen.add(img.url);
         photos.push({
           src: img.url, eventId: img.id, eventName: img.name || "Library",
-          category: targetCat, fn: "", space: "", mood: "", venue: "", video: "",
+          fn: "", space: "", mood: "", venue: "", video: "",
           tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
           isLibrary: true, elements: img.elements || [], dims: img.dims || {},
         });
@@ -629,8 +619,8 @@ export default function StudioBuild({ ctx }) {
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||"📦"}:zoneLabelsD[k];
       const isCentrepieceZone=/centre\s*piece|center\s*piece|centrepiece/i.test(el?.label||k||"");
-      const isOn=enabledEls[k];const tier=elTiers[k]||"simple";const isCust=customMode[k];
-      let matchedPhotos = getMatchedPhotos(srcType, tier).filter(ph => {
+      const isOn=enabledEls[k];const isCust=customMode[k];
+      let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
         const li = libItems.find(l => l.id === ph.eventId);
@@ -669,7 +659,7 @@ export default function StudioBuild({ ctx }) {
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
           <div style={{marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS}}>📷 {TIER_TO_CAT[tier]} {el.label} — tap to apply pricing</div>
+                <div style={{fontSize:11,fontWeight:600,color:textS}}>📷 {el.label} — tap to apply pricing</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {elSelectedPhoto[k]&&<div style={{fontSize:10,color:"#059669",fontWeight:600}}>✓ {elSelectedPhoto[k].eventName}</div>}
                   <label style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading===k?accent+"20":"transparent",color:zoneUploading===k?accent:accent,fontSize:10,fontWeight:600,cursor:zoneUploading?"wait":"pointer",display:"flex",alignItems:"center",gap:3}}>
@@ -741,7 +731,7 @@ export default function StudioBuild({ ctx }) {
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();setElGallery({elKey:k,photos:matchedPhotos,title:`${TIER_TO_CAT[tier]} ${el.label}`});setGalleryIdx(i);}}>
+                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" style={{width:gridZones[k]?"100%":160,height:95,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"2px 6px",borderRadius:4,fontSize:8}}>🔍 Preview</div>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:700}}>{fmt(photoFullCost)}</div>}
@@ -761,7 +751,7 @@ export default function StudioBuild({ ctx }) {
               </div>
               ) : (
             <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:12,padding:"16px 20px",textAlign:"center"}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${TIER_TO_CAT[tier]} ${el.label} photos match your filters`:`No ${TIER_TO_CAT[tier]} ${el.label} photos yet`}</div>
+              <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
               <div style={{fontSize:11,color:textS,marginBottom:8}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
                 {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
@@ -775,11 +765,6 @@ export default function StudioBuild({ ctx }) {
           </div>
 
           {/* ═══ AI INSPIRATION per element — HIDDEN pending search integration ═══ */}
-
-          {/* ═══ TIER SELECTOR — always visible ═══ */}
-          <div style={{display:"flex",gap:6,marginBottom:12}}>
-            {["simple","enhanced"].map(t=><button key={t} onClick={()=>{setElTiers(p=>({...p,[k]:t}));}} style={{flex:1,padding:"8px 10px",border:"none",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:tier===t?700:400,background:tier===t?"#444":isDark?"rgba(255,255,255,0.04)":"#F3F4F6",color:tier===t?"#fff":textS,textTransform:"capitalize"}}>{t === "simple" ? "Silver" : "Gold"}</button>)}
-          </div>
 
           {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
           {showCosts&&!isCollapsed(k)&&<Fragment>
