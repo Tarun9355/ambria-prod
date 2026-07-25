@@ -2792,8 +2792,12 @@ export default function StudioApp() {
     }, 0);
   }, [getElPrice, applyFloralRatio]);
 
-  const getElPriceForFn = useCallback((el, zc, fnRatio) => {
-    if (el.invId) return getElPriceFromInventory(el); // IMS inventory-sourced element — Rate Card never consulted
+  // checkAvail (optional): mirrors getElPrice's opts.checkAvailability — only meaningful for the
+  // CURRENTLY ACTIVE function, since activeBlocksForDate is only ever warmed for that function's
+  // own date (see the useEffect that warms it). Callers must gate this to the active function only;
+  // passing it for another function's snapshot would check its items against the wrong date's blocks.
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail) => {
+    if (el.invId) return getElPriceFromInventory(el, checkAvail ? { checkAvailability: true } : undefined); // IMS inventory-sourced element — Rate Card never consulted
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
@@ -2826,8 +2830,8 @@ export default function StudioApp() {
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
 
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail) => {
+    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail).lineCost, 0);
   }, [getElPriceForFn]);
 
   const calcPhotoCost = useCallback((zoneKey, photo) => {
@@ -3040,9 +3044,14 @@ export default function StudioApp() {
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates).total; });
+    // Availability-shortfall pricing only applies to the currently active function — see
+    // getElPriceForFn's comment. This is what makes this total (Summary's top banner, Deal Check's
+    // quote) match Build's own live totalCost() instead of running lower whenever an item is
+    // oversubscribed for the date.
+    const fCheckAvail = fnData.fnIdx === activeFnIdx;
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, fCheckAvail);
     });
     // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
     // (Summary's accordion), which already scoped this way; this one used to count every custom
@@ -3090,7 +3099,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems, structRates]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems, structRates, activeFnIdx]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -3284,7 +3293,9 @@ export default function StudioApp() {
           // (it's not an error signal; lineCost is already 0 in the genuinely-unpriced case). This
           // used to skip counting ANY of those elements' cost here — the single biggest reason
           // Summary's own per-zone accordion could show a fraction of Build's/Deal Check's total.
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio);
+          // checkAvail only for the active function (see getElPriceForFn) — keeps this accordion's
+          // per-zone total matching Build's own live totalCost() when an item is oversubscribed.
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, fnData.fnIdx === activeFnIdx);
           ic += priceInfo.lineCost;
           itemCount += (el2.qty || 0);
         });
@@ -3348,7 +3359,7 @@ export default function StudioApp() {
         gensets, venueGensets, gensetCost, gensetRate, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems, structRates]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
 
   const cat = getCat(grandTotal);
 
