@@ -2940,7 +2940,12 @@ export default function StudioApp() {
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
     });
     const fnIdx = activeFnIdx || 0;
-    dcCustomItems.filter(ci => ci.fnIdx === fnIdx).forEach(ci => {
+    // Only count a custom Production/Buying item while its own zone is still enabled — matches
+    // how normal element-card costs are gated by enabledEls above, and matches
+    // calcFunctionBreakdown (Summary's accordion), which already scoped this way. Previously this
+    // counted every custom item for the function regardless of zone toggle state, so switching a
+    // zone off didn't remove its custom items from the total the way it removes everything else.
+    dcCustomItems.filter(ci => ci.fnIdx === fnIdx && enabledEls[ci.zoneKey]).forEach(ci => {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
@@ -3031,7 +3036,10 @@ export default function StudioApp() {
       if (!fEnabledEls[zk] || !elems) return;
       decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio);
     });
-    dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx).forEach(ci => {
+    // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
+    // (Summary's accordion), which already scoped this way; this one used to count every custom
+    // item for the function regardless of zone toggle state.
+    dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx && fEnabledEls[ci.zoneKey]).forEach(ci => {
       decor += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     let transport = 0;
