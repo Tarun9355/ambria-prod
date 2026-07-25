@@ -2893,6 +2893,9 @@ export default function StudioApp() {
     const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decorCost >= b.minBudget && decorCost < b.maxBudget);
     const bufTrucks = bt ? bt.bufferTrucks : 0;
+    // No decor priced at all → nothing to deliver or power, so skip truck/genset cost entirely
+    // (matches calcFunctionCost/calcFunctionBreakdown, which already gate transport on decor > 0).
+    if (decorCost <= 0) return decorCost;
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
     const truckTotal = allTrucks * tripRate * 2;
     const gensets = match ? (match.gensets || 1) : 1;
@@ -2958,11 +2961,16 @@ export default function StudioApp() {
     const tripRate = match ? match.rate : customTripRate;
     const tierId = match ? match.tier : "new";
     const tierLabel = match ? (TR_TIERS.find(t => t.id === match.tier)?.label || match.tier) : "New venue";
+    const decor = totalCost();
+    // No decor selected at all → nothing to deliver or power, so no trucks/genset either. Matches
+    // calcFunctionCost/calcFunctionBreakdown, which already skip transport entirely when a
+    // function's decor total is 0 — this was the one place still charging it unconditionally
+    // as soon as a venue was picked, even with every zone toggled off.
+    if (decor <= 0) return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: match ? (match.gensets || 1) : 1, gensetCost: 0, gensetRate, truckTotal: 0 };
     const breakdown = [];
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
-    const decor = totalCost();
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
     const bufTrucks = bt ? bt.bufferTrucks : 0;
     if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
