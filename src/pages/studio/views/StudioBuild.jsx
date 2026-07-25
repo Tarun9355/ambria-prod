@@ -84,6 +84,10 @@ export default function StudioBuild({ ctx }) {
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
   const toggleZoneCollapse = (k) => setZoneCollapsed((p) => ({ ...p, [k]: p[k] === false ? true : false }));
   const [notesOpen, setNotesOpen] = useState({}); // per-zone: reveal the client-note field (else a small icon)
+  // Per-zone photo-strip scroll containers, keyed by zone key — lets us scroll a strip back to
+  // the start after picking a photo (it gets pinned to the front, but the scroll position doesn't
+  // otherwise follow it there).
+  const stripRefs = useRef({});
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
@@ -725,7 +729,7 @@ export default function StudioBuild({ ctx }) {
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
               {matchedPhotos.length>0 ? (
-              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
+              <div ref={el=>{stripRefs.current[k]=el;}} style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
               {matchedPhotos.map((ph,i)=>{
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
                 const isSelected = elSelectedPhoto[k]?.src === ph.src;
@@ -745,7 +749,7 @@ export default function StudioBuild({ ctx }) {
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
                     {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:8,fontWeight:700,padding:"2px 6px",borderRadius:4}}>SOURCE</div>}
                   </div>
-                  <div style={{padding:"6px 8px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>selectElPhoto(k,ph)}>
+                  <div style={{padding:"6px 8px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{selectElPhoto(k,ph);requestAnimationFrame(()=>{const strip=stripRefs.current[k];if(strip)strip.scrollTo({left:0,top:0,behavior:"smooth"});});}}>
                     <div style={{fontSize:10,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
                     <div style={{fontSize:9,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
