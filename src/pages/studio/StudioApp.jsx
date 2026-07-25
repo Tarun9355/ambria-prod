@@ -2575,7 +2575,7 @@ export default function StudioApp() {
       const lineCost = ownedQty * ownedRate + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
-      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null };
+      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
