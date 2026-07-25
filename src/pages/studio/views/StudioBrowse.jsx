@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
 export default function StudioBrowse({ ctx }) {
   const {
@@ -6,7 +6,7 @@ export default function StudioBrowse({ ctx }) {
     S, isDark, accent, border, textS, fmt,
     accentBg, accentText, textP, cardBg,
     // auth / scope
-    isAdmin, userVenueScope,
+    isAdmin, userVenueScope, authUser,
     // step
     setStep,
     // venue filters
@@ -24,9 +24,13 @@ export default function StudioBrowse({ ctx }) {
     // build / session
     sourceVideo, venue, showMsg,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
-    ytVideoTags, outdoorVenueList, browseVideos, allVideos, activeClient,
+    ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   } = ctx;
+
+  // Video id currently open in the "Fix taxonomy" modal (salesperson-facing correction,
+  // separate from Manage's full tag editor) — null when closed.
+  const [taxFixVid, setTaxFixVid] = useState(null);
 
     // Smart video match: strict cascade — venue+fn > venue > fn > hardcoded fallback
     const getBestVideo = (ev) => {
@@ -70,7 +74,10 @@ export default function StudioBrowse({ ctx }) {
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
             <div style={{fontSize:14,fontWeight:600,marginBottom:3,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
             <div style={{fontSize:11,color:textS,marginBottom:6}}>{[v.venue, v.fn, v.space].filter(Boolean).join(" · ") || "Untagged"}</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>{[...v.styles, ...v.colors].slice(0,3).map((t,i)=><span key={i} style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:accentBg,color:accentText}}>{t}</span>)}</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,marginBottom:10}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3}}>{[...v.styles, ...v.colors].slice(0,3).map((t,i)=><span key={i} style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:accentBg,color:accentText}}>{t}</span>)}</div>
+              <button onClick={(e)=>{e.stopPropagation();setTaxFixVid(v.id);}} title="This video is tagged wrong? Fix its taxonomy" style={{flexShrink:0,padding:"2px 7px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,cursor:"pointer"}}>✎ Fix tags</button>
+            </div>
             {priceTBD&&<div style={{fontSize:10,color:"#D97706",marginBottom:8,padding:"4px 8px",background:"rgba(217,119,6,0.1)",borderRadius:6,border:"1px dashed rgba(217,119,6,0.3)"}}>⚠ Needs zone photos — customize to build</div>}
             <div style={{marginTop:"auto",display:"flex",gap:6}}>
               {isPlatinum?(
@@ -299,6 +306,55 @@ export default function StudioBrowse({ ctx }) {
           </div>
         </div>
         </div>
+
+        {/* ═══ FIX TAXONOMY — lightweight salesperson-facing correction modal ═══
+            Edits write straight to ytVideoTags (same store Manage's editor and every
+            filter/seeding path reads), so a fix here applies everywhere the video shows up. */}
+        {taxFixVid && (() => {
+          const vid = allVideos.find(x => x.id === taxFixVid);
+          const tag = ytVideoTags[taxFixVid] || {};
+          const fnArr = Array.isArray(tag.fn) ? tag.fn : (tag.fn ? [tag.fn] : []);
+          const styleArr = tag.styles || [];
+          const colorArr = tag.colors || [];
+          const updTag = (patch) => saveYtTags({ ...ytVideoTags, [taxFixVid]: { ...(ytVideoTags[taxFixVid] || {}), ...patch, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } });
+          const toggleArr = (field, val) => { const cur = Array.isArray(tag[field]) ? tag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
+          const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, ["White & Gold", "Red & Gold", "Pastels", "Teal"]);
+          const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 6 };
+          const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
+          const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
+          return (
+            <div onClick={() => setTaxFixVid(null)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+              <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", border: `1px solid ${border}`, padding: "20px 22px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: textP }}>Fix taxonomy — {vid?.title || "Video"}</div>
+                  <button onClick={() => setTaxFixVid(null)} style={{ border: "none", background: "transparent", color: textS, fontSize: 16, cursor: "pointer" }}>✕</button>
+                </div>
+                <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Changes save instantly and apply everywhere this video shows up.</div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Event type</div>
+                  <div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Tier</div>
+                  <div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, tag.tier === t, () => updTag({ tier: tag.tier === t ? undefined : t })))}</div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Venue type</div>
+                  <div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(s => chip(s, tag.io === s, () => updTag({ io: tag.io === s ? undefined : s })))}</div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Design style</div>
+                  <div style={chipRow}>{taxOr(taxonomy.designStyle, ["Floral", "Modern", "Traditional", "Royal", "Minimal"]).map(s => chip(s, styleArr.includes(s), () => toggleArr("styles", s)))}</div>
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={lbl}>Palette</div>
+                  <div style={chipRow}>{palettes.map(c => chip(c, colorArr.includes(c), () => toggleArr("colors", c)))}</div>
+                </div>
+                <button onClick={() => { setTaxFixVid(null); showMsg("✓ Taxonomy updated", "green"); }} style={{ ...S.btn(true), width: "100%" }}>Done</button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
 }
