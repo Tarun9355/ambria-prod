@@ -3147,8 +3147,19 @@ export default function StudioApp() {
       if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
-    let tReal = 0, tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0;
-    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
+    let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
+    // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
+    // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
+    // because the swap-override pass below has to divert quantity FROM one flower's aggregate
+    // INTO another's, same as the tab does; a flat running total can't express that.
+    const flowerAgg = new Map(); // parentId → { totalQty, unitPrice, name, unit }
+    // Salesperson customizations made in Deal Check's own Florals tab — this rollup used to ignore
+    // both entirely, so a swapped-in flower or a picked colour/preference rate never reached the
+    // bottom-bar Florals total (or GYV/Dept Income, which is built from this same function).
+    const colorPrefsForFn = dcFloralColorPrefs?.[fn?.fnIdx] || {};
+    const fnOverrides = fn?.floralOverrides || { rows: [] };
+    const overrideByParentId = new Map();
+    (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
       (elems || []).forEach(el => {
@@ -3172,20 +3183,33 @@ export default function StudioApp() {
         if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
         if (!comp || !Array.isArray(comp.flowers)) return;
         // Fixed extra cost (pot/base) per unit — a real cost regardless of real/artificial split.
-        { const ex = (Number(comp.extraCost) || 0) * q; if (ex > 0) { tReal += ex; realIncome += ex; } }
+        // Not tied to any one flower, so it sits outside flowerAgg/the swap pass entirely.
+        { const ex = (Number(comp.extraCost) || 0) * q; if (ex > 0) { fixedExtras += ex; realIncome += ex; } }
         const season = sMap[fn.fnDate] || "non_saya";
         const sMult = mults[season] || 1;
         comp.flowers.forEach(fl => {
           const resolved = resolveMandiFlower(fl.flowerId, mc);
           const parent = resolved?.parent || null;
+          const parentId = parent?.id || fl.flowerId;
           const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
           const effR = ft === "real_only" ? 1 : rp;
           const effA = ft === "real_only" ? 0 : ap;
-          const bp = (parent?.currentPrice || 0) * sMult;
+          // Ranked colour preference (1st choice) or a legacy single colour-variant pick overrides
+          // the mandi parent's base price — and skips the season multiplier, same as the Florals
+          // tab: an explicit price the salesperson picked shouldn't silently move with the season.
+          const override = overrideByParentId.get(parentId);
+          const prefArr = colorPrefsForFn?.[parentId];
+          const prefRate = Array.isArray(prefArr) && prefArr.length > 0 ? Number(prefArr[0].rate) : 0;
+          const variantRate = Number(override?.colorVariant?.rate) || 0;
+          const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
+          const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
           const realUnits = (fl.qty || 0) * q * effR;
-          const realCost = realUnits * bp;
-          tReal += realCost;
-          if (realUnits > 0 && parent) { const nm = parent.name || "Flower"; if (!fbreak[nm]) fbreak[nm] = { name: nm, qty: 0, cost: 0, unit: parent.unit || "" }; fbreak[nm].qty += realUnits; fbreak[nm].cost += realCost; }
+          if (realUnits > 0 && parent) {
+            const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
+            agg.totalQty += realUnits;
+            agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
+            flowerAgg.set(parentId, agg);
+          }
           if (effA > 0) {
             if (ft === "mapping") {
               // Mapped to a specific artificial inventory item — sourcing cost = its purchase cost per unit.
@@ -3201,8 +3225,41 @@ export default function StudioApp() {
         });
       });
     });
+    // Manual flower swaps (Deal Check's 🔄 swap button) — divert quantity from one flower's
+    // aggregate to another's, exactly like DCFloralsTab.jsx's own post-aggregation pass, so a swap
+    // made there is reflected here too instead of only in the tab's own displayed total.
+    (fnOverrides.rows || []).forEach(override => {
+      if (!override?.swapTo) return;
+      const fromAgg = flowerAgg.get(override.swapTo.fromParentId);
+      if (!fromAgg) return;
+      const swapQty = Number(override.swapTo.qty) || 0;
+      const isSplit = !!override.swapTo.isSplit;
+      if (swapQty <= 0) return;
+      if (isSplit) {
+        fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
+        if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
+      } else {
+        flowerAgg.delete(override.swapTo.fromParentId);
+      }
+      const targetParent = resolveMandiFlower(override.swapTo.toParentId, mc)?.parent;
+      if (!targetParent) return;
+      const targetId = targetParent.id;
+      const targetRate = (override.swapTo.toRate || targetParent.currentPrice || 0);
+      const existing = flowerAgg.get(targetId);
+      if (existing) existing.totalQty += swapQty;
+      else flowerAgg.set(targetId, { totalQty: swapQty, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
+    });
+    let tReal = fixedExtras;
+    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
+    flowerAgg.forEach(v => {
+      if (!(v.totalQty > 0)) return;
+      const cost = v.totalQty * v.unitPrice;
+      tReal += cost;
+      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit };
+      fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
+    });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey]);
+  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
