@@ -194,6 +194,26 @@ export default function DCFloralsTab({ ctx }) {
                               });
                               return;
                             }
+                            // IMS Mandi tab "Mapping" flowers — the artificial substitute is a SPECIFIC
+                            // inventory item (picked in IMS), not a generic bunches-per-kg conversion.
+                            // Mirrors calcFnFloralSourcingCost's own mapping branch (StudioApp.jsx) —
+                            // this tab previously had no branch for it at all, so a mapped flower's
+                            // artificial cost silently computed as ₹0 (bunchesPerUnit falls back to 0
+                            // since mapping flowers never have one set in IMS).
+                            if (flowerType === "mapping") {
+                              const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac;
+                              const mapCost = Number(parent?.artificialMapCost) || 0;
+                              const lineCost = realUnitsReplaced * mapCost;
+                              artCost += lineCost;
+                              artLines.push({
+                                flowerId: parentId, name: parent?.name || fl.flowerId,
+                                realUnitsReplaced, unit: parent?.unit || "?",
+                                bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost,
+                                missingRatio: mapCost <= 0, realOnly: false,
+                                isMapped: true, mappedName: parent?.artificialMapName || null
+                              });
+                              return;
+                            }
                             const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;
                             const realUnitsReplaced = (fl.qty || 0) * elQty * artFrac;
                             const bunches = realUnitsReplaced * bunchesPerUnit;
@@ -485,6 +505,18 @@ export default function DCFloralsTab({ ctx }) {
                           (e.artLines||[]).forEach(al=>{ if(!al.realOnly && al.missingRatio && al.realUnitsReplaced > 0) acc.add(al.name); });
                           return acc;
                         }, new Set());
+                        // IMS Mandi "Mapping" flowers (real flower → a specific artificial inventory
+                        // item) — aggregate across elements, keyed by the mapped item so the same
+                        // substitute used by several elements rolls into one row.
+                        const mappedAgg = {};
+                        elementBreakdown.forEach(e => (e.artLines||[]).forEach(al => {
+                          if (!al.isMapped) return;
+                          const key = al.mappedName || al.name;
+                          if (!mappedAgg[key]) mappedAgg[key] = { mappedName: al.mappedName, realFlowerName: al.name, unit: al.unit, qty: 0, cost: 0 };
+                          mappedAgg[key].qty += al.realUnitsReplaced;
+                          mappedAgg[key].cost += al.lineCost;
+                        }));
+                        const mappedList = Object.values(mappedAgg);
                         return (
                           <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(236,72,153,0.04)",border:`1px solid rgba(236,72,153,0.20)`}}>
                             <div style={{fontSize:11,fontWeight:700,color:"#EC4899",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>🌺 Artificial Bunches</div>
@@ -500,6 +532,18 @@ export default function DCFloralsTab({ ctx }) {
                                 <div style={{fontSize:9,color:textS,marginTop:2}}>× ₹{greenRate}/kg = <span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span></div>
                               </div>
                             </div>
+                            {mappedList.length > 0 && (
+                              <div style={{marginTop:10,padding:"8px 10px",borderRadius:7,background:"rgba(59,130,246,0.06)",border:"1px solid rgba(59,130,246,0.2)"}}>
+                                <div style={{fontSize:10,color:"#3B82F6",fontWeight:600,marginBottom:4}}>🔗 Mapped substitutes</div>
+                                {mappedList.map((m, mi) => (
+                                  <div key={mi} style={{display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0",color:"#fff"}}>
+                                    <span>{m.realFlowerName} → {m.mappedName || "no item mapped"} × {m.qty.toFixed(1)} {m.unit}</span>
+                                    <span style={{color:"#3B82F6",fontWeight:600}}>₹{Math.round(m.cost).toLocaleString("en-IN")}</span>
+                                  </div>
+                                ))}
+                                {mappedList.some(m => !m.mappedName) && <div style={{fontSize:9,color:"#F59E0B",marginTop:2,fontStyle:"italic"}}>⚠ Some mapped flowers have no inventory item picked yet — set in IMS Mandi tab</div>}
+                              </div>
+                            )}
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,paddingTop:8,borderTop:`1px solid ${border}`}}>
                               <span style={{fontSize:11,color:textS,fontWeight:500}}>Total Artificial</span>
                               <span style={{color:"#EC4899",fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalArtificial).toLocaleString("en-IN")}</span>
@@ -514,7 +558,7 @@ export default function DCFloralsTab({ ctx }) {
                               <button onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg })} style={{fontSize:9,padding:"4px 12px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.10)",color:"#EC4899",fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>🌸 Split Colors</button>
                             </div>
                             {missingRatios.size > 0 && (
-                              <div style={{fontSize:9,color:"#F59E0B",marginTop:6,fontStyle:"italic"}}>⚠ Missing Art Bunches/Unit on: {Array.from(missingRatios).join(", ")} — set in IMS Mandi tab</div>
+                              <div style={{fontSize:9,color:"#F59E0B",marginTop:6,fontStyle:"italic"}}>⚠ Missing Art Bunches/Unit (or mapped item cost) on: {Array.from(missingRatios).join(", ")} — set in IMS Mandi tab</div>
                             )}
                           </div>
                         );
