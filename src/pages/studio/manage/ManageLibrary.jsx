@@ -169,7 +169,7 @@ export default function ManageLibrary({ ctx }) {
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern, studioFloralData, dealCheckData,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, bulkVidVenue, runBulkTagVideoVenues, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -1846,6 +1846,7 @@ export default function ManageLibrary({ ctx }) {
             const vis = allVideos.filter(v => !hiddenVideos[v.id]);
             const cnt = (k) => k === "all" ? vis.length : vis.filter(v => videoStatus(v) === k).length;
             const untaggedN = cnt("untagged");
+            const noVenueN = vis.filter(v => !ytVideoTags[v.id]?.venue).length;
             return (
               <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                 {[
@@ -1866,6 +1867,11 @@ export default function ManageLibrary({ ctx }) {
                     <span style={{ fontSize: 10, color: textS }}>🎬 Tagging {bulkVid.done}/{bulkVid.total} · {bulkVid.ok}✓ {bulkVid.fail}✕</span>
                   ) : untaggedN > 0 ? (
                     <button onClick={() => { if (window.confirm(`Tag ${untaggedN} untagged video${untaggedN === 1 ? "" : "s"} from their description?\n\nRuns in the background — keep working; progress shows in the corner. Each video's description is parsed for venue/event/tier/etc. and gets best-match zone photos. The team reviews/verifies after, and tagged videos appear on Browse.`)) runBulkTagVideos?.(); }} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#0EA5E9" }}>🎬 Tag all untagged ({untaggedN})</button>
+                  ) : null}
+                  {bulkVidVenue?.running ? (
+                    <span style={{ fontSize: 10, color: textS }}>🗺 Venue {bulkVidVenue.done}/{bulkVidVenue.total} · {bulkVidVenue.ok}✓ {bulkVidVenue.skip}– {bulkVidVenue.fail}✕</span>
+                  ) : noVenueN > 0 ? (
+                    <button onClick={() => { if (window.confirm(`Backfill venue on ${noVenueN} video${noVenueN === 1 ? "" : "s"} with no venue tag yet?\n\nParses each video's description for a "Venue:" line and matches it to your Inhouse/Outside venue list. A venue that doesn't match anything known is filed under Outside → Other. Videos that already have a venue (including a manual fix) are left untouched. Runs in the background.`)) runBulkTagVideoVenues?.(); }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#0EA5E9", border: "1px solid #0EA5E9" }}>🗺 Backfill venue ({noVenueN})</button>
                   ) : null}
                 </div>
               </div>

@@ -1111,6 +1111,8 @@ export default function StudioApp() {
   const bulkTagStop = useRef(false);
   const [bulkVid, setBulkVid] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk VIDEO AI tagging progress
   const bulkVidStop = useRef(false);
+  const [bulkVidVenue, setBulkVidVenue] = useState({ running: false, done: 0, total: 0, ok: 0, skip: 0, fail: 0, finishedAt: 0 }); // venue-only backfill progress (see runBulkTagVideoVenues)
+  const bulkVidVenueStop = useRef(false);
   useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
   // Merge freshly-fetched rows into the shared lazy library cache (by id) — every targeted query
   // (browse page, zone match, point lookup, KB, bulk tag) funnels its results through this instead
@@ -3812,7 +3814,11 @@ export default function StudioApp() {
 
       const newTag = {
         ...existingTag,
-        venue: matchedVenue || (venueRaw ? venueRaw : existingTag.venue || ""),
+        // A venue mentioned in the description that doesn't match any known inhouse/outside venue
+        // is filed under the generic "Other" bucket (Outside → Other in the venue picker) rather
+        // than stored as raw scraped text — keeps the venue field a closed set the ops team can
+        // filter/fix from, instead of accumulating one-off freeform names.
+        venue: matchedVenue || (venueRaw ? "Other" : existingTag.venue || ""),
         venueCustom: matchedVenue ? undefined : (venueRaw ? true : existingTag.venueCustom),
         fn: matchedFn ? [matchedFn] : existingTag.fn,
         tier: matchedTier || existingTag.tier,
@@ -3880,6 +3886,40 @@ export default function StudioApp() {
     setBulkVid({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
     showMsg(`🎬 Video tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
     return { ok, fail };
+  }, [allVideos, hiddenVideos, ytVideoTags, buildVideoTagFromAI, saveYtTags]);
+
+  // Venue-only backfill: unlike runBulkTagVideos (which only touches completely untagged videos
+  // and merges every field), this targets every video that has NO venue yet — including videos
+  // already tagged/verified for fn/tier/styles/etc. before venue-from-description existed — and
+  // writes ONLY {venue, venueCustom} onto its existing tag, leaving every other field untouched.
+  // A video that already has a venue (a real match OR the "Other" bucket) is left alone, so a
+  // manual correction made after an earlier pass is never clobbered by re-running this.
+  const stopBulkTagVideoVenues = useCallback(() => { bulkVidVenueStop.current = true; }, []);
+  const runBulkTagVideoVenues = useCallback(async () => {
+    const targets = allVideos.filter(v => !hiddenVideos[v.id] && !ytVideoTags[v.id]?.venue);
+    if (!targets.length) { showMsg("Every video already has a venue tag.", "green"); return null; }
+    bulkVidVenueStop.current = false;
+    setBulkVidVenue({ running: true, done: 0, total: targets.length, ok: 0, skip: 0, fail: 0, finishedAt: 0 });
+    let merged = { ...ytVideoTags };
+    let ok = 0, skip = 0, fail = 0;
+    for (let n = 0; n < targets.length; n++) {
+      if (bulkVidVenueStop.current) break;
+      try {
+        const newTag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const prev = merged[targets[n].id] || {};
+        if (newTag?.venue) {
+          merged = { ...merged, [targets[n].id]: { ...prev, venue: newTag.venue, venueCustom: newTag.venueCustom, _lastEditedBy: "Auto (venue backfill)", _lastEditedAt: Date.now() } };
+          ok++;
+        } else skip++;
+      } catch { fail++; }
+      if ((n + 1) % 4 === 0) await saveYtTags(merged);
+      setBulkVidVenue({ running: true, done: n + 1, total: targets.length, ok, skip, fail, finishedAt: 0 });
+    }
+    await saveYtTags(merged);
+    const stopped = bulkVidVenueStop.current;
+    setBulkVidVenue({ running: false, done: targets.length, total: targets.length, ok, skip, fail, finishedAt: Date.now() });
+    showMsg(`🗺 Venue backfill ${stopped ? "stopped" : "complete"} — ${ok} tagged (unmatched filed under "Other"), ${skip} had no venue mentioned in their description, ${fail} failed.`, "green");
+    return { ok, skip, fail };
   }, [allVideos, hiddenVideos, ytVideoTags, buildVideoTagFromAI, saveYtTags]);
 
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
@@ -6165,7 +6205,7 @@ export default function StudioApp() {
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, bulkVidVenue, runBulkTagVideoVenues, stopBulkTagVideoVenues, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch,
     zonePrintSearch, setZonePrintSearch,
