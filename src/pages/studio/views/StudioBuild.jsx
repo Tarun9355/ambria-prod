@@ -71,7 +71,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
               <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
                 {zm.defaultTruss&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>Truss</span>
-                    {["box","singleU"].map(tt=><button key={tt} onClick={()=>sZ({trT:tt})} style={{padding:"2px 8px",borderRadius:5,border:"none",fontSize:11.5,cursor:"pointer",fontWeight:zc.trT===tt?700:400,background:zc.trT===tt?"rgba(0,0,0,0.08)":"transparent",color:zc.trT===tt?textP:textS}}>{tt==="box"?"Box"+(showCosts?" ₹50":""):"Single U"+(showCosts?" ₹30":"")}{showCosts?"/sqft":""}</button>)}
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
                 </div>}
               <div style={{display:"flex",gap:8,marginBottom:6}}>
@@ -1206,7 +1205,7 @@ undefined
       </div>
     </div>}
 
-    {/* ═══ ELEMENT CARDS — photos change with tier ═══ */}
+    {/* ═══ ELEMENT CARDS ═══ One unified photo strip per zone (no Silver/Gold split). ═══ */}
     {[...zoneKeys, ...customZones.filter(cz=>cz.sourceType).map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
@@ -1262,7 +1261,7 @@ undefined
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
           <div style={{marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS,display:"flex",alignItems:"center",gap:6}}><IconCamera size={12}/>{TIER_TO_CAT[tier]} {el.label} — tap to apply pricing</div>
+                <div style={{fontSize:11,fontWeight:600,color:textS,display:"flex",alignItems:"center",gap:6}}><IconCamera size={12}/>{el.label} — tap to apply pricing</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {elSelectedPhoto[k]&&<div style={{fontSize:10,color:"#059669",fontWeight:600}}>✓ {elSelectedPhoto[k].eventName}</div>}
                   <label style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading===k?accent+"20":"transparent",color:zoneUploading===k?accent:accent,fontSize:10,fontWeight:600,cursor:zoneUploading?"wait":"pointer",display:"flex",alignItems:"center",gap:3}}>
@@ -1343,7 +1342,7 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:`${TIER_TO_CAT[tier]} ${el.label}`});setGalleryIdx(i);}}>
+                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:5,fontSize:9.5,display:"inline-flex",alignItems:"center",gap:3}}><IconSearch size={10}/>Preview</div>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:12.5,fontWeight:700}}>{fmt(photoFullCost)}</div>}
@@ -1377,7 +1376,7 @@ undefined
               </>);
               })() : (
             <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:10,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-              <div style={{flex:1,minWidth:200}}><div style={{fontSize:12,fontWeight:600,color:"#B45309"}}>{zpHasFilters?`No ${TIER_TO_CAT[tier]} ${el.label} photos match your filters`:`No ${TIER_TO_CAT[tier]} ${el.label} photos yet`}</div>
+              <div style={{flex:1,minWidth:200}}><div style={{fontSize:12,fontWeight:600,color:"#B45309"}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
               <div style={{fontSize:10.5,color:textS,marginTop:2,lineHeight:1.4}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div></div>
               <div style={{display:"flex",gap:7,flexShrink:0,flexWrap:"wrap"}}>
                 {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
@@ -1392,10 +1391,6 @@ undefined
 
           {/* ═══ AI INSPIRATION per element — HIDDEN pending search integration ═══ */}
 
-          {/* ═══ TIER SELECTOR — always visible ═══ */}
-          <div style={{display:"inline-flex",gap:3,marginBottom:12,padding:3,borderRadius:9,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)"}}>
-            {["simple","enhanced"].map(t=><button key={t} onClick={()=>{setElTiers(p=>({...p,[k]:t}));}} style={{minWidth:92,padding:"5px 14px",border:"none",borderRadius:7,cursor:"pointer",fontSize:11.5,fontWeight:tier===t?700:500,background:tier===t?"#444":isDark?"rgba(255,255,255,0.04)":"#F3F4F6",color:tier===t?"#fff":textS,textTransform:"capitalize"}}>{t === "simple" ? "Silver" : "Gold"}</button>)}
-          </div>
 
           {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
           {showCosts&&!isCollapsed(k)&&<Fragment>
@@ -1409,7 +1404,7 @@ undefined
           {zoneSection[k]==="elements"&&(zoneElements[k] ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {TIER_TO_CAT[tier]} {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
+                <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
                 {isElCardOpen(k)&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
                       master library photo so the fix sticks for everyone. Visible for ANY selected
@@ -1534,7 +1529,7 @@ undefined
                             </div>
                           )}
                         </div>
-                        <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
+                        <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
                         {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:11,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                         {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                         {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
@@ -2012,7 +2007,7 @@ undefined
                           </div>
                         )}
                       </div>
-                      <span style={{fontSize:12,fontWeight:500,color:(rc||el.invId||el.patternId)?textP:"#F59E0B",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
+                      <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
                         {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:10,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                       {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                       {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
