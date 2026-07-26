@@ -13,6 +13,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
+import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
 import ManageLibrary from "./manage/ManageLibrary.jsx";
 import ManageSettings from "./manage/ManageSettings.jsx";
 import StudioModals from "./StudioModals.jsx";
@@ -28,6 +29,24 @@ import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { makeS } from "../../lib/studio/styles";
+
+// ═══ HEADER TYPE + CHIP SCALE ═══
+// The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
+// NAV_FS for anything clickable, NAV_META_FS for uppercase micro-labels that aren't controls.
+// NAV_ICON keeps every SVG optically matched — something emoji never allowed.
+const NAV_FS = 12;
+const NAV_META_FS = 10;
+const NAV_ICON = 15;
+const NAV_META = { fontSize: NAV_META_FS, fontWeight: 700, letterSpacing: 1.1, textTransform: "uppercase", lineHeight: 1.4 };
+// Segmented container shared by the mode switch, step nav and manage tabs, so all three
+// read as one control family instead of three different pill shapes.
+const NAV_GROUP = { display: "flex", alignItems: "center", gap: 3, background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 3 };
+const NAV_CHIP_BASE = { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, border: "none", background: "transparent", fontSize: NAV_FS, fontWeight: 500, lineHeight: 1, whiteSpace: "nowrap", transition: "all 0.15s" };
+// Square icon-only buttons (Deal Check, Logout) — equal footprint so they don't read as
+// mis-sized text buttons next to the labelled chips.
+const NAV_ICON_BTN = { ...NAV_CHIP_BASE, padding: 0, width: 31, height: 31, justifyContent: "center", borderRadius: 9, border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)", cursor: "pointer" };
+// Hairline between right-hand clusters, so each change of meaning is visible.
+const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", flexShrink: 0 };
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
@@ -1207,6 +1226,14 @@ export default function StudioApp() {
   // restore on mount (see the restore effect after loadClientSession).
   useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
   useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
+  // Each step/tab swaps the whole page body while the document keeps scrolling — so the browser
+  // carries the previous screen's scroll offset over. Continue lives at the bottom of a long
+  // Event Info form, so Browse used to open already scrolled to the bottom. Reset on every
+  // step / mode / manage-tab change. Instant, not smooth: this is a page change, not a jump
+  // within one, and animating it would look like the old screen sliding away.
+  useEffect(() => {
+    try { window.scrollTo(0, 0); } catch { /* non-browser env (SSR/tests) */ }
+  }, [step, mode, manageTab]);
   useEffect(() => { try { sessionStorage.setItem("ambria-active-fn", String(activeFnIdx)); } catch { /* */ } }, [activeFnIdx]);
 
   // ═══ §25 LMS LEAD INTEGRATION ═══
@@ -6141,6 +6168,15 @@ Return ONLY JSON:
   const accentBg = isDark ? "rgba(201,169,110,0.12)" : "#F5F0FF";
   const accentText = isDark ? "#C9A96E" : "#6D28D9";
 
+  // Header chip factory — needs `accent`, so it lives here rather than at module scope.
+  const navChip = (active) => ({
+    ...NAV_CHIP_BASE,
+    cursor: "pointer",
+    fontWeight: active ? 600 : 500,
+    background: active ? `${accent}22` : "transparent",
+    color: active ? accent : "rgba(255,255,255,0.55)",
+  });
+
   // ═══════════════════════════════════════════════════════════════
   // CTX BAG — single object literal passed to view slices in later commits.
   // Comprehensive: every state var, setter, and pricing/save helper a view might need.
@@ -6338,7 +6374,11 @@ Return ONLY JSON:
   return (
     <div style={S.app}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      <style>{`* { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; } h1,h2,h3 { font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, sans-serif !important; } input,select,textarea,button { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; }`}</style>
+      <style>{`* { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; } h1,h2,h3 { font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, sans-serif !important; } input,select,textarea,button { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; }
+        /* Toast entrance — keeps the translateX(-50%) centring in both frames, so the resting
+           inline transform matches the animation's end state and there's no snap on completion. */
+        @keyframes studioToastIn { from { opacity: 0; transform: translate(-50%, -14px) } to { opacity: 1; transform: translate(-50%, 0) } }
+        @media (prefers-reduced-motion: reduce) { @keyframes studioToastIn { from { opacity: 0 } to { opacity: 1 } } }`}</style>
 
       {/* SAVE FAILURE BANNER */}
       {saveError && (
@@ -6349,9 +6389,10 @@ Return ONLY JSON:
         </div>
       )}
 
-      {/* TOAST */}
+      {/* TOAST — pinned top-centre. zIndex clears the sticky header (50), and the slide-down
+          entrance reads as arriving from the top edge rather than just appearing. */}
       {toast && (
-        <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", zIndex: 100000, padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#fff", background: toast.color === "red" ? "#dc2626" : toast.color === "green" ? "#16a34a" : "#374151" }}>{toast.msg}</div>
+        <div role="status" aria-live="polite" style={{ position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 100000, padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,0.28)", animation: "studioToastIn 0.22s ease-out", background: toast.color === "red" ? "#dc2626" : toast.color === "green" ? "#16a34a" : "#374151" }}>{toast.msg}</div>
       )}
 
       {/* GLOBAL BULK-TAG PROGRESS PILL — visible on every Studio screen while tagging runs */}
@@ -6380,39 +6421,76 @@ Return ONLY JSON:
         </div>
       )}
 
-      {/* HEADER */}
+      {/* ═══ HEADER ═══
+          Emoji are gone — every glyph is an SVG from components/icons.jsx, stroked in
+          `currentColor` so it takes the colour of whatever chip it sits in. Emoji could never be
+          size-matched (each renders at its own optical weight); the icons all share NAV_ICON.
+          Type is on two tiers only: NAV_FS for everything clickable, META_FS for the uppercase
+          micro-labels. The old header mixed 8/9/10/11/12/13px in one row. ═══ */}
       <div style={S.header}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 10, background: `linear-gradient(135deg,${accent},#8B7355)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#0F0F1A" }}>A</div>
-          <div><div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>Ambria</div><div style={{ fontSize: 10, color: accent, letterSpacing: 1.5, textTransform: "uppercase" }}>{mode === "manage" ? "Manage" : "Design Studio"}</div></div>
+        {/* ── LEFT: brand, then the cross-app switcher. Both answer "where am I?", so they belong
+               together at the start of the bar; a rule separates identity from navigation.
+               flex:1 so the centre zone stays optically centred rather than content-pushed. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 0", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg,${accent},#8B7355)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#0F0F1A", letterSpacing: -0.3, flexShrink: 0 }}>A</div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: -0.2, lineHeight: 1.2 }}>Ambria</div>
+              <div style={{ ...NAV_META, color: accent, marginTop: 1 }}>{mode === "manage" ? "Manage" : "Design Studio"}</div>
+            </div>
+          </div>
+          {/* Cross-app switcher (only renders for users granted both Studio + IMS) */}
+          <div style={NAV_RULE} />
+          <AppSwitcher current="studio" tone="dark" />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* Mode switch */}
-          <div style={{ display: "flex", background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 3 }}>
-            {[["studio", "🎨 Studio"], ...(canManageAny ? [["manage", "⚙️ Manage"]] : [])].map(([id, label]) => (
-              <button key={id} onClick={() => setMode(id)} style={{ padding: "6px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: mode === id ? 600 : 400, background: mode === id ? `${accent}22` : "transparent", color: mode === id ? accent : "#6B7280", transition: "all 0.15s" }}>{label}</button>
+
+        {/* ── CENTRE: where you are in the flow. Its own zone so it isn't crushed against the
+               account controls the way it was when everything shared one right-hand run. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+          {/* Studio step nav — completed steps carry a tick, upcoming ones stay inert */}
+          {mode === "studio" && <div style={NAV_GROUP}>{["Event Info", "Browse", "Build", "Summary"].map((l, i) => {
+            const done = i < step, active = i === step, reachable = i <= step;
+            return (
+              <div key={i} onClick={() => { if (reachable) setStep(i); }}
+                style={{ ...NAV_CHIP_BASE, cursor: reachable ? "pointer" : "default",
+                  fontWeight: active ? 600 : 500,
+                  background: active ? "rgba(255,255,255,0.14)" : "transparent",
+                  color: active ? "#fff" : done ? "rgba(255,255,255,0.62)" : "rgba(255,255,255,0.28)" }}>
+                {done && <IconCheck size={NAV_ICON - 2} />}{l}
+              </div>
+            );
+          })}</div>}
+          {/* Manage tabs */}
+          {mode === "manage" && <div style={NAV_GROUP}>
+            {(hasPerm("canEditEvents") || hasPerm("canManageLibrary")) && <button onClick={() => setManageTab("library")} style={navChip(manageTab === "library")}><IconBook size={NAV_ICON} />Library &amp; content</button>}
+            {(isAdmin || hasStudioTab("settings")) && <button onClick={() => setManageTab("settings")} style={navChip(manageTab === "settings")}><IconGear size={NAV_ICON} />Settings</button>}
+          </div>}
+        </div>
+
+        {/* ── RIGHT: money, mode, account. Hairline rules mark each change of meaning. The app
+               switcher now lives on the left, which also pulls the two "Studio" chips (this-app
+               vs this-mode) apart — side by side they read as one broken control. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, flex: "1 1 0", minWidth: 0 }}>
+          {/* The estimate chip lived here; Build's right-hand Live Estimate tile owns it now. */}
+          {/* Mode switch — which part of Studio. Titled to distinguish it from the app switcher. */}
+          <div style={NAV_GROUP}>
+            {[["studio", "Studio", IconPalette, "Design Studio — build deals"], ...(canManageAny ? [["manage", "Manage", IconSliders, "Manage — library & settings"]] : [])].map(([id, label, Icon, tip]) => (
+              <button key={id} onClick={() => setMode(id)} title={tip} style={navChip(mode === id)}><Icon size={NAV_ICON} />{label}</button>
             ))}
           </div>
-          {/* Studio step nav */}
-          {mode === "studio" && <div style={{ display: "flex", gap: 3 }}>{["Event Info", "Browse", "Build", "Summary"].map((l, i) => <div key={i} onClick={() => { if (i <= step) setStep(i); }} style={{ padding: "5px 12px", borderRadius: 16, fontSize: 11, fontWeight: i === step ? 600 : 400, cursor: i <= step ? "pointer" : "default", background: i === step ? "rgba(255,255,255,0.15)" : "transparent", color: i <= step ? "#fff" : "rgba(255,255,255,0.25)" }}>{l}</div>)}</div>}
-          {/* Manage tabs */}
-          {mode === "manage" && <div style={{ display: "flex", gap: 3 }}>
-            {(hasPerm("canEditEvents") || hasPerm("canManageLibrary")) && <button onClick={() => setManageTab("library")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "library" ? 600 : 400, background: manageTab === "library" ? `${accent}22` : "transparent", color: manageTab === "library" ? accent : "#6B7280" }}>📚 Library & content</button>}
-            {(isAdmin || hasStudioTab("settings")) && <button onClick={() => setManageTab("settings")} style={{ padding: "6px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 11, fontWeight: manageTab === "settings" ? 600 : 400, background: manageTab === "settings" ? `${accent}22` : "transparent", color: manageTab === "settings" ? accent : "#6B7280" }}>⚙️ Settings</button>}
-          </div>}
-          {/* Live budget — only if canViewPricing */}
-          {mode === "studio" && step >= 2 && hasPerm("canViewPricing") && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 12, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-              <div><div style={{ fontSize: 8, color: accent, textTransform: "uppercase", letterSpacing: 1 }}>Estimate</div><div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>{fmt(grandTotal)}</div></div>
-              <div style={{ padding: "3px 8px", borderRadius: 8, fontSize: 10, fontWeight: 600, background: cat.bg, color: cat.color }}>{cat.label}</div>
-            </div>
-          </div>}
-          {/* Cross-app switcher (only for users granted both Studio + IMS) */}
-          <AppSwitcher current="studio" />
-          {/* Deal Check entry */}
-          {authUser && mode === "studio" && (isAdmin || studioSub("design", "dealcheck")) && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)", background: "transparent", color: "#6B7280", fontSize: 13, cursor: "pointer", lineHeight: 1 }}>⚙</button>}
-          {/* User badge */}
-          {authUser && <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}><div style={{ padding: "5px 12px", borderRadius: 8, background: "rgba(255,255,255,0.06)", fontSize: 11, color: "#fff" }}>{authUser.name}{isAdmin && <span style={{ color: accent, marginLeft: 4, fontSize: 9 }}>ADMIN</span>}{!isAdmin && authUser.role === "manager" && <span style={{ color: "#38BDF8", marginLeft: 4, fontSize: 9 }}>MGR</span>}</div><button onClick={doLogout} style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "#6B7280", fontSize: 10, cursor: "pointer" }}>Logout</button></div>}
+          {/* Account zone — Deal Check, who you are, sign out */}
+          <div style={NAV_RULE} />
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            {authUser && mode === "studio" && (isAdmin || studioSub("design", "dealcheck")) && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" aria-label="Deal Check" style={NAV_ICON_BTN}><IconClipboardCheck size={NAV_ICON} /></button>}
+            {authUser && <>
+              <div style={{ ...NAV_CHIP_BASE, background: "rgba(255,255,255,0.06)", color: "#fff", fontWeight: 500 }}>
+                {authUser.name}
+                {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
+                {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
+              </div>
+              <button onClick={doLogout} title="Log out" aria-label="Log out" style={NAV_ICON_BTN}><IconLogout size={NAV_ICON} /></button>
+            </>}
+          </div>
         </div>
         {/* ROW 2: FUNCTION PILLS — hidden on Build page (step===2) per SOP */}
         {mode === "studio" && authUser && step !== 2 && (() => {
@@ -6422,7 +6500,7 @@ Return ONLY JSON:
           const SHIFT_LETTER = { Morning: "M", Lunch: "L", Sundowner: "S", Night: "N" };
           return (
             <div style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, paddingTop: 10, marginTop: 6, borderTop: `1px solid rgba(201,169,110,0.12)`, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 10, color: "#6B7280", textTransform: "uppercase", letterSpacing: 1.3, marginRight: 6, fontWeight: 600 }}>Function:</div>
+              <div style={{ ...NAV_META, color: "rgba(255,255,255,0.45)", marginRight: 2 }}>Function</div>
               {fns.map((f, i) => {
                 const isActive = i === activeFnIdx;
                 const f_ = f || {};
@@ -6430,7 +6508,7 @@ Return ONLY JSON:
                 const slotLetter = f_.shift ? (SHIFT_LETTER[f_.shift] || String(f_.shift).charAt(0).toUpperCase()) : "";
                 const label = `${typeLbl} · ${fmtDate(f_.date)}${slotLetter ? " " + slotLetter : ""}`;
                 return (
-                  <div key={i} onClick={() => switchActiveFn(i)} style={{ padding: "6px 14px", borderRadius: 999, fontSize: 11, fontWeight: isActive ? 600 : 400, cursor: "pointer", background: isActive ? accent : "transparent", color: isActive ? "#1a1a2e" : accent, border: `1px solid ${isActive ? accent : "rgba(201,169,110,0.4)"}`, transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: 0.2 }}>{label}</div>
+                  <div key={i} onClick={() => switchActiveFn(i)} style={{ ...NAV_CHIP_BASE, padding: "6px 14px", borderRadius: 999, cursor: "pointer", fontWeight: isActive ? 600 : 500, background: isActive ? accent : "transparent", color: isActive ? "#1a1a2e" : accent, border: `1px solid ${isActive ? accent : "rgba(201,169,110,0.4)"}` }}>{label}</div>
                 );
               })}
             </div>
@@ -6452,7 +6530,7 @@ Return ONLY JSON:
             <ManageSettings ctx={ctx} />
           ) : (
             <div style={{ textAlign: "center", padding: 60, color: textS }}>
-              <div style={{ fontSize: 36, marginBottom: 12 }}>🔒</div>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 12, opacity: 0.55 }}><IconLock size={34} /></div>
               <div style={{ fontSize: 16, fontWeight: 600 }}>No permissions</div>
               <div style={{ fontSize: 13, marginTop: 4 }}>Ask your admin for Studio access in IMS → Admin → Users → Tab Access.</div>
             </div>
