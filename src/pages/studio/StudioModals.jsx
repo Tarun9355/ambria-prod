@@ -50,11 +50,18 @@ export default function StudioModals({ ctx }) {
     zoneConfig, setZoneConfig, libItems,
     // premiaGate (👑 Sr. Designer / Platinum gate)
     premiaGate, setPremiaGate, premiaConfig,
+    // live IMS inventory (aliased — a local `imsInventory` below prefers Deal Check's cache/
+    // snapshot when one exists, falling back to this)
+    imsInventory: liveImsInventory,
   } = ctx;
   // Rate-card items carry no photo of their own — thumbnails for the zone-upload-review "add
   // element" search come from the matching IMS inventory item by name (best-effort; falls back to
   // the generic 📦 icon when nothing matches, same as every other add-element search in the app).
-  const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || [];
+  // Prefers Deal Check's cache/snapshot (richer — reflects live holds) when one exists, but a fresh
+  // Build session has neither yet, so this MUST fall back to the plain live inventory rather than
+  // an empty array — otherwise every inventory search here (custom ceiling/masking, add element)
+  // comes up empty until Deal Check has been generated at least once for this client.
+  const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || liveImsInventory || [];
   // Live soft-blocking for the zone-upload-review modal — same logic as Build's own zone editor
   // (StudioBuild.jsx's remainingForItem). The staged elements here haven't been written into
   // zoneElements[elKey] yet, so exclude that zone key entirely.
