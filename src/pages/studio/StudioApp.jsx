@@ -3306,7 +3306,10 @@ export default function StudioApp() {
     const fVenue = fnData.fnVenue || "";
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     const zones = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
-      const el = zoneLabelsD[k] || fCustomZones.find(cz => cz.id === k) || { label: k, icon: "📦" };
+      // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
+      // custom zone names showing blank in Summary's accordion and the PDF/PPT export.
+      const customZoneMatch = fCustomZones.find(cz => cz.id === k);
+      const el = zoneLabelsD[k] || (customZoneMatch ? { label: customZoneMatch.name, icon: customZoneMatch.icon || "📦" } : { label: k, icon: "📦" });
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let ic = 0, itemCount = 0;
@@ -5314,7 +5317,10 @@ export default function StudioApp() {
     const fElTiers = fnData.elTiers || {};
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     return Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
-      const el = zoneLabelsD[k] || fCustomZones.find(cz => cz.id === k) || { label: k, icon: "📦" };
+      // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
+      // custom zone names showing blank in the PDF/PPT export.
+      const customZoneMatch = fCustomZones.find(cz => cz.id === k);
+      const el = zoneLabelsD[k] || (customZoneMatch ? { label: customZoneMatch.name, icon: customZoneMatch.icon || "📦" } : { label: k, icon: "📦" });
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let items = [];

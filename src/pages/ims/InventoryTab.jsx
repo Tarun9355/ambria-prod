@@ -107,6 +107,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [detailItem, setDetailItem] = useState(null);
   const [addModal, setAddModal] = useState(false);
   const [blockModal, setBlockModal] = useState(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [bulkModal, setBulkModal] = useState(false);
   const [importModal, setImportModal] = useState(false);
   const [moveSubcatModal, setMoveSubcatModal] = useState(false);
@@ -404,8 +405,12 @@ Rules:
   }
 
   function deleteItem(id) {
-    const it = inventory.find((i) => i.id === id);
-    if (!window.confirm(`Delete "${it?.name || "this item"}" from inventory?\n\nThis permanently removes the item and cannot be undone.`)) return;
+    setDeleteConfirmId(id);
+  }
+  function confirmDeleteItem() {
+    const id = deleteConfirmId;
+    setDeleteConfirmId(null);
+    if (!id) return;
     setInventory((prev) => prev.filter((i) => i.id !== id), [id]);
   }
 
@@ -682,6 +687,7 @@ Rules:
   const catChips = Object.keys(catCounts).sort((a, b) => catCounts[b] - catCounts[a]); // busiest first
   const selItem = inventory.find((i) => i.id === detailItem);
   const blockInv = inventory.find((i) => i.id === blockModal);
+  const deleteConfirmInv = inventory.find((i) => i.id === deleteConfirmId);
 
   // Distinct sub-categories across ALL inventory (not scoped to the active category filter) —
   // powers the "Move Sub-Category" bulk-reassign modal below.
@@ -1898,6 +1904,19 @@ Rules:
               </button>
             </>);
           })()}
+        </div>
+      </Modal>
+
+      {/* ── Delete Confirmation Modal ────────────────────────────────────── */}
+      <Modal open={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="🗑 Delete item?">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700">
+            Delete <strong>"{deleteConfirmInv?.name || "this item"}"</strong> from inventory? This permanently removes it and cannot be undone.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-2 rounded-lg text-sm border text-gray-600 hover:bg-gray-50">Cancel</button>
+            <button onClick={confirmDeleteItem} className="px-4 py-2 rounded-lg text-sm bg-red-600 hover:bg-red-700 text-white font-medium">Delete</button>
+          </div>
         </div>
       </Modal>
 
