@@ -1,4 +1,5 @@
 import { useState, Fragment } from "react";
+import { IconBox } from "../icons.jsx";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
@@ -43,21 +44,35 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const kitFactor = (typeof _fRaw === "number" && isFinite(_fRaw) && _fRaw > 0) ? _fRaw : 1;
   // Recipe (flower) Studio rate for a pattern at the element's size = real mandi cost × markup. Lets a
   // kit that includes a flower recipe show its flower cost here, priced the same way getElPriceFromInventory does.
-  const _szKey = (() => { const s = String(elSize || "B").toUpperCase(); return (s === "S" || s === "SMALL") ? "small" : (s === "B" || s === "BIG" || s === "LARGE") ? "big" : "medium"; })();
+  const sizeKey = (v) => { const s = String(v || "B").toUpperCase(); return (s === "S" || s === "SMALL") ? "small" : (s === "B" || s === "BIG" || s === "LARGE") ? "big" : "medium"; };
+  const _szKey = sizeKey(elSize);
+  // A component may carry its own size; with none it inherits the element's, which is what every
+  // existing component does — so this changes no stored kit's price.
+  const szKeyFor = (o) => sizeKey(o?.size || elSize);
+  // "Has sizes" is read off the data (more than one size defined) rather than a `mode` flag, which
+  // nothing else in the codebase sets.
+  const patHasSizes = (pat) => !!(pat && pat.sizes && Object.keys(pat.sizes).length > 1);
   // Full artificial-rate settings (art flower/green ₹/kg, bunches/kg, markup) so artRate here matches
   // getElPriceFromInventory's blend byte-for-byte; falls back to just the markup when not provided.
   const _floralSettings = { ...(floralSettings || {}), defaultStudioMarkup: Number(studioMarkup) || (floralSettings?.defaultStudioMarkup) || 3 };
-  const recipeRateFor = (pat, subKey) => {
+  const recipeRateFor = (pat, subKey, override) => {
     if (!pat) return 0;
     // Recipe Studio rate blended real/artificial by the global ratio — same as a standalone recipe
     // element (getElPrice). A sub-category floral_mode of real/artificial pins it to 100/0; else it
     // follows the deal's floralRatio. `extra` (pot/base) is added once, un-blended.
-    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, _floralSettings, imsInventory);
+    const rates = floralPatternUnitRates(pat, szKeyFor(override), mandiCatalogue, _floralSettings, imsInventory);
     if (!rates) return 0;
     const sk = String(subKey || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? rcFloralModeByKey[sk] : undefined;
-    const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+    const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
     return Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+  };
+  // The % a recipe row falls back to when it has no explicit override — the placeholder in its box.
+  const recipeModeDefault = (pat, subKey) => {
+    const sk = String(subKey || pat?.sub || "").trim().toLowerCase();
+    const subMode = sk ? rcFloralModeByKey[sk] : undefined;
+    return subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
   };
   // A PLAIN component (an ordinary {itemId,qty} entry, not a patternId add-on) can itself be a
   // floral item (e.g. a pot/planter whose own sub-category carries a flower recipe) — same as a
@@ -66,12 +81,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // kitTotalFromInventory/priceForInvItem at a flat rate; `blendedUnit` recomputes it the real
   // way (recipe blend + extra + its own rental) so `subOverride.realPct` — this instance's own
   // override, defaulting to the sub-category's mode or the deal's global floralRatio — actually
-  // changes its price, exactly like the top-level 🌐 Ratio / 🎯 100% controls do.
+  // changes its price, exactly like the element card's Ratio ⇄ % toggle does.
   const compFloralInfo = (cItem, override) => {
     if (!cItem) return null;
     const pat = matchFlowerPattern(cItem, flowerPatterns || []);
     if (!pat) return null;
-    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, _floralSettings, imsInventory);
+    const rates = floralPatternUnitRates(pat, szKeyFor(override), mandiCatalogue, _floralSettings, imsInventory);
     if (!rates) return null;
     const sk = String(cItem.subCat || cItem.subcategory || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? rcFloralModeByKey[sk] : undefined;
@@ -79,7 +94,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
     const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
     const flatRental = priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(override?.subOverrides) ? override.subOverrides : undefined);
     const blendedUnit = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + flatRental;
-    return { pattern: pat, realPct, modeDefault, blendedUnit, flatRental, patternSMB: pat.mode === "smb" };
+    return { pattern: pat, realPct, modeDefault, blendedUnit, flatRental, patternSMB: patHasSizes(pat) };
   };
   // Delta between the blended price and the flat rental kitTotalFromInventory already counted for
   // any floral-matched plain component — folded into `flowerTotal` (below) rather than double-
@@ -99,22 +114,76 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // (same two sources getElPriceFromInventory sums), each at the recipe's Studio rate.
   const subCatPattern = matchFlowerPattern(item, flowerPatterns || []);
   const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern, item.subCat || item.subcategory) : 0;
-  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
+  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub, c) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
   const partsTotal = rentalMarked + flowerTotal;
   const setComps = (next) => onChange(next);
+  // #A5B4FC is ~2:1 on the light kit background — fine in dark mode, unreadable in light.
+  const indigo = isDark ? "#A5B4FC" : "#4F46E5";
+  // Ratio / 100% share one selected-state. `border` is never "none": an inactive pill has to
+  // look clickable. Active is a tint, not a solid fill — these sit inside a dense row.
+  const floralPill = (on) => ({
+    padding: "2px 8px", borderRadius: 999, cursor: "pointer", fontSize: 11, fontWeight: on ? 700 : 500,
+    border: `1px solid ${on ? "#EC4899" : border}`,
+    background: on ? (isDark ? "rgba(236,72,153,0.22)" : "rgba(236,72,153,0.12)") : "transparent",
+    color: on ? (isDark ? "#F9A8D4" : "#BE185D") : textS,
+    transition: "all 0.15s",
+  });
+  // One template for every row in this kit. There is no qty column — each item's stepper sits in
+  // the name cell beside it. The multiplier column only exists when there IS a multiplier, and every
+  // row in the kit agrees about that, so the columns stay aligned.
+  const rowGrid = {
+    display: "grid",
+    gridTemplateColumns: `22px minmax(0,1fr) ${qtyMultiplier > 1 ? "78px " : ""}86px 16px`,
+    alignItems: "center", gap: 6, fontSize: 12,
+  };
+  // ── Category-appropriate controls, shared by both row types ──
+  const setComp = (ci, patch) => setComps(comps.map((x, i) => (i === ci ? { ...x, ...patch } : x)));
+  const sizeBtn = (on) => ({
+    padding: "1px 6px", borderRadius: 5, border: "none", fontSize: 11, cursor: "pointer",
+    fontWeight: on ? 700 : 400, background: on ? "rgba(0,0,0,0.06)" : "transparent", color: on ? textP : textS,
+  });
+  // S/M/B — only where the recipe actually defines more than one size.
+  const sizeControls = (c, ci, pat) => patHasSizes(pat) ? (
+    <span style={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }} title="Recipe size">
+      {["S", "M", "B"].map((z) => (
+        <button key={z} onClick={() => setComp(ci, { size: z })} style={sizeBtn((c.size || elSize || "B").toUpperCase() === z)}>{z}</button>
+      ))}
+    </span>
+  ) : null;
+  // Ratio ⇄ % plus a manual box — the same pair the element card carries.
+  const ratioControls = (c, ci, placeholderPct) => (
+    <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+      🌸
+      <button onClick={() => setComp(ci, { realPct: typeof c.realPct === "number" ? undefined : 100 })}
+        title={typeof c.realPct === "number" ? "Priced at " + c.realPct + "% of the recipe's Studio rate — tap to go back to this sub-category's default ratio" : "Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"}
+        style={floralPill(typeof c.realPct === "number")}>{typeof c.realPct === "number" ? `${c.realPct}%` : "Ratio"}</button>
+      <input type="number" min="0" max="100" value={c.realPct ?? ""} placeholder={String(placeholderPct)}
+        onChange={(e) => { const v = e.target.value; setComp(ci, { realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) }); }}
+        title="Manually set the exact % real — overrides Ratio/100%"
+        style={{ width: 42, padding: "2px 6px", borderRadius: 6, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 11, textAlign: "center" }} />
+    </span>
+  );
   const resetKit = () => onChange(undefined);
   return (
-    <div style={{ marginTop: 6, marginBottom: 4, padding: "8px 10px", borderRadius: 8, background: isDark ? "rgba(99,102,241,0.06)" : "rgba(99,102,241,0.05)", border: `1px solid rgba(99,102,241,0.25)` }}>
+    <div style={{ marginTop: 6, marginBottom: 6, marginLeft: 18, padding: "9px 12px", borderRadius: 8, borderLeft: "3px solid rgba(99,102,241,0.45)", background: isDark ? "rgba(99,102,241,0.06)" : "rgba(99,102,241,0.05)", border: `1px solid rgba(99,102,241,0.25)` }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#A5B4FC", letterSpacing: 0.3 }}>📦 Kit — includes:{isEdited && <span style={{ color: "#F59E0B", marginLeft: 5 }}>· edited</span>}</span>
-        {isEdited && <span onClick={resetKit} style={{ fontSize: 9, color: textS, cursor: "pointer", textDecoration: "underline" }}>reset to default</span>}
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: indigo, letterSpacing: 0.3, display: "inline-flex", alignItems: "center", gap: 6 }}><IconBox size={12}/>Kit — includes:{isEdited && <span style={{ color: "#F59E0B", marginLeft: 5 }}>· edited</span>}</span>
+        {isEdited && <span onClick={resetKit} style={{ fontSize: 11, color: textS, cursor: "pointer", textDecoration: "underline" }}>reset to default</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {/* Column header. No qty column: each stepper sits with its item, and its tooltip says
+            the figure is per kit. The next figure is × the element's qty. */}
+        <div style={{ ...rowGrid, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: textS, opacity: 0.75 }}>
+          <span/><span/>
+          {qtyMultiplier > 1 && <span style={{ textAlign: "right" }}>× Kits</span>}
+          <span style={{ textAlign: "right" }}>Amount</span>
+          <span/>
+        </div>
         {kitBase > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-            <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(99,102,241,0.14)" : "rgba(99,102,241,0.10)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🧰</span>
-            <span style={{ color: textP, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name} <span style={{ color: textS, fontSize: 9, fontStyle: "italic" }}>· this kit's own rental{kitFactor !== 1 ? ` (₹${kitBase.toLocaleString("en-IN")} × ${kitFactor})` : ""}</span></span>
-            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="the kit/console's own charge (× its sub-category multiplier), on top of the add-on items"><b style={{ color: "#A5B4FC" }}>₹{kitBaseMarked.toLocaleString("en-IN")}</b></span>
+          <div style={rowGrid}>
+            <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(99,102,241,0.14)" : "rgba(99,102,241,0.10)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}><IconBox size={12}/></span>
+            <span style={{ color: textP, fontWeight: 600, gridColumn: "2 / -3", minWidth: 0, whiteSpace: "normal", overflowWrap: "break-word" }}>{item.name}</span>
+            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="the kit/console's own charge (× its sub-category multiplier), on top of the add-on items"><b style={{ color: indigo }}>₹{kitBaseMarked.toLocaleString("en-IN")}</b></span>
           </div>
         )}
         {comps.map((c, ci) => {
@@ -122,16 +191,20 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
             const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
             const patQty = Number(c.qty) || 0;
             return (
-              <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-                <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
-                <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
+              <div key={ci} style={rowGrid}>
+                <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🌸</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>
+                <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: "1 1 auto", minWidth: 104, whiteSpace: "normal", overflowWrap: "break-word" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }} title="per kit">
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, patQty - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
                   <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{patQty}{studioUnitLabel(pat?.unit)}</span>
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
-                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
-                {(() => { const rr = recipeRateFor(pat, pat?.sub); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
+                {sizeControls(c, ci, pat)}
+                {pat && ratioControls(c, ci, recipeModeDefault(pat, pat?.sub))}
+                </div>
+                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 11.5, whiteSpace: "nowrap", textAlign: "right" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
+                {(() => { const rr = recipeRateFor(pat, pat?.sub, c); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
             );
@@ -146,7 +219,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const cRate = cFloral ? cFloral.blendedUnit : (cItem ? priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0);
           return (
             <Fragment key={ci}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+              <div style={rowGrid}>
                 <div style={{ position: "relative", flexShrink: 0 }}
                   onMouseEnter={(e) => {
                     if (!cSrc) return;
@@ -156,36 +229,32 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     setHoverImg({ idx: ci, openUp, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined, left: Math.min(r.left, window.innerWidth - 168) });
                   }}
                   onMouseLeave={() => setHoverImg(null)}>
-                  {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>📦</span>}
+                  {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}><IconBox size={11}/></span>}
                   {hoverImg?.idx === ci && cSrc && (
                     <div style={{ position: "fixed", top: hoverImg.top, bottom: hoverImg.bottom, left: hoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
                       <img src={cSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     </div>
                   )}
                 </div>
-                <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
-                  {cItemIsKit && <span style={{ color: "#A5B4FC", fontWeight: 700, fontSize: 9 }}>📦</span>}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>
+                <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: "1 1 auto", minWidth: 104, whiteSpace: "normal", overflowWrap: "break-word", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ whiteSpace: "normal", overflowWrap: "break-word" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
+                  {cItemIsKit && <span style={{ color: indigo, fontWeight: 700, display: "flex" }}><IconBox size={11}/></span>}
                   {cItem && onCheckAvailability && (
                     <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); })}
-                      title="Check stock availability & swap this component" style={{ cursor: "pointer", fontSize: 11, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}>📦</span>
+                      title="Check stock availability & swap this component" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
                   )}
-                  {cFloral && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9, fontWeight: 700 }}>
-                      🌸
-                      <button onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, realPct: undefined } : x))} title="Use this sub-category's default real/artificial ratio" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof c.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof c.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button>
-                      <button onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, realPct: 100 } : x))} title="Price this component at 100% the recipe's Studio rate, overriding the sub-category's default" style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: c.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: c.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button>
-                      <input type="number" min="0" max="100" value={c.realPct ?? ""} placeholder={String(cFloral.modeDefault)} onChange={(e) => { const v = e.target.value; setComps(comps.map((x, i) => i === ci ? { ...x, realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) } : x)); }} title="Manually set the exact % real — overrides Ratio/100%" style={{ width: 38, padding: "1px 4px", borderRadius: 3, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 9, textAlign: "center" }} />
-                    </span>
-                  )}
+                  {cFloral && sizeControls(c, ci, cFloral.pattern)}
+                  {cFloral && ratioControls(c, ci, cFloral.modeDefault)}
                 </span>
-                <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
+                <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }} title="per kit">
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
                   <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{qtyEach}</span>
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
-                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-                {cItem && (() => { const marked = Math.round(cRate); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="client price (rental + margin, all-in)"><b style={{ color: "#A5B4FC" }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })()}
+                </div>
+                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 11.5, whiteSpace: "nowrap", textAlign: "right" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
+                {cItem ? (() => { const marked = Math.round(cRate); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="client price (rental + margin, all-in)"><b style={{ color: indigo }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })() : <span/>}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
               {/* Kit-inside-a-kit → fully editable, PER THIS PARENT INSTANCE. Edits are stored in this
@@ -218,16 +287,16 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           );
         })}
         {subCatRecipe > 0 && subCatPattern && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-            <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
-            <span style={{ color: textP, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subCatPattern.name} <span style={{ color: "#EC4899", fontSize: 9, fontStyle: "italic" }}>· recipe (this kit's sub-category)</span></span>
-            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{subCatRecipe.toLocaleString("en-IN")}</b></span>
+          <div style={rowGrid}>
+            <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🌸</span>
+            <span style={{ color: textP, fontWeight: 600, gridColumn: "2 / -3", minWidth: 0, whiteSpace: "normal", overflowWrap: "break-word" }}>{subCatPattern.name} <span style={{ color: "#EC4899", fontSize: 11, fontStyle: "italic" }}>· recipe (this kit's sub-category)</span></span>
+            <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{subCatRecipe.toLocaleString("en-IN")}</b></span>
           </div>
         )}
       </div>
       <div style={{ marginTop: 5, position: "relative" }}>
-        <input value={addSearch} onChange={(e) => setAddSearch(e.target.value)} placeholder="🔍 Search by name or sub-category to add…"
-          style={{ width: "100%", fontSize: 10, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
+        <input value={addSearch} onChange={(e) => setAddSearch(e.target.value)} placeholder="Search by name or sub-category to add…"
+          style={{ width: "100%", fontSize: 11.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
         {addSearch.trim() && (() => {
           const tokens = addSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
           const matches = (imsInventory || []).filter((x) => x.id !== item.id && !comps.some((c) => c.itemId === x.id) && !isHiddenSubcat(x, rcSubcatFactors) && tokens.every((t) => (x.name + " " + (x.subCat || x.subcategory || "") + " " + (x.cat || x.category || "")).toLowerCase().includes(t))).slice(0, 40);
@@ -236,7 +305,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           const patMatches = (flowerPatterns || []).filter((p) => p && p.id && p.name && !comps.some((c) => c.patternId === p.id) && tokens.every((t) => (p.name + " " + (p.sub || "")).toLowerCase().includes(t))).slice(0, 20);
           return (
             <div style={{ position: "absolute", zIndex: 50, top: "100%", left: 0, right: 0, marginTop: 2, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, maxHeight: 220, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
-              {matches.length === 0 && patMatches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 10, color: textS }}>No matches</div>}
+              {matches.length === 0 && patMatches.length === 0 && <div style={{ padding: "6px 8px", fontSize: 11.5, color: textS }}>No matches</div>}
               {matches.map((x) => {
                 const src = x.img || x.photoUrls?.[0];
                 const remaining = dealAwareness?.getRemaining ? dealAwareness.getRemaining(x.id) : null;
@@ -246,12 +315,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: isBlocked ? "not-allowed" : "pointer", borderBottom: `1px solid ${border}`, opacity: isBlocked ? 0.45 : 1 }}>
                     <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={(x.subCat || x.subcategory) ? (x.subCat || x.subcategory) + " › " + (x.cat || x.category || "") : (x.cat || x.category || "")} dims={itemDimsText(x)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, color: textP, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: textP, display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.name}</span>
-                        {isBlocked && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700, flexShrink: 0 }}>🚫 fully used in this event</span>}
-                        {!isBlocked && remaining != null && <span style={{ fontSize: 7, padding: "1px 4px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700, flexShrink: 0 }}>{remaining} left for this event</span>}
+                        {isBlocked && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(239,68,68,0.15)", color: "#EF4444", fontWeight: 700, flexShrink: 0 }}>fully used in this event</span>}
+                        {!isBlocked && remaining != null && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(245,158,11,0.15)", color: "#F59E0B", fontWeight: 700, flexShrink: 0 }}>{remaining} left for this event</span>}
                       </div>
-                      <div style={{ fontSize: 9, color: textS }}>{(x.subCat || x.subcategory) ? (x.subCat || x.subcategory) + " › " : ""}{x.cat || x.category || ""}{itemDimsText(x) ? ` · 📐 ${itemDimsText(x)}` : ""}</div>
+                      <div style={{ fontSize: 11, color: textS }}>{(x.subCat || x.subcategory) ? (x.subCat || x.subcategory) + " › " : ""}{x.cat || x.category || ""}{itemDimsText(x) ? ` · ${itemDimsText(x)}` : ""}</div>
                     </div>
                   </div>
                 );
@@ -259,10 +328,10 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
               {patMatches.map((p) => (
                 <div key={"pat-" + p.id} onClick={() => { setComps([...comps, { patternId: p.id, qty: 1 }]); setAddSearch(""); }}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", cursor: "pointer", borderBottom: `1px solid ${border}` }}>
-                  <div style={{ width: 22, height: 22, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(236,72,153,0.15)", flexShrink: 0, fontSize: 12 }}>🌸</div>
+                  <div style={{ width: 22, height: 22, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(236,72,153,0.15)", flexShrink: 0, fontSize: 12.5 }}>🌸</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                    <div style={{ fontSize: 9, color: "#EC4899" }}>flower recipe{p.sub ? ` · ${p.sub}` : ""} — no rental, priced separately</div>
+                    <div style={{ fontSize: 12, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: "#EC4899" }}>flower recipe{p.sub ? ` · ${p.sub}` : ""} — no rental, priced separately</div>
                   </div>
                 </div>
               ))}
@@ -270,9 +339,9 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           );
         })()}
       </div>
-      <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-        <span style={{ color: textS }}>Kit total = items ₹{itemsMarked.toLocaleString("en-IN")}{kitBaseMarked > 0 ? ` + console ₹${kitBaseMarked.toLocaleString("en-IN")}` : ""}{flowerTotal > 0 ? ` + 🌸 recipe ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
-        <span style={{ color: "#A5B4FC", fontWeight: 700 }}>{fmt ? fmt(partsTotal * qtyMultiplier) : `₹${(partsTotal * qtyMultiplier).toLocaleString("en-IN")}`}</span>
+      <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
+        <span style={{ color: textS }}>Kit total = items ₹{itemsMarked.toLocaleString("en-IN")}{kitBaseMarked > 0 ? ` + console ₹${kitBaseMarked.toLocaleString("en-IN")}` : ""}{flowerTotal > 0 ? ` + recipe ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
+        <span style={{ color: indigo, fontWeight: 700 }}>{fmt ? fmt(partsTotal * qtyMultiplier) : `₹${(partsTotal * qtyMultiplier).toLocaleString("en-IN")}`}</span>
       </div>
     </div>
   );
