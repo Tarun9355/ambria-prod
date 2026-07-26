@@ -2230,6 +2230,35 @@ export default function ManageLibrary({ ctx }) {
                   ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
                   : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} />}
               </div>
+              {/* Venue (2-level chip picker — same pattern/shared toggle state as the inline grid
+                  editor's own Venue row above); this full-screen editor previously had no way to
+                  set it at all, unlike the image tagger's Venue picker. */}
+              <div style={{ marginBottom: 18 }}>
+                <div style={lbl}>Venue</div>
+                {(() => {
+                  const curVenue = vTag.venue || "";
+                  const isInhouse = curVenue && allInhouseVenues.includes(curVenue);
+                  const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
+                  const setVidVenue = (val) => updTag({ venue: val || undefined, venueCustom: undefined });
+                  const outsideFiltered = customOutdoor.filter(o => tagOutsideSub === "empanelled" ? o.empanelled : tagOutsideSub === "other" ? !o.empanelled : true);
+                  return <>
+                    <div style={chipRow}>
+                      {chip("Inhouse", activeGroup === "inhouse", () => { setTagVenueGroup("inhouse"); setTagOutsideSub("all"); })}
+                      {chip("Outside", activeGroup === "outside", () => { setTagVenueGroup("outside"); setTagOutsideSub("all"); })}
+                      {curVenue && <span onClick={() => { setVidVenue(""); setTagVenueGroup(""); }} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
+                    </div>
+                    {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>{allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}</div>}
+                    {activeGroup === "outside" && <>
+                      <div style={{ ...chipRow, marginTop: 6 }}>
+                        {chip("All", tagOutsideSub === "all", () => setTagOutsideSub("all"))}
+                        {chip("Empanelled", tagOutsideSub === "empanelled", () => setTagOutsideSub("empanelled"))}
+                        {chip("Other", tagOutsideSub === "other", () => setTagOutsideSub("other"))}
+                      </div>
+                      <div style={{ ...chipRow, marginTop: 4 }}>{outsideFiltered.map(o => chip(o.name + (o.empanelled ? " ★" : ""), curVenue === o.name, () => setVidVenue(curVenue === o.name ? "" : o.name)))}</div>
+                    </>}
+                  </>;
+                })()}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginBottom: 18 }}>
                 <div><div style={lbl}>Tier</div><div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
                 <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
