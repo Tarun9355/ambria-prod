@@ -1706,6 +1706,26 @@ export default function StudioApp() {
   const [premiaConfig, setPremiaConfig] = useState(PREMIA_DEFAULTS);
   const [premiaGate, setPremiaGate] = useState(null);
 
+  // ═══ BROWSER BACK BUTTON — step back within Studio instead of leaving the app ═══
+  // Studio's step/modal navigation is plain React state, not URL-backed, so the browser had no
+  // history entry of its own to consume — the very first Back press exited the whole SPA. Pushes a
+  // guard history entry so Back is always caught here first: close the top-most full-screen overlay
+  // if one's open, else step back one Studio screen (Summary → Build → Browse → Event Info); only
+  // once neither applies does Back actually leave the app.
+  useEffect(() => {
+    window.history.pushState({ studioNavGuard: true }, "");
+    const onPopState = () => {
+      if (dcFullPageOpen) { setDcFullPageOpen(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (premiaGate) { setPremiaGate(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (videoModal) { setVideoModal(null); setVideoPlaying(false); setVideoOverlay(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (zoneUploadReview) { setZoneUploadReview(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (step > 0) { setStep((s) => Math.max(0, s - 1)); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      // Nothing left to step back through — let this Back actually leave the app.
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [dcFullPageOpen, premiaGate, videoModal, zoneUploadReview, step]);
+
   // ═══ YOUTUBE BROWSER STATE ═══
   const [ytVideos, setYtVideos] = useState([]);
   const [ytPlaylists, setYtPlaylists] = useState([{ id: AMBRIA_PLAYLIST_ID, title: "All Ambria Work" }]);
