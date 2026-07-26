@@ -103,12 +103,18 @@ export default function DCFloralsTab({ ctx }) {
                       if (!pattern) console.log("[deal-check florals] no pattern for", rc.name, "· available patterns:", flowerPatterns.map(p => p.name));
                       let realCostPerUnit = 0;
                       let realLines = [];
+                      // Fixed extra cost (pot/base/frame) per unit — a real cost regardless of the
+                      // real/artificial split, added AFTER the flower lines below. calcFnFloralSourcingCost
+                      // (the bottom-bar Florals rollup) already includes this; this tab's own Real Total
+                      // didn't, so it ran lower than the rollup for any pattern with a nonzero extraCost.
+                      let patternExtraCost = 0;
                       if (pattern) {
                         const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
                         if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
                         if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
+                        if (comp) patternExtraCost = (Number(comp.extraCost) || 0) * elQty;
                         if (comp && Array.isArray(comp.flowers)) {
                           const season = seasonMap[activeFn.fnDate] || "non_saya";
                           const seasonMult = mandiMults[season] || 1;
@@ -161,7 +167,7 @@ export default function DCFloralsTab({ ctx }) {
                       // Tier 1.9 (22 May 2026) — Artificial cost via real-to-bunch conversion.
                       // Iterate the recipe again to compute artificial bunches per real-flower line.
                       // Old formula (rental × artFrac) replaced entirely. No fallback for items without recipe.
-                      const realCost = realLines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+                      const realCost = realLines.reduce((s, l) => s + l.qty * l.unitPrice, 0) + patternExtraCost;
                       const artFlowerRatePerKg = Number(dealCheckData?.artificialFlowerRatePerKg ?? 50);
                       const artFlowerBunchesPerKg = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
                       const artGreenRatePerKg = Number(dealCheckData?.artificialGreenRatePerKg ?? 40);
