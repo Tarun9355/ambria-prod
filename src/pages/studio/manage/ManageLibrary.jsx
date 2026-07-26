@@ -1873,6 +1873,19 @@ export default function ManageLibrary({ ctx }) {
                   ) : noVenueN > 0 ? (
                     <button onClick={() => { if (window.confirm(`Backfill venue on ${noVenueN} video${noVenueN === 1 ? "" : "s"} with no venue tag yet?\n\nParses each video's description for a "Venue:" line and matches it to your Inhouse/Outside venue list. A venue that doesn't match anything known is filed under Outside → Other. Videos that already have a venue (including a manual fix) are left untouched. Runs in the background.`)) runBulkTagVideoVenues?.(); }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#0EA5E9", border: "1px solid #0EA5E9" }}>🗺 Backfill venue ({noVenueN})</button>
                   ) : null}
+                  {/* Reset every "Needs review" video back to Untagged (wipes its tags entirely) so a
+                      full re-tag from description — now including venue — starts clean instead of
+                      merging over stale AI tags from before venue-extraction existed. */}
+                  {cnt("review") > 0 && (
+                    <button onClick={() => {
+                      const ids = vis.filter(v => videoStatus(v) === "review").map(v => v.id);
+                      if (!window.confirm(`Clear tags on ${ids.length} "Needs review" video${ids.length === 1 ? "" : "s"} and move ${ids.length === 1 ? "it" : "them"} back to Untagged?\n\nThis wipes their existing venue/event/tier/style/color tags entirely, so you can re-tag them fresh (e.g. with "Tag all untagged" afterward). Cannot be undone.`)) return;
+                      const nt = { ...ytVideoTags };
+                      ids.forEach(id => delete nt[id]);
+                      saveYtTags(nt);
+                      showMsg(`Cleared tags on ${ids.length} video${ids.length === 1 ? "" : "s"} — moved to Untagged`, "green");
+                    }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#E11D48", border: "1px solid #E11D48" }}>🗑 Reset Needs-review → Untagged ({cnt("review")})</button>
+                  )}
                 </div>
               </div>
             );
