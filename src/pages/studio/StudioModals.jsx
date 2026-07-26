@@ -21,7 +21,7 @@ export default function StudioModals({ ctx }) {
   const {
     // dcCustomModal
     dcCustomModal, setDcCustomModal, dcCustomItems, setDcCustomItems,
-    dcInventoryCache, dealCheckData, rcCats, rcItems, isDark, border, textP, textS,
+    dealCheckData, studioFloralData, rcCats, rcItems, isDark, border, textP, textS,
     elSelectedPhoto,
     // videoModal
     videoModal, setVideoModal, videoPlaying, setVideoPlaying, videoOverlay, setVideoOverlay,
@@ -50,18 +50,8 @@ export default function StudioModals({ ctx }) {
     zoneConfig, setZoneConfig, libItems,
     // premiaGate (👑 Sr. Designer / Platinum gate)
     premiaGate, setPremiaGate, premiaConfig,
-    // live IMS inventory (aliased — a local `imsInventory` below prefers Deal Check's cache/
-    // snapshot when one exists, falling back to this)
-    imsInventory: liveImsInventory,
+    imsInventory,
   } = ctx;
-  // Rate-card items carry no photo of their own — thumbnails for the zone-upload-review "add
-  // element" search come from the matching IMS inventory item by name (best-effort; falls back to
-  // the generic 📦 icon when nothing matches, same as every other add-element search in the app).
-  // Prefers Deal Check's cache/snapshot (richer — reflects live holds) when one exists, but a fresh
-  // Build session has neither yet, so this MUST fall back to the plain live inventory rather than
-  // an empty array — otherwise every inventory search here (custom ceiling/masking, add element)
-  // comes up empty until Deal Check has been generated at least once for this client.
-  const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || liveImsInventory || [];
   // Live soft-blocking for the zone-upload-review modal — same logic as Build's own zone editor
   // (StudioBuild.jsx's remainingForItem). The staged elements here haven't been written into
   // zoneElements[elKey] yet, so exclude that zone key entirely.
@@ -88,7 +78,7 @@ export default function StudioModals({ ctx }) {
         config={dcCustomModal}
         customItems={dcCustomItems}
         setCustomItems={setDcCustomItems}
-        imsInventory={(dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || []}
+        imsInventory={imsInventory || []}
         rcCats={rcCats}
         rcItems={rcItems}
         isDark={isDark}
@@ -622,13 +612,13 @@ export default function StudioModals({ ctx }) {
                               overrides={el.kitOverrides}
                               onChange={(next) => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }}
                               imsInventory={imsInventory}
-                              flowerPatterns={dealCheckData?.flowerPatterns||recipeOnlyPatterns}
+                              flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
                               qtyMultiplier={el.qty || 1}
                               dealAwareness={{ getRemaining: (itemId) => zurRemainingForItem(itemId, idx) }}
                               rcSubcatFactors={rcSubcatFactors}
                               rcFactorByKey={rcFactorByKey}
-                              mandiCatalogue={dealCheckData?.mandiCatalogue || []} studioMarkup={Number(dealCheckData?.defaultStudioMarkup) || 3} elSize={el.size}
-                              floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={dealCheckData || {}}
+                              mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue || []} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup) || 3} elSize={el.size}
+                              floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData) || {}}
                               textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                             />
                           </div>
@@ -933,8 +923,8 @@ export default function StudioModals({ ctx }) {
         // Look up by invId (stable across renames) when the element has one; name-match is only a
         // fallback for legacy elements tagged before invId-based lookup existed.
         const invItem = el.invId
-          ? (dealCheckData?.inventory || []).find(i => i.id === el.invId)
-          : (dealCheckData?.inventory || []).find(i => i.name === el.name);
+          ? (imsInventory || []).find(i => i.id === el.invId)
+          : (imsInventory || []).find(i => i.name === el.name);
         const baseColour = invItem?.baseColour || "Ivory";
         const paintCost = invItem?.paintCost ?? imsDefaultPaintCost;
         // Pick active function's palette
