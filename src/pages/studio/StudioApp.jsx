@@ -3531,6 +3531,15 @@ export default function StudioApp() {
     return groups;
   }, [customInhouse]);
   const allOutdoorDB = useMemo(() => customOutdoor.slice(), [customOutdoor]);
+  // Property (parent) names, and which of their sub-venues they group — lets a video/description
+  // reference the PROPERTY (e.g. "Restro") rather than one of its specific rooms (e.g. "Banquet",
+  // "Lawn"). A property with exactly one sub-venue is unambiguous (resolves straight to that room);
+  // one with several is ambiguous, so the property name itself becomes the storable/filterable value.
+  const subVenuesOfParent = useMemo(() => Object.fromEntries(allInhouseGroups.map(g => [g.parent, g.subVenues])), [allInhouseGroups]);
+  const inhouseParentNames = useMemo(() => allInhouseGroups.map(g => g.parent), [allInhouseGroups]);
+  // Every value a video's venue tag can legitimately hold for an INHOUSE property — individual
+  // sub-venues (rooms) plus the ambiguous-property fallback names themselves.
+  const allInhouseVenueOrParentNames = useMemo(() => [...new Set([...allInhouseVenues, ...inhouseParentNames])], [allInhouseVenues, inhouseParentNames]);
 
   // ═══ CLOUDINARY PHOTO BROWSER (reference ~4111) — rewired /api/cloudinary → cldAdmin ═══
   const fetchCldFolders = useCallback(async (path = "") => {
@@ -3802,16 +3811,24 @@ export default function StudioApp() {
       const existingTag = ytVideoTags[videoId] || {};
 
       const colorList = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || []);
-      // Match against every venue actually configured in Studio Settings → Venues (customInhouse),
-      // not the parent-filtered allInhouseVenues — that list silently drops any venue whose "Parent
-      // property" hasn't been set yet, so a real backend venue could never be resolved from a
-      // description. bestTaxMatch's substring containment already handles a venue being written
-      // with a property prefix in the description (e.g. "Ambria Valencia" vs. the venue's own bare
-      // name "Valencia") — it just needs the real name present in the candidate list to check against.
-      const allVenues = [...new Set([...customInhouse.map(v => v.name), ...customOutdoor.map(o => o.name)])].filter(Boolean);
-
       const venueRaw = extractLabeledValue(desc, "Venue");
-      const matchedVenue = bestTaxMatch(venueRaw, allVenues);
+      // Resolve the venue in priority order: (1) a specific sub-venue/room name — matches against
+      // every venue actually configured in Studio Settings → Venues (customInhouse), not the
+      // parent-filtered allInhouseVenues, which silently drops any venue whose "Parent property"
+      // hasn't been set yet; (2) an outside venue; (3) a PROPERTY name (e.g. "Restro" instead of
+      // one of its rooms "Banquet"/"Lawn") — resolves straight to that room if the property has
+      // only one, otherwise the property name itself is stored (ambiguous — which room isn't
+      // knowable from text alone). bestTaxMatch's substring containment already handles a name
+      // being written with a property prefix (e.g. "Ambria Valencia" vs. the bare "Valencia").
+      const subVenueNames = [...new Set(customInhouse.map(v => v.name).filter(Boolean))];
+      let matchedVenue = bestTaxMatch(venueRaw, subVenueNames) || bestTaxMatch(venueRaw, customOutdoor.map(o => o.name).filter(Boolean));
+      if (!matchedVenue && venueRaw) {
+        const matchedParent = bestTaxMatch(venueRaw, inhouseParentNames);
+        if (matchedParent) {
+          const subs = subVenuesOfParent[matchedParent] || [];
+          matchedVenue = subs.length === 1 ? subs[0] : matchedParent;
+        }
+      }
       const matchedFn = bestTaxMatch(extractLabeledValue(desc, "Event Type"), taxOr(taxonomy.eventType, FUNCTIONS));
       const matchedIo = bestTaxMatch(extractLabeledValue(desc, "Setup Type"), taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]));
       const matchedColor = bestTaxMatch(extractLabeledValue(desc, "Color Palette"), colorList);
@@ -3835,7 +3852,7 @@ export default function StudioApp() {
       };
       newTag._aiTagged = true;
       return newTag;
-  }, [ytVideoTags, customInhouse, customOutdoor, taxonomy, imsPaletteCatalogue]);
+  }, [ytVideoTags, customInhouse, customOutdoor, taxonomy, imsPaletteCatalogue, inhouseParentNames, subVenuesOfParent]);
 
   const aiTagVideo = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
@@ -4060,20 +4077,31 @@ export default function StudioApp() {
       };
     });
     let out = list;
-    if (venueGroup === "inhouse") out = out.filter(v => v.venue && allInhouseVenues.includes(v.venue));
+    // allInhouseVenueOrParentNames also covers a video stored at the ambiguous PROPERTY level
+    // (e.g. "Restro" itself, when a description named the property but not one of its rooms) —
+    // plain allInhouseVenues (rooms only) would otherwise misfile such a video as "outside".
+    if (venueGroup === "inhouse") out = out.filter(v => v.venue && allInhouseVenueOrParentNames.includes(v.venue));
     else if (venueGroup === "outside") {
-      out = out.filter(v => v.venue && !allInhouseVenues.includes(v.venue));
+      out = out.filter(v => v.venue && !allInhouseVenueOrParentNames.includes(v.venue));
       if (outsideSub === "empanelled") out = out.filter(v => allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
       else if (outsideSub === "other") out = out.filter(v => !allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
     }
-    if (browseVenues.length > 0) out = out.filter(v => browseVenues.includes(v.venue));
+    if (browseVenues.length > 0) {
+      // Selecting a PROPERTY chip (e.g. "Restro") also surfaces videos tagged at any of its own
+      // rooms ("Banquet"/"Lawn") — filtering "by property" should include everything under it.
+      // Selecting a specific room does NOT reach back up to ambiguous property-level tags, since
+      // those don't actually confirm which room the video is.
+      const expandedVenues = new Set(browseVenues);
+      browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => expandedVenues.add(sv)); });
+      out = out.filter(v => expandedVenues.has(v.venue));
+    }
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
     if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
     if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
     if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
     if (filterPalette.length > 0) out = out.filter(v => v.colors.some(c => filterPalette.includes(c)));
     return out;
-  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenues, allOutdoorDB]);
+  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
 
   // ── Active client + meeting number — VERBATIM ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
@@ -6186,7 +6214,7 @@ export default function StudioApp() {
     // taxonomy constants (module-scope)
     taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, PAINT_TOKENS_FALLBACK,
     // derived memos
-    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups,
+    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames,
     allVenueData, outdoorVenueList, browseVideos, allVideos,
     // handlers
     loadClientSession, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,

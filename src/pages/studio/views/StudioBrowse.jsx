@@ -25,6 +25,7 @@ export default function StudioBrowse({ ctx }) {
     sourceVideo, venue, showMsg,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
+    inhouseParentNames, subVenuesOfParent, allInhouseVenueOrParentNames,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   } = ctx;
 
@@ -181,8 +182,12 @@ export default function StudioBrowse({ ctx }) {
                 {(userVenueScope==="all"||userVenueScope==="inhouse"||isAdmin)&&<div onClick={()=>{setVenueGroup("inhouse");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);}} style={S.pill(venueGroup==="inhouse")}>Inhouse</div>}
                 {(userVenueScope==="all"||userVenueScope==="outside"||isAdmin)&&<div onClick={()=>{setVenueGroup("outside");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);}} style={S.pill(venueGroup==="outside")}>Outside</div>}
               </div>
-              {/* Sub-venue pills for Inhouse — multi-select */}
+              {/* Sub-venue pills for Inhouse — multi-select. Property (parent) chips shown first,
+                  bold — selecting one also pulls in every video tagged at any of its own rooms
+                  (see browseVideos' expandedVenues), plus any video tagged ambiguously at just the
+                  property level (a description that named the property but not a specific room). */}
               {venueGroup==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:8}}>
+                {inhouseParentNames.map(p=>{const on=browseVenues.includes(p);return <div key={"p-"+p} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,p)} title={`Every video at any ${p} venue`} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px",fontWeight:700}}>🏢 {p}</div>;})}
                 {allInhouseVenues.map(v=>{const on=browseVenues.includes(v);return <div key={v} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px"}}>{v}</div>;})}
                 {browseVenues.length>0&&<div onClick={()=>setBrowseVenues([])} style={{padding:"4px 8px",borderRadius:12,fontSize:9,cursor:"pointer",color:textS,border:`1px dashed ${border}`}}>✕</div>}
               </div>}
@@ -338,7 +343,7 @@ export default function StudioBrowse({ ctx }) {
                   <div style={lbl}>Venue</div>
                   {(() => {
                     const curVenue = tag.venue || "";
-                    const isInhouse = curVenue && allInhouseVenues.includes(curVenue);
+                    const isInhouse = curVenue && allInhouseVenueOrParentNames.includes(curVenue);
                     const activeGroup = taxVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
                     const setVidVenue = (val) => updTag({ venue: val || undefined, venueCustom: undefined });
                     const outsideFiltered = outdoorVenueList.filter(o => taxOutsideSub === "empanelled" ? o.empanelled : taxOutsideSub === "other" ? !o.empanelled : true);
@@ -348,7 +353,12 @@ export default function StudioBrowse({ ctx }) {
                         {chip("Outside", activeGroup === "outside", () => { setTaxVenueGroup("outside"); setTaxOutsideSub("all"); })}
                         {curVenue && <span onClick={() => { setVidVenue(""); setTaxVenueGroup(""); }} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
                       </div>
-                      {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>{allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}</div>}
+                      {/* Property chips first (🏢 — picks the property itself, for when no single room
+                          fits), then individual rooms. */}
+                      {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>
+                        {inhouseParentNames.map(p => chip("🏢 " + p, curVenue === p, () => setVidVenue(curVenue === p ? "" : p)))}
+                        {allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
+                      </div>}
                       {activeGroup === "outside" && <>
                         <div style={{ ...chipRow, marginTop: 6 }}>
                           {chip("All", taxOutsideSub === "all", () => setTaxOutsideSub("all"))}
