@@ -9,6 +9,13 @@ export default function StudioBrowse({ ctx }) {
   // selected, so nothing is hidden — you just don't scroll past options you aren't changing.
   const [openSections, setOpenSections] = useState({});
   const toggleSection = (k) => setOpenSections(p => ({ ...p, [k]: !p[k] }));
+  // Video id currently open in the "Fix taxonomy" modal (salesperson-facing correction,
+  // separate from Manage's full tag editor) — null when closed.
+  const [taxFixVid, setTaxFixVid] = useState(null);
+  // 2-level Venue picker toggle state (Inhouse/Outside + outside sub-filter) — mirrors Manage
+  // Library's own tagVenueGroup/tagOutsideSub, kept local here since this modal is self-contained.
+  const [taxVenueGroup, setTaxVenueGroup] = useState("");
+  const [taxOutsideSub, setTaxOutsideSub] = useState("all");
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
@@ -86,7 +93,10 @@ export default function StudioBrowse({ ctx }) {
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
             <div className="sb-title" style={{fontSize:14,fontWeight:600,marginBottom:3,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
             <div style={{fontSize:11,color:textS,marginBottom:6}}>{[v.venue, v.fn, v.space].filter(Boolean).join(" · ") || "Untagged"}</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>{[...v.styles, ...v.colors].slice(0,3).map((t,i)=><span key={i} style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:accentBg,color:accentText}}>{t}</span>)}</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,marginBottom:10}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:3}}>{[...v.styles, ...v.colors].slice(0,3).map((t,i)=><span key={i} style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:accentBg,color:accentText}}>{t}</span>)}</div>
+              <button onClick={(e)=>{e.stopPropagation();setTaxVenueGroup("");setTaxOutsideSub("all");setTaxFixVid(v.id);}} title="This video is tagged wrong? Fix its taxonomy" style={{flexShrink:0,padding:"2px 7px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,cursor:"pointer"}}>Fix tags</button>
+            </div>
             {priceTBD&&<div style={{fontSize:10,color:"#D97706",marginBottom:8,padding:"4px 8px",background:"rgba(217,119,6,0.1)",borderRadius:6,border:"1px dashed rgba(217,119,6,0.3)",display:"flex",alignItems:"center",gap:5}}><IconAlert size={11}/>Needs zone photos — customize to build</div>}
             <div style={{marginTop:"auto",display:"flex",gap:6}}>
               {isPlatinum?(

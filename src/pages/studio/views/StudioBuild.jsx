@@ -1421,7 +1421,7 @@ undefined
                       // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
                       const mv=master.tags?.venue||"";
                       setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
-                      setCorrectPhoto({ libId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
+                      setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
                     }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
                       style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
                       <IconPencil size={11}/>{verified?"Correct & update master":"Correct & save to master"}
