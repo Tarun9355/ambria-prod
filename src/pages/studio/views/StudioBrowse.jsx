@@ -14,7 +14,7 @@ export default function StudioBrowse({ ctx }) {
     S, isDark, accent, border, textS, fmt,
     accentBg, accentText, textP, cardBg,
     // auth / scope
-    isAdmin, userVenueScope,
+    isAdmin, userVenueScope, authUser,
     // step
     setStep,
     // venue filters
@@ -32,7 +32,8 @@ export default function StudioBrowse({ ctx }) {
     // build / session
     sourceVideo, venue, showMsg,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
-    ytVideoTags, outdoorVenueList, browseVideos, allVideos, activeClient,
+    ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
+    inhouseParentNames, subVenuesOfParent, allInhouseVenueOrParentNames,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   } = ctx;
 
@@ -404,6 +405,86 @@ export default function StudioBrowse({ ctx }) {
               or via Resume/Continue on the session banner above. */}
         </div>
         </div>
+
+        {/* ═══ FIX TAXONOMY — lightweight salesperson-facing correction modal ═══
+            Edits write straight to ytVideoTags (same store Manage's editor and every
+            filter/seeding path reads), so a fix here applies everywhere the video shows up. */}
+        {taxFixVid && (() => {
+          const vid = allVideos.find(x => x.id === taxFixVid);
+          const tag = ytVideoTags[taxFixVid] || {};
+          const fnArr = Array.isArray(tag.fn) ? tag.fn : (tag.fn ? [tag.fn] : []);
+          const styleArr = tag.styles || [];
+          const colorArr = tag.colors || [];
+          const updTag = (patch) => saveYtTags({ ...ytVideoTags, [taxFixVid]: { ...(ytVideoTags[taxFixVid] || {}), ...patch, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } });
+          const toggleArr = (field, val) => { const cur = Array.isArray(tag[field]) ? tag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
+          const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, ["White & Gold", "Red & Gold", "Pastels", "Teal"]);
+          const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 6 };
+          const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
+          const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
+          return (
+            <div onClick={() => setTaxFixVid(null)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+              <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", border: `1px solid ${border}`, padding: "20px 22px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: textP }}>Fix taxonomy — {vid?.title || "Video"}</div>
+                  <button onClick={() => setTaxFixVid(null)} style={{ border: "none", background: "transparent", color: textS, fontSize: 16, cursor: "pointer" }}>✕</button>
+                </div>
+                <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Changes save instantly and apply everywhere this video shows up.</div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Venue</div>
+                  {(() => {
+                    const curVenue = tag.venue || "";
+                    const isInhouse = curVenue && allInhouseVenueOrParentNames.includes(curVenue);
+                    const activeGroup = taxVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
+                    const setVidVenue = (val) => updTag({ venue: val || undefined, venueCustom: undefined });
+                    const outsideFiltered = outdoorVenueList.filter(o => taxOutsideSub === "empanelled" ? o.empanelled : taxOutsideSub === "other" ? !o.empanelled : true);
+                    return <>
+                      <div style={chipRow}>
+                        {chip("Inhouse", activeGroup === "inhouse", () => { setTaxVenueGroup("inhouse"); setTaxOutsideSub("all"); })}
+                        {chip("Outside", activeGroup === "outside", () => { setTaxVenueGroup("outside"); setTaxOutsideSub("all"); })}
+                        {curVenue && <span onClick={() => { setVidVenue(""); setTaxVenueGroup(""); }} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
+                      </div>
+                      {/* Property chips first (🏢 — picks the property itself, for when no single room
+                          fits), then individual rooms. */}
+                      {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>
+                        {inhouseParentNames.map(p => chip("🏢 " + p, curVenue === p, () => setVidVenue(curVenue === p ? "" : p)))}
+                        {allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
+                      </div>}
+                      {activeGroup === "outside" && <>
+                        <div style={{ ...chipRow, marginTop: 6 }}>
+                          {chip("All", taxOutsideSub === "all", () => setTaxOutsideSub("all"))}
+                          {chip("Empanelled", taxOutsideSub === "empanelled", () => setTaxOutsideSub("empanelled"))}
+                          {chip("Other", taxOutsideSub === "other", () => setTaxOutsideSub("other"))}
+                        </div>
+                        <div style={{ ...chipRow, marginTop: 4 }}>{outsideFiltered.map(o => chip(o.name + (o.empanelled ? " ★" : ""), curVenue === o.name, () => setVidVenue(curVenue === o.name ? "" : o.name)))}</div>
+                      </>}
+                    </>;
+                  })()}
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Event type</div>
+                  <div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Tier</div>
+                  <div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, tag.tier === t, () => updTag({ tier: tag.tier === t ? undefined : t })))}</div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Venue type</div>
+                  <div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(s => chip(s, tag.io === s, () => updTag({ io: tag.io === s ? undefined : s })))}</div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={lbl}>Design style</div>
+                  <div style={chipRow}>{taxOr(taxonomy.designStyle, ["Floral", "Modern", "Traditional", "Royal", "Minimal"]).map(s => chip(s, styleArr.includes(s), () => toggleArr("styles", s)))}</div>
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={lbl}>Palette</div>
+                  <div style={chipRow}>{palettes.map(c => chip(c, colorArr.includes(c), () => toggleArr("colors", c)))}</div>
+                </div>
+                <button onClick={() => { setTaxFixVid(null); showMsg("✓ Taxonomy updated", "green"); }} style={{ ...S.btn(true), width: "100%" }}>Done</button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
 }

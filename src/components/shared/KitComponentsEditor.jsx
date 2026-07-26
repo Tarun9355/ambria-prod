@@ -34,7 +34,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // A component is either {itemId, qty} (a physical inventory item) or {patternId, qty} (a flower-
   // recipe add-on, qty in the recipe's own unit — priced separately via getElPriceFromInventory,
   // contributes ₹0 to the rental total below).
-  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
+  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1, realPct: s.realPct, size: s.size } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
   const kitBase = Number(item.kitBase) || 0;
   // Kit's own sub-category scaling factor — the same multiplier priceForInvItem applies to the whole
@@ -190,6 +190,9 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           if (c.patternId) {
             const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
             const patQty = Number(c.qty) || 0;
+            const sizeOpts = pat?.sizes ? Object.keys(pat.sizes) : [];
+            const hasSizes = sizeOpts.length > 1;
+            const szLabel = (sk) => sk === "small" ? "S" : (sk === "big" || sk === "large") ? "B" : "M";
             return (
               <div key={ci} style={rowGrid}>
                 <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🌸</span>

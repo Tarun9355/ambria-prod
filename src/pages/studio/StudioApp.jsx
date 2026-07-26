@@ -28,6 +28,7 @@ import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
+import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { makeS } from "../../lib/studio/styles";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
@@ -49,20 +50,10 @@ const NAV_ICON_BTN = { ...NAV_CHIP_BASE, padding: 0, width: 31, height: 31, just
 const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", flexShrink: 0 };
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
-  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, ZONE_TYPE_TO_AREA,
+  getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS, DRAPE_DENSITIES,
 } from "../../lib/studio/taxonomy";
 
-// Reverse of ZONE_TYPE_TO_AREA: photo-tag area name ("Bar / Counter") → build zone key ("bar").
-// A video's zonePhotos are keyed by area name; the Build page keys zones by elKey — without this
-// map the per-zone photo a salesperson assigned to a video never pre-selects on Build.
-const AREA_TO_ZONEKEY = (() => {
-  const m = {};
-  Object.entries(ZONE_TYPE_TO_AREA).forEach(([zk, areas]) => {
-    (Array.isArray(areas) ? areas : [areas]).forEach((a) => { if (!(a in m)) m[a] = zk; });
-  });
-  return m;
-})();
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
 import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
@@ -78,7 +69,7 @@ import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rate
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
-  fetchZoneLibraryPhotos, fetchRecentLibraryPhotos, fetchUntaggedLibraryTargets,
+  fetchZoneLibraryPhotos, fetchUntaggedLibraryTargets,
   fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
@@ -212,11 +203,6 @@ const TPL_DEFAULTS = [
 // ═══ DEFAULT SAMPLE EVENTS — sample events removed; team loads real events via UI ═══
 const DEFAULTS = [];
 
-// Old per-item catalogue fully removed — element-card pricing only. ITEMS is retained as
-// an empty stub so the (never-reached) legacy itemQty loop in calcFunctionCost compiles.
-// The loop body only runs when fItemQty has entries, which never happens in the new model.
-const ITEMS = [];
-
 // §7.9.5 — RC floral element → IMS hard-prop default map.
 const FLORAL_HARDPROP_DEFAULT = {
   "F01": [], "F02": [], "F03": [], "F04": [],
@@ -311,7 +297,7 @@ function platformRowCost(row, rates) {
   const fd = row.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
-  const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, rates?.printMaterials).rate;
+  const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, rates?.carpetMaterials).rate;
   return { platform, carpet };
 }
 function calcStructCost(zk, zc, rates) {
@@ -947,10 +933,13 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
     if (!enabledEls[zk] || !cfg) return;
-    const dims = cfg.dims || {}; const sqft = (Number(dims.w) || 0) * (Number(dims.d) || 0); if (sqft <= 0) return;
-    if (cfg.trT) addSub("Truss", sqft * Math.max(1, Number(cfg.trussQty) || 1));
-    if (cfg.plH) addSub("Platform", sqft);
-    if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft);
+    // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
+    // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
+    // silently dropped out of Build's transport total (only element-based items ever counted).
+    const d = cfg.dims || {}; const fd = cfg.floorDims || d;
+    if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+    const sqft = (fd.L || 0) * (fd.W || 0);
+    if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
   });
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
@@ -1141,6 +1130,8 @@ export default function StudioApp() {
   const bulkTagStop = useRef(false);
   const [bulkVid, setBulkVid] = useState({ running: false, done: 0, total: 0, ok: 0, fail: 0, finishedAt: 0 }); // app-wide bulk VIDEO AI tagging progress
   const bulkVidStop = useRef(false);
+  const [bulkVidVenue, setBulkVidVenue] = useState({ running: false, done: 0, total: 0, ok: 0, skip: 0, fail: 0, finishedAt: 0 }); // venue-only backfill progress (see runBulkTagVideoVenues)
+  const bulkVidVenueStop = useRef(false);
   useEffect(() => { libItemsRef.current = libItems; }, [libItems]);
   // Merge freshly-fetched rows into the shared lazy library cache (by id) — every targeted query
   // (browse page, zone match, point lookup, KB, bulk tag) funnels its results through this instead
@@ -1379,6 +1370,9 @@ export default function StudioApp() {
   // Print material rates (IMS Admin → Settings → 🖨️ Print Materials, e.g. Flex/Vinyl/Sunboard
   // ₹/sqft) — read by Library's per-element Print section to price a print job.
   const [imsPrintMaterials, setImsPrintMaterials] = useState([]);
+  // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — its own master list, no
+  // longer piggybacking on Print Materials (a real print-job catalogue with an unrelated purpose).
+  const [imsCarpetMaterials, setImsCarpetMaterials] = useState([]);
   // IMS Admin → Settings → 🏗️ Truss & Masking Rates (settings.trussRates/maskingRates) — falls back
   // to DEFAULT_TRUSS_RATES/DEFAULT_MASKING_RATES via trussRateFor/maskingRateFor until customized.
   const [imsTrussRates, setImsTrussRates] = useState([]);
@@ -1469,28 +1463,11 @@ export default function StudioApp() {
   const [floralRatio, setFloralRatio] = useState(70);
   const [floralOverrides, setFloralOverrides] = useState({ note: "", rows: [] });
 
-  // ═══ ZONE PHOTO FILTERS (Build canvas) — VERBATIM ═══
+  // ═══ ZONE PHOTO FILTERS (Build canvas) — seeded from a reference video's own taxonomy when
+  // customizing off it (see pickAndLoad), otherwise starts at "All"; always user-adjustable from
+  // here via the 🔍 filter, never auto-reapplied afterwards. ═══
   const [zpFilterOpen, setZpFilterOpen] = useState(false);
   const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
-  // Build the zone photo-filter selection from a reference's tags (video or event) so every zone
-  // defaults to the reference's own event type / venue / style / palette / day-night / venue instead
-  // of "All". The salesperson can still widen it via the 🔍 filter. `venue` is a string on tags but
-  // an array in the filter, so it's wrapped.
-  // Accepts BOTH tag schemas: library-photo tags (eventType/venueType/designStyle/colorPalette/
-  // timeSetting/venue) AND inspiration-video tags (fn/io/styles/colors/venue). The values are the
-  // same taxonomy strings — only the key names differ — so a video reference pre-fills EVERY category
-  // (event type, venue type, style, palette, day/night, venue), not just the shared `venue` key.
-  const zpFiltersFromTags = useCallback((tags) => {
-    const arr = (v) => (Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []));
-    return {
-      eventType: arr(tags?.eventType ?? tags?.fn),
-      venueType: arr(tags?.venueType ?? tags?.io ?? tags?.space),
-      designStyle: arr(tags?.designStyle ?? tags?.styles),
-      colorPalette: arr(tags?.colorPalette ?? tags?.colors),
-      timeSetting: arr(tags?.timeSetting ?? tags?.dayNight),
-      venue: arr(tags?.venue),
-    };
-  }, []);
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
@@ -1758,6 +1735,26 @@ export default function StudioApp() {
   const [premiaConfig, setPremiaConfig] = useState(PREMIA_DEFAULTS);
   const [premiaGate, setPremiaGate] = useState(null);
 
+  // ═══ BROWSER BACK BUTTON — step back within Studio instead of leaving the app ═══
+  // Studio's step/modal navigation is plain React state, not URL-backed, so the browser had no
+  // history entry of its own to consume — the very first Back press exited the whole SPA. Pushes a
+  // guard history entry so Back is always caught here first: close the top-most full-screen overlay
+  // if one's open, else step back one Studio screen (Summary → Build → Browse → Event Info); only
+  // once neither applies does Back actually leave the app.
+  useEffect(() => {
+    window.history.pushState({ studioNavGuard: true }, "");
+    const onPopState = () => {
+      if (dcFullPageOpen) { setDcFullPageOpen(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (premiaGate) { setPremiaGate(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (videoModal) { setVideoModal(null); setVideoPlaying(false); setVideoOverlay(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (zoneUploadReview) { setZoneUploadReview(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (step > 0) { setStep((s) => Math.max(0, s - 1)); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      // Nothing left to step back through — let this Back actually leave the app.
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [dcFullPageOpen, premiaGate, videoModal, zoneUploadReview, step]);
+
   // ═══ YOUTUBE BROWSER STATE ═══
   const [ytVideos, setYtVideos] = useState([]);
   const [ytPlaylists, setYtPlaylists] = useState([{ id: AMBRIA_PLAYLIST_ID, title: "All Ambria Work" }]);
@@ -1813,9 +1810,6 @@ export default function StudioApp() {
   const [cldVideoPath, setCldVideoPath] = useState([]);
   const [cldVideoList, setCldVideoList] = useState([]);
   const [cldVideoLoading, setCldVideoLoading] = useState(false);
-  // ═══ ZONE PICKER MODAL STATE (reference ~3601) ═══
-  const [zonePickerVid, setZonePickerVid] = useState(null); // video id for zone picker modal
-  const [zonePickerZone, setZonePickerZone] = useState(null); // zone name being picked
 
   // ═══ PINTEREST SEARCH STATE ═══
   const [pinResults, setPinResults] = useState([]);
@@ -2000,6 +1994,7 @@ export default function StudioApp() {
       try { const synv = await kvGet("synonymDictionary"); if (synv != null) { const sd = parse(synv); if (Array.isArray(sd) && !cancelled) setImsSynonymDictionary(sd); } } catch {}
       // Print Materials — same per-field kv row pattern as synonymDictionary above.
       try { const pmv = await kvGet("printMaterials"); if (pmv != null) { const pm = parse(pmv); if (Array.isArray(pm) && !cancelled) setImsPrintMaterials(pm); } } catch {}
+      try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {}
       // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
       try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
       try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
@@ -2103,6 +2098,7 @@ export default function StudioApp() {
           else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
+          else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
@@ -2471,7 +2467,7 @@ export default function StudioApp() {
   // Bundled settings-driven rates passed to calcStructCost everywhere — imsInventory/rcFactorByKey
   // ride along so trussRowCost can price a "custom ceiling/masking" inventory item (rental × its
   // sub-category's scaling factor) the same way any other IMS-sourced element prices.
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsTrussRates, imsMaskingRates, imsInventory, rcFactorByKey]);
+  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsInventory, rcFactorByKey]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -2574,13 +2570,20 @@ export default function StudioApp() {
       // element does (see the non-kit floral path below) — a sub-category floral_mode of real/
       // artificial pins it to 100/0, otherwise it follows the deal's floralRatio. `extra` (pot/base)
       // is added once, un-blended, matching getElPrice's composition order.
-      const recipeCost = (pattern, subKey, recipeQty = 1) => {
+      // `override` (a kit's own subItems/kitOverrides entry for this pattern add-on) lets each
+      // attached recipe pin its own SMB size and real/artificial ratio independent of the kit
+      // element's own size toggle and the deal's global ratio — set via the 🌐/🎯/Size controls in
+      // KitComponentsEditor.jsx and InventoryTab.jsx's kit builder. Undefined fields fall back to
+      // the previous shared behavior (element size / sub-category mode / global floralRatio).
+      const recipeCost = (pattern, subKey, recipeQty = 1, override) => {
         if (!pattern) return 0;
-        const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
+        const szKey = override?.size || sizeKey;
+        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
         if (!rates) return 0;
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
-        const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
         const blended = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
         return blended * (Number(recipeQty) || 0);
       };
@@ -2590,10 +2593,10 @@ export default function StudioApp() {
       const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
       const attachedPatterns = effectiveSubItems
         .filter((si) => si.patternId)
-        .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty }))
+        .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty, si }))
         .filter((x) => x.pattern);
       if (subCatPattern || attachedPatterns.length) {
-        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty), 0);
+        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0);
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
@@ -2633,7 +2636,7 @@ export default function StudioApp() {
       const lineCost = ownedQty * ownedRate + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
-      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null };
+      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -2850,8 +2853,12 @@ export default function StudioApp() {
     }, 0);
   }, [getElPrice, applyFloralRatio]);
 
-  const getElPriceForFn = useCallback((el, zc, fnRatio) => {
-    if (el.invId) return getElPriceFromInventory(el); // IMS inventory-sourced element — Rate Card never consulted
+  // checkAvail (optional): mirrors getElPrice's opts.checkAvailability — only meaningful for the
+  // CURRENTLY ACTIVE function, since activeBlocksForDate is only ever warmed for that function's
+  // own date (see the useEffect that warms it). Callers must gate this to the active function only;
+  // passing it for another function's snapshot would check its items against the wrong date's blocks.
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail) => {
+    if (el.invId) return getElPriceFromInventory(el, checkAvail ? { checkAvailability: true } : undefined); // IMS inventory-sourced element — Rate Card never consulted
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
@@ -2884,8 +2891,8 @@ export default function StudioApp() {
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
 
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio).lineCost, 0);
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail) => {
+    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail).lineCost, 0);
   }, [getElPriceForFn]);
 
   const calcPhotoCost = useCallback((zoneKey, photo) => {
@@ -2951,6 +2958,9 @@ export default function StudioApp() {
     const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decorCost >= b.minBudget && decorCost < b.maxBudget);
     const bufTrucks = bt ? bt.bufferTrucks : 0;
+    // No decor priced at all → nothing to deliver or power, so skip truck/genset cost entirely
+    // (matches calcFunctionCost/calcFunctionBreakdown, which already gate transport on decor > 0).
+    if (decorCost <= 0) return decorCost;
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
     const truckTotal = allTrucks * tripRate * 2;
     const gensets = match ? (match.gensets || 1) : 1;
@@ -2986,23 +2996,28 @@ export default function StudioApp() {
 
   const totalCost = useCallback(() => {
     let c = 0;
-    const zones = activeZones.length > 0 ? activeZones : Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
+    // Always derive zones fresh from the live zoneConfig/enabledEls — matches calcFunctionCost and
+    // calcFunctionBreakdown below. `activeZones` used to take priority here when non-empty, but it's
+    // stale legacy state (only ever repopulated from an old restored session, reset to [] on almost
+    // every edit) — letting it override the live config silently priced a deal from an out-of-date
+    // zone list whenever a session happened to still be carrying one.
+    const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     zones.forEach(z => { c += calcStructCost(z.type, z.config, structRates).total; });
     Object.entries(zoneElements).forEach(([zk, elems]) => {
       if (!enabledEls[zk] || !elems) return;
       c += calcElsCost(elems, true, zoneConfig[zk], { checkAvailability: true }); // active fn's live canvas — see activeBlocksForDate
     });
-    const grades = itemGrades || {};
-    Object.entries(itemQty || {}).forEach(([itemId, qty]) => {
-      if (!qty) return;
-      // old catalogue items fully removed — element card pricing only
-    });
     const fnIdx = activeFnIdx || 0;
-    dcCustomItems.filter(ci => ci.fnIdx === fnIdx).forEach(ci => {
+    // Only count a custom Production/Buying item while its own zone is still enabled — matches
+    // how normal element-card costs are gated by enabledEls above, and matches
+    // calcFunctionBreakdown (Summary's accordion), which already scoped this way. Previously this
+    // counted every custom item for the function regardless of zone toggle state, so switching a
+    // zone off didn't remove its custom items from the total the way it removes everything else.
+    dcCustomItems.filter(ci => ci.fnIdx === fnIdx && enabledEls[ci.zoneKey]).forEach(ci => {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, itemQty, itemGrades, activeZones, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates]);
 
   const transportCalc = useMemo(() => {
     if (!venue) return { trucks: 0, tripRate: 0, total: 0, isNew: true, tier: "new", tierLabel: "", breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0 };
@@ -3011,11 +3026,16 @@ export default function StudioApp() {
     const tripRate = match ? match.rate : customTripRate;
     const tierId = match ? match.tier : "new";
     const tierLabel = match ? (TR_TIERS.find(t => t.id === match.tier)?.label || match.tier) : "New venue";
+    const decor = totalCost();
+    // No decor selected at all → nothing to deliver or power, so no trucks/genset either. Matches
+    // calcFunctionCost/calcFunctionBreakdown, which already skip transport entirely when a
+    // function's decor total is 0 — this was the one place still charging it unconditionally
+    // as soon as a venue was picked, even with every zone toggled off.
+    if (decor <= 0) return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: match ? (match.gensets || 1) : 1, gensetCost: 0, gensetRate, truckTotal: 0 };
     const breakdown = [];
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
-    const decor = totalCost();
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
     const bufTrucks = bt ? bt.bufferTrucks : 0;
     if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
@@ -3075,28 +3095,29 @@ export default function StudioApp() {
     const fZoneElements = fnData.zoneElements || {};
     const fZoneConfig = fnData.zoneConfig || {};
     const fEnabledEls = fnData.enabledEls || {};
-    const fActiveZones = fnData.activeZones || [];
-    const fItemQty = fnData.itemQty || {};
-    const fItemGrades = fnData.itemGrades || {};
     const fVenue = fnData.fnVenue || "";
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     let decor = 0;
-    const zones = fActiveZones.length > 0 ? fActiveZones : Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
+    // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
+    // comment. `activeZones` no longer takes priority here. Also dropped the legacy itemQty
+    // catalogue loop that used to sit here — it looked items up in the old per-item catalogue,
+    // which was already emptied out elsewhere, so the loop never actually added any cost;
+    // removing it just retires visibly-dead code, it doesn't change any computed total.
+    const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates).total; });
+    // Availability-shortfall pricing only applies to the currently active function — see
+    // getElPriceForFn's comment. This is what makes this total (Summary's top banner, Deal Check's
+    // quote) match Build's own live totalCost() instead of running lower whenever an item is
+    // oversubscribed for the date.
+    const fCheckAvail = fnData.fnIdx === activeFnIdx;
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, fCheckAvail);
     });
-    const grades = fItemGrades || {};
-    Object.entries(fItemQty || {}).forEach(([itemId, qty]) => {
-      if (!qty) return;
-      const it = ITEMS.find(x => x.id === itemId);
-      if (!it) return;
-      const grade = grades[itemId] || "P";
-      const unit = it[grade === "P" ? "premium" : grade === "E" ? "elegant" : "simple"] || it.premium || 0;
-      decor += qty * unit;
-    });
-    dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx).forEach(ci => {
+    // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
+    // (Summary's accordion), which already scoped this way; this one used to count every custom
+    // item for the function regardless of zone toggle state.
+    dcCustomItems.filter(ci => ci.fnIdx === fnData.fnIdx && fEnabledEls[ci.zoneKey]).forEach(ci => {
       decor += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     let transport = 0;
@@ -3139,7 +3160,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems, structRates]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems, structRates, activeFnIdx]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -3162,8 +3183,19 @@ export default function StudioApp() {
       if (typeof rc?.defaultRealPct === "number") return rc.defaultRealPct;
       return Math.max(0, Math.min(100, 100 - fnRatio));
     };
-    let tReal = 0, tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0;
-    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
+    let tArt = 0, realIncome = 0, artIncome = 0, artFlowerBunches = 0, artGreenBunches = 0, fixedExtras = 0;
+    // Real-flower quantities/rates, aggregated by mandi parent id across every element in this
+    // function — mirrors DCFloralsTab.jsx's own `flowerAgg`. Needed (not just a running total)
+    // because the swap-override pass below has to divert quantity FROM one flower's aggregate
+    // INTO another's, same as the tab does; a flat running total can't express that.
+    const flowerAgg = new Map(); // parentId → { totalQty, unitPrice, name, unit }
+    // Salesperson customizations made in Deal Check's own Florals tab — this rollup used to ignore
+    // both entirely, so a swapped-in flower or a picked colour/preference rate never reached the
+    // bottom-bar Florals total (or GYV/Dept Income, which is built from this same function).
+    const colorPrefsForFn = dcFloralColorPrefs?.[fn?.fnIdx] || {};
+    const fnOverrides = fn?.floralOverrides || { rows: [] };
+    const overrideByParentId = new Map();
+    (fnOverrides.rows || []).forEach(r => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
       (elems || []).forEach(el => {
@@ -3187,20 +3219,33 @@ export default function StudioApp() {
         if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
         if (!comp || !Array.isArray(comp.flowers)) return;
         // Fixed extra cost (pot/base) per unit — a real cost regardless of real/artificial split.
-        { const ex = (Number(comp.extraCost) || 0) * q; if (ex > 0) { tReal += ex; realIncome += ex; } }
+        // Not tied to any one flower, so it sits outside flowerAgg/the swap pass entirely.
+        { const ex = (Number(comp.extraCost) || 0) * q; if (ex > 0) { fixedExtras += ex; realIncome += ex; } }
         const season = sMap[fn.fnDate] || "non_saya";
         const sMult = mults[season] || 1;
         comp.flowers.forEach(fl => {
           const resolved = resolveMandiFlower(fl.flowerId, mc);
           const parent = resolved?.parent || null;
+          const parentId = parent?.id || fl.flowerId;
           const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
           const effR = ft === "real_only" ? 1 : rp;
           const effA = ft === "real_only" ? 0 : ap;
-          const bp = (parent?.currentPrice || 0) * sMult;
+          // Ranked colour preference (1st choice) or a legacy single colour-variant pick overrides
+          // the mandi parent's base price — and skips the season multiplier, same as the Florals
+          // tab: an explicit price the salesperson picked shouldn't silently move with the season.
+          const override = overrideByParentId.get(parentId);
+          const prefArr = colorPrefsForFn?.[parentId];
+          const prefRate = Array.isArray(prefArr) && prefArr.length > 0 ? Number(prefArr[0].rate) : 0;
+          const variantRate = Number(override?.colorVariant?.rate) || 0;
+          const basePrice = prefRate > 0 ? prefRate : variantRate > 0 ? variantRate : (Number(parent?.currentPrice) || 0);
+          const bp = (prefRate > 0 || variantRate > 0) ? basePrice : basePrice * sMult;
           const realUnits = (fl.qty || 0) * q * effR;
-          const realCost = realUnits * bp;
-          tReal += realCost;
-          if (realUnits > 0 && parent) { const nm = parent.name || "Flower"; if (!fbreak[nm]) fbreak[nm] = { name: nm, qty: 0, cost: 0, unit: parent.unit || "" }; fbreak[nm].qty += realUnits; fbreak[nm].cost += realCost; }
+          if (realUnits > 0 && parent) {
+            const agg = flowerAgg.get(parentId) || { totalQty: 0, unitPrice: bp, name: parent.name || "Flower", unit: parent.unit || "" };
+            agg.totalQty += realUnits;
+            agg.unitPrice = bp; // refresh — mirrors the Florals tab's own aggregation
+            flowerAgg.set(parentId, agg);
+          }
           if (effA > 0) {
             if (ft === "mapping") {
               // Mapped to a specific artificial inventory item — sourcing cost = its purchase cost per unit.
@@ -3216,8 +3261,41 @@ export default function StudioApp() {
         });
       });
     });
+    // Manual flower swaps (Deal Check's 🔄 swap button) — divert quantity from one flower's
+    // aggregate to another's, exactly like DCFloralsTab.jsx's own post-aggregation pass, so a swap
+    // made there is reflected here too instead of only in the tab's own displayed total.
+    (fnOverrides.rows || []).forEach(override => {
+      if (!override?.swapTo) return;
+      const fromAgg = flowerAgg.get(override.swapTo.fromParentId);
+      if (!fromAgg) return;
+      const swapQty = Number(override.swapTo.qty) || 0;
+      const isSplit = !!override.swapTo.isSplit;
+      if (swapQty <= 0) return;
+      if (isSplit) {
+        fromAgg.totalQty = Math.max(0, fromAgg.totalQty - swapQty);
+        if (fromAgg.totalQty <= 0.0001) flowerAgg.delete(override.swapTo.fromParentId);
+      } else {
+        flowerAgg.delete(override.swapTo.fromParentId);
+      }
+      const targetParent = resolveMandiFlower(override.swapTo.toParentId, mc)?.parent;
+      if (!targetParent) return;
+      const targetId = targetParent.id;
+      const targetRate = (override.swapTo.toRate || targetParent.currentPrice || 0);
+      const existing = flowerAgg.get(targetId);
+      if (existing) existing.totalQty += swapQty;
+      else flowerAgg.set(targetId, { totalQty: swapQty, unitPrice: targetRate, name: targetParent.name || "Flower", unit: targetParent.unit || "" });
+    });
+    let tReal = fixedExtras;
+    const fbreak = {}; // flowerName → { name, qty, cost } (mandi shopping breakdown, real flowers)
+    flowerAgg.forEach(v => {
+      if (!(v.totalQty > 0)) return;
+      const cost = v.totalQty * v.unitPrice;
+      tReal += cost;
+      if (!fbreak[v.name]) fbreak[v.name] = { name: v.name, qty: 0, cost: 0, unit: v.unit };
+      fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
+    });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey]);
+  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
@@ -3321,14 +3399,24 @@ export default function StudioApp() {
     const fVenue = fnData.fnVenue || "";
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     const zones = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
-      const el = zoneLabelsD[k] || fCustomZones.find(cz => cz.id === k) || { label: k, icon: "📦" };
+      // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
+      // custom zone names showing blank in Summary's accordion and the PDF/PPT export.
+      const customZoneMatch = fCustomZones.find(cz => cz.id === k);
+      const el = zoneLabelsD[k] || (customZoneMatch ? { label: customZoneMatch.name, icon: customZoneMatch.icon || "📦" } : { label: k, icon: "📦" });
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let ic = 0, itemCount = 0;
       if (ze && ze.length > 0) {
         (ze || []).forEach(el2 => {
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio);
-          if (!priceInfo.rc) return;
+          // `priceInfo.rc` is only ever set for a legacy Rate-Card name match — every IMS
+          // inventory-backed, kit, and pure flower-recipe element prices through
+          // getElPriceFromInventory/getElPriceFromPattern instead, which always return `rc: null`
+          // (it's not an error signal; lineCost is already 0 in the genuinely-unpriced case). This
+          // used to skip counting ANY of those elements' cost here — the single biggest reason
+          // Summary's own per-zone accordion could show a fraction of Build's/Deal Check's total.
+          // checkAvail only for the active function (see getElPriceForFn) — keeps this accordion's
+          // per-zone total matching Build's own live totalCost() when an item is oversubscribed.
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, fnData.fnIdx === activeFnIdx);
           ic += priceInfo.lineCost;
           itemCount += (el2.qty || 0);
         });
@@ -3392,7 +3480,7 @@ export default function StudioApp() {
         gensets, venueGensets, gensetCost, gensetRate, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems, structRates]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
 
   const cat = getCat(grandTotal);
 
@@ -3419,98 +3507,25 @@ export default function StudioApp() {
     await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
   }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
 
-  // ── Library photo scoring for a zone ──
-  // Async: fetches its zone-tagged candidate pool from the server (`tags->areasElements` overlap)
-  // instead of scanning the whole in-memory library — callers must await/`.then()` this now.
-  const getLibPhotosForZone = useCallback(async (zone, videoTag, filterFn) => {
-    // `zone` may be a single tag name (Manage Library) or an array of synonym names (Build page).
-    // filterFn (optional): a predicate applied to the zone matches BEFORE scoring/capping — so active
-    // photo filters (event type, palette, etc.) constrain the pool first and matching photos aren't
-    // lost to the 50-cap by higher-scoring but filtered-out photos.
+  // ── Library photos for a zone ──
+  // Async: fetches the zone-tagged candidate pool from the server (`tags->areasElements` overlap)
+  // instead of scanning the whole in-memory library. Returns every photo tagged for this zone,
+  // unranked — no video-taxonomy or palette-based scoring. Build shows the full zone-tagged set
+  // and the user always picks manually; nothing is auto-preselected.
+  const getLibPhotosForZone = useCallback(async (zone, filterFn) => {
+    // `zone` may be a single tag name or an array of synonym names (Build page).
+    // filterFn (optional): a predicate applied to the zone matches — e.g. Build's explicit
+    // "Filter whole build" photo filters (event type, palette, etc.), a user-initiated filter,
+    // not automatic taxonomy scoring.
     const zoneList = (Array.isArray(zone) ? zone : [zone]).filter(Boolean);
-    if (!zoneList.length) return { exact: [], similar: [], fallback: [] };
+    if (!zoneList.length) return [];
     const zoneCandidates = await fetchZoneLibraryPhotos(zoneList);
     mergeLibItems(zoneCandidates);
-    const tier = videoTag?.tier;
-    const libTier = tier === "Silver" ? "Simple" : tier === "Gold" ? "Enhanced" : null;
-    // Resolve the active palette (per function) → its anchor colours + the ★ primary.
-    // When a palette is chosen its colours drive matching (the Build screen has no video
-    // colours otherwise); a photo whose colours include the PRIMARY ranks above one that
-    // matches only a secondary anchor, which falls into the queue below.
-    const activePaletteName = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx - 1]?.palette || "");
-    const activePalette = (imsPaletteCatalogue || []).find(p => p.name === activePaletteName);
-    const paletteColors = activePalette ? (activePalette.anchorColours || []) : [];
-    // A palette can have MULTIPLE primary colours; a photo carrying ANY of them is a
-    // full (primary) match. (Legacy single `primaryColour` still read.)
-    const primaryColors = activePalette
-      ? (Array.isArray(activePalette.primaryColours) ? activePalette.primaryColours : (activePalette.primaryColour ? [activePalette.primaryColour] : []))
-      : [];
-    const colors = paletteColors.length ? paletteColors : (videoTag?.colors || []);
-    const styles = videoTag?.styles || [];
-    const fns = Array.isArray(videoTag?.fn) ? videoTag.fn : (videoTag?.fn ? [videoTag.fn] : []);
-    const io = videoTag?.io || "";
-    const zoneMatches = zoneCandidates.filter(li => {
+    return zoneCandidates.filter(li => {
       const ae = li.tags?.areasElements || [];
       return zoneList.some(z => ae.includes(z)) && (!filterFn || filterFn(li));
     });
-    const scorePhoto = (li) => {
-      let score = 0;
-      const liTier = li.tags?.categoryTier || [];
-      const liColor = li.tags?.colorPalette || [];
-      const liStyle = li.tags?.designStyle || [];
-      const liFn = li.tags?.eventType || [];
-      const liIO = li.tags?.venueType || [];
-      // §Palette-first — when an active palette context exists (e.g. arrived via an Ivory-tagged
-      // video / client palette set), photos carrying a palette colour LEAD their zone regardless
-      // of where "color" sits in the settings priority; the priority score below is the tiebreaker.
-      if (colors.length) {
-        if (primaryColors.length && primaryColors.some(pc => liColor.includes(pc))) score += 1000;
-        else if (colors.some(c => liColor.includes(c))) score += 500;
-      }
-      filterPriority.forEach((p, idx) => {
-        const weight = (filterPriority.length - idx) * 10;
-        switch (p.id) {
-          case "tier": if (libTier && liTier.includes(libTier)) score += weight; break;
-          case "style": if (styles.length && styles.some(s => liStyle.includes(s))) score += weight; break;
-          case "color":
-            if (colors.length) {
-              if (primaryColors.length) {
-                // Designated ★ primaries: full weight when the photo carries ANY primary
-                // colour; a secondary-anchor-only match gets a small weight so those
-                // photos queue below the primary-colour ones.
-                if (primaryColors.some(pc => liColor.includes(pc))) score += weight;
-                else if (colors.some(c => liColor.includes(c))) score += Math.round(weight * 0.2);
-              } else if (colors.some(c => liColor.includes(c))) {
-                score += weight;
-              }
-            }
-            break;
-          case "fn": if (fns.length && fns.some(f => liFn.includes(f))) score += weight; break;
-          case "io": if (io && liIO.includes(io)) score += weight; break;
-        }
-      });
-      return score;
-    };
-    const scored = zoneMatches.map(li => ({ li, score: scorePhoto(li) })).sort((a, b) => b.score - a.score);
-    const exact = scored.filter(s => s.score >= 40).map(s => s.li).slice(0, 50);
-    const similar = scored.filter(s => s.score >= 10 && s.score < 40).map(s => s.li).slice(0, 50 - exact.length);
-    const fallback = scored.filter(s => s.score < 10).map(s => s.li).slice(0, 50 - exact.length - similar.length);
-    const total = exact.length + similar.length + fallback.length;
-    let overflow = [];
-    if (total < 50) {
-      const usedIds = new Set([...exact, ...similar, ...fallback].map(li => li.id));
-      // "Rest" (non-zone fillers) — a bounded recently-tagged pool instead of the whole library,
-      // still following the settings priority + palette-first ordering.
-      const recentPool = await fetchRecentLibraryPhotos(200);
-      mergeLibItems(recentPool);
-      overflow = recentPool.filter(li => !usedIds.has(li.id) && (!filterFn || filterFn(li)))
-        .map(li => ({ li, score: scorePhoto(li) }))
-        .sort((a, b) => b.score - a.score)
-        .map(s => s.li)
-        .slice(0, 50 - total);
-    }
-    return { exact, similar, fallback: [...fallback, ...overflow] };
-  }, [filterPriority, clientPalette, activeFnIdx, extraFunctions, imsPaletteCatalogue, mergeLibItems]);
+  }, [mergeLibItems]);
 
   // ── All videos (youtube + manual), newest first — VERBATIM ──
   const allVideos = useMemo(() => {
@@ -3543,6 +3558,15 @@ export default function StudioApp() {
     return groups;
   }, [customInhouse]);
   const allOutdoorDB = useMemo(() => customOutdoor.slice(), [customOutdoor]);
+  // Property (parent) names, and which of their sub-venues they group — lets a video/description
+  // reference the PROPERTY (e.g. "Restro") rather than one of its specific rooms (e.g. "Banquet",
+  // "Lawn"). A property with exactly one sub-venue is unambiguous (resolves straight to that room);
+  // one with several is ambiguous, so the property name itself becomes the storable/filterable value.
+  const subVenuesOfParent = useMemo(() => Object.fromEntries(allInhouseGroups.map(g => [g.parent, g.subVenues])), [allInhouseGroups]);
+  const inhouseParentNames = useMemo(() => allInhouseGroups.map(g => g.parent), [allInhouseGroups]);
+  // Every value a video's venue tag can legitimately hold for an INHOUSE property — individual
+  // sub-venues (rooms) plus the ambiguous-property fallback names themselves.
+  const allInhouseVenueOrParentNames = useMemo(() => [...new Set([...allInhouseVenues, ...inhouseParentNames])], [allInhouseVenues, inhouseParentNames]);
 
   // ═══ CLOUDINARY PHOTO BROWSER (reference ~4111) — rewired /api/cloudinary → cldAdmin ═══
   const fetchCldFolders = useCallback(async (path = "") => {
@@ -3797,112 +3821,98 @@ export default function StudioApp() {
     saveManualVideos([vid, ...manualVideos]);
   }, [manualVideos, saveManualVideos]);
 
-  // ═══ AI TAG VIDEO (reference ~4762) — /api/youtube → ytApi, /api/anthropic → callClaudeStreaming ═══
-  // Core: fetch a video's details, AI-tag the metadata, and auto-assign the best-match library
-  // photo per zone. Returns the tag object (with _aiTagged) or null. Used by single + bulk taggers.
+  // ═══ TAG VIDEO FROM DESCRIPTION — /api/youtube → ytApi, then plain-JS taxonomy matching ═══
+  // Ambria's video descriptions carry explicit labeled lines ("Venue: ...", "Package Category:
+  // ..."), so extracting tags is deterministic parsing, not AI inference — no Claude call, no
+  // cost/latency, no ambiguity. A label with no match in its taxonomy list (or missing from the
+  // description) is simply left untagged; there is no AI fallback.
+  // Core: fetch a video's details and tag it from its description. Returns the tag object
+  // (with _aiTagged) or null. Used by single + bulk taggers. Per-zone photos are no longer
+  // pinned per-video — Build shows every zone-tagged library photo live instead (see
+  // getLibPhotosForZone / StudioBuild.jsx's getMatchedPhotos).
   const buildVideoTagFromAI = useCallback(async (videoId) => {
       const ytData = await ytApi("videos", { part: "snippet", id: videoId }).catch(() => ({}));
       const snippet = ytData.items?.[0]?.snippet;
       if (!snippet) return null;
-      const title = snippet.title || "";
       const desc = snippet.description || "";
-      const ytTags = (snippet.tags || []).join(", ");
-      const venueList = allInhouseVenues.join(", ");
-      const venueAliases = allInhouseVenues.map(v => {
-        const parts = v.toLowerCase().split(/\s+/);
-        return `"${v}" (match if text contains: ${parts.filter(p => p.length > 3).join(", ")})`;
-      }).join("; ");
-      const fnList = taxOr(taxonomy.eventType, FUNCTIONS).map(f => `"${f}"`).join(", ");
-      const styleList = (taxonomy.designStyle || []).map(s => `"${s}"`).join(", ");
-      const colorList = (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || [])).map(c => `"${c}"`).join(", ");
-      const prompt = `You are a wedding/event decor video tagger. Respond ONLY with valid JSON.
-
-Analyze this YouTube video about Indian wedding/event decoration and extract tags.
-
-VIDEO TITLE: ${title}
-VIDEO DESCRIPTION: ${desc.slice(0, 1500)}
-VIDEO TAGS: ${ytTags}
-
-SMART VENUE MATCHING — match against these known venues: ${venueList}
-Aliases: ${venueAliases}
-Rules: If the title/description mentions "Pushpanjali" → venue is "Pushpanjali". If it mentions "Exotica" → "Exotica". If it mentions "Manaktala" → "Manaktala". Match partial names intelligently. Also match abbreviations or variations.
-
-Extract these fields using ONLY these exact values:
-- venue: one of [${allInhouseVenues.map(v => `"${v}"`).join(", ")}] or "" if unknown
-- fn: function type, array from [${fnList}]
-- tier: "Silver" (simple/basic decor) or "Gold" (premium/enhanced/luxury decor) — infer from description/quality/scale
-- io: "Indoor" or "Outdoor" or "" — infer from venue name, description, or visual cues mentioned
-- colors: array from [${colorList}] — pick values that match colors mentioned or implied
-- styles: array from [${styleList}] — pick values that match the decor style described
-
-Return ONLY JSON:
-{"venue":"...","fn":["..."],"tier":"...","io":"...","colors":["..."],"styles":["..."]}`;
-
-      const txt = await callClaudeStreaming({
-        contentBlocks: prompt,
-        model: "claude-sonnet-4-6",
-        maxTokens: 500,
-      });
-      const clean = (txt || "").replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
       const existingTag = ytVideoTags[videoId] || {};
+
+      const colorList = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || []);
+      const venueRaw = extractLabeledValue(desc, "Venue");
+      // Resolve the venue in priority order: (1) a specific sub-venue/room name — matches against
+      // every venue actually configured in Studio Settings → Venues (customInhouse), not the
+      // parent-filtered allInhouseVenues, which silently drops any venue whose "Parent property"
+      // hasn't been set yet; (2) an outside venue; (3) a PROPERTY name (e.g. "Restro" instead of
+      // one of its rooms "Banquet"/"Lawn") — resolves straight to that room if the property has
+      // only one, otherwise the property name itself is stored (ambiguous — which room isn't
+      // knowable from text alone). bestTaxMatch's substring containment already handles a name
+      // being written with a property prefix (e.g. "Ambria Valencia" vs. the bare "Valencia").
+      const subVenueNames = [...new Set(customInhouse.map(v => v.name).filter(Boolean))];
+      let matchedVenue = bestTaxMatch(venueRaw, subVenueNames) || bestTaxMatch(venueRaw, customOutdoor.map(o => o.name).filter(Boolean));
+      if (!matchedVenue && venueRaw) {
+        const matchedParent = bestTaxMatch(venueRaw, inhouseParentNames);
+        if (matchedParent) {
+          const subs = subVenuesOfParent[matchedParent] || [];
+          matchedVenue = subs.length === 1 ? subs[0] : matchedParent;
+        }
+      }
+      const matchedFn = bestTaxMatch(extractLabeledValue(desc, "Event Type"), taxOr(taxonomy.eventType, FUNCTIONS));
+      const matchedIo = bestTaxMatch(extractLabeledValue(desc, "Setup Type"), taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]));
+      const matchedColor = bestTaxMatch(extractLabeledValue(desc, "Color Palette"), colorList);
+      const matchedTier = bestTaxMatch(extractLabeledValue(desc, "Package Category"), taxOr(taxonomy.tier, CATEGORIES));
+      const matchedStyle = bestTaxMatch(extractLabeledValue(desc, "Design Style"), taxonomy.designStyle || []);
+
       const newTag = {
         ...existingTag,
-        venue: parsed.venue || existingTag.venue || "",
-        fn: Array.isArray(parsed.fn) ? (parsed.fn.length === 1 ? parsed.fn[0] : parsed.fn) : parsed.fn || existingTag.fn,
-        tier: parsed.tier || existingTag.tier,
-        io: parsed.io || existingTag.io,
-        colors: (parsed.colors || []).length ? parsed.colors : existingTag.colors || [],
-        styles: (parsed.styles || []).length ? parsed.styles : existingTag.styles || [],
-        palette: parsed.colors?.[0] || existingTag.palette || "",
+        // A venue mentioned in the description that doesn't match any known inhouse/outside venue
+        // is filed under the generic "Other" bucket (Outside → Other in the venue picker) rather
+        // than stored as raw scraped text — keeps the venue field a closed set the ops team can
+        // filter/fix from, instead of accumulating one-off freeform names.
+        venue: matchedVenue || (venueRaw ? "Other" : existingTag.venue || ""),
+        venueCustom: matchedVenue ? undefined : (venueRaw ? true : existingTag.venueCustom),
+        fn: matchedFn ? [matchedFn] : existingTag.fn,
+        tier: matchedTier || existingTag.tier,
+        io: matchedIo || existingTag.io,
+        colors: matchedColor ? [matchedColor] : (existingTag.colors || []),
+        styles: matchedStyle ? [matchedStyle] : (existingTag.styles || []),
+        palette: matchedColor || existingTag.palette || "",
       };
-      // Auto-assign the best-matching library photo to each zone (kept if the admin already picked
-      // one). Gives the video a build cost so it shows priced on Browse once saved.
-      const autoZonePhotos = { ...(existingTag.zonePhotos || {}) };
-      for (const area of (taxonomy.areasElements || [])) {
-        if (autoZonePhotos[area]) continue;
-        const { exact, similar } = await getLibPhotosForZone(area, newTag);
-        const top = exact[0] || similar[0];
-        if (top) autoZonePhotos[area] = top.id;
-      }
-      newTag.zonePhotos = autoZonePhotos;
       newTag._aiTagged = true;
       return newTag;
-  }, [ytVideoTags, allInhouseVenues, taxonomy, imsPaletteCatalogue, getLibPhotosForZone]);
+  }, [ytVideoTags, customInhouse, customOutdoor, taxonomy, imsPaletteCatalogue, inhouseParentNames, subVenuesOfParent]);
 
   const aiTagVideo = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
     setAiTaggingVideo(videoId);
-    showMsg("🤖 AI analyzing video...", "blue");
+    showMsg("📋 Parsing description...", "blue");
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
-      const assigned = Object.keys(newTag.zonePhotos || {}).length;
       setAiVideoDraft({ videoId, tags: newTag });
       setYtTagEdit(videoId);
-      showMsg(`✓ AI tagged + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & save`, "green");
-    } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
+      showMsg("✓ Tagged from description — review & save", "green");
+    } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI]);
 
-  // Direct-save variant for the full-screen editor: AI-tag a single video and save immediately
-  // (no draft step), so the big editor just shows the filled tags to review/adjust.
+  // Direct-save variant for the full-screen editor: tag a single video from its description and
+  // save immediately (no draft step), so the big editor just shows the filled tags to review/adjust.
   const aiTagVideoSave = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
     setAiTaggingVideo(videoId);
-    showMsg("🤖 AI analyzing video...", "blue");
+    showMsg("📋 Parsing description...", "blue");
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
-      const assigned = Object.keys(newTag.zonePhotos || {}).length;
-      await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "AI", _savedAt: Date.now() } });
-      showMsg(`✓ AI tagged + ${assigned} zone photo${assigned === 1 ? "" : "s"} — review & adjust below`, "green");
-    } catch (e) { showMsg("AI tag failed: " + e.message, "red"); }
+      await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "Auto", _savedAt: Date.now() } });
+      showMsg("✓ Tagged from description — review & adjust below", "green");
+    } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
   }, [aiTaggingVideo, buildVideoTagFromAI, ytVideoTags, saveYtTags, authUser]);
 
-  // Bulk AI-tag every untagged video (app-wide, like photo bulk). Saves directly with _aiTagged so
-  // the team reviews/verifies after — keeps going while you move around; stoppable; resumable.
+  // Bulk-tag every untagged video from its description (app-wide, like photo bulk). Saves
+  // directly with _aiTagged so the team reviews/verifies after — keeps going while you move
+  // around; stoppable; resumable.
   const stopBulkTagVideos = useCallback(() => { bulkVidStop.current = true; }, []);
   const runBulkTagVideos = useCallback(async () => {
     const targets = allVideos.filter(v => !hiddenVideos[v.id] && !ytVideoTags[v.id]);
@@ -3915,7 +3925,7 @@ Return ONLY JSON:
       if (bulkVidStop.current) break;
       try {
         const tag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        if (tag) { merged = { ...merged, [targets[n].id]: { ...tag, _savedBy: "AI (bulk)", _savedAt: Date.now() } }; ok++; }
+        if (tag) { merged = { ...merged, [targets[n].id]: { ...tag, _savedBy: "Auto (bulk)", _savedAt: Date.now() } }; ok++; }
         else fail++;
       } catch { fail++; }
       if ((n + 1) % 4 === 0) await saveYtTags(merged);
@@ -3924,8 +3934,42 @@ Return ONLY JSON:
     await saveYtTags(merged);
     const stopped = bulkVidStop.current;
     setBulkVid({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
-    showMsg(`🎬 Video AI tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
+    showMsg(`🎬 Video tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
     return { ok, fail };
+  }, [allVideos, hiddenVideos, ytVideoTags, buildVideoTagFromAI, saveYtTags]);
+
+  // Venue-only backfill: unlike runBulkTagVideos (which only touches completely untagged videos
+  // and merges every field), this targets every video that has NO venue yet — including videos
+  // already tagged/verified for fn/tier/styles/etc. before venue-from-description existed — and
+  // writes ONLY {venue, venueCustom} onto its existing tag, leaving every other field untouched.
+  // A video that already has a venue (a real match OR the "Other" bucket) is left alone, so a
+  // manual correction made after an earlier pass is never clobbered by re-running this.
+  const stopBulkTagVideoVenues = useCallback(() => { bulkVidVenueStop.current = true; }, []);
+  const runBulkTagVideoVenues = useCallback(async () => {
+    const targets = allVideos.filter(v => !hiddenVideos[v.id] && !ytVideoTags[v.id]?.venue);
+    if (!targets.length) { showMsg("Every video already has a venue tag.", "green"); return null; }
+    bulkVidVenueStop.current = false;
+    setBulkVidVenue({ running: true, done: 0, total: targets.length, ok: 0, skip: 0, fail: 0, finishedAt: 0 });
+    let merged = { ...ytVideoTags };
+    let ok = 0, skip = 0, fail = 0;
+    for (let n = 0; n < targets.length; n++) {
+      if (bulkVidVenueStop.current) break;
+      try {
+        const newTag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
+        const prev = merged[targets[n].id] || {};
+        if (newTag?.venue) {
+          merged = { ...merged, [targets[n].id]: { ...prev, venue: newTag.venue, venueCustom: newTag.venueCustom, _lastEditedBy: "Auto (venue backfill)", _lastEditedAt: Date.now() } };
+          ok++;
+        } else skip++;
+      } catch { fail++; }
+      if ((n + 1) % 4 === 0) await saveYtTags(merged);
+      setBulkVidVenue({ running: true, done: n + 1, total: targets.length, ok, skip, fail, finishedAt: 0 });
+    }
+    await saveYtTags(merged);
+    const stopped = bulkVidVenueStop.current;
+    setBulkVidVenue({ running: false, done: targets.length, total: targets.length, ok, skip, fail, finishedAt: Date.now() });
+    showMsg(`🗺 Venue backfill ${stopped ? "stopped" : "complete"} — ${ok} tagged (unmatched filed under "Other"), ${skip} had no venue mentioned in their description, ${fail} failed.`, "green");
+    return { ok, skip, fail };
   }, [allVideos, hiddenVideos, ytVideoTags, buildVideoTagFromAI, saveYtTags]);
 
   // ── YouTube Data API loaders — rewired through the Supabase `youtube` Edge Function
@@ -4060,20 +4104,31 @@ Return ONLY JSON:
       };
     });
     let out = list;
-    if (venueGroup === "inhouse") out = out.filter(v => v.venue && allInhouseVenues.includes(v.venue));
+    // allInhouseVenueOrParentNames also covers a video stored at the ambiguous PROPERTY level
+    // (e.g. "Restro" itself, when a description named the property but not one of its rooms) —
+    // plain allInhouseVenues (rooms only) would otherwise misfile such a video as "outside".
+    if (venueGroup === "inhouse") out = out.filter(v => v.venue && allInhouseVenueOrParentNames.includes(v.venue));
     else if (venueGroup === "outside") {
-      out = out.filter(v => v.venue && !allInhouseVenues.includes(v.venue));
+      out = out.filter(v => v.venue && !allInhouseVenueOrParentNames.includes(v.venue));
       if (outsideSub === "empanelled") out = out.filter(v => allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
       else if (outsideSub === "other") out = out.filter(v => !allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
     }
-    if (browseVenues.length > 0) out = out.filter(v => browseVenues.includes(v.venue));
+    if (browseVenues.length > 0) {
+      // Selecting a PROPERTY chip (e.g. "Restro") also surfaces videos tagged at any of its own
+      // rooms ("Banquet"/"Lawn") — filtering "by property" should include everything under it.
+      // Selecting a specific room does NOT reach back up to ambiguous property-level tags, since
+      // those don't actually confirm which room the video is.
+      const expandedVenues = new Set(browseVenues);
+      browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => expandedVenues.add(sv)); });
+      out = out.filter(v => expandedVenues.has(v.venue));
+    }
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
     if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
     if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
     if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
     if (filterPalette.length > 0) out = out.filter(v => v.colors.some(c => filterPalette.includes(c)));
     return out;
-  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenues, allOutdoorDB]);
+  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
 
   // ── Active client + meeting number — VERBATIM ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
@@ -4113,56 +4168,31 @@ Return ONLY JSON:
 
   const pickAndLoad = useCallback((ev, targetStep, videoUrl) => {
     const vidId = (videoUrl || ev.video)?.match(/embed\/([a-zA-Z0-9_-]{11})/)?.[1];
-    let videoZoneKeys = [];
     if (vidId) {
       const vTag = ytVideoTags[vidId] || {};
       const vid = allVideos.find(v => v.id === vidId);
       setSourceVideo({ id: vidId, title: vid?.title || ev.name, tags: vTag });
-      // Default every zone's photo filter to this reference's tags (event type/venue/style/palette/
-      // day-night/venue) so the strips show reference-specific photos, not everything.
-      setZpFilters(zpFiltersFromTags(vTag));
+      // Seed the "Filter whole build" panel from this reference video's own taxonomy (event type/
+      // venue type/style/palette/day-night/venue) — customizing off a video starts the zone photo
+      // strips narrowed to photos matching it, instead of showing the whole library; the
+      // salesperson can still widen/clear the filter from here. Video tags use fn/io/styles/colors
+      // (vs a library photo's own eventType/venueType/designStyle/colorPalette) — same taxonomy
+      // strings, different key names. Zone photos themselves are still never pinned/auto-picked —
+      // every zone starts empty and the salesperson picks manually from the (now filtered) set.
+      const arr = (v) => (Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []));
+      setZpFilters({
+        eventType: arr(vTag.fn), venueType: arr(vTag.io), designStyle: arr(vTag.styles),
+        colorPalette: arr(vTag.colors), timeSetting: arr(vTag.timeSetting), venue: arr(vTag.venue),
+      });
       // Default the Build palette to the one tagged on the video (salesperson can still change it).
       const vidPalette = vTag.palette || (Array.isArray(vTag.colors) ? vTag.colors[0] : "") || "";
       if (vidPalette) {
         if (activeFnIdx === 0) setClientPalette(vidPalette);
         else setExtraFunctions(prev => prev.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: vidPalette } : f));
       }
-      const zonePhotos = vTag.zonePhotos || {};
-      const autoZE = {};
-      const autoSP = {};
-      const autoZC = {};
-      Object.entries(zonePhotos).forEach(([area, libId]) => {
-        const li = libItems.find(l => l.id === libId);
-        if (!li) return;
-        // Map the photo-tag area name → the Build zone key so the selection lands on the right card.
-        const zk = AREA_TO_ZONEKEY[area] || area;
-        if ((li.elements || []).length > 0) {
-          autoZE[zk] = JSON.parse(JSON.stringify(li.elements));
-        }
-        autoSP[zk] = { src: li.url, eventName: li.name || "Library photo" };
-        const pd = li.dims || {};
-        if (pd.trussW || pd.trussL || pd.trussH || pd.floorL || pd.floorW) {
-          const cfg = buildZoneConfig(zk, pd);
-          if (cfg) autoZC[zk] = cfg;
-        }
-      });
-      if (Object.keys(autoZE).length > 0) setZoneElements(autoZE);
-      if (Object.keys(autoSP).length > 0) setElSelectedPhoto(autoSP);
-      if (Object.keys(autoZC).length > 0) {
-        setZoneConfig(prev => ({ ...prev, ...autoZC }));
-        setActiveZones([]);
-      }
-      videoZoneKeys = Object.keys(zonePhotos).map(area => AREA_TO_ZONEKEY[area] || area);
     }
     loadEvent(ev, targetStep);
-    if (videoZoneKeys.length > 0) {
-      setEnabledEls(prev => {
-        const updated = { ...prev };
-        videoZoneKeys.forEach(zk => { updated[zk] = true; });
-        return updated;
-      });
-    }
-  }, [loadEvent, ytVideoTags, allVideos, libItems, activeFnIdx, setClientPalette, setExtraFunctions]);
+  }, [loadEvent, ytVideoTags, allVideos, activeFnIdx, setClientPalette, setExtraFunctions]);
 
   const pickAndLoadFromVideo = useCallback((videoId, targetStep) => {
     const tag = ytVideoTags[videoId] || {};
@@ -4181,7 +4211,9 @@ Return ONLY JSON:
       photos: [],
       video: `https://www.youtube.com/embed/${videoId}`,
       desc: "",
-      enabledEls: Object.keys(tag.zonePhotos || {}).map(area => AREA_TO_ZONEKEY[area] || area),
+      // No zones pre-enabled — the salesperson turns on whichever zones this deal needs and
+      // picks each zone's photo manually from the Library (no per-video zone pinning anymore).
+      enabledEls: [],
       itemQtys: {},
       itemGrades: {},
       tags: [...(tag.styles || []), ...(tag.colors || [])].slice(0, 3)
@@ -4486,7 +4518,6 @@ Return ONLY JSON:
         const vid = allVideos.find(v => v.id === session.sourceVideoId);
         const vTag = ytVideoTags[session.sourceVideoId] || {};
         setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      setZpFilters(zpFiltersFromTags(vTag));
       }
       setStep(landingStep);
       const fnCount = Object.keys(session.fnSnapshots).length;
@@ -4515,7 +4546,6 @@ Return ONLY JSON:
       const vid = allVideos.find(v => v.id === session.sourceVideoId);
       const vTag = ytVideoTags[session.sourceVideoId] || {};
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      setZpFilters(zpFiltersFromTags(vTag));
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
     setStep(landingStep);
@@ -4674,7 +4704,6 @@ Return ONLY JSON:
       const vid = allVideos.find(v => v.id === session.sourceVideoId);
       const vTag = ytVideoTags[session.sourceVideoId] || {};
       setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      setZpFilters(zpFiltersFromTags(vTag));
     } else {
       setSourceVideo(null);
     }
@@ -4743,7 +4772,17 @@ Return ONLY JSON:
         + "instructions earlier in this message, THESE WIN. Apply them to the tags and elements you output.\n\n"
         + houseRulesRaw)
       : "";
-    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\nElement estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this IMS Inventory list. Copy the name character-for-character:\n${elemList}\n2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat", picked from the "Sub-category vocabulary by category" list below — this routes the exact-name match to the right bucket instead of the whole catalog, so pick the one that's visually true (e.g. a floral pot is cat "Florals", subCat "Flower Pot Large" — not a Lighting subCat just because a light sits nearby).\n3. For each visible element, estimate quantity and pick size (S/M/B) if available.\n4. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional; still fill "cat"/"subCat" with your best guess.\n5. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n6. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n7. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n8. NEVER tag "artificial flower", "faux flower", "fake flower/greenery/bouquet/garland" or similar as its own element. Real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item itself — it is never a separate physical item. Just tag the flower/floral item normally by its recipe or pot name; do not add an extra "artificial ___" entry for it.\n9. KITS — if what you see is several pieces sold and priced together as ONE bundled inventory item (e.g. a console with its own base pot, a stand with its own topper), tag it ONCE using that bundled item's exact name. Do NOT also separately list its individual component pieces — that double-counts cost and double-blocks inventory.\n10. ATTACHMENT — for EVERY element, also decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle sitting on a console table, a vase on a pedestal, a topper on a stand). If so, set "attachedTo" to the EXACT "name" you used for that other element (copy it character-for-character). If it is freestanding / not attached to anything else you tagged, set "attachedTo" to "". Still tag the item normally (name/qty/size) even when it's attached to something else — do not skip it, just record what it's attached to.\n11. CRITICAL — NAMING IS MANDATORY: "name" must ALWAYS be a specific, human-scannable name (5-9 words) a salesperson could recognize in a list of hundreds of photos — reference the zone/area, the dominant design style, AND one standout hero element, e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier" or "Boho Backdrop with Hanging Marigold Strings". NEVER settle for generic filler alone like "Wedding Decor", "Elegant Setup", "Floral Arrangement", "Event Design", or a bare venue/zone label — every single photo needs its own distinct, descriptive name, not a placeholder.\n12. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The "dims" fields (trussL/trussW/trussH/plH/mkT) capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss) — fill them whenever there's an overhead rig, regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT try to force a Jali into the Arch/Panel naming, it is its own shape). FIRST search the IMS Inventory list above (rule 1) for a SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic label, so use them whenever one visually matches. ONLY if no specific item matches, fall back to the generic sub-category combo name: MATERIAL (Wooden or Wrought Iron) + DEPTH (2D flat / 3D with visible depth) + SHAPE (Arch/Panel) from the sub-category vocabulary below. NEVER invent your own descriptive label (e.g. "Gold Mesh Dome Structure") for a structure element instead of matching it to the inventory list. Filling the truss dims is NEVER a substitute for tagging this — do not skip the structure element just because you already filled trussL/trussW/trussH.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}\n\nReturn ONLY JSON:\n{"name":"Mandap Stage — Ivory Drapes & Crystal Chandelier","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","cat":"Lighting","subCat":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal","attachedTo":""},{"name":"Console Table","cat":"Furniture","subCat":"Console Table","qty":1,"unit":"pc","size":"M","detail":"","attachedTo":""},{"name":"Pillar Candle","cat":"Lighting","subCat":"Candle","qty":2,"unit":"pc","size":"","detail":"","attachedTo":"Console Table"},{"name":"Custom Drape Structure","cat":"Fabric","subCat":"","qty":2,"unit":"pc","size":"","detail":"fabric","new":true,"attachedTo":""}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`;
+    // TEMPORARY — taxonomy-only bulk pass (spec: business wants the ~2100 untagged library photos
+    // zone/venue/style/etc.-tagged now, so they show up in Build's zone pickers, WITHOUT asking the
+    // AI for elements/dims yet — salespeople fill those in live while building and push them back via
+    // "Correct & update master" instead). Flip TAG_ELEMENTS back to true to resume full tagging;
+    // nothing else needs to change — the prompt/schema/post-processing below all key off this flag.
+    const TAG_ELEMENTS = false;
+    const elementsRulesText = TAG_ELEMENTS ? `Element estimation rules:\n1. FIRST PRIORITY: Use EXACT names from this IMS Inventory list. Copy the name character-for-character:\n${elemList}\n2. For each element, ALSO put its top-level category and sub-category in "cat"/"subCat", picked from the "Sub-category vocabulary by category" list below — this routes the exact-name match to the right bucket instead of the whole catalog, so pick the one that's visually true (e.g. a floral pot is cat "Florals", subCat "Flower Pot Large" — not a Lighting subCat just because a light sits nearby).\n3. For each visible element, estimate quantity and pick size (S/M/B) if available.\n4. ONLY if you see something clearly visible that has NO match in the list above, add it with "new":true flag. Keep the name short and professional; still fill "cat"/"subCat" with your best guess.\n5. CRITICAL — DO NOT add Truss, Box Truss, Single U Truss, Platform, Carpet, Wall Masking, Fabric Masking, Acrylic Panel, Flex Print, Vinyl Print, Genset, or any structural/overhead items as elements. These are captured separately in the "dims" section (trussL/trussW/trussH, plH, mkT, mkWalls). Tag ONLY visible decor items: florals, lighting, furniture, chandeliers, ceiling patterns, arches, props, wrought iron pieces, glass panels.\n6. LIGHTS — count EVERY individual light fixture you can see (chandeliers, LED panels, fairy-light runs, lamps, uplights, neon). Put the TOTAL number of lights in "lightCount" (0 if none). Never write vague counts; never omit lights.\n7. MISSING/UNSURE — if you see a decor item you cannot confidently match to the list, still add it to elements with "new":true AND add a short plain description to "unrecognized" so a human reviewer can add it to the system. Use [] if everything was identified.\n8. NEVER tag "artificial flower", "faux flower", "fake flower/greenery/bouquet/garland" or similar as its own element. Real-vs-artificial is a %-blend the pricing engine applies automatically to the matched floral item itself — it is never a separate physical item. Just tag the flower/floral item normally by its recipe or pot name; do not add an extra "artificial ___" entry for it.\n9. KITS — if what you see is several pieces sold and priced together as ONE bundled inventory item (e.g. a console with its own base pot, a stand with its own topper), tag it ONCE using that bundled item's exact name. Do NOT also separately list its individual component pieces — that double-counts cost and double-blocks inventory.\n10. ATTACHMENT — for EVERY element, also decide if it is physically resting on, placed on top of, or otherwise part of another element you are ALSO tagging in this same photo (e.g. a candle sitting on a console table, a vase on a pedestal, a topper on a stand). If so, set "attachedTo" to the EXACT "name" you used for that other element (copy it character-for-character). If it is freestanding / not attached to anything else you tagged, set "attachedTo" to "". Still tag the item normally (name/qty/size) even when it's attached to something else — do not skip it, just record what it's attached to.\n11. CRITICAL — NAMING IS MANDATORY: "name" must ALWAYS be a specific, human-scannable name (5-9 words) a salesperson could recognize in a list of hundreds of photos — reference the zone/area, the dominant design style, AND one standout hero element, e.g. "Mandap Stage — Ivory Drapes & Crystal Chandelier" or "Boho Backdrop with Hanging Marigold Strings". NEVER settle for generic filler alone like "Wedding Decor", "Elegant Setup", "Floral Arrangement", "Event Design", or a bare venue/zone label — every single photo needs its own distinct, descriptive name, not a placeholder.\n12. STRUCTURES vs TRUSS DIMS — these are TWO SEPARATE things and you must fill BOTH when relevant, never one instead of the other. The "dims" fields (trussL/trussW/trussH/plH/mkT) capture ONLY the plain overhead scaffold/base rig (Box Truss or Single U Truss) — fill them whenever there's an overhead rig, regardless of what it's made of or shaped like. SEPARATELY — and in ADDITION — if the structure itself (arch, panel, wall, jali/lattice/mesh screen, backdrop frame) has a distinct material and shape, you MUST ALSO add ONE element for it. Shapes include Arch, Panel, AND Jali (a perforated lattice/mesh screen — do NOT try to force a Jali into the Arch/Panel naming, it is its own shape). FIRST search the IMS Inventory list above (rule 1) for a SPECIFIC matching item by its own catalog name (e.g. "iron Jali" for a wrought-iron perforated lattice/mesh screen/dome, "J arch"/"Single arch"/"Triangle" for specific arch shapes) — these specific catalog names always win over a generic label, so use them whenever one visually matches. ONLY if no specific item matches, fall back to the generic sub-category combo name: MATERIAL (Wooden or Wrought Iron) + DEPTH (2D flat / 3D with visible depth) + SHAPE (Arch/Panel) from the sub-category vocabulary below. NEVER invent your own descriptive label (e.g. "Gold Mesh Dome Structure") for a structure element instead of matching it to the inventory list. Filling the truss dims is NEVER a substitute for tagging this — do not skip the structure element just because you already filled trussL/trussW/trussH.\n\nDimension estimation rules (in feet, estimate from visual cues like people height ~5.5ft, chairs ~3ft, standard ceiling ~10-12ft):\n- trussL: length of the main structure (front-to-back or stage width)\n- trussW: width/depth of the structure\n- trussH: height of the overhead structure/truss\n- floorL: floor area length (may be larger than truss if carpet/platform extends)\n- floorW: floor area width\n- plH: platform height — "4in" if slightly raised, "1ft" if clearly elevated stage, "" if ground level\n- mkT: masking material if visible behind/sides — "fabric","acrylic","flex","vinyl" or "" if none\n- mkWalls: which walls have masking — {"back":true/false,"left":true/false,"right":true/false}` : `Elements & dimensions: NOT needed for this pass — always return "elements": [], "lightCount": 0, "unrecognized": [], and every "dims" field as its zero/empty default ({"trussL":0,"trussW":0,"trussH":0,"floorL":0,"floorW":0,"plH":"","mkT":"","mkWalls":{"back":false,"left":false,"right":false}}). Do NOT attempt to detect, count, or name any decor items, and do NOT estimate any structure dimensions — only the taxonomy tags above matter right now. Still write a good, specific, human-scannable "name" (5-9 words) for the photo based on the zone/area, dominant design style, and what you can tell about the scene overall — reference something distinctive, not a generic placeholder like "Wedding Decor" or "Elegant Setup".`;
+    const exampleJson = TAG_ELEMENTS
+      ? `{"name":"Mandap Stage — Ivory Drapes & Crystal Chandelier","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":24,"trussW":15,"trussH":12,"floorL":28,"floorW":18,"plH":"4in","mkT":"fabric","mkWalls":{"back":true,"left":false,"right":false}},"elements":[{"name":"Chandelier","cat":"Lighting","subCat":"Chandelier","qty":12,"unit":"pc","size":"M","detail":"crystal","attachedTo":""},{"name":"Console Table","cat":"Furniture","subCat":"Console Table","qty":1,"unit":"pc","size":"M","detail":"","attachedTo":""},{"name":"Pillar Candle","cat":"Lighting","subCat":"Candle","qty":2,"unit":"pc","size":"","detail":"","attachedTo":"Console Table"},{"name":"Custom Drape Structure","cat":"Fabric","subCat":"","qty":2,"unit":"pc","size":"","detail":"fabric","new":true,"attachedTo":""}],"lightCount":24,"unrecognized":["large hanging floral ring"]}`
+      : `{"name":"Mandap Stage — Ivory Drapes & Crystal Chandelier","tags":{"eventType":["..."],"venueType":["..."],"areasElements":["..."],"colorPalette":["..."],"categoryTier":["..."],"designStyle":["..."],"timeSetting":["..."]},"dims":{"trussL":0,"trussW":0,"trussH":0,"floorL":0,"floorW":0,"plH":"","mkT":"","mkWalls":{"back":false,"left":false,"right":false}},"elements":[],"lightCount":0,"unrecognized":[]}`;
+    const prompt = `Analyze this wedding/event decor image. Tag it using ONLY these exact values:\n\nEvent type: ${taxonomy.eventType.join(", ")}\nVenue type: ${taxonomy.venueType.join(", ")}\nAreas & elements: ${taxonomy.areasElements.join(", ")}\nColor palette: ${(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette).join(", ")}\nCategory tier: ${taxonomy.categoryTier.join(", ")}\nDesign style: ${taxonomy.designStyle.join(", ")}\nTime/setting: ${taxonomy.timeSetting.join(", ")}\n\n${elementsRulesText}\n\nReturn ONLY JSON:\n${exampleJson}`;
     // Structured-outputs schema — the 7 tag fields are LOCKED to your exact taxonomy values (enums), so
     // Claude can never return an off-list or mis-cased tag (the root of photos not matching their zone).
     // Element names stay free text (the fuzzy match below maps them to IMS inventory / flags new items).
@@ -4910,7 +4949,7 @@ Return ONLY JSON:
       // absurd counts. Returns a corrected element list that replaces the first pass BEFORE matching.
       // Best-effort: any failure leaves the first-pass elements untouched (aiRawResponse already
       // snapshotted the pristine first pass above).
-      if (Array.isArray(parsed.elements) && parsed.elements.length && imageBlock) {
+      if (TAG_ELEMENTS && Array.isArray(parsed.elements) && parsed.elements.length && imageBlock) {
         try {
           const proposed = parsed.elements.map(e => `- ${e.name} (${e.cat || "?"}/${e.subCat || "?"}) x${e.qty || 1}`).join("\n");
           const verifyText = "You already tagged the decor photo below. Here are the elements you proposed:\n" + proposed
@@ -4950,7 +4989,7 @@ Return ONLY JSON:
           }
         } catch (e) { console.warn("[aiTag] self-verify pass skipped:", e?.message || e); }
       }
-      if (parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
+      if (TAG_ELEMENTS && parsed.elements && (imsInventory.length || recipeOnlyPatterns.length)) {
         // Stamp each element's ORIGINAL AI-proposed name before any filtering/matching renames it —
         // "attachedTo" (below) references another element by the name Claude gave it in its own
         // response, so that name must survive even after this element's own "name" gets overwritten
@@ -5443,7 +5482,10 @@ Return ONLY JSON:
     const fElTiers = fnData.elTiers || {};
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     return Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
-      const el = zoneLabelsD[k] || fCustomZones.find(cz => cz.id === k) || { label: k, icon: "📦" };
+      // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
+      // custom zone names showing blank in the PDF/PPT export.
+      const customZoneMatch = fCustomZones.find(cz => cz.id === k);
+      const el = zoneLabelsD[k] || (customZoneMatch ? { label: customZoneMatch.name, icon: customZoneMatch.icon || "📦" } : { label: k, icon: "📦" });
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let items = [];
@@ -5499,7 +5541,7 @@ Return ONLY JSON:
         structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       }
       if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
-      if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsPrintMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
+      if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
       if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
       if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });
@@ -6208,7 +6250,7 @@ Return ONLY JSON:
     // taxonomy constants (module-scope)
     taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, PAINT_TOKENS_FALLBACK,
     // derived memos
-    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups,
+    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames,
     allVenueData, outdoorVenueList, browseVideos, allVideos,
     // handlers
     loadClientSession, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
@@ -6233,7 +6275,7 @@ Return ONLY JSON:
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
-    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
+    taxonomy, setTaxonomy, saveTax, libItems, setLibItems, saveLib, mergeLibItems, ensureLibItems, ensureLibItemsByUrl, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, stopBulkTagVideos, bulkVidVenue, runBulkTagVideoVenues, stopBulkTagVideoVenues, importCloudinaryFolder, libSearch, setLibSearch, libFilters, setLibFilters,
     libVenueGroup, setLibVenueGroup, libVenueNames, setLibVenueNames, libEditImg, setLibEditImg, zoneElements, setZoneElements,
     libAiLoading, setLibAiLoading, zoneAiFilling, setZoneAiFilling, zoneElSearch, setZoneElSearch,
     zonePrintSearch, setZonePrintSearch,
@@ -6282,7 +6324,7 @@ Return ONLY JSON:
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — Library's per-element Print section
-    imsPrintMaterials,
+    imsPrintMaterials, imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + the bundled object
     // passed to calcStructCost everywhere
     imsTrussRates, imsMaskingRates, structRates,
@@ -6321,8 +6363,6 @@ Return ONLY JSON:
     addVideoOpen, setAddVideoOpen, cldVideoFolders, setCldVideoFolders, cldVideoPath, setCldVideoPath,
     cldVideoList, setCldVideoList, cldVideoLoading, setCldVideoLoading,
     openCldVideoBrowser, cldVideoNavigate, cldVideoGoBack, addCldVideo,
-    // zone picker modal
-    zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
     // notifications
     notifications, setNotifications, notifOpen, setNotifOpen, notifLastRead, setNotifLastRead, unreadCount, markAllRead,
     filterPriority, setFilterPriority, saveFilterPriority,

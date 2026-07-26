@@ -21,7 +21,7 @@ export default function StudioModals({ ctx }) {
   const {
     // dcCustomModal
     dcCustomModal, setDcCustomModal, dcCustomItems, setDcCustomItems,
-    dcInventoryCache, dealCheckData, rcCats, rcItems, isDark, border, textP, textS,
+    dealCheckData, studioFloralData, rcCats, rcItems, isDark, border, textP, textS,
     elSelectedPhoto,
     // videoModal
     videoModal, setVideoModal, videoPlaying, setVideoPlaying, videoOverlay, setVideoOverlay,
@@ -32,7 +32,7 @@ export default function StudioModals({ ctx }) {
     // Element Breakdown + Print — same IMS-inventory-driven pricing/search the Library editor and
     // Build's zone editor use, so the upload-review modal reflects the same live system instead of
     // its own smaller Rate-Card-only copy.
-    getElPriceFromInventory, getElPriceFromPattern, recipeOnlyPatterns, imsPrintMaterials,
+    getElPriceFromInventory, getElPriceFromPattern, recipeOnlyPatterns, imsPrintMaterials, imsCarpetMaterials,
     imsTrussRates, imsMaskingRates,
     // previewImg
     previewImg, setPreviewImg,
@@ -50,11 +50,8 @@ export default function StudioModals({ ctx }) {
     zoneConfig, setZoneConfig, libItems,
     // premiaGate (👑 Sr. Designer / Platinum gate)
     premiaGate, setPremiaGate, premiaConfig,
+    imsInventory,
   } = ctx;
-  // Rate-card items carry no photo of their own — thumbnails for the zone-upload-review "add
-  // element" search come from the matching IMS inventory item by name (best-effort; falls back to
-  // the generic 📦 icon when nothing matches, same as every other add-element search in the app).
-  const imsInventory = (dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || [];
   // Live soft-blocking for the zone-upload-review modal — same logic as Build's own zone editor
   // (StudioBuild.jsx's remainingForItem). The staged elements here haven't been written into
   // zoneElements[elKey] yet, so exclude that zone key entirely.
@@ -81,7 +78,7 @@ export default function StudioModals({ ctx }) {
         config={dcCustomModal}
         customItems={dcCustomItems}
         setCustomItems={setDcCustomItems}
-        imsInventory={(dcInventoryCache?.length > 0 ? dcInventoryCache : dealCheckData?.inventory) || []}
+        imsInventory={imsInventory || []}
         rcCats={rcCats}
         rcItems={rcItems}
         isDark={isDark}
@@ -360,9 +357,9 @@ export default function StudioModals({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={zoneUploadReview.dims?.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={zoneUploadReview.dims?.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
                 </div>
               </div>
@@ -394,9 +391,9 @@ export default function StudioModals({ ctx }) {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                        <select value={row.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <select value={row.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                           <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                          {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                          {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                         </select>
                       </div>
                     </div>
@@ -447,7 +444,7 @@ export default function StudioModals({ ctx }) {
                   const flSqft=fL*fW;
                   const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                   const plCost=flSqft*plRate;
-                  const cp=carpetPricingFor(row.cpT, imsPrintMaterials);
+                  const cp=carpetPricingFor(row.cpT, imsCarpetMaterials);
                   const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                   return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
                 };
@@ -615,13 +612,13 @@ export default function StudioModals({ ctx }) {
                               overrides={el.kitOverrides}
                               onChange={(next) => { const elems = [...(zoneUploadReview.elements || [])]; elems[idx] = { ...elems[idx], kitOverrides: next }; setZoneUploadReview({ ...zoneUploadReview, elements: elems }); }}
                               imsInventory={imsInventory}
-                              flowerPatterns={dealCheckData?.flowerPatterns||recipeOnlyPatterns}
+                              flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
                               qtyMultiplier={el.qty || 1}
                               dealAwareness={{ getRemaining: (itemId) => zurRemainingForItem(itemId, idx) }}
                               rcSubcatFactors={rcSubcatFactors}
                               rcFactorByKey={rcFactorByKey}
-                              mandiCatalogue={dealCheckData?.mandiCatalogue || []} studioMarkup={Number(dealCheckData?.defaultStudioMarkup) || 3} elSize={el.size}
-                              floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={dealCheckData || {}}
+                              mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue || []} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup) || 3} elSize={el.size}
+                              floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData) || {}}
                               textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
                             />
                           </div>
@@ -926,8 +923,8 @@ export default function StudioModals({ ctx }) {
         // Look up by invId (stable across renames) when the element has one; name-match is only a
         // fallback for legacy elements tagged before invId-based lookup existed.
         const invItem = el.invId
-          ? (dealCheckData?.inventory || []).find(i => i.id === el.invId)
-          : (dealCheckData?.inventory || []).find(i => i.name === el.name);
+          ? (imsInventory || []).find(i => i.id === el.invId)
+          : (imsInventory || []).find(i => i.name === el.name);
         const baseColour = invItem?.baseColour || "Ivory";
         const paintCost = invItem?.paintCost ?? imsDefaultPaintCost;
         // Pick active function's palette

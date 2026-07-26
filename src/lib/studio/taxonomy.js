@@ -117,14 +117,16 @@ export function maskingRateFor(key, maskingRates) {
 // not silently drop to ₹0.
 export const CARPET_OFF = "__off__";
 
-// Carpet used to be a fixed Old/New rate baked in here. It's now priced live from IMS Admin →
-// Settings → 🖨️ Print Materials — `cpT` on a zone holds a printMaterials row id, not an enum, so
-// editing a material's rate there (or adding new floor-covering options) updates every zone
-// instantly instead of requiring a code change. `{rate, label}` together so pricing and display
-// (StudioApp's structItems line, StudioSummary's breakdown) read off the same lookup.
-export function carpetPricingFor(cpT, printMaterials) {
+// Carpet used to be a fixed Old/New rate baked in here, then briefly piggybacked on IMS Admin →
+// Settings → 🖨️ Print Materials (a real print-job material catalogue — the wrong master for a
+// floor covering). It's now priced live from its own IMS Admin → Settings → 🟫 Carpet Materials
+// list — `cpT` on a zone holds a carpetMaterials row id, not an enum, so editing a material's rate
+// there (or adding new floor-covering options) updates every zone instantly instead of requiring a
+// code change. `{rate, label}` together so pricing and display (StudioApp's structItems line,
+// StudioSummary's breakdown) read off the same lookup.
+export function carpetPricingFor(cpT, carpetMaterials) {
   if (cpT === CARPET_OFF) return { rate: 0, label: "" };
-  const list = printMaterials || [];
+  const list = carpetMaterials || [];
   const effective = cpT || defaultCarpetMatId(list);
   if (!effective) return { rate: 0, label: "" };
   let mat = list.find((m) => m.id === effective);
@@ -139,8 +141,8 @@ export function carpetPricingFor(cpT, printMaterials) {
 }
 // Whatever a newly-added platform's carpet should default to — "Carpet Old" by name if that
 // material exists, else any material with "carpet" in its name, else none (no default available).
-export function defaultCarpetMatId(printMaterials) {
-  const list = printMaterials || [];
+export function defaultCarpetMatId(carpetMaterials) {
+  const list = carpetMaterials || [];
   const exact = list.find((m) => String(m.name || "").trim().toLowerCase() === "carpet old");
   if (exact) return exact.id;
   const anyCarpet = list.find((m) => String(m.name || "").toLowerCase().includes("carpet"));

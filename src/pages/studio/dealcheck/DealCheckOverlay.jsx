@@ -38,7 +38,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
-    dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials,
+    dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
     activeFnIdx, switchActiveFn,
     // pricing helpers
@@ -862,14 +862,47 @@ export default function DealCheckOverlay({ ctx }) {
                     const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                     if (fns.length === 0) return <div style={{padding:"10px 12px",borderRadius:8,background:"rgba(255,255,255,0.03)",border:`1px solid ${border}`,fontSize:11,color:textS,fontStyle:"italic"}}>No functions yet</div>;
                     return fns.map((fn, fi) => {
-                      // Per-fn decor cost (rental + floral) — spec §7.9.3
+                      // Per-fn decor cost (rental + floral) — spec §7.9.3. Mirrors the logic the
+                      // shared cost rollup (dcCostRollup below) applies per zone/card, so this chip
+                      // matches the "X rental" totals shown per zone in the Inventory tab — it used
+                      // to just sum effKitRental(card.qty), silently dropping manually-added items
+                      // (dcManualItems), the fixed-venue Repeat discount, split-fulfilment cards, and
+                      // unavailable-shortfall (cost%) pricing that the zone chips already account for.
                       const cards = dcCards[fi] || {};
+                      const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
+                      const zoneIsRepeatFn = (ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
+                      const repeatDiscPctFn = (subcat) => { const sc = Number((dealCheckData?.fixedVenueSubcatDiscount || {})[String(subcat || "").toLowerCase().trim()]); return (Number.isFinite(sc) && sc > 0) ? sc : 0; };
+                      const costPctForFn = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                       let fnDecor = 0;
                       Object.entries(cards).forEach(([ck, c]) => {
+                        const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
+                        if (splitArr.length) {
+                          const _rep = zoneIsRepeatFn(ck);
+                          splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); fnDecor += _rep ? q * br * (1 - repeatDiscPctFn(imsField.subcategory(it)) / 100) : q * br; });
+                          return;
+                        }
                         if (!c?.imsId) return;
                         const item = dcInventoryCache.find(x => x.id === c.imsId);
                         if (!item) return;
-                        fnDecor += effKitRental(item, fi, ck) * (c.qty || 1);
+                        const baseR = effKitRental(item, fi, ck);
+                        const qty = c.qty || 1;
+                        const _rep = zoneIsRepeatFn(ck);
+                        const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+                        if (isKit) { fnDecor += _rep ? qty * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : qty * baseR; return; }
+                        const available = getStudioAvailable(item, fnBlocks);
+                        const ownedQty = Math.min(qty, available);
+                        const shortQty = Math.max(0, qty - available);
+                        const ownedRental = _rep ? ownedQty * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : ownedQty * baseR;
+                        const shortCost = shortQty * (Number(item.cost) || 0) * (costPctForFn(imsField.subcategory(item)) / 100);
+                        fnDecor += ownedRental + shortCost;
+                      });
+                      (dcManualItems || []).filter(mi => mi.fnIdx === fi).forEach(mi => {
+                        const item = dcInventoryCache.find(x => x.id === mi.imsId);
+                        if (!item) return;
+                        const q = Number(mi.qty) || 1;
+                        const baseR = imsField.rentalCost(item);
+                        const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
+                        fnDecor += _rep ? q * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : q * baseR;
                       });
                       const isActive = fi === activeFnIdx;
                       return (
@@ -1188,7 +1221,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     <div style={{padding:"11px 12px",borderRadius:9,background:"rgba(244,63,94,0.05)",border:"1px solid rgba(244,63,94,0.25)",display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                                         <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>🟥 Carpet</span>
-                                        <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#94A3B8",fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsPrintMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
+                                        <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#94A3B8",fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsCarpetMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
                                         <span style={{fontSize:10,color:textS}}>{neededSqft} sqft needed</span>
                                       </div>
                                       {carpetItem && calc ? (

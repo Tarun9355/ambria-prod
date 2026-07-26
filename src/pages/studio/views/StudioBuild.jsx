@@ -5,7 +5,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders } from "../../../components/icons.jsx";
 import {
-  TIER_TO_CAT, ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
+  ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
 } from "../../../lib/studio/taxonomy";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -322,10 +322,10 @@ export default function StudioBuild({ ctx }) {
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
-    enabledEls, setEnabledEls, elTiers, setElTiers, customMode, toggleEl,
+    enabledEls, setEnabledEls, customMode, toggleEl,
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
-    elSelectedPhoto, selectElPhoto, elNotes, setElNotes,
+    elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
     setElGallery, setGalleryIdx,
     newCzName, setNewCzName,
     // uploads / ai
@@ -339,6 +339,8 @@ export default function StudioBuild({ ctx }) {
     imsInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials)
     imsPrintMaterials,
+    // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — own master list
+    imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + bundled calcStructCost input
     imsTrussRates, imsMaskingRates, structRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
@@ -354,7 +356,7 @@ export default function StudioBuild({ ctx }) {
     // video modal
     setVideoModal, setVideoPlaying,
     // misc
-    showMsg, saveLib, authUser, logVerificationEvent,
+    showMsg, saveLib, mergeLibItems, authUser, logVerificationEvent,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
   } = ctx;
@@ -459,6 +461,10 @@ export default function StudioBuild({ ctx }) {
     </span>;
   };
   const [notesOpen, setNotesOpen] = useState({}); // per-zone: reveal the client-note field (else a small icon)
+  // Per-zone photo-strip scroll containers, keyed by zone key — lets us scroll a strip back to
+  // the start after picking a photo (it gets pinned to the front, but the scroll position doesn't
+  // otherwise follow it there).
+  const stripRefs = useRef({});
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
@@ -649,7 +655,7 @@ export default function StudioBuild({ ctx }) {
     const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
     const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
     const date = activeFnMeta?.date || clientDate || "";
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || null, onPick: onPick || null });
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
     try {
       const { inventory, blocksForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
@@ -690,19 +696,19 @@ export default function StudioBuild({ ctx }) {
 
   // getLibPhotosForZone is async (server-queried zone match) now. Bridge it back to the synchronous
   // shape getMatchedPhotos renders inline: cache results per zone-area-set (bumped whenever the
-  // scoring context — source video or active photo filters — changes), fetch on first read, return
-  // empty until it resolves. Zone key is tier-agnostic (tier filtering happens after, below).
+  // active photo filters change), fetch on first read, return empty until it resolves. Zone key is
+  // tier-agnostic (tier filtering happens after, below). Returns every photo tagged for the zone,
+  // unranked — no source-video/palette scoring — so the strip shows the zone's full set.
   const [zoneMatchCache, setZoneMatchCache] = useState({});
   const zoneFetchInFlight = useRef(new Set());
   const [matchGen, setMatchGen] = useState(0);
-  useEffect(() => { setMatchGen(g => g + 1); }, [sourceVideo?.id, zpHasFilters, JSON.stringify(zpFilters)]);
+  useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters)]);
   const ensureZoneMatches = (areaNames) => {
     if (!areaNames.length) return;
     const cacheKey = `${matchGen}::${areaNames.join("|")}`;
     if (zoneFetchInFlight.current.has(cacheKey) || zoneMatchCache[cacheKey]) return;
     zoneFetchInFlight.current.add(cacheKey);
-    const vTag = sourceVideo ? (ytVideoTags[sourceVideo.id] || {}) : {};
-    getLibPhotosForZone(areaNames, vTag, zpHasFilters ? zpFilterPhoto : null)
+    getLibPhotosForZone(areaNames, zpHasFilters ? zpFilterPhoto : null)
       .then((result) => setZoneMatchCache((prev) => ({ ...prev, [cacheKey]: result })))
       .finally(() => zoneFetchInFlight.current.delete(cacheKey));
   };
@@ -723,10 +729,7 @@ export default function StudioBuild({ ctx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneKeys, customZones, matchGen]);
 
-  // Strict category filter: Simple=Silver ONLY, Enhanced=Gold ONLY
-  // No mixing — each tab shows ONLY its category's photos
-  const getMatchedPhotos = (elKey, tier) => {
-    const targetCat = TIER_TO_CAT[tier] || "Silver";
+  const getMatchedPhotos = (elKey) => {
     const areaNamesRaw = ZONE_TYPE_TO_AREA[elKey];
     let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
     // Custom / renamed zones (keys living in zoneDefs.meta, not the static map) have no direct
@@ -744,61 +747,31 @@ export default function StudioBuild({ ctx }) {
     const photos = [];
     const seen = new Set();
 
-    // 1. VIDEO DEFAULT — if sourceVideo has a zone photo for this area, show it first
-    if (sourceVideo && areaNames.length) {
-      const vTag = ytVideoTags[sourceVideo.id] || {};
-      const zp = vTag.zonePhotos || {};
-      const libId = areaNames.map(n => zp[n]).find(Boolean);
-      if (libId) {
-        const li = libItems.find(l => l.id === libId);
-        if (li && li.url) {
-          seen.add(li.url);
-          photos.push({
-            src: li.url, eventId: li.id, eventName: li.name || "Video default",
-            category: targetCat, fn: "", space: "", mood: "", venue: "", video: "",
-            tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
-            isLibrary: true, elements: li.elements || [], dims: li.dims || {}, isVideoDefault: true,
-          });
-        }
-      }
-    }
-
-    // 2. LIBRARY PHOTOS — scored by admin priority, capped at 50
-    // Strict tier tab: Silver shows only Simple-tagged photos, Gold only Enhanced.
-    // Photos tagged the OPPOSITE tier are excluded; untagged photos appear under either tab.
-    const tabTier = tier === "enhanced" ? "Enhanced" : tier === "premium" ? "Premium" : "Simple";
+    // LIBRARY PHOTOS — every photo tagged for this zone, unranked, capped at 50. No source-video
+    // default, no relevance scoring, no Silver/Gold split — the salesperson always picks manually
+    // from the zone's full tagged set regardless of a photo's categoryTier tag.
     if (areaNames.length) {
       // Async zone match (getLibPhotosForZone) — read from the cache populated by the effect above
-      // (empty arrays until it resolves, same render cost as before once warm).
-      const {exact, similar, fallback} = zoneMatchCache[`${matchGen}::${areaNames.join("|")}`] || { exact: [], similar: [], fallback: [] };
-      // getLibPhotosForZone merges non-zone "overflow" fillers into `fallback` (the Manage
-      // zone-picker wants those). On Build we must show ONLY photos actually tagged for this
-      // zone — otherwise a Stage panel surfaces photos tagged Entry Passage / Bar Counter, etc.
-      const allMatches = [...exact, ...similar, ...fallback].filter(img =>
-        (img.tags?.areasElements || []).some(a => areaNames.includes(a)));
+      // (empty array until it resolves, same render cost as before once warm).
+      const allMatches = zoneMatchCache[`${matchGen}::${areaNames.join("|")}`] || [];
       for (const img of allMatches) {
         if (photos.length >= 50) break;
         if (!img.url || seen.has(img.url)) continue;
-        const liTier = img.tags?.categoryTier || [];
-        if (liTier.length && !liTier.includes(tabTier)) continue; // tagged opposite tier → hide
         seen.add(img.url);
         photos.push({
           src: img.url, eventId: img.id, eventName: img.name || "Library",
-          category: targetCat, fn: "", space: "", mood: "", venue: "", video: "",
+          fn: "", space: "", mood: "", venue: "", video: "",
           tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
           isLibrary: true, elements: img.elements || [], dims: img.dims || {},
         });
       }
     }
 
-    // 3. EVENT PHOTOS — only for zones with NO area mapping (untagged custom zones).
+    // 2. EVENT PHOTOS — only for zones with NO area mapping (untagged custom zones).
     // For mapped zones we deliberately stop at zone-tagged library photos above; event
     // photos aren't tagged per-zone, so padding with them re-introduces wrong-zone images.
     if (!areaNames.length && photos.length < 50) {
-      const catEvents = events.filter(ev => {
-        if (getCat(getFullCost(ev)).label !== targetCat) return false;
-        return (ev.enabledEls || []).includes(elKey) || (ev.elements && ev.elements[elKey]);
-      });
+      const catEvents = events.filter(ev => (ev.enabledEls || []).includes(elKey) || (ev.elements && ev.elements[elKey]));
       const sorted = catEvents.map(ev => {
         let relevance = 0;
         if (fn && ev.fn === fn) relevance += 4;
@@ -822,7 +795,7 @@ export default function StudioBuild({ ctx }) {
       }
     }
 
-    // 4. NEVER EMPTY — only for unmapped zones. A mapped zone with no tagged photos shows
+    // 3. NEVER EMPTY — only for unmapped zones. A mapped zone with no tagged photos shows
     // its empty state (prompting the team to tag/upload) rather than random library photos.
     // NOTE: `libItems` is a lazy cache (not the whole library) now, so this rare last-resort
     // filler draws from whatever's already been loaded this session rather than a true random
@@ -834,7 +807,7 @@ export default function StudioBuild({ ctx }) {
         seen.add(img.url);
         photos.push({
           src: img.url, eventId: img.id, eventName: img.name || "Library",
-          category: targetCat, fn: "", space: "", mood: "", venue: "", video: "",
+          fn: "", space: "", mood: "", venue: "", video: "",
           tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
           isLibrary: true, elements: img.elements || [], dims: img.dims || {},
         });
@@ -1178,7 +1151,6 @@ undefined
     {sourceVideo&&!sourceEvent&&(()=>{
       const vTag=ytVideoTags[sourceVideo.id]||{};
       const vid=allVideos.find(v=>v.id===sourceVideo.id);
-      const zoneCount=Object.keys(vTag.zonePhotos||{}).length;
       const ytWatchUrl=sourceVideo.id?`https://www.youtube.com/watch?v=${sourceVideo.id}`:"";
       const embedUrl=sourceVideo.id?`https://www.youtube.com/embed/${sourceVideo.id}`:null;
       return <div style={{...S.card,marginBottom:20,overflow:"hidden"}}>
@@ -1207,7 +1179,6 @@ undefined
               {vTag.io&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(16,185,129,0.12)",color:"#10B981",fontWeight:600}}>{vTag.io}</span>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
-              <div style={{fontSize:11,color:textS}}>{zoneCount} zones pre-assigned</div>
               <button onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}} style={{padding:"4px 14px",borderRadius:6,border:"none",background:"rgba(255,0,0,0.9)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>{"▶"} Play Video</button>
               {ytWatchUrl&&<button onClick={()=>{try{navigator.clipboard.writeText(ytWatchUrl);showMsg("✓ YouTube link copied!","green");}catch{}}} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:600,cursor:"pointer"}}><IconCopy size={11}/> Copy Link</button>}
             </div>
@@ -1241,8 +1212,8 @@ undefined
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
       const isCentrepieceZone=/centre\s*piece|center\s*piece|centrepiece/i.test(el?.label||k||"");
-      const isOn=enabledEls[k];const tier=elTiers[k]||"simple";const isCust=customMode[k];
-      let matchedPhotos = getMatchedPhotos(srcType, tier).filter(ph => {
+      const isOn=enabledEls[k];const isCust=customMode[k];
+      let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
         const li = libItems.find(l => l.id === ph.eventId);
@@ -1441,11 +1412,14 @@ undefined
                 <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {TIER_TO_CAT[tier]} {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
                 {isElCardOpen(k)&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
-                      master library photo so the fix sticks for everyone. Shows only for a selected
-                      library photo while CORRECTION_MODE is on. Past quotes keep their own numbers. */}
-                  {CORRECTION_MODE && elSelectedPhoto[k]?.isLibrary && elSelectedPhoto[k]?.eventId && (()=>{
-                    const libId = elSelectedPhoto[k].eventId;
-                    const master = libItems.find(i => i.id === libId);
+                      master library photo so the fix sticks for everyone. Visible for ANY selected
+                      photo while CORRECTION_MODE is on, so it can be tagged whenever — if the photo
+                      isn't a Library photo yet (fresh upload, event photo), save() below creates a
+                      new Library entry for it instead of updating an existing one. */}
+                  {CORRECTION_MODE && elSelectedPhoto[k]?.src && (()=>{
+                    const selP = elSelectedPhoto[k];
+                    const isLib = selP.isLibrary && selP.eventId;
+                    const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
                     const verified = !!master?._verified;
                     return <button onClick={()=>{
                       if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
@@ -1538,6 +1512,7 @@ undefined
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                   const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
                   const thumbKey = `${k}:${idx}`;
+                  const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
                   <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2015,6 +1990,7 @@ undefined
                 const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                 const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
                 const thumbKey = `${k}:${idx}`;
+                const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
                   <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2041,6 +2017,7 @@ undefined
                       {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                       {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                       {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
+                      {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={isUnavail?"Not available for this date — tap to pick a different item":"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:isUnavail?13:11,opacity:isUnavail?1:0.5,padding:isUnavail?"1px 3px":"0 1px",borderRadius:4,background:isUnavail?"rgba(239,68,68,0.15)":"transparent",lineHeight:1}}>📦</span>}
                       {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2}}>
@@ -2106,9 +2083,12 @@ undefined
                 <div style={{fontSize:11,fontWeight:600,color:textS}}><IconRuler size={11}/> Zone Structure</div>
                 {showCosts&&st.total>0&&<div style={{fontWeight:600,color:textP}}>{fmt(st.total)}</div>}
               </div>
-              {/* Truss type */}
-              <div style={{display:"flex",gap:4,marginBottom:8}}>
-                {[{id:"box",l:"Box Truss"},{id:"singleU",l:"Single U Truss"},{id:null,l:"None"}].map(o=><button key={o.id||"none"} onClick={()=>sZ({trT:o.id})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${zc.trT===o.id?textP:border}`,background:zc.trT===o.id?"rgba(0,0,0,0.06)":"transparent",color:zc.trT===o.id?textP:textS,fontSize:10,cursor:"pointer",fontWeight:zc.trT===o.id?600:400}}>{o.l}{showCosts&&o.id?` ₹${o.id==="box"?50:30}/sqft`:""}</button>)}
+              {/* Truss type — Box vs Single U is set by how many dims are filled below (2 ⇒ Single
+                  U, 3 ⇒ Box), so that choice is read-only here; "None" is the one real manual
+                  action (turns truss off regardless of dims). */}
+              <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
+                {zc.trT&&<span style={{fontSize:10,fontWeight:600,color:textS}} title="Set by how many Truss dims are filled below — 2 dims = Single U, 3 dims = Box">{zc.trT==="box"?"Box Truss":"Single U Truss"}{showCosts?` · ₹${zc.trT==="box"?50:30}/sqft`:""}</span>}
+                <button onClick={()=>sZ({trT:null})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${!zc.trT?textP:border}`,background:!zc.trT?"rgba(0,0,0,0.06)":"transparent",color:!zc.trT?textP:textS,fontSize:10,cursor:"pointer",fontWeight:!zc.trT?600:400}}>None</button>
               </div>
               {/* Truss dims: L, W, H + Qty */}
               <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -2197,7 +2177,7 @@ undefined
                 <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconCarpet size={11}/> Carpet</span>
                   <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                 </div>{showCosts&&st.carpet>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
               </div>
@@ -2269,53 +2249,66 @@ undefined
       const master = libItems.find(i=>i.id===correctPhoto.libId);
       const taxLabel=(key)=>({eventType:"Event type",venueType:"Venue type",areasElements:"Areas / zones",colorPalette:"Palette",categoryTier:"Category tier",tier:"Tier",designStyle:"Design style",timeSetting:"Time / setting"}[key]||key);
       const toggle=(key,val)=>setCorrectPhoto(p=>{const cur=p.tags?.[key]||[];const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val];return {...p,tags:{...p.tags,[key]:next}};});
+      const isNewMaster=!correctPhoto.libId;
       const save=()=>{
-        if(!master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
+        if(!isNewMaster && !master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const zk=correctPhoto.zoneKey;
-        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master.elements||[]));
+        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[]));
         // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
         // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
         // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity
         // scale) are dropped so the template doesn't force them onto future quotes.
         const liveCfg=zoneConfig[zk];
-        const zoneCfgMap={...(master.zoneConfigByType||{})};
-        let libDims=master.dims;
+        const zoneCfgMap={...(master?.zoneConfigByType||{})};
+        let libDims=master?.dims;
         if(liveCfg){
           const {repeat,scale,...rest}=liveCfg;
           zoneCfgMap[zk]=JSON.parse(JSON.stringify(rest));
           // Mirror the primary dims into the master's Library-shape dims too, so browse thumbnails,
           // the Library editor and buildZoneConfig's fallback all reflect the corrected measurements.
           const d=liveCfg.dims||{},fd=liveCfg.floorDims||{};
-          libDims={...(master.dims||{}),
+          libDims={...(master?.dims||{}),
             trussL:d.L||0,trussW:d.W||0,trussH:d.H||0,floorL:fd.L||0,floorW:fd.W||0,
-            plH:liveCfg.plH||master.dims?.plH||"",cpT:liveCfg.cpT??master.dims?.cpT??null,
-            mkT:liveCfg.mkT||master.dims?.mkT||"",mkWalls:liveCfg.mkWalls||master.dims?.mkWalls||{},
+            plH:liveCfg.plH||master?.dims?.plH||"",cpT:liveCfg.cpT??master?.dims?.cpT??null,
+            mkT:liveCfg.mkT||master?.dims?.mkT||"",mkWalls:liveCfg.mkWalls||master?.dims?.mkWalls||{},
             trussFrontExt:liveCfg.trussFrontExt||0,trussFrontExtH:liveCfg.trussFrontExtH||0,
-            trussMaterial:liveCfg.trussMaterial??master.dims?.trussMaterial??null,
-            drapeDensity:liveCfg.drapeDensity??master.dims?.drapeDensity??null,
+            trussMaterial:liveCfg.trussMaterial??master?.dims?.trussMaterial??null,
+            drapeDensity:liveCfg.drapeDensity??master?.dims?.drapeDensity??null,
             customCeilingItemId:liveCfg.customCeilingItemId??null,customMaskingItemId:liveCfg.customMaskingItemId??null};
         }
         // Keep the original verifier's credit — a later editor's correction updates tags/elements
         // but shouldn't steal the "verified by" attribution from whoever verified it first.
-        const wasVerified=!!master._verified;
+        const wasVerified=!!master?._verified;
         const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};
-        const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
-        saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
-        // Only the first verification counts as a contribution — re-corrections of an already-
-        // verified photo update _lastEditedBy above but don't log again.
-        if(!wasVerified) logVerificationEvent?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
-        showMsg("✅ Correction saved to master — thanks!","green");
+        if(isNewMaster){
+          // This photo wasn't a Library photo yet (fresh upload / event photo) — create one now.
+          const newId="LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+          const created={id:newId,url:correctPhoto.draftSrc,name:correctPhoto.name||"Untitled",tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,addedAt:Date.now(),source:"build",_verified:true,...stamp,_correctedOn:"build"};
+          mergeLibItems([created]);
+          saveLib([created]);
+          // Point this zone's selection at the new Library entry going forward (same src, now backed by a real row).
+          setElSelectedPhoto(p=>({...p,[zk]:{...p[zk],isLibrary:true,eventId:newId}}));
+          logVerificationEvent?.({photoId:newId,photoName:created.name,source:"build"});
+          showMsg("✅ Saved as a new Library photo — thanks!","green");
+        } else {
+          const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
+          saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
+          // Only the first verification counts as a contribution — re-corrections of an already-
+          // verified photo update _lastEditedBy above but don't log again.
+          if(!wasVerified) logVerificationEvent?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
+          showMsg("✅ Correction saved to master — thanks!","green");
+        }
         setCorrectPhoto(null);
       };
       return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}}>
         <div onClick={e=>e.stopPropagation()} style={{background:cardBg,borderRadius:16,width:"100%",maxWidth:620,maxHeight:"90vh",overflow:"auto",border:`1px solid ${border}`,padding:18}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div style={{fontSize:15,fontWeight:700,color:textP}}>✏️ Correct photo — tags, elements & zone details</div>
+            <div style={{fontSize:15,fontWeight:700,color:textP}}>{isNewMaster?"✏️ Save photo to Library — tags, elements & zone details":"✏️ Correct photo — tags, elements & zone details"}</div>
             <span onClick={()=>setCorrectPhoto(null)} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700}}>✕</span>
           </div>
-          <div style={{fontSize:11,color:textS,marginBottom:12}}>Fix any tags below — they save to the shared library photo for everyone (future quotes). Your <b>element edits, zone dimensions and all structure details</b> (truss, masking, plinth, carpet, prints, materials) from the build card above are saved too. Quotes already given keep their own numbers.</div>
+          <div style={{fontSize:11,color:textS,marginBottom:12}}>{isNewMaster?"This photo isn't in the shared Library yet — add tags below and it'll become a reusable Library photo for everyone.":"Fix any tags below — they save to the shared library photo for everyone (future quotes)."} Your <b>element edits, zone dimensions and all structure details</b> (truss, masking, plinth, carpet, prints, materials) from the build card above are saved too. Quotes already given keep their own numbers.</div>
           <div style={{display:"flex",gap:12,marginBottom:12}}>
-            {master?.url&&<img src={master.url} alt="" style={{width:120,height:84,objectFit:"cover",borderRadius:10,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>}
+            {(master?.url||correctPhoto.draftSrc)&&<img src={master?.url||correctPhoto.draftSrc} alt="" style={{width:120,height:84,objectFit:"cover",borderRadius:10,flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>}
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
               <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>

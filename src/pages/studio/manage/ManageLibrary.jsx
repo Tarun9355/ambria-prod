@@ -106,31 +106,6 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems, error, retry, refreshCounts, refreshNew };
 }
 
-// Real component (not a plain helper function) so its hooks are safe even though the grid that
-// renders it is itself toggled on/off by a parent condition — a genuine mount/unmount, not a
-// conditional hook call.
-// getLibPhotosForZone is async (server-queried) now — this bridges it back to the synchronous
-// "just read {exact,similar,fallback}" shape the video zone-photo pickers render inline, by caching
-// results keyed on (zone list + the bits of videoTag that affect scoring) and kicking off a fetch
-// on first read. Returns empty arrays (never null) while a key's fetch is in flight.
-function useZoneMatchCache(getLibPhotosForZone) {
-  const [cache, setCache] = useState({});
-  const inFlight = useRef(new Set());
-  const get = useCallback((zone, videoTag) => {
-    const key = JSON.stringify([Array.isArray(zone) ? zone : [zone], videoTag?.tier, videoTag?.colors, videoTag?.styles, videoTag?.fn, videoTag?.io]);
-    const hit = cache[key];
-    if (hit) return hit;
-    if (!inFlight.current.has(key)) {
-      inFlight.current.add(key);
-      getLibPhotosForZone(zone, videoTag).then((result) => {
-        setCache((prev) => ({ ...prev, [key]: result }));
-      }).finally(() => inFlight.current.delete(key));
-    }
-    return { exact: [], similar: [], fallback: [] };
-  }, [cache, getLibPhotosForZone]);
-  return get;
-}
-
 function LoadMoreSentinel({ onIntersect }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -168,7 +143,7 @@ export default function ManageLibrary({ ctx }) {
     taxonomy, setTaxonomy, saveTax, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData,
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
-    allInhouseVenues, allOutdoorDB, customOutdoor,
+    allInhouseVenues, allOutdoorDB, customOutdoor, inhouseParentNames, allInhouseVenueOrParentNames, subVenuesOfParent,
     // permissions
     studioLibraryAllowed,
     // library state + persistence
@@ -186,13 +161,15 @@ export default function ManageLibrary({ ctx }) {
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — per-element Print section
     imsPrintMaterials,
+    // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — own master list
+    imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates)
     imsTrussRates, imsMaskingRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern, studioFloralData, dealCheckData,
     // misc
-    showMsg, aiTagImage, authUser, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, importCloudinaryFolder,
+    showMsg, aiTagImage, authUser, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, bulkVidVenue, runBulkTagVideoVenues, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
@@ -212,10 +189,6 @@ export default function ManageLibrary({ ctx }) {
     // cloudinary video browser
     addVideoOpen, setAddVideoOpen, cldVideoFolders, cldVideoPath, cldVideoList, cldVideoLoading,
     openCldVideoBrowser, cldVideoNavigate, cldVideoGoBack, addCldVideo,
-    // zone picker modal
-    zonePickerVid, setZonePickerVid, zonePickerZone, setZonePickerZone,
-    getLibPhotosForZone, calcElsCost, filterPriority,
-    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
   } = ctx;
 
   // Element Breakdown hover previews: enlarged thumbnail on hover, and — for a kit — its component
@@ -297,7 +270,6 @@ export default function ManageLibrary({ ctx }) {
     const id = setInterval(() => { libPage.refreshCounts(); libPage.refreshNew(); }, 4000);
     return () => clearInterval(id);
   }, [bulkTag?.running]); // eslint-disable-line react-hooks/exhaustive-deps
-  const getZoneMatches = useZoneMatchCache(getLibPhotosForZone);
   const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
   useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
@@ -1070,9 +1042,9 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={libEditImg.dims?.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={libEditImg.dims?.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
                 </div>
               </div>
@@ -1104,9 +1076,9 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                        <select value={row.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <select value={row.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                           <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                          {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
+                          {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                         </select>
                       </div>
                     </div>
@@ -1153,7 +1125,7 @@ export default function ManageLibrary({ ctx }) {
                 const flSqft=fL*fW;
                 const plRate=row.plH==="4in"?30:row.plH==="1ft"?45:0;
                 const plCost=flSqft*plRate;
-                const cp=carpetPricingFor(row.cpT, imsPrintMaterials);
+                const cp=carpetPricingFor(row.cpT, imsCarpetMaterials);
                 const cpRate=row.cpT===CARPET_OFF?0:cp.rate;const cpCost=flSqft*cpRate;
                 return {fL,fW,flSqft,plH:row.plH,plRate,plCost,cpRate,cpCost,cpLabel:cp.label};
               };
@@ -1874,6 +1846,7 @@ export default function ManageLibrary({ ctx }) {
             const vis = allVideos.filter(v => !hiddenVideos[v.id]);
             const cnt = (k) => k === "all" ? vis.length : vis.filter(v => videoStatus(v) === k).length;
             const untaggedN = cnt("untagged");
+            const noVenueN = vis.filter(v => !ytVideoTags[v.id]?.venue).length;
             return (
               <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                 {[
@@ -1893,8 +1866,26 @@ export default function ManageLibrary({ ctx }) {
                   {bulkVid?.running ? (
                     <span style={{ fontSize: 10, color: textS }}>🎬 Tagging {bulkVid.done}/{bulkVid.total} · {bulkVid.ok}✓ {bulkVid.fail}✕</span>
                   ) : untaggedN > 0 ? (
-                    <button onClick={() => { if (window.confirm(`AI-tag ${untaggedN} untagged video${untaggedN === 1 ? "" : "s"}?\n\nRuns in the background — keep working; progress shows in the corner. Each video is metadata-tagged and gets best-match zone photos. The team reviews/verifies after, and tagged videos appear on Browse.`)) runBulkTagVideos?.(); }} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#0EA5E9" }}>🎬 Tag all untagged ({untaggedN})</button>
+                    <button onClick={() => { if (window.confirm(`Tag ${untaggedN} untagged video${untaggedN === 1 ? "" : "s"} from their description?\n\nRuns in the background — keep working; progress shows in the corner. Each video's description is parsed for venue/event/tier/etc. and gets best-match zone photos. The team reviews/verifies after, and tagged videos appear on Browse.`)) runBulkTagVideos?.(); }} style={{ ...S.btn(true), fontSize: 10, padding: "6px 14px", background: "#0EA5E9" }}>🎬 Tag all untagged ({untaggedN})</button>
                   ) : null}
+                  {bulkVidVenue?.running ? (
+                    <span style={{ fontSize: 10, color: textS }}>🗺 Venue {bulkVidVenue.done}/{bulkVidVenue.total} · {bulkVidVenue.ok}✓ {bulkVidVenue.skip}– {bulkVidVenue.fail}✕</span>
+                  ) : noVenueN > 0 ? (
+                    <button onClick={() => { if (window.confirm(`Backfill venue on ${noVenueN} video${noVenueN === 1 ? "" : "s"} with no venue tag yet?\n\nParses each video's description for a "Venue:" line and matches it to your Inhouse/Outside venue list. A venue that doesn't match anything known is filed under Outside → Other. Videos that already have a venue (including a manual fix) are left untouched. Runs in the background.`)) runBulkTagVideoVenues?.(); }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#0EA5E9", border: "1px solid #0EA5E9" }}>🗺 Backfill venue ({noVenueN})</button>
+                  ) : null}
+                  {/* Reset every "Needs review" video back to Untagged (wipes its tags entirely) so a
+                      full re-tag from description — now including venue — starts clean instead of
+                      merging over stale AI tags from before venue-extraction existed. */}
+                  {cnt("review") > 0 && (
+                    <button onClick={() => {
+                      const ids = vis.filter(v => videoStatus(v) === "review").map(v => v.id);
+                      if (!window.confirm(`Clear tags on ${ids.length} "Needs review" video${ids.length === 1 ? "" : "s"} and move ${ids.length === 1 ? "it" : "them"} back to Untagged?\n\nThis wipes their existing venue/event/tier/style/color tags entirely, so you can re-tag them fresh (e.g. with "Tag all untagged" afterward). Cannot be undone.`)) return;
+                      const nt = { ...ytVideoTags };
+                      ids.forEach(id => delete nt[id]);
+                      saveYtTags(nt);
+                      showMsg(`Cleared tags on ${ids.length} video${ids.length === 1 ? "" : "s"} — moved to Untagged`, "green");
+                    }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#E11D48", border: "1px solid #E11D48" }}>🗑 Reset Needs-review → Untagged ({cnt("review")})</button>
+                  )}
                 </div>
               </div>
             );
@@ -1944,6 +1935,9 @@ export default function ManageLibrary({ ctx }) {
             <span style={{fontSize:10,color:textS,fontWeight:600}}>Filter:</span>
             <select value={ytFilterVenue} onChange={e=>setYtFilterVenue(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
               <option value="all">All Venues</option>
+              {inhouseParentNames.length>0&&<optgroup label="Inhouse — Properties">
+                {inhouseParentNames.map(p=><option key={"p-"+p} value={p}>🏢 {p} (any room)</option>)}
+              </optgroup>}
               <optgroup label="Inhouse">
                 {allInhouseVenues.map(v=><option key={v} value={v}>{v}</option>)}
               </optgroup>
@@ -2008,7 +2002,12 @@ export default function ManageLibrary({ ctx }) {
               if(ytFilterPL!=="all"&&v.playlistId!==ytFilterPL) return false;
               if(ytSearch.trim()&&!v.title.toLowerCase().includes(ytSearch.toLowerCase())) return false;
               const tag=ytVideoTags[v.id];
-              if(ytFilterVenue!=="all"&&tag?.venue!==ytFilterVenue) return false;
+              // Selecting a property (e.g. "Restro") also matches any of its own rooms, plus any
+              // video tagged ambiguously at just the property level — same rollup as Browse.
+              if(ytFilterVenue!=="all"){
+                const okVenues=new Set([ytFilterVenue,...(subVenuesOfParent[ytFilterVenue]||[])]);
+                if(!tag?.venue||!okVenues.has(tag.venue)) return false;
+              }
               if(ytFilterFn!=="all"&&!(tag?.fn||[]).includes?.(ytFilterFn)&&tag?.fn!==ytFilterFn) return false;
               if(ytFilterTier!=="all"&&tag?.tier!==ytFilterTier) return false;
               if(ytFilterIO!=="all"&&tag?.io!==ytFilterIO) return false;
@@ -2088,7 +2087,7 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                   {/* AI Draft banner */}
                   {hasDraft&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",marginBottom:10,borderRadius:8,background:"rgba(201,169,110,0.12)",border:`1px solid ${accent}40`}}>
-                    <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>🤖 AI suggested — review & save</span>
+                    <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>📋 Parsed from description — review & save</span>
                     <button onClick={()=>{const nt={...ytVideoTags,[v.id]:{...aiVideoDraft.tags,_aiTagged:true,_savedBy:authUser?.name||"—",_savedAt:Date.now()}};saveYtTags(nt);setAiVideoDraft(null);showMsg("✓ AI tags saved — video now live on Browse","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
                     <button onClick={()=>{setAiVideoDraft(null);setYtTagEdit(null);}} style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>✕ Discard</button>
                   </div>}
@@ -2097,7 +2096,7 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Venue</div>
                     {(() => {
                       const curVenue = tag.venue || "";
-                      const isInhouse = curVenue && allInhouseVenues.includes(curVenue);
+                      const isInhouse = curVenue && allInhouseVenueOrParentNames.includes(curVenue);
                       // Auto-sync group when venue is already set
                       const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
                       const setVidVenue = (val) => {
@@ -2111,7 +2110,10 @@ export default function ManageLibrary({ ctx }) {
                           <div onClick={()=>{setTagVenueGroup("outside");setTagOutsideSub("all");}} style={S.pill(activeGroup==="outside")}>Outside</div>
                           {curVenue&&<div onClick={()=>{setVidVenue("");setTagVenueGroup("");}} style={{padding:"4px 8px",borderRadius:12,fontSize:9,cursor:"pointer",color:textS,border:`1px dashed ${border}`}}>✕ {curVenue}</div>}
                         </div>
+                        {/* Property chips (🏢) first — pick the property itself when no single room
+                            fits — then individual rooms. */}
                         {activeGroup==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+                          {inhouseParentNames.map(p=>{const on=curVenue===p;return <div key={"p-"+p} onClick={()=>setVidVenue(on?"":p)} title={`Tag at the ${p} property level (no specific room)`} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px",fontWeight:700}}>🏢 {p}</div>;})}
                           {allInhouseVenues.map(vn=>{const on=curVenue===vn;return <div key={vn} onClick={()=>setVidVenue(on?"":vn)} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px"}}>{vn}</div>;})}
                         </div>}
                         {activeGroup==="outside"&&<>
@@ -2127,7 +2129,7 @@ export default function ManageLibrary({ ctx }) {
                       </>;
                     })()}
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Tier</div>
                       <select value={tag.tier||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,tier:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,tier:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
@@ -2140,6 +2142,13 @@ export default function ManageLibrary({ ctx }) {
                       <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,io:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Time / Setting</div>
+                      <select value={tag.timeSetting||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,timeSetting:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,timeSetting:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                        <option value="">—</option>
+                        {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
                     {/* §23 Phase 2.9c — palette per video (drives Build screen paint picker grouping) */}
@@ -2202,38 +2211,6 @@ export default function ManageLibrary({ ctx }) {
                       })}
                     </div>
                   </div>
-                  {/* ═══ PHOTOS BY ZONE (Phase 2) — every zone on one screen, ranked candidates, one-click assign ═══ */}
-                  <div style={{marginBottom:8,borderTop:`1px solid ${border}`,paddingTop:10}}>
-                    <div style={{fontSize:10,color:textS,fontWeight:600,marginBottom:6}}>📸 Photos by zone — tap a thumbnail to assign, or hit <span style={{color:accent,fontWeight:700}}>🔍 Big view</span> to pick from large photos in a full-screen popup.</div>
-                    {(taxonomy.areasElements||[]).map((zone,zi)=>{
-                      const zp=tag.zonePhotos||{};
-                      const libId=zp[zone];
-                      const chosen=libId?libItems.find(li=>li.id===libId):null;
-                      const {exact,similar}=getZoneMatches(zone,tag);
-                      const cands=[...exact,...similar];
-                      // keep the chosen photo visible even if it isn't in the top matches
-                      const stripList=[...(chosen&&!cands.find(c=>c.id===chosen.id)?[chosen]:[]),...cands].slice(0,14);
-                      const setZonePhoto=(id)=>{const np={...zp};if(id)np[zone]=id;else delete np[zone];const nt={...ytVideoTags,[v.id]:{...tag,zonePhotos:np}};saveYtTags(nt);};
-                      return <div key={zone} style={{padding:"8px 0",borderBottom:zi<(taxonomy.areasElements||[]).length-1?`1px solid ${border}`:"none"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                          <span style={{fontSize:14,width:20,textAlign:"center"}}>{ZONE_ICONS[zone]||"📍"}</span>
-                          <span style={{fontSize:11,fontWeight:600,color:textP,flex:1}}>{zone}</span>
-                          {chosen?<span style={{fontSize:9,color:"#059669",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {chosen.name||"selected"}</span>:<span style={{fontSize:9,color:textS}}>{cands.length} match{cands.length===1?"":"es"}</span>}
-                          <span onClick={(e)=>{e.stopPropagation();setZonePickerVid(v.id);setZonePickerZone(zone);setZpFilterOpen(false);setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});}} title="Open the big full-screen picker for this zone" style={{fontSize:9,fontWeight:700,cursor:"pointer",flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${accent}`,color:accent,background:`${accent}12`}}>🔍 Big view</span>
-                          {chosen&&<span onClick={(e)=>{e.stopPropagation();setZonePhoto(null);}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:700,flexShrink:0}}>× clear</span>}
-                        </div>
-                        {stripList.length===0
-                          ? <div style={{fontSize:9,color:textS,paddingLeft:28}}>No matching photos yet — use "More…" or tag more library photos for this zone.</div>
-                          : <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,paddingLeft:28}} onClick={e=>e.stopPropagation()}>
-                              {stripList.map(li=>{const isSel=li.id===libId;return <div key={li.id} onClick={()=>setZonePhoto(isSel?null:li.id)} title={li.name||""} style={{flexShrink:0,width:92,borderRadius:8,overflow:"hidden",cursor:"pointer",border:isSel?"2px solid #059669":`1px solid ${border}`,background:cardBg}}>
-                                <img src={li.url} alt="" loading="lazy" style={{width:92,height:60,objectFit:"cover",display:"block",opacity:isSel?1:0.92}} onError={e=>{e.target.style.display="none"}}/>
-                                <div style={{padding:"3px 5px",fontSize:8,fontWeight:isSel?700:500,color:isSel?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isSel?"✓ ":""}{li.name||"Untitled"}</div>
-                              </div>;})}
-                            </div>}
-                      </div>;
-                    })}
-                    {Object.keys(tag.zonePhotos||{}).length>0&&<div style={{fontSize:9,color:textS,marginTop:6}}>{Object.keys(tag.zonePhotos||{}).length} of {(taxonomy.areasElements||[]).length} zones assigned</div>}
-                  </div>
                   {/* Quick actions */}
                   <div style={{display:"flex",gap:6,justifyContent:"flex-end",flexWrap:"wrap"}}>
                     <button onClick={(e)=>{e.stopPropagation();const nh={...hiddenVideos};if(nh[v.id])delete nh[v.id];else nh[v.id]=true;saveHiddenVideos(nh);showMsg(nh[v.id]?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
@@ -2244,7 +2221,7 @@ export default function ManageLibrary({ ctx }) {
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}
                     <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
-                    <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"🤖 AI Tag"}</button>
+                    <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"📋 Tag from description"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
                 </div>}
@@ -2253,148 +2230,14 @@ export default function ManageLibrary({ ctx }) {
           </div>
         </div>
       )}
-      {/* ═══ FULL-SCREEN LIBRARY PICKER MODAL ═══ */}
-      {zonePickerVid&&zonePickerZone&&(()=>{
-        const vTag=ytVideoTags[zonePickerVid]||{};
-        const {exact:rawExact,similar:rawSimilar,fallback:rawFallback}=getZoneMatches(zonePickerZone,vTag);
-        const exact=zpHasFilters?rawExact.filter(zpFilterPhoto):rawExact;
-        const similar=zpHasFilters?rawSimilar.filter(zpFilterPhoto):rawSimilar;
-        const fallback=zpHasFilters?rawFallback.filter(zpFilterPhoto):rawFallback;
-        const totalRaw=rawExact.length+rawSimilar.length+rawFallback.length;
-        const totalFiltered=exact.length+similar.length+fallback.length;
-        const currentLibId=(vTag.zonePhotos||{})[zonePickerZone];
-        const selectPhoto=(libId)=>{
-          const zp={...(vTag.zonePhotos||{}), [zonePickerZone]:libId};
-          const nt={...ytVideoTags,[zonePickerVid]:{...vTag,zonePhotos:zp}};
-          saveYtTags(nt);
-          setZonePickerVid(null);setZonePickerZone(null);
-        };
-        const calcElCost=(li)=>{
-          if(!(li.elements||[]).length)return 0;
-          return calcElsCost(li.elements, true, null);
-        };
-        const renderCard=(li)=>{
-          const isCurrent=li.id===currentLibId;
-          const cost=calcElCost(li);
-          return <div key={li.id} onClick={()=>selectPhoto(li.id)} style={{borderRadius:10,border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,overflow:"hidden",cursor:"pointer",background:cardBg,position:"relative"}}>
-            <div style={{position:"relative"}}>
-              <img src={li.url} alt={li.name||""} style={{width:"100%",height:200,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="200px";}}/>
-              {isCurrent&&<div style={{position:"absolute",top:4,right:4,background:accent,color:"#fff",fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700}}>Current</div>}
-              {cost>0&&<div style={{position:"absolute",top:4,left:4,background:"rgba(0,0,0,0.75)",color:"#fff",fontSize:10,padding:"2px 8px",borderRadius:4,fontWeight:700}}>{fmt(cost)}</div>}
-            </div>
-            <div style={{padding:"6px 8px"}}>
-              <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{li.name||"Untitled"}</div>
-              <div style={{fontSize:9,color:textS}}>{(li.elements||[]).length} elements</div>
-              <div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:3}}>
-                {(li.tags?.colorPalette||[]).map(c=><span key={c} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(249,115,22,0.12)",color:"#F97316"}}>{c}</span>)}
-                {(li.tags?.designStyle||[]).map(s=><span key={s} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(236,72,153,0.12)",color:"#EC4899"}}>{s}</span>)}
-                {(li.tags?.categoryTier||[]).map(t=><span key={t} style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(148,163,184,0.15)",color:textS}}>{t}</span>)}
-              </div>
-            </div>
-          </div>;
-        };
-        const priorityLabels = filterPriority.map(p=>p.label).join(" > ");
-        return <div style={{position:"fixed",inset:0,zIndex:9999,background:isDark?"rgba(0,0,0,0.92)":"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}} onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:bg,borderRadius:16,width:"96vw",maxWidth:1500,maxHeight:"94vh",overflow:"auto",border:`1px solid ${border}`}}>
-            <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:bg,zIndex:1}}>
-              <div>
-                <div style={{fontSize:18,fontWeight:700,color:textP}}>{ZONE_ICONS[zonePickerZone]||"📍"} Select photo for {zonePickerZone}</div>
-                <div style={{fontSize:12,color:textS,marginTop:2}}>Priority: {priorityLabels}</div>
-              </div>
-              <span onClick={()=>{setZonePickerVid(null);setZonePickerZone(null);}} style={{fontSize:18,cursor:"pointer",color:textS,fontWeight:700,padding:"4px 8px"}}>✕</span>
-            </div>
-            <div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-              <span style={{fontSize:10,color:textS}}>Video tags:</span>
-              {vTag.tier&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(148,163,184,0.2)",color:textP,fontWeight:600}}>{vTag.tier}</span>}
-              {(vTag.colors||[]).map(c=><span key={c} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(249,115,22,0.15)",color:"#F97316",fontWeight:600}}>{c}</span>)}
-              {(vTag.styles||[]).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600}}>{s}</span>)}
-              {(Array.isArray(vTag.fn)?vTag.fn:(vTag.fn?[vTag.fn]:[])).map(f=><span key={f} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(168,85,247,0.15)",color:"#A855F7",fontWeight:600}}>{f}</span>)}
-              {vTag.io&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>{vTag.io}</span>}
-            </div>
-            {/* Filter toggle + panel */}
-            <div style={{padding:"8px 20px",borderBottom:`1px solid ${border}`,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <span onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 12px",borderRadius:8,background:zpFilterOpen?`${accent}22`:"transparent",border:`1px solid ${zpFilterOpen?accent:border}`,color:zpFilterOpen?accent:textS,fontSize:11,fontWeight:500,cursor:"pointer"}}>🔍 Filters {zpFilterOpen?"▲":"▼"}</span>
-              {zpHasFilters&&<span style={{fontSize:10,color:textS}}>{totalFiltered} of {totalRaw}</span>}
-              {zpHasFilters&&<span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:10,color:"#E11D48",cursor:"pointer"}}>Clear</span>}
-            </div>
-            {zpFilterOpen&&<div style={{padding:"10px 20px",borderBottom:`1px solid ${border}`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Event type</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,eventType:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.length===0?accent:"transparent",color:zpFilters.eventType.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.length===0?accent:border}`,fontWeight:zpFilters.eventType.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.eventType.includes(v)?accent:"transparent",color:zpFilters.eventType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.eventType.includes(v)?accent:border}`,fontWeight:zpFilters.eventType.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Venue type</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.length===0?accent:"transparent",color:zpFilters.venueType.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.length===0?accent:border}`,fontWeight:zpFilters.venueType.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.venueType.includes(v)?accent:"transparent",color:zpFilters.venueType.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.venueType.includes(v)?accent:border}`,fontWeight:zpFilters.venueType.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Design style</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,designStyle:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.length===0?accent:"transparent",color:zpFilters.designStyle.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.length===0?accent:border}`,fontWeight:zpFilters.designStyle.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.designStyle.includes(v)?accent:"transparent",color:zpFilters.designStyle.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.designStyle.includes(v)?accent:border}`,fontWeight:zpFilters.designStyle.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Color palette</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.length===0?accent:"transparent",color:zpFilters.colorPalette.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.length===0?accent:border}`,fontWeight:zpFilters.colorPalette.length===0?600:400}}>All</span>
-                    {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.colorPalette.includes(v)?accent:"transparent",color:zpFilters.colorPalette.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.colorPalette.includes(v)?accent:border}`,fontWeight:zpFilters.colorPalette.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,fontWeight:600,color:accent,marginBottom:4}}>Day / Night</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,timeSetting:[]}))} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.timeSetting.length===0?accent:"transparent",color:zpFilters.timeSetting.length===0?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.timeSetting.length===0?accent:border}`,fontWeight:zpFilters.timeSetting.length===0?600:400}}>All</span>
-                    {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={{padding:"3px 9px",borderRadius:10,fontSize:10,cursor:"pointer",background:zpFilters.timeSetting.includes(v)?accent:"transparent",color:zpFilters.timeSetting.includes(v)?isDark?"#1a1a2e":"#fff":textS,border:`1px solid ${zpFilters.timeSetting.includes(v)?accent:border}`,fontWeight:zpFilters.timeSetting.includes(v)?600:400}}>{v}</span>)}
-                  </div>
-                </div>
-              </div>
-            </div>}
-            <div style={{padding:20}}>
-              {exact.length>0&&<>
-                <div style={{fontSize:12,fontWeight:700,color:accent,marginBottom:8}}>Best matches ({exact.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
-                  {exact.map(renderCard)}
-                </div>
-              </>}
-              {similar.length>0&&<>
-                <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>Similar options ({similar.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
-                  {similar.map(renderCard)}
-                </div>
-              </>}
-              {fallback.length>0&&<>
-                <div style={{fontSize:12,fontWeight:600,color:textS,marginBottom:8}}>More options ({fallback.length})</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12,marginBottom:20}}>
-                  {fallback.map(renderCard)}
-                </div>
-              </>}
-              {exact.length===0&&similar.length===0&&fallback.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>
-                <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>No photos in Library yet</div>
-                <div style={{fontSize:12}}>Add photos to Library and tag them to see options here.</div>
-              </div>}
-            </div>
-          </div>
-        </div>;
-      })()}
-
       {/* ═══ FULL-SCREEN VIDEO TAG EDITOR — all metadata + a left/right photo scroller per zone ═══ */}
       {bigTagVid && (() => {
         const v = allVideos.find(x => x.id === bigTagVid) || {};
         const vTag = ytVideoTags[bigTagVid] || {};
         const updTag = (patch) => saveYtTags({ ...ytVideoTags, [bigTagVid]: { ...vTag, ...patch } });
-        const setZP = (zone, id) => { const zp = { ...(vTag.zonePhotos || {}) }; if (id) zp[zone] = id; else delete zp[zone]; updTag({ zonePhotos: zp }); };
         const toggleArr = (field, val) => { const cur = Array.isArray(vTag[field]) ? vTag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
         const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
         const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
-        const zones = taxonomy.areasElements || [];
-        const assigned = Object.keys(vTag.zonePhotos || {}).length;
         const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 5 };
         const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
         const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
@@ -2403,9 +2246,9 @@ export default function ManageLibrary({ ctx }) {
             <div style={{ position: "sticky", top: 0, zIndex: 2, background: bg, borderBottom: `1px solid ${border}`, padding: "14px 22px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🎬 {v.title || "Video"}</div>
-                <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>{assigned} of {zones.length} zones have a photo · changes save instantly</div>
+                <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>changes save instantly</div>
               </div>
-              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🤖 AI Tag"}</button>
+              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
               <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
@@ -2417,41 +2260,49 @@ export default function ManageLibrary({ ctx }) {
                   ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
                   : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} />}
               </div>
+              {/* Venue (2-level chip picker — same pattern/shared toggle state as the inline grid
+                  editor's own Venue row above); this full-screen editor previously had no way to
+                  set it at all, unlike the image tagger's Venue picker. */}
+              <div style={{ marginBottom: 18 }}>
+                <div style={lbl}>Venue</div>
+                {(() => {
+                  const curVenue = vTag.venue || "";
+                  const isInhouse = curVenue && allInhouseVenueOrParentNames.includes(curVenue);
+                  const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
+                  const setVidVenue = (val) => updTag({ venue: val || undefined, venueCustom: undefined });
+                  const outsideFiltered = customOutdoor.filter(o => tagOutsideSub === "empanelled" ? o.empanelled : tagOutsideSub === "other" ? !o.empanelled : true);
+                  return <>
+                    <div style={chipRow}>
+                      {chip("Inhouse", activeGroup === "inhouse", () => { setTagVenueGroup("inhouse"); setTagOutsideSub("all"); })}
+                      {chip("Outside", activeGroup === "outside", () => { setTagVenueGroup("outside"); setTagOutsideSub("all"); })}
+                      {curVenue && <span onClick={() => { setVidVenue(""); setTagVenueGroup(""); }} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
+                    </div>
+                    {/* Property chips (🏢) first — pick the property itself when no single room fits
+                        — then individual rooms. */}
+                    {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>
+                      {inhouseParentNames.map(p => chip("🏢 " + p, curVenue === p, () => setVidVenue(curVenue === p ? "" : p)))}
+                      {allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
+                    </div>}
+                    {activeGroup === "outside" && <>
+                      <div style={{ ...chipRow, marginTop: 6 }}>
+                        {chip("All", tagOutsideSub === "all", () => setTagOutsideSub("all"))}
+                        {chip("Empanelled", tagOutsideSub === "empanelled", () => setTagOutsideSub("empanelled"))}
+                        {chip("Other", tagOutsideSub === "other", () => setTagOutsideSub("other"))}
+                      </div>
+                      <div style={{ ...chipRow, marginTop: 4 }}>{outsideFiltered.map(o => chip(o.name + (o.empanelled ? " ★" : ""), curVenue === o.name, () => setVidVenue(curVenue === o.name ? "" : o.name)))}</div>
+                    </>}
+                  </>;
+                })()}
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginBottom: 18 }}>
-                <div><div style={lbl}>Tier</div><div style={chipRow}>{["Silver", "Gold", "Platinum"].map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
+                <div><div style={lbl}>Tier</div><div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
                 <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                 <div><div style={lbl}>Event type</div><div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div></div>
-                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor"]).map(io => chip(io, vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
+                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(io, vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
                 <div><div style={lbl}>Colors</div><div style={chipRow}>{palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}</div></div>
                 <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
+                <div><div style={lbl}>Time / Setting</div><div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div></div>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 8 }}>📸 Photo per zone — scroll ◀ ▶ and click to pick</div>
-              {zones.map(zone => {
-                const zp = vTag.zonePhotos || {};
-                const chosenId = zp[zone];
-                const { exact, similar, fallback } = getZoneMatches(zone, vTag);
-                const cands = [...exact, ...similar, ...fallback];
-                const chosen = chosenId ? libItems.find(l => l.id === chosenId) : null;
-                const strip = [...(chosen && !cands.find(c => c.id === chosen.id) ? [chosen] : []), ...cands].slice(0, 40);
-                return <div key={zone} style={{ padding: "10px 0", borderBottom: `1px solid ${border}` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 18 }}>{ZONE_ICONS[zone] || "📍"}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: textP, flex: 1 }}>{zone}</span>
-                    {chosen ? <span style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>✓ {chosen.name || "selected"}</span> : <span style={{ fontSize: 11, color: textS }}>{strip.length} options</span>}
-                    {chosen && <span onClick={() => setZP(zone, null)} style={{ fontSize: 11, color: "#E11D48", cursor: "pointer", fontWeight: 700 }}>× clear</span>}
-                  </div>
-                  {strip.length === 0 ? <div style={{ fontSize: 11, color: textS, paddingLeft: 28 }}>No matching photos for this zone yet — tag more library photos for it.</div> :
-                    <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
-                      {strip.map(li => { const isSel = li.id === chosenId; return <div key={li.id} onClick={() => setZP(zone, isSel ? null : li.id)} title={li.name || ""} style={{ flexShrink: 0, width: 190, borderRadius: 10, overflow: "hidden", cursor: "pointer", border: isSel ? `3px solid #059669` : `1px solid ${border}`, background: cardBg }}>
-                        <img src={li.url} alt="" loading="lazy" style={{ width: 190, height: 130, objectFit: "cover", display: "block", opacity: isSel ? 1 : 0.9 }} onError={e => { e.target.style.display = "none"; }} />
-                        <div style={{ padding: "5px 8px" }}>
-                          <div style={{ fontSize: 11, fontWeight: isSel ? 700 : 600, color: isSel ? "#059669" : textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{isSel ? "✓ " : ""}{li.name || "Untitled"}</div>
-                          <div style={{ fontSize: 9, color: textS }}>{(li.elements || []).length} elements</div>
-                        </div>
-                      </div>; })}
-                    </div>}
-                </div>;
-              })}
             </div>
           </div>
         </div>;

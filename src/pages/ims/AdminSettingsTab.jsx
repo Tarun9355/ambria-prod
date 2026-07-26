@@ -102,6 +102,21 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     setSettings((s) => ({ ...s, printMaterials: [...(s.printMaterials || []), { id: "PM" + Date.now(), name, ratePerSqft: 0 }] }));
     setPrintMatNew("");
   };
+  const [carpetMatNew, setCarpetMatNew] = useState("");
+  const addCarpetMaterial = () => {
+    const name = carpetMatNew.trim();
+    if (!name) return;
+    setSettings((s) => ({ ...s, carpetMaterials: [...(s.carpetMaterials || []), { id: "CM" + Date.now(), name, ratePerSqft: 0 }] }));
+    setCarpetMatNew("");
+  };
+  // One-time migration: a zone's carpet (`cpT`) used to be picked from Print Materials by
+  // "carpet" in the name — a real print-job material list, wrong master for a floor covering.
+  // Copies those rows over (same id, so existing zones' cpT keeps resolving) into their own list.
+  const importCarpetFromPrintMaterials = () => {
+    const fromPrint = (settings.printMaterials || []).filter((m) => String(m.name || "").toLowerCase().includes("carpet"));
+    if (!fromPrint.length) return;
+    setSettings((s) => ({ ...s, carpetMaterials: [...(s.carpetMaterials || []), ...fromPrint.map((m) => ({ id: m.id, name: m.name, ratePerSqft: m.ratePerSqft || 0 }))] }));
+  };
   // Truss/masking rates are a FIXED small set (tied to the truss geometry / wall-area pricing
   // formulas elsewhere) — only the rate is editable, not the name or the list itself. Seed from the
   // code defaults until an admin actually customizes one, so the panel never shows blank rows.
@@ -155,6 +170,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "subcats", label: "📂 Sub-Categories" },
     { id: "synonyms", label: "🔤 AI Synonyms" },
     { id: "printmaterials", label: "🖨️ Print Materials" },
+    { id: "carpetmaterials", label: "🟫 Carpet Materials" },
     { id: "structurerates", label: "🏗️ Truss & Masking" },
   ];
 
@@ -2076,6 +2092,45 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               </div>
             ))}
             {(settings.printMaterials || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No print materials yet — add one above (e.g. Flex, Vinyl, Sunboard).</p>}
+          </div>
+        </div>
+      )}
+      {activePanel === "carpetmaterials" && (
+        <div className="space-y-4">
+          <div>
+            <p className="font-bold text-gray-900 mb-1">🟫 Carpet Materials</p>
+            <p className="text-xs text-gray-500">₹/sqft rates for floor carpet, picked per zone in Studio's Zone Structure panel. Its own master list — no longer pulled from Print Materials.</p>
+          </div>
+          {!(settings.carpetMaterials || []).length && (settings.printMaterials || []).some((m) => String(m.name || "").toLowerCase().includes("carpet")) && (
+            <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <p className="text-xs text-amber-800">Found carpet-named rows still in Print Materials — copy them here so existing zones keep pricing correctly.</p>
+              <button onClick={importCarpetFromPrintMaterials} className="bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-2 rounded-lg font-medium whitespace-nowrap">Import from Print Materials</button>
+            </div>
+          )}
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <label className="text-xs text-gray-500">Material name</label>
+              <input value={carpetMatNew} onChange={(e) => setCarpetMatNew(e.target.value)} placeholder="e.g. Carpet Old"
+                className="w-full border rounded-lg px-3 py-2 text-sm" onKeyDown={(e) => { if (e.key === "Enter") addCarpetMaterial(); }} />
+            </div>
+            <button onClick={addCarpetMaterial} className="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">+ Add Material</button>
+          </div>
+          <div className="space-y-2">
+            {(settings.carpetMaterials || []).map((m) => (
+              <div key={m.id} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
+                <input value={m.name} onChange={(e) => setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.map((x) => (x.id === m.id ? { ...x, name: e.target.value } : x)) }))}
+                  className="flex-1 border rounded-lg px-2 py-1 text-sm font-medium" />
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">₹</span>
+                  <input type="number" min="0" value={m.ratePerSqft ?? 0} onChange={(e) => setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.map((x) => (x.id === m.id ? { ...x, ratePerSqft: parseFloat(e.target.value) || 0 } : x)) }))}
+                    className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                  <span className="text-xs text-gray-400">/sqft</span>
+                </div>
+                <button onClick={() => { if (!window.confirm(`Delete "${m.name}"?`)) return; setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.filter((x) => x.id !== m.id) })); }}
+                  className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
+              </div>
+            ))}
+            {(settings.carpetMaterials || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No carpet materials yet — add one above (e.g. Carpet Old, Carpet New).</p>}
           </div>
         </div>
       )}
