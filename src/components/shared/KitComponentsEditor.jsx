@@ -33,7 +33,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // A component is either {itemId, qty} (a physical inventory item) or {patternId, qty} (a flower-
   // recipe add-on, qty in the recipe's own unit — priced separately via getElPriceFromInventory,
   // contributes ₹0 to the rental total below).
-  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
+  const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1, realPct: s.realPct, size: s.size } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
   const kitBase = Number(item.kitBase) || 0;
   // Kit's own sub-category scaling factor — the same multiplier priceForInvItem applies to the whole
@@ -47,17 +47,28 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Full artificial-rate settings (art flower/green ₹/kg, bunches/kg, markup) so artRate here matches
   // getElPriceFromInventory's blend byte-for-byte; falls back to just the markup when not provided.
   const _floralSettings = { ...(floralSettings || {}), defaultStudioMarkup: Number(studioMarkup) || (floralSettings?.defaultStudioMarkup) || 3 };
-  const recipeRateFor = (pat, subKey) => {
+  // `override` (a patternId comp's own {realPct, size}) lets THIS attached recipe pin its own SMB
+  // size and real/artificial ratio, independent of the parent element's size and the deal's global
+  // ratio — set via the Size/🌐/🎯 controls below. Falls back to the previous shared behavior
+  // (element size / sub-category mode / global floralRatio) when unset.
+  const recipeRateFor = (pat, subKey, override) => {
     if (!pat) return 0;
     // Recipe Studio rate blended real/artificial by the global ratio — same as a standalone recipe
     // element (getElPrice). A sub-category floral_mode of real/artificial pins it to 100/0; else it
     // follows the deal's floralRatio. `extra` (pot/base) is added once, un-blended.
-    const rates = floralPatternUnitRates(pat, _szKey, mandiCatalogue, _floralSettings, imsInventory);
+    const szKey = override?.size || _szKey;
+    const rates = floralPatternUnitRates(pat, szKey, mandiCatalogue, _floralSettings, imsInventory);
     if (!rates) return 0;
     const sk = String(subKey || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? rcFloralModeByKey[sk] : undefined;
-    const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+    const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
     return Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+  };
+  const patternModeDefault = (pat, subKey) => {
+    const sk = String(subKey || pat?.sub || "").trim().toLowerCase();
+    const subMode = sk ? rcFloralModeByKey[sk] : undefined;
+    return subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
   };
   // A PLAIN component (an ordinary {itemId,qty} entry, not a patternId add-on) can itself be a
   // floral item (e.g. a pot/planter whose own sub-category carries a flower recipe) — same as a
@@ -99,7 +110,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // (same two sources getElPriceFromInventory sums), each at the recipe's Studio rate.
   const subCatPattern = matchFlowerPattern(item, flowerPatterns || []);
   const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern, item.subCat || item.subcategory) : 0;
-  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
+  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub, c) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
   const partsTotal = rentalMarked + flowerTotal;
   const setComps = (next) => onChange(next);
   const resetKit = () => onChange(undefined);
@@ -121,18 +132,47 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           if (c.patternId) {
             const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
             const patQty = Number(c.qty) || 0;
+            const sizeOpts = pat?.sizes ? Object.keys(pat.sizes) : [];
+            const hasSizes = sizeOpts.length > 1;
+            const szLabel = (sk) => sk === "small" ? "S" : (sk === "big" || sk === "large") ? "B" : "M";
             return (
-              <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-                <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
-                <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
-                  <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, patQty - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
-                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{patQty}{studioUnitLabel(pat?.unit)}</span>
-                  <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
+              <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                  <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>🌸</span>
+                  <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 2 }} title="per kit">
+                    <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, patQty - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
+                    <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{patQty}{studioUnitLabel(pat?.unit)}</span>
+                    <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
+                  </div>
+                  {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
+                  {(() => { const rr = recipeRateFor(pat, pat?.sub, c); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
+                  <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
                 </div>
-                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 10, whiteSpace: "nowrap" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
-                {(() => { const rr = recipeRateFor(pat, pat?.sub); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85 }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{(rr * patQty).toLocaleString("en-IN")}</b></span>; })()}
-                <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
+                {pat && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 9, paddingLeft: 28, flexWrap: "wrap" }}>
+                    {hasSizes && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <span style={{ color: textS }}>Size:</span>
+                        {sizeOpts.map(sk => (
+                          <button key={sk} onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, size: sk } : x))}
+                            style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: (c.size || "medium") === sk ? "#EC4899" : "rgba(236,72,153,0.12)", color: (c.size || "medium") === sk ? "#fff" : "#EC4899" }}>{szLabel(sk)}</button>
+                        ))}
+                      </span>
+                    )}
+                    <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <span style={{ color: textS }}>Ratio:</span>
+                      <button onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, realPct: undefined } : x))} title="Use this sub-category's default real/artificial ratio"
+                        style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: typeof c.realPct !== "number" ? "#EC4899" : "rgba(236,72,153,0.12)", color: typeof c.realPct !== "number" ? "#fff" : "#EC4899" }}>🌐 Ratio</button>
+                      <button onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, realPct: 100 } : x))} title="Price this recipe at 100% real, overriding the default"
+                        style={{ padding: "1px 6px", borderRadius: 3, border: "none", cursor: "pointer", background: c.realPct === 100 ? "#EC4899" : "rgba(236,72,153,0.12)", color: c.realPct === 100 ? "#fff" : "#EC4899" }}>🎯 100%</button>
+                      <input type="number" min="0" max="100" value={c.realPct ?? ""} placeholder={String(patternModeDefault(pat, pat?.sub))}
+                        onChange={(e) => { const v = e.target.value; setComps(comps.map((x, i) => i === ci ? { ...x, realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) } : x)); }}
+                        title="Manually set the exact % real — overrides Ratio/100%"
+                        style={{ width: 34, padding: "1px 4px", borderRadius: 3, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 9, textAlign: "center" }} />
+                    </span>
+                  </div>
+                )}
               </div>
             );
           }

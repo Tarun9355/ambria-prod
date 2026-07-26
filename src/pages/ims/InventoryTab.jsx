@@ -1625,18 +1625,46 @@ Rules:
                       if (si.patternId) {
                         // Flower-recipe add-on — ₹0 in Kit rental price (auto) below; its studio
                         // rate (× this qty, in the recipe's OWN unit) is added separately wherever
-                        // this kit is priced (getElPriceFromInventory).
+                        // this kit is priced (getElPriceFromInventory), which now honors si.size /
+                        // si.realPct as this add-on's own SMB size and real/artificial ratio
+                        // override (undefined = element size / sub-category default, unchanged).
                         const pat = (settings.flowerPatterns || []).find((p) => p.id === si.patternId);
+                        const sizeOpts = pat?.sizes ? Object.keys(pat.sizes) : [];
+                        const hasSizes = sizeOpts.length > 1;
+                        const szLabel = (sk) => sk === "small" ? "S" : (sk === "big" || sk === "large") ? "B" : "M";
                         return (
-                          <div key={idx} className="flex items-center gap-2 bg-pink-50 border border-pink-200 rounded-lg px-2 py-1.5">
-                            <div className="w-7 h-7 rounded bg-pink-100 flex-shrink-0 flex items-center justify-center text-sm">🌸</div>
-                            <span className="flex-1 text-xs font-medium text-gray-700 truncate">{pat ? pat.name : `⚠ ${si.patternId} (recipe missing)`}</span>
-                            <input type="number" min="0" step="any" value={si.qty ?? 1} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
-                              className="w-14 border border-pink-300 rounded-md px-2 py-1 text-xs text-center" />
-                            <span className="text-[10px] text-pink-600 w-14">{studioUnitLabel(pat?.unit)}</span>
-                            <span className="text-[10px] text-pink-600 italic">flower recipe — no rental, priced separately</span>
-                            <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.filter((_, i) => i !== idx) }))}
-                              className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
+                          <div key={idx} className="bg-pink-50 border border-pink-200 rounded-lg px-2 py-1.5 space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded bg-pink-100 flex-shrink-0 flex items-center justify-center text-sm">🌸</div>
+                              <span className="flex-1 text-xs font-medium text-gray-700 truncate">{pat ? pat.name : `⚠ ${si.patternId} (recipe missing)`}</span>
+                              <input type="number" min="0" step="any" value={si.qty ?? 1} onChange={(e) => { const q = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, qty: q } : s) })); }}
+                                className="w-14 border border-pink-300 rounded-md px-2 py-1 text-xs text-center" />
+                              <span className="text-[10px] text-pink-600 w-14">{studioUnitLabel(pat?.unit)}</span>
+                              <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.filter((_, i) => i !== idx) }))}
+                                className="text-red-400 hover:text-red-600 text-sm px-1" title="Remove">×</button>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap pl-9 text-[9px]">
+                              {hasSizes && (
+                                <span className="flex items-center gap-1">
+                                  <span className="text-pink-500">Size:</span>
+                                  {sizeOpts.map((sk) => (
+                                    <button key={sk} onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, size: sk } : s) }))}
+                                      className={`px-1.5 py-0.5 rounded border ${(si.size || "medium") === sk ? "bg-pink-600 text-white border-pink-600" : "bg-white text-pink-600 border-pink-300"}`}>{szLabel(sk)}</button>
+                                  ))}
+                                </span>
+                              )}
+                              <span className="flex items-center gap-1">
+                                <span className="text-pink-500">Ratio:</span>
+                                <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, realPct: undefined } : s) }))} title="Use this sub-category's default real/artificial ratio"
+                                  className={`px-1.5 py-0.5 rounded border ${si.realPct == null ? "bg-pink-600 text-white border-pink-600" : "bg-white text-pink-600 border-pink-300"}`}>🌐 Default</button>
+                                <button onClick={() => setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, realPct: 100 } : s) }))} title="Price this recipe at 100% real, overriding the default"
+                                  className={`px-1.5 py-0.5 rounded border ${si.realPct === 100 ? "bg-pink-600 text-white border-pink-600" : "bg-white text-pink-600 border-pink-300"}`}>🎯 100%</button>
+                                <input type="number" min="0" max="100" value={si.realPct ?? ""} placeholder="%"
+                                  onChange={(e) => { const v = e.target.value; setEditForm((f) => ({ ...f, subItems: f.subItems.map((s, i) => i === idx ? { ...s, realPct: v === "" ? undefined : Math.max(0, Math.min(100, parseFloat(v) || 0)) } : s) })); }}
+                                  className="w-12 border border-pink-300 rounded px-1 py-0.5 text-center" />
+                              </span>
+                              <span className="text-pink-500 italic ml-auto">no rental, priced separately</span>
+                            </div>
                           </div>
                         );
                       }

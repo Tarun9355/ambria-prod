@@ -2541,13 +2541,20 @@ export default function StudioApp() {
       // element does (see the non-kit floral path below) — a sub-category floral_mode of real/
       // artificial pins it to 100/0, otherwise it follows the deal's floralRatio. `extra` (pot/base)
       // is added once, un-blended, matching getElPrice's composition order.
-      const recipeCost = (pattern, subKey, recipeQty = 1) => {
+      // `override` (a kit's own subItems/kitOverrides entry for this pattern add-on) lets each
+      // attached recipe pin its own SMB size and real/artificial ratio independent of the kit
+      // element's own size toggle and the deal's global ratio — set via the 🌐/🎯/Size controls in
+      // KitComponentsEditor.jsx and InventoryTab.jsx's kit builder. Undefined fields fall back to
+      // the previous shared behavior (element size / sub-category mode / global floralRatio).
+      const recipeCost = (pattern, subKey, recipeQty = 1, override) => {
         if (!pattern) return 0;
-        const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
+        const szKey = override?.size || sizeKey;
+        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
         if (!rates) return 0;
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
-        const realPct = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - floralRatio));
+        const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
         const blended = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
         return blended * (Number(recipeQty) || 0);
       };
@@ -2557,10 +2564,10 @@ export default function StudioApp() {
       const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
       const attachedPatterns = effectiveSubItems
         .filter((si) => si.patternId)
-        .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty }))
+        .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty, si }))
         .filter((x) => x.pattern);
       if (subCatPattern || attachedPatterns.length) {
-        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty), 0);
+        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0);
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
