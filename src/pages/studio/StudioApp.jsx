@@ -3802,7 +3802,13 @@ export default function StudioApp() {
       const existingTag = ytVideoTags[videoId] || {};
 
       const colorList = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || []);
-      const allVenues = [...allInhouseVenues, ...customOutdoor.map(o => o.name)];
+      // Match against every venue actually configured in Studio Settings → Venues (customInhouse),
+      // not the parent-filtered allInhouseVenues — that list silently drops any venue whose "Parent
+      // property" hasn't been set yet, so a real backend venue could never be resolved from a
+      // description. bestTaxMatch's substring containment already handles a venue being written
+      // with a property prefix in the description (e.g. "Ambria Valencia" vs. the venue's own bare
+      // name "Valencia") — it just needs the real name present in the candidate list to check against.
+      const allVenues = [...new Set([...customInhouse.map(v => v.name), ...customOutdoor.map(o => o.name)])].filter(Boolean);
 
       const venueRaw = extractLabeledValue(desc, "Venue");
       const matchedVenue = bestTaxMatch(venueRaw, allVenues);
@@ -3829,7 +3835,7 @@ export default function StudioApp() {
       };
       newTag._aiTagged = true;
       return newTag;
-  }, [ytVideoTags, allInhouseVenues, customOutdoor, taxonomy, imsPaletteCatalogue]);
+  }, [ytVideoTags, customInhouse, customOutdoor, taxonomy, imsPaletteCatalogue]);
 
   const aiTagVideo = useCallback(async (videoId) => {
     if (aiTaggingVideo) return;
