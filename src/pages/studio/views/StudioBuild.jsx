@@ -1386,9 +1386,13 @@ undefined
                       if (!li?._verified) return null;
                       const by = li._verifiedBy || "unknown";
                       const on = li._verifiedAt ? new Date(li._verifiedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : null;
-                      return <div title={`Verified by ${by}${on ? " on " + on : ""}`} style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:9,
-                        background:"rgba(0,0,0,0.6)",border:"1.5px solid #059669",color:"#059669",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                        <IconCheck size={11}/>
+                      // Solid green with a white ring and a drop shadow. The Library grid's dark disc
+                      // with a thin coloured ring works on its plain cards, but over a photo — light
+                      // stage, dark stage, foliage — it disappears.
+                      return <div title={`Verified by ${by}${on ? " on " + on : ""}`} style={{position:"absolute",top:6,right:6,width:21,height:21,borderRadius:11,
+                        background:"#059669",border:"2px solid rgba(255,255,255,0.92)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                        boxShadow:"0 2px 7px rgba(0,0,0,0.4)"}}>
+                        <IconCheck size={12}/>
                       </div>;
                     })()}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
