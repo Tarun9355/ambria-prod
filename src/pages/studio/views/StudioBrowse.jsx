@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconSparkle, IconCrown, IconSave, IconAlert, IconPlay,
-  IconPalette, IconClipboard } from "../../../components/icons.jsx";
+  IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
 
 export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
@@ -9,6 +9,7 @@ export default function StudioBrowse({ ctx }) {
   // selected, so nothing is hidden — you just don't scroll past options you aren't changing.
   const [openSections, setOpenSections] = useState({});
   const toggleSection = (k) => setOpenSections(p => ({ ...p, [k]: !p[k] }));
+  const [vq, setVq] = useState("");
   // Video id currently open in the "Fix taxonomy" modal (salesperson-facing correction,
   // separate from Manage's full tag editor) — null when closed.
   const [taxFixVid, setTaxFixVid] = useState(null);
@@ -43,6 +44,17 @@ export default function StudioBrowse({ ctx }) {
     inhouseParentNames, subVenuesOfParent, allInhouseVenueOrParentNames,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   } = ctx;
+  // Search narrows what the filters already produced, so the two compose instead of competing.
+  // Token-AND over the fields a card actually shows, so word order does not matter.
+  const shownVideos = (() => {
+    const tokens = vq.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return browseVideos;
+    return browseVideos.filter((v) => {
+      const hay = [v.title, v.venue, v.fn, ...(v.fns || []), v.space, v.tier, ...(v.styles || []), ...(v.colors || [])]
+        .filter(Boolean).join(" ").toLowerCase();
+      return tokens.every((t) => hay.includes(t));
+    });
+  })();
 
     // Resting elevation for the video tiles. Declared above VideoCard so it can't repeat the
     // use-before-init bug that bit the Event Info form. S.card ships with a border and no shadow,
@@ -390,8 +402,16 @@ export default function StudioBrowse({ ctx }) {
               })()}
             </div>
           )}
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <div style={{position:"relative",flex:1,maxWidth:360}}>
+              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",display:"flex",color:textM,pointerEvents:"none"}}><IconSearch size={13}/></span>
+              <input value={vq} onChange={e=>setVq(e.target.value)} placeholder="Search videos by name, venue, style…"
+                style={{...S.input,marginBottom:0,padding:"7px 30px 7px 30px",fontSize:12.5}}/>
+              {vq&&<span onClick={()=>setVq("")} title="Clear the search" style={{position:"absolute",right:9,top:"50%",transform:"translateY(-50%)",cursor:"pointer",color:textM,fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>}
+            </div>
+          </div>
           <div style={{display:"flex",alignItems:"baseline",gap:9,marginBottom:12,flexWrap:"wrap"}}>
-            <div style={{fontSize:13,fontWeight:600,color:textP}}>{browseVideos.length} video{browseVideos.length===1?"":"s"}</div>
+            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideos.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideos.length}</span>}</div>
             <div style={{fontSize:12,color:textM}}>{browseVenues.length>0?`at ${browseVenues.join(", ")}`:venueGroup!=="all"?`(${venueGroup})`:""}</div>
             {activeTotal>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:11,color:textM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
@@ -399,9 +419,9 @@ export default function StudioBrowse({ ctx }) {
             </div>}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
-            {browseVideos.map(v=><VideoCard key={v.id} v={v}/>)}
+            {shownVideos.map(v=><VideoCard key={v.id} v={v}/>)}
           </div>
-          {browseVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textM,background:cardBg,borderRadius:14,border:`1px dashed ${border}`}}>
+          {shownVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textM,background:cardBg,borderRadius:14,border:`1px dashed ${border}`}}>
             <div style={{fontSize:14,fontWeight:600,color:textP,marginBottom:4}}>No videos match these filters</div>
             <div style={{fontSize:12,marginBottom:activeTotal>0?14:12}}>Try changing filters, or tag more videos in Manage → Library</div>
             {/* The dead end is almost always a filter left on in a section scrolled out of view —
