@@ -406,25 +406,43 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   return(<>
     <div style={S.main}>
       <div style={{textAlign:"center",marginBottom:24}}><div style={{fontSize:40,marginBottom:8}}>{"🎉"}</div><div style={{fontSize:28,fontWeight:700}}>Decor Estimate</div>{clientName&&<div style={{fontSize:16,color:accentText,fontWeight:500}}>{clientName}</div>}<div style={{fontSize:14,color:textS}}>{venue} {"·"} {fn}{clientDate&&` · ${new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</div>{activeClient&&<div style={{marginTop:6}}><span style={{fontSize:10,padding:"3px 12px",borderRadius:8,background:accentBg,color:accentText,fontWeight:600}}>Meeting #{meetingNumber} with {activeClient.name}</span></div>}</div>
-      {/* ═══ EXPORT ═══ */}
-      <div style={{marginBottom:20}}>
-        <button onClick={()=>{saveSession();const d=buildCombinedCostSheetData();setCsData(JSON.parse(JSON.stringify(d)));}} style={{width:"100%",padding:"14px 16px",borderRadius:12,border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:"linear-gradient(135deg,#C9A96E,#8B7355)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(201,169,110,0.35)"}}>{"📋"} Preview & Export Cost Sheet</button>
-      </div>
       {/* Big Deal Check button removed 05 May 2026 — discreet ⚙ cog in header (line ~9993) is the canonical entry point per spec §7.9.2 */}
-      {/* ═══ SOLD BUTTON ═══ */}
-      {activeClient?.status==="booked"?<div style={{marginBottom:20,padding:"14px 16px",borderRadius:12,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",textAlign:"center"}}><span style={{fontSize:16}}>{"✅"}</span> <span style={{fontSize:14,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:11,color:textS,marginLeft:8}}>by {activeClient.bookedBy}</span>}</div>
-      :<div style={{marginBottom:20}}>
-        {(()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
-        <button onClick={markSold} disabled={!canSold} style={{width:"100%",padding:"16px 16px",borderRadius:12,border:"none",cursor:canSold?"pointer":"not-allowed",fontSize:16,fontWeight:700,background:canSold?"linear-gradient(135deg,#10B981,#059669)":"#333",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSold?"0 4px 20px rgba(16,185,129,0.35)":"none",opacity:canSold?1:0.5}}>{"🎉"} SOLD — Confirm Booking</button>
-        {!canSold&&<div style={{fontSize:10,color:textS,textAlign:"center",marginTop:6}}>Requires: {missing.join(", ")}</div>}
-        </>;})()}
+      {/* ═══ FIREWORKS ═══ Seven bursts across the screen, each throwing particles out radially
+          with a little gravity droop. Everything finishes inside the 4s markSold keeps the flag on. */}
+      {showSoldConfetti&&<div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:9999,overflow:"hidden"}}>
+        {Array.from({length:7}).map((_,b)=>{
+          const cx=10+Math.random()*80, cy=14+Math.random()*46;          // burst centre, in %
+          const col=["#C9A96E","#10B981","#F59E0B","#EC4899","#8B5CF6","#3B82F6","#EF4444"][b%7];
+          const delay=b*0.26+Math.random()*0.18;                        // staggered, not simultaneous
+          return Array.from({length:24}).map((__,p)=>{
+            const ang=(p/24)*Math.PI*2+Math.random()*0.2;
+            const dist=80+Math.random()*80;
+            return <span key={b+"-"+p} className="fw-p" style={{position:"absolute",left:`${cx}%`,top:`${cy}%`,
+              width:5,height:5,borderRadius:"50%",background:col,boxShadow:`0 0 8px ${col}`,opacity:0,
+              "--dx":`${Math.cos(ang)*dist}px`,"--dy":`${Math.sin(ang)*dist}px`,
+              animation:`fwBurst 1.3s cubic-bezier(.15,.6,.3,1) ${delay}s forwards`}}/>;
+          });
+        })}
+        <style>{`@keyframes fwBurst{
+          0%{transform:translate(0,0) scale(1);opacity:1}
+          60%{opacity:1}
+          100%{transform:translate(var(--dx),calc(var(--dy) + 30px)) scale(.3);opacity:0}}
+          @media (prefers-reduced-motion: reduce){.fw-p{animation:none !important;opacity:0}}`}</style>
       </div>}
-      {/* ═══ CONFETTI ═══ */}
-      {showSoldConfetti&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,pointerEvents:"none",zIndex:9999,overflow:"hidden"}}>{Array.from({length:60}).map((_,i)=><div key={i} style={{position:"absolute",left:`${Math.random()*100}%`,top:"-10%",width:Math.random()*10+6,height:Math.random()*10+6,borderRadius:Math.random()>0.5?"50%":"2px",background:["#C9A96E","#10B981","#F59E0B","#EC4899","#8B5CF6","#3B82F6","#EF4444"][i%7],animation:`confettiFall ${1.5+Math.random()*2}s ease-in forwards`,animationDelay:`${Math.random()*0.8}s`,opacity:0.9}}/>)}<style>{`@keyframes confettiFall{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(${360+Math.random()*360}deg);opacity:0}}`}</style></div>}
       <div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:20,padding:"28px 32px",color:"#fff",textAlign:"center",marginBottom:28}}>
         <div style={{fontSize:13,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Total Estimate</div>
         <div style={{fontSize:42,fontWeight:700,marginBottom:8}}>{fmt(eventGrandTotal)}</div>
         <div style={{display:"inline-block",padding:"6px 20px",borderRadius:14,fontSize:14,fontWeight:600,background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
+        {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
+            rather than a full-width bar above the panel. */}
+        <div style={{marginTop:16}}>
+        {activeClient?.status==="booked"
+          ? <div style={{padding:"14px 16px",borderRadius:12,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",textAlign:"center"}}><span style={{fontSize:16}}>{"✅"}</span> <span style={{fontSize:14,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:11,color:textS,marginLeft:8}}>by {activeClient.bookedBy}</span>}</div>
+          : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
+          <button onClick={markSold} disabled={!canSold} style={{padding:"9px 22px",borderRadius:10,border:"none",cursor:canSold?"pointer":"not-allowed",fontSize:12.5,fontWeight:700,background:canSold?"linear-gradient(135deg,#10B981,#059669)":"#333",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSold?"0 4px 20px rgba(16,185,129,0.35)":"none",opacity:canSold?1:0.5}}>{"🎉"} SOLD — Confirm Booking</button>
+          {!canSold&&<div style={{fontSize:10,color:textS,textAlign:"center",marginTop:6}}>Requires: {missing.join(", ")}</div>}
+          </>;})()}
+        </div>
         {(() => {
           const allFns = collectAllFunctionData();
           return allFns.length > 1 ? <div style={{fontSize:11,color:"#a5b4fc",marginTop:10}}>{allFns.length} functions · {allFns.map(f => f.fnType || "—").join(" + ")}</div> : null;
