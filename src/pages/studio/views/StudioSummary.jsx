@@ -603,10 +603,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 .sh-3{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .34s forwards}
 .sh-4{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .42s forwards}
 .sh-rule{width:0;opacity:0;animation:shRule .5s cubic-bezier(.22,.61,.36,1) .5s forwards}
+/* ═══ PREVIEW BUTTON ═══ Sits in the Total Estimate card's top-right corner. The glow is a
+   breathing box-shadow on the button plus a soft blurred halo behind it (.sh-pv-glow), so the
+   pulse reads on the dark gradient without the button itself changing size. */
+@keyframes pvPulse{
+  0%,100%{box-shadow:0 0 0 1px rgba(201,169,110,.55),0 0 10px rgba(201,169,110,.35),0 0 22px rgba(201,169,110,.18)}
+  50%{box-shadow:0 0 0 1px rgba(201,169,110,.9),0 0 18px rgba(201,169,110,.65),0 0 40px rgba(201,169,110,.4)}
+}
+@keyframes pvHalo{0%,100%{opacity:.35;transform:scale(1)}50%{opacity:.7;transform:scale(1.09)}}
+.sh-pv{position:relative;background:linear-gradient(135deg,#D9B87C,#B08D4F);color:#1A1206;animation:pvPulse 2.4s ease-in-out infinite;transition:background .18s,filter .18s,transform .18s}
+.sh-pv:hover{background:linear-gradient(135deg,#E8CFA0,#C9A96E);filter:brightness(1.06);transform:translateY(-1.5px)}
+.sh-pv:active{transform:translateY(0);filter:brightness(.96)}
+.sh-pv-glow{position:absolute;inset:-6px;border-radius:12px;background:radial-gradient(closest-side,rgba(201,169,110,.5),transparent 72%);filter:blur(7px);pointer-events:none;animation:pvHalo 2.4s ease-in-out infinite}
 @media (prefers-reduced-motion: reduce){
   .sh-badge,.sh-1,.sh-2,.sh-3,.sh-4{animation:none;opacity:1;transform:none}
   .sh-rule{animation:none;opacity:1;width:56px}
   .sh-halo{animation:none;opacity:0}
+  .sh-pv{animation:none;box-shadow:0 0 0 1px rgba(201,169,110,.7)}
+  .sh-pv-glow{animation:none;opacity:.4}
 }
       `}</style>
       <div style={{textAlign:"center",marginBottom:28}}>
@@ -646,7 +660,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           100%{transform:translate(var(--dx),calc(var(--dy) + 30px)) scale(.3);opacity:0}}
           @media (prefers-reduced-motion: reduce){.fw-p{animation:none !important;opacity:0}}`}</style>
       </div>}
-      <div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:20,padding:"28px 32px",color:"#fff",textAlign:"center",marginBottom:28}}>
+      <div style={{position:"relative",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:20,padding:"28px 32px",color:"#fff",textAlign:"center",marginBottom:28}}>
+        {/* Preview — opens the full cost-sheet overlay (csData). Only gate is having at least one
+            function to show; the sheet itself is editable and exports to PDF/PPT/Canva. */}
+        <button className="sh-pv" onClick={()=>setCsData(buildCombinedCostSheetData())} title="Preview the full cost sheet"
+          style={{position:"absolute",top:16,right:16,padding:"7px 16px",borderRadius:9,border:"none",cursor:"pointer",
+            fontSize:12,fontWeight:700,letterSpacing:.3,
+            display:"inline-flex",alignItems:"center",gap:7,zIndex:1}}>
+          <span className="sh-pv-glow"/>
+          <span style={{position:"relative"}}>{"👁"} Preview</span>
+        </button>
         <div style={{fontSize:13,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Total Estimate</div>
         <div style={{fontSize:42,fontWeight:700,marginBottom:8}}>{fmt(eventGrandTotal)}</div>
         <div style={{display:"inline-block",padding:"6px 20px",borderRadius:14,fontSize:14,fontWeight:600,background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
