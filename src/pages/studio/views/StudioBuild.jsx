@@ -957,12 +957,14 @@ export default function StudioBuild({ ctx }) {
    4 across with the side rails open, 6 with them folded. The count is set rather than derived from
    a minimum width, because auto-fill gave only 3 whenever the column sat just under the threshold for
    a 4th track. Cards fill their track exactly - no width cap - so a fixed count leaks no slack.
-   align-items:start — stretching made a plain card as tall as the kit card beside it.
+   align-items:stretch — every card in a row is the same height. This was start for a while,
+   because a tall kit stretched the short card beside it into a mostly-empty box; grouping kits
+   into their own rows removed that, so a row now only ever holds one kind of card.
    Every card takes one track. Cards are GROUPED — plain first, kits after — and the first kit is
    pinned to column 1 so the kits begin a fresh row: grouping alone still let one kit share the last
    plain row and set its height. Kits then stretch to their row height so they match each other, while
    plain cards keep their natural height (uniform already, via minHeight). */
-.el-grid{display:grid;grid-template-columns:repeat(var(--el-cols,4),minmax(0,1fr));gap:16px;align-items:start}
+.el-grid{display:grid;grid-template-columns:repeat(var(--el-cols,4),minmax(0,1fr));gap:16px;align-items:stretch}
 /* The count comes from the rails; these only stop the cards getting too narrow to hold the
    S/M/B + Ratio row on smaller screens. */
 @media (max-width:1200px){.el-grid{--el-cols:3 !important}}
@@ -1532,7 +1534,7 @@ undefined
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:firstKit?"1":"span 1",alignSelf:isKit?"stretch":"start",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:firstKit?"1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -2009,7 +2011,7 @@ undefined
                 const thumbKey = `${k}:${idx}`;
                 const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:firstKit?"1":"span 1",alignSelf:isKit?"stretch":"start",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:firstKit?"1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
