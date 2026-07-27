@@ -730,6 +730,19 @@ export default function StudioBuild({ ctx }) {
   const zoneFetchInFlight = useRef(new Set());
   const [matchGen, setMatchGen] = useState(0);
   useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters)]);
+  // Which library "areas / zones" tags feed this zone. Static map first; custom or renamed zones
+  // have no entry, so fall back to their display label — reverse-looked-up into the area-set that
+  // contains it, else used as an area name of its own. One definition, three callers: the strip, the
+  // prefetch effect, and the tag-correction save below.
+  const areaNamesFor = (elKey) => {
+    const raw = ZONE_TYPE_TO_AREA[elKey];
+    const names = Array.isArray(raw) ? [...raw] : (raw ? [raw] : []);
+    if (names.length) return names;
+    const label = (zoneLabelsD[elKey]?.label) || elKey || "";
+    if (!label) return [];
+    const hit = Object.values(ZONE_TYPE_TO_AREA).find((arr) => (arr || []).includes(label));
+    return hit ? [...hit] : [label];
+  };
   const ensureZoneMatches = (areaNames) => {
     if (!areaNames.length) return;
     const cacheKey = `${matchGen}::${areaNames.join("|")}`;
@@ -745,32 +758,13 @@ export default function StudioBuild({ ctx }) {
     keys.forEach((k) => {
       const czSrc = customZones.find(cz => cz.id === k);
       const srcType = czSrc?.sourceType || k;
-      const areaNamesRaw = ZONE_TYPE_TO_AREA[srcType];
-      let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
-      if (!areaNames.length) {
-        const label = (zoneLabelsD[srcType]?.label) || srcType || "";
-        if (label) { const hit = Object.values(ZONE_TYPE_TO_AREA).find(arr => (arr || []).includes(label)); areaNames = hit ? [...hit] : [label]; }
-      }
-      ensureZoneMatches(areaNames);
+      ensureZoneMatches(areaNamesFor(srcType));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneKeys, customZones, matchGen]);
 
   const getMatchedPhotos = (elKey) => {
-    const areaNamesRaw = ZONE_TYPE_TO_AREA[elKey];
-    let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
-    // Custom / renamed zones (keys living in zoneDefs.meta, not the static map) have no direct
-    // area mapping. Resolve them by display label so they're still zone-restricted instead of
-    // falling through to the "show any library photo" padding below (which leaks e.g. Bar photos
-    // into a Lounge section). Reverse-lookup the area-set that contains the label; else use the
-    // label itself as the area name.
-    if (!areaNames.length) {
-      const label = (zoneLabelsD[elKey]?.label) || elKey || "";
-      if (label) {
-        const hit = Object.values(ZONE_TYPE_TO_AREA).find(arr => (arr || []).includes(label));
-        areaNames = hit ? [...hit] : [label];
-      }
-    }
+    const areaNames = areaNamesFor(elKey);
     const photos = [];
     const seen = new Set();
 
@@ -2336,6 +2330,17 @@ undefined
         // nothing on screen. Bumping matchGen invalidates every cached zone set and refetches —
         // the corrected photo leaves its old strip and appears in the newly tagged one, live.
         setMatchGen(g => g + 1);
+        // Refetching is not enough on its own: the strip pins the SELECTED photo even when the zone
+        // no longer returns it, and the photo being corrected is always this zone's selection. If its
+        // new tags no longer cover this zone, release the selection so it can actually leave.
+        // zoneElements / zoneConfig stay — the elements were built by hand and are not the photo's.
+        {
+          const czSrcZ = customZones.find(cz => cz.id === zk);
+          const areas = areaNamesFor(czSrcZ?.sourceType || zk);
+          const tagged = correctPhoto.tags?.areasElements || [];
+          const stillInZone = areas.length ? tagged.some(a => areas.includes(a)) : true;
+          if (!stillInZone) setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
+        }
         setCorrectPhoto(null);
       };
       return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}}>
