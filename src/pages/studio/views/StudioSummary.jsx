@@ -302,11 +302,27 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           });
         });
 
-        // ── Section header slide ──
+        // ── Section header slide — a full-bleed photo title card when a zone photo exists (this used
+        // to be title + gold line + a total band floating over a mostly-blank white slide, which read
+        // as an empty/unfinished page since the Overview slide right after already shows the same
+        // total). A hero photo behind the function name is the standard decor-deck divider pattern. ──
         slide = pptx.addSlide();
-        slide.background = { fill: "FFFFFF" };
-        slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 0.35, w: 8.8, fontSize: 18, fontFace: "Arial", color: dark, bold: true });
-        slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+        const dividerPhoto = moodPhotos[0] || null;
+        if (dividerPhoto) {
+          slide.background = { fill: dark };
+          try {
+            const imgOpts = { x: 0, y: 0, w: 10, h: 7.5, sizing: { type: "cover", w: 10, h: 7.5 } };
+            if (dividerPhoto.startsWith("data:")) imgOpts.data = dividerPhoto; else imgOpts.path = dividerPhoto;
+            slide.addImage(imgOpts);
+          } catch {}
+          slide.addShape(pptx.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 7.5, fill: { color: dark, transparency: 42 }, line: { type: "none" } });
+          slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.8, y: 3.2, w: 8.4, fontSize: 26, fontFace: "Arial", color: "FFFFFF", bold: true, align: "center" });
+          slide.addShape(pptx.shapes.LINE, { x: 4.0, y: 3.95, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+        } else {
+          slide.background = { fill: "FFFFFF" };
+          slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 3.2, w: 8.8, fontSize: 22, fontFace: "Arial", color: dark, bold: true, align: "center" });
+          slide.addShape(pptx.shapes.LINE, { x: 4.0, y: 3.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+        }
         // Function-level grand total band at bottom
         slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 6.4, w: 8.8, h: 0.7, fill: { color: dark }, rectRadius: 0.1 });
         slide.addText([{ text: "Function Total  ", options: { fontSize: 12, color: "A5B4FC" } }, { text: f(fnObj.grand), options: { fontSize: 18, color: gold, bold: true } }], { x: 0.8, y: 6.45, w: 8.4, h: 0.6, align: "center", valign: "middle" });
