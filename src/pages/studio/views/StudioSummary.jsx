@@ -11,13 +11,14 @@
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
 import { useState } from "react";
+import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
   const {
     // theme / chrome
-    S, isDark, border, textS, textP, accentBg, accentText, fmt,
+    S, isDark, accent, border, textS, textP, accentBg, accentText, fmt,
     // client / venue meta
     venue, clientName, fn, clientDate, allVenueData, activeClient, meetingNumber,
     // events / cost sheet
@@ -405,7 +406,41 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   const vb=venue&&allVenueData[venue]?allVenueData[venue].base:0;
   return(<>
     <div style={S.main}>
-      <div style={{textAlign:"center",marginBottom:24}}><div style={{fontSize:40,marginBottom:8}}>{"🎉"}</div><div style={{fontSize:28,fontWeight:700}}>Decor Estimate</div>{clientName&&<div style={{fontSize:16,color:accentText,fontWeight:500}}>{clientName}</div>}<div style={{fontSize:14,color:textS}}>{venue} {"·"} {fn}{clientDate&&` · ${new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</div>{activeClient&&<div style={{marginTop:6}}><span style={{fontSize:10,padding:"3px 12px",borderRadius:8,background:accentBg,color:accentText,fontWeight:600}}>Meeting #{meetingNumber} with {activeClient.name}</span></div>}</div>
+      <style>{`
+/* ═══ ESTIMATE HEADER ═══ Staggered entrance. Every animated part starts hidden with fill-mode
+   forwards, so prefers-reduced-motion must restore the END state, not just cancel the animation —
+   cancelling alone would leave the whole header invisible. */
+@keyframes shPop{0%{opacity:0;transform:scale(.72)}62%{transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
+@keyframes shRise{0%{opacity:0;transform:translateY(11px)}100%{opacity:1;transform:none}}
+@keyframes shHalo{0%{opacity:.45;transform:scale(.86)}100%{opacity:0;transform:scale(1.55)}}
+@keyframes shRule{0%{width:0;opacity:0}100%{width:56px;opacity:1}}
+.sh-badge{opacity:0;animation:shPop .62s cubic-bezier(.34,1.4,.5,1) .05s forwards}
+.sh-halo{animation:shHalo 2.1s ease-out .55s 2}
+.sh-1{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .18s forwards}
+.sh-2{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .26s forwards}
+.sh-3{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .34s forwards}
+.sh-4{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .42s forwards}
+.sh-rule{width:0;opacity:0;animation:shRule .5s cubic-bezier(.22,.61,.36,1) .5s forwards}
+@media (prefers-reduced-motion: reduce){
+  .sh-badge,.sh-1,.sh-2,.sh-3,.sh-4{animation:none;opacity:1;transform:none}
+  .sh-rule{animation:none;opacity:1;width:56px}
+  .sh-halo{animation:none;opacity:0}
+}
+      `}</style>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div className="sh-badge" style={{position:"relative",width:60,height:60,margin:"0 auto 14px",borderRadius:"50%",
+          display:"flex",alignItems:"center",justifyContent:"center",color:accent,
+          background:isDark?"rgba(201,169,110,0.12)":"rgba(201,169,110,0.13)",border:`1px solid ${accent}55`,
+          boxShadow:isDark?"0 10px 26px -14px rgba(0,0,0,0.7)":"0 10px 26px -14px rgba(201,169,110,0.55)"}}>
+          <IconSparkle size={26}/>
+          <span className="sh-halo" style={{position:"absolute",inset:-7,borderRadius:"50%",border:`1px solid ${accent}`,opacity:0,pointerEvents:"none"}}/>
+        </div>
+        <div className="sh-1" style={{fontSize:30,fontWeight:700,letterSpacing:-0.6,lineHeight:1.15}}>Decor Estimate</div>
+        {clientName&&<div className="sh-2" style={{fontSize:16,color:accentText,fontWeight:600,marginTop:3}}>{clientName}</div>}
+        <div className="sh-3" style={{fontSize:13.5,color:textS,marginTop:3}}>{venue} {"·"} {fn}{clientDate&&` · ${new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</div>
+        {activeClient&&<div className="sh-4" style={{marginTop:9}}><span style={{fontSize:10,padding:"3px 12px",borderRadius:8,background:accentBg,color:accentText,fontWeight:600}}>Meeting #{meetingNumber} with {activeClient.name}</span></div>}
+        <div className="sh-rule" style={{height:2,borderRadius:2,margin:"16px auto 0",background:`linear-gradient(90deg,transparent,${accent},transparent)`}}/>
+      </div>
       {/* Big Deal Check button removed 05 May 2026 — discreet ⚙ cog in header (line ~9993) is the canonical entry point per spec §7.9.2 */}
       {/* ═══ FIREWORKS ═══ Seven bursts across the screen, each throwing particles out radially
           with a little gravity droop. Everything finishes inside the 4s markSold keeps the flag on. */}
