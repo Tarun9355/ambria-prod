@@ -572,6 +572,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       if (fnObj.fnShift) parts.push(fnObj.fnShift);
       return parts.filter(Boolean).join(" · ");
     };
+    // Looks up an inventory item's own photo by name — same name match buildPptx's itemPhotoFor
+    // uses, since the cost-sheet data only carries a name/qty/rate, not the inventory id.
+    const itemPhotoFor = (name) => {
+      const inv = (imsInventory || []).find((i) => (i.name || "").toLowerCase() === String(name || "").toLowerCase());
+      return inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || null;
+    };
     const sections = [];
 
     const fnLines = combined.functions.map(fnLine).join("\n");
@@ -584,6 +590,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       }
       const zonePhotos = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4);
       sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
+
+      // One highlight card per zone that has a photo — the zone's hero shot plus its own decor
+      // items' photos (so the deck shows the actual pieces going into that zone, not just a table row).
+      fnObj.zones.forEach((z) => {
+        if (!z.photo || z.photo.startsWith("data:")) return;
+        const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img && !it.img.startsWith("data:")).slice(0, 4);
+        const itemLines = withPhoto.map((it) => `${it.name}\n${it.img}`).join("\n\n");
+        sections.push([`# ${fnLine(fnObj)} — ${z.label}`, z.photo, itemLines].filter(Boolean).join("\n\n"));
+      });
 
       const rows = fnObj.zones.map((z) => `| ${z.label} | ${z.items.length} | ${f(z.structTotal)} | ${f(z.itemTotal)} | ${f(z.zoneTotal)} |`).join("\n");
       const tbl = `| Zone | Items | Structure | Decor Items | Zone Total |\n|---|---|---|---|---|\n${rows}`;
