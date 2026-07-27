@@ -1300,7 +1300,7 @@ undefined
                   {elSelectedPhoto[k]&&<div style={{fontSize:10,color:"#059669",fontWeight:600}}>✓ {elSelectedPhoto[k].eventName}</div>}
                   <label style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading===k?accent+"20":"transparent",color:zoneUploading===k?accent:accent,fontSize:10,fontWeight:600,cursor:zoneUploading?"wait":"pointer",display:"flex",alignItems:"center",gap:3}}>
                     {zoneUploading===k?"Uploading…":<><IconCamera size={11}/>Upload</>}
-                    <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                    <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                   </label>
                   <button onClick={()=>setGridZones(g=>({...g,[k]:!g[k]}))} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>
                   <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
@@ -1459,7 +1459,7 @@ undefined
                 {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
                 <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
                   {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
-                  <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                  <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                 </label>
               </div>
             </div>
