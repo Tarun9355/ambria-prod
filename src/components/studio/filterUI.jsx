@@ -77,14 +77,21 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
     </div>
   );
 
-  // Panel shell: the card, the sticky title row, the total count and the reset.
+  // Panel shell: the card, the pinned title row, the total count and the reset.
   // `action` is an optional node pinned to the end of the header — Build uses it for the
   // collapse-the-rails control. Browse passes nothing and renders exactly as before.
-  const Panel = ({ title = "Filters", total = 0, onClear, note, action, children }) => (
+  //
+  // `scroll` turns the body into its own scroll area capped to the viewport. Without it the panel
+  // has no scrollport of its own, so a wheel over the filters just scrolls the page — the sections
+  // below the fold are only reachable by scrolling the whole layout past them. `overscrollBehavior:
+  // contain` is the other half: it stops the scroll chaining back to the page once the body bottoms
+  // out. The header sits outside the scrollport, so it stays put without needing position:sticky.
+  const Panel = ({ title = "Filters", total = 0, onClear, note, action, scroll, children }) => (
     <div className="sb-panel" style={{...S.card, padding:0, boxShadow: isDark
       ? "0 1px 2px rgba(0,0,0,0.45), 0 10px 26px -12px rgba(0,0,0,0.6)"
-      : "0 1px 2px rgba(26,26,46,0.06), 0 10px 26px -12px rgba(26,26,46,0.2)"}}>
-      <div style={{position:"sticky",top:0,zIndex:1,display:"flex",alignItems:"center",gap:8,
+      : "0 1px 2px rgba(26,26,46,0.06), 0 10px 26px -12px rgba(26,26,46,0.2)",
+      ...(scroll ? {display:"flex",flexDirection:"column",minHeight:0,maxHeight:scroll,overflow:"hidden"} : null)}}>
+      <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:8,
         padding:"13px 16px",borderBottom:`1px solid ${hairline}`,
         background:isDark?"#1A1A2E":"linear-gradient(180deg,#FEFCF8,#fff)"}}>
         <div style={{fontSize:13.5,fontWeight:700,color:textP,letterSpacing:-0.1}}>{title}</div>
@@ -96,7 +103,9 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
         {/* marginLeft:auto only if nothing before it already claimed the gap */}
         {action && <div style={{marginLeft:(total > 0 || note) ? 0 : "auto",display:"flex",alignItems:"center",flexShrink:0}}>{action}</div>}
       </div>
-      <div style={{padding:"14px 16px 16px"}}>{children}</div>
+      <div className={scroll ? "sb-scroll" : undefined}
+        style={{padding:"14px 16px 16px",
+          ...(scroll ? {flex:1,minHeight:0,overflowY:"auto",overscrollBehavior:"contain"} : null)}}>{children}</div>
     </div>
   );
 
@@ -114,6 +123,13 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
 .sb-panel:hover{box-shadow:${isDark
   ? "0 2px 4px rgba(0,0,0,0.5), 0 18px 36px -14px rgba(0,0,0,0.7)"
   : "0 2px 4px rgba(26,26,46,0.08), 0 18px 36px -14px rgba(26,26,46,0.28)"} !important}
+/* Slim scrollbar for the panel body — the default chrome one is wide enough to crowd a 248px rail.
+   No fade/gradient cue over the content: an earlier attempt at that covered the last rows of pills. */
+.sb-scroll{scrollbar-width:thin;scrollbar-color:${isDark?"rgba(255,255,255,0.18) transparent":"rgba(26,26,46,0.18) transparent"}}
+.sb-scroll::-webkit-scrollbar{width:7px}
+.sb-scroll::-webkit-scrollbar-track{background:transparent}
+.sb-scroll::-webkit-scrollbar-thumb{background:${isDark?"rgba(255,255,255,0.16)":"rgba(26,26,46,0.16)"};border-radius:999px}
+.sb-scroll:hover::-webkit-scrollbar-thumb{background:${isDark?"rgba(255,255,255,0.28)":"rgba(26,26,46,0.28)"}}
 `;
   // Reduced-motion is deliberately NOT bundled here: each page already emits one combined
   // @media block covering its own classes too, and a second one would just duplicate it.

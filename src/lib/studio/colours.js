@@ -34,3 +34,27 @@ export const swatchHexFor = (name, colourCatalogue, override) => {
   const css = cssColourToHex(key);
   return css || "#cccccc";
 };
+
+// ═══ PALETTE NAMES ═══ Single source for "which palettes does the catalogue actually offer".
+//
+// Every caller used to gate on `imsPaletteCatalogue.length > 0` and fall back to the taxonomy list
+// only when the catalogue was completely empty. One click of "+ Add Palette" in Manage → Library
+// writes `{name:"New Palette", anchorColours:[]}` straight to the DB, and that single placeholder
+// was enough to make the catalogue "non-empty" — which suppressed all 13 taxonomy palettes and left
+// the Browse/Build filters showing nothing but "All" and "New Palette".
+//
+// A row counts as a real palette only if it has been named. An untouched "New Palette" with no
+// anchor colours is the editor's placeholder, not a choice anyone made, so it never counts. Rename
+// it (or give it colours) and it starts counting like any other.
+export const isPlaceholderPalette = (p) => {
+  const name = String(p?.name || "").trim();
+  if (!name) return true;
+  return name.toLowerCase() === "new palette" && !(p?.anchorColours || []).length;
+};
+
+export const paletteNames = (paletteCatalogue, taxonomyPalettes, fallback = []) => {
+  const real = (paletteCatalogue || []).filter((p) => !isPlaceholderPalette(p)).map((p) => p.name);
+  if (real.length) return real;
+  const tax = (taxonomyPalettes || []).filter(Boolean);
+  return tax.length ? tax : fallback;
+};

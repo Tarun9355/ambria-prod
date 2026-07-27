@@ -8,6 +8,7 @@ import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
 } from "../../../lib/studio/taxonomy";
+import { paletteNames } from "../../../lib/studio/colours";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
@@ -853,13 +854,14 @@ export default function StudioBuild({ ctx }) {
         { key:"eventType",    label:"Event type",    opts: taxOr(taxonomy.eventType, FUNCTIONS) },
         { key:"venueType",    label:"Venue type",    opts: taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]) },
         { key:"designStyle",  label:"Design style",  opts: taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]) },
-        { key:"colorPalette", label:"Color palette", cols:1, opts: (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])) },
+        { key:"colorPalette", label:"Color palette", cols:1, opts: paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]) },
         { key:"timeSetting",  label:"Day / Night",   opts: taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]) },
         { key:"venue",        cols:2, label:`Venue${zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}`, opts: zpVenueChoices, empty:"No venues configured yet" },
       ];
       const total = Object.values(zpFilters).flat().length;
       const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
       return <FPanel title="Photo filters" total={total} onClear={clearAll} note="Applies to every zone"
+        scroll="calc(100vh - 86px)"
         action={<span className="rail-btn" onClick={()=>setRailsOpen(false)} title="Fold both side panels away and widen the build"
           style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.4,
             textTransform:"uppercase",color:textS,padding:"3px 7px",borderRadius:7,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>

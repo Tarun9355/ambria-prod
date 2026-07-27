@@ -29,6 +29,7 @@ import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
+import { paletteNames } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
@@ -3852,7 +3853,7 @@ export default function StudioApp() {
       const desc = snippet.description || "";
       const existingTag = ytVideoTags[videoId] || {};
 
-      const colorList = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : (taxonomy.colorPalette || []);
+      const colorList = paletteNames(imsPaletteCatalogue, taxonomy.colorPalette);
       const venueRaw = extractLabeledValue(desc, "Venue");
       // Resolve the venue in priority order: (1) a specific sub-venue/room name — matches against
       // every venue actually configured in Studio Settings → Venues (customInhouse), not the
@@ -4801,7 +4802,7 @@ export default function StudioApp() {
     // Structured-outputs schema — the 7 tag fields are LOCKED to your exact taxonomy values (enums), so
     // Claude can never return an off-list or mis-cased tag (the root of photos not matching their zone).
     // Element names stay free text (the fuzzy match below maps them to IMS inventory / flags new items).
-    const paletteVals = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxonomy.colorPalette;
+    const paletteVals = paletteNames(imsPaletteCatalogue, taxonomy.colorPalette);
     // Lock to the taxonomy values; if a list is empty, fall back to a free string array (an empty
     // enum is an invalid schema and would 400 every request).
     const enumArr = (vals) => ({ type: "array", items: (Array.isArray(vals) && vals.length) ? { type: "string", enum: vals } : { type: "string" } });
