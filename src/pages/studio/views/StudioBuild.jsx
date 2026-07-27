@@ -939,10 +939,11 @@ export default function StudioBuild({ ctx }) {
    auto-fill, so the browser decides the column count from the 272px minimum rather than me guessing
    it: 3 across with the side rails open, 5 with them folded, and the gap is 16px at every width.
    align-items:start — stretching made a plain card as tall as the kit card beside it.
-   Every card takes ONE track, kits included. A two-track kit cannot start on the last column, so it
-   skipped ahead and left a hole; dense packing filled the hole but pulled a later card visually ahead
-   of the kit. One track each is the only arrangement that keeps cards in the order they were added
-   AND leaves no gap. The kit contents still fit, because their name cell wraps. */
+   A KIT card takes the whole row; every other card takes one track. Grid rows are uniform height, so
+   a ~450px kit sharing a row with two ~104px cards left a chasm under each of them — roughly 960px of
+   dead space across a nine-card list, against 272px once kits get their own row. Order is preserved
+   either way (no dense packing); the cost is that the row before a kit can end with an empty cell,
+   which is a short gap rather than a tall one. */
 .el-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px;align-items:start}
 /* ═══ ELEMENT CARD HOVER ═══
    Resting cards are flat outlines so the grid reads as one calm surface. Hover lifts exactly one
@@ -1509,7 +1510,7 @@ undefined
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -1987,7 +1988,7 @@ undefined
                 const thumbKey = `${k}:${idx}`;
                 const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
