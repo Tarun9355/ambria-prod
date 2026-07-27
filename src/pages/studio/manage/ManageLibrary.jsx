@@ -140,7 +140,7 @@ export default function ManageLibrary({ ctx }) {
     S, isDark, accent, border, textS, fmt,
     accentBg, accentText, textP, cardBg,
     // taxonomy
-    taxonomy, setTaxonomy, saveTax, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData,
+    taxonomy, setTaxonomy, saveTax, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData, paletteCatalogueLoaded,
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
     allInhouseVenues, allOutdoorDB, customOutdoor, inhouseParentNames, allInhouseVenueOrParentNames, subVenuesOfParent, leafInhouseVenues,
@@ -1760,9 +1760,12 @@ export default function ManageLibrary({ ctx }) {
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
-        <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes ({imsPaletteCatalogue.length})</button>
+        <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
       </div>
-      {libView === "palettes" && (
+      {libView === "palettes" && !paletteCatalogueLoaded && (
+        <div style={{ maxWidth: 650, padding: "24px 18px", textAlign: "center", color: textS, fontSize: 12 }}>Loading palette catalogue…</div>
+      )}
+      {libView === "palettes" && paletteCatalogueLoaded && (
         <div style={{ maxWidth: 650 }}>
           {/* 🎨 Colour Catalogue */}
           <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px", marginBottom: 12 }}>

@@ -1362,6 +1362,15 @@ export default function StudioApp() {
   const [studioFloralData, setStudioFloralData] = useState(null);
   const [imsColourCatalogue, setImsColourCatalogue] = useState([]);
   const [imsPaletteCatalogue, setImsPaletteCatalogue] = useState([]);
+  // Guards savePaletteData against the mount race that wiped a real palette catalogue on
+  // 2026-07-27: the initial PALETTE_SK fetch sits behind ~24 other sequential kvGet calls, so for a
+  // moment after mount imsPaletteCatalogue is still its useState([]) default — genuinely empty, not
+  // "confirmed empty from the DB". Saving during that window overwrites real data with nothing.
+  // Both flip true once the fetch below has had its one chance to populate state, whatever it found
+  // — the ref is the actual save-time guard (doesn't need a re-render), the state drives the Manage
+  // Library Palettes tab showing "Loading…" instead of a confidently-empty, clickable "+ Add" panel.
+  const paletteLoadedRef = useRef(false);
+  const [paletteCatalogueLoaded, setPaletteCatalogueLoaded] = useState(false);
   const [imsPaintableCategories, setImsPaintableCategories] = useState(["Props", "Arches", "Panels", "Pillars", "Glass", "Structural", "Furniture", "Stage", "Consumable", "Arches & Props", "Wall Masking"]);
   const [imsDefaultPaintCost, setImsDefaultPaintCost] = useState(400);
   // AI Synonym Dictionary (IMS Admin → Settings → 🔤 AI Synonyms, e.g. Jali/Lattice/Mesh/Screen) —
@@ -1382,6 +1391,10 @@ export default function StudioApp() {
   // growing list of positional args as more of these settings-driven rates get added.
   // Save colour + palette catalogues to Studio-owned PALETTE_SK
   const savePaletteData = useCallback((colours, palettes) => {
+    if (!paletteLoadedRef.current) {
+      showMsg("Still loading the palette catalogue — try again in a moment", "red");
+      return;
+    }
     const data = { colourCatalogue: colours || imsColourCatalogue, paletteCatalogue: palettes || imsPaletteCatalogue };
     reliableSave(PALETTE_SK, JSON.stringify(data), "Palette catalogue").catch(() => {});
   }, [imsColourCatalogue, imsPaletteCatalogue]);
@@ -1997,6 +2010,7 @@ export default function StudioApp() {
       try {
         const palv = await kvGet(PALETTE_SK);
         if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
+        if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
         const sv = await kvGet(IMS_SETTINGS_SK);
         if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
       } catch {}
@@ -6389,7 +6403,7 @@ export default function StudioApp() {
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
     studioFloralData, venueParents,
-    imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, imsPaintableCategories, setImsPaintableCategories,
+    imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
     dcManualSearch, setDcManualSearch, dcDedupOverrides, setDcDedupOverrides, dcBlockedFnOpen, setDcBlockedFnOpen, dcBlockedSubOpen, setDcBlockedSubOpen,
