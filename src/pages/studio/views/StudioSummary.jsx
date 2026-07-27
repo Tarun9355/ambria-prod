@@ -14,6 +14,7 @@ import { useState } from "react";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
+import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
@@ -498,12 +499,56 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     }
   };
 
-  // "🎨 Canva" — same deck, uploaded as a Design Import job instead of downloaded, so the
-  // salesperson gets back an editable Canva draft. Polls client-side (each poll is one fast Canva
-  // GET via the edge function) rather than blocking one long edge-function call, since imports can
-  // take a few seconds and edge functions have a short execution ceiling.
+  // Turns the same cost-sheet data buildPptx uses into a markdown outline for Gamma's Generate API.
+  // Sections are separated by "\n---\n" (Gamma's own card-break syntax with cardSplit:
+  // "inputTextBreaks" — one break = one extra card), and zone photos are dropped in as bare
+  // Cloudinary URLs (Gamma fetches/re-hosts them; imageOptions.source:"noImages" on the edge-function
+  // side means it uses ONLY these, no AI-generated filler). textMode:"preserve" keeps our numbers and
+  // wording exact — Gamma is designing the layout, not rewriting the content.
+  const buildGammaOutline = (combined) => {
+    const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
+    const fmtDate = (iso) => {
+      if (!iso) return "—";
+      try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
+    };
+    const fnLine = (fnObj) => {
+      const parts = [fnObj.fnType || "Function", fmtDate(fnObj.fnDate), fnObj.fnVenue || "—"];
+      if (fnObj.fnShift) parts.push(fnObj.fnShift);
+      return parts.filter(Boolean).join(" · ");
+    };
+    const sections = [];
+
+    const fnLines = combined.functions.map(fnLine).join("\n");
+    sections.push(`# Ambria Decorations — Cost Estimate\n\n**${combined.clientName || "Client"}**\n\n${fnLines}\n\nPushpanjali, Bijwasan, New Delhi`);
+
+    combined.functions.forEach((fnObj) => {
+      if (fnObj.isEmpty) {
+        sections.push(`# ${fnLine(fnObj)}\n\nDesign pending — zones for this function have not been built yet.`);
+        return;
+      }
+      const zonePhotos = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4);
+      sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
+
+      const rows = fnObj.zones.map((z) => `| ${z.label} | ${z.items.length} | ${f(z.structTotal)} | ${f(z.itemTotal)} | ${f(z.zoneTotal)} |`).join("\n");
+      const tbl = `| Zone | Items | Structure | Decor Items | Zone Total |\n|---|---|---|---|---|\n${rows}`;
+      const transportLine = fnObj.transport ? `\n\nTransport & Power: ${f(fnObj.transport.total || 0)} (${fnObj.transport.trucks || 0} trucks)` : "";
+      sections.push(`# ${fnLine(fnObj)} — Cost Breakdown\n\n${tbl}${transportLine}\n\n**Function Total: ${f(fnObj.grand)}**`);
+    });
+
+    const sumRows = combined.functions.map((fnObj) => `| ${fnObj.fnType || "—"} | ${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"} | ${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.grand)} |`).join("\n");
+    sections.push(`# Event Summary\n\n| Function | Date · Venue | Decor | Transport | Grand |\n|---|---|---|---|---|\n${sumRows}\n\n**EVENT GRAND TOTAL: ${f(combined.eventGrandTotal)}**\n\nAmbria Decorations · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com\n\n_This is an estimate. Final pricing may vary based on customization and availability._`);
+
+    return sections.join("\n---\n");
+  };
+
+  // "🎨 Canva" — the cost-sheet content goes to Gamma first so its AI actually designs the deck
+  // (rather than our own hand-coded PptxGenJS layout), then the pptx Gamma exports is uploaded to
+  // Canva as a Design Import job, same as before, so the salesperson still gets back an editable
+  // Canva draft. Everything polls client-side (each poll is one fast GET via an edge function)
+  // rather than blocking one long edge-function call, since both steps can take a while and edge
+  // functions have a short execution ceiling.
   const sendToCanva = async (combined) => {
-    setCanvaState("building"); setCanvaEditUrl(""); setCanvaError("");
+    setCanvaState("designing"); setCanvaEditUrl(""); setCanvaError("");
     try {
       const connected = await canvaConnectionStatus();
       if (!connected) {
@@ -511,10 +556,18 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         setCanvaError('Canva isn\'t connected — ask an admin to connect it in IMS → Admin → Settings.');
         return;
       }
-      const { pptx, combined: c } = await buildPptx(combined);
+      const outline = buildGammaOutline(combined);
+      const title = `${combined.clientName || "Ambria"} Cost Estimate`;
+      const generationId = await gammaCreateGeneration(outline, title);
+      let base64 = null;
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const res = await gammaPollGeneration(generationId);
+        if (res.status === "completed") { base64 = res.base64; break; }
+        if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Gamma design failed"); return; }
+      }
+      if (!base64) { setCanvaState("error"); setCanvaError("Timed out waiting for Gamma to finish designing — try again"); return; }
       setCanvaState("uploading");
-      const base64 = await pptx.write({ outputType: "base64" });
-      const title = `${c.clientName || "Ambria"} Cost Estimate`;
       const jobId = await canvaCreateImport(base64, title);
       setCanvaState("processing");
       for (let i = 0; i < 24; i++) {
@@ -527,7 +580,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     } catch (err) {
       console.error("Canva send error:", err);
       setCanvaState("error");
-      setCanvaError(err.message || "Canva generation failed");
+      setCanvaError(err.message || "Deck generation failed");
     }
   };
 
@@ -784,10 +837,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
             <button onClick={csExportPPT} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} PPT</button>
             {(() => {
-              const busy = canvaState === "building" || canvaState === "uploading" || canvaState === "processing";
-              const busyLabel = canvaState === "building" ? "Building…" : canvaState === "uploading" ? "Uploading…" : "Generating…";
+              const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
+              const busyLabel = canvaState === "designing" ? "Designing…" : canvaState === "uploading" ? "Uploading…" : "Finalizing…";
               if (canvaState === "ready") return <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>;
-              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Send this deck to Canva as an editable draft"} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry Canva":"🎨 Canva"}</button>;
+              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":"🎨 Canva"}</button>;
             })()}
             <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
           </div>
