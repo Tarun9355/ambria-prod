@@ -10,12 +10,67 @@
 //
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
+
+// ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
+// re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
+// displayed value (fromRef tracks every frame), and reduced-motion snaps straight to the target.
+function useCountUp(target, ms = 900) {
+  const [val, setVal] = useState(target);
+  const fromRef = useRef(target);
+  useEffect(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const from = fromRef.current;
+    if (reduce || from === target) { fromRef.current = target; setVal(target); return; }
+    let raf = 0, start = null;
+    const tick = (t) => {
+      if (start === null) start = t;
+      const p = Math.min(1, (t - start) / ms);
+      const v = from + (target - from) * (1 - Math.pow(1 - p, 3)); // easeOutCubic
+      fromRef.current = v;
+      setVal(v);
+      if (p < 1) raf = requestAnimationFrame(tick); else fromRef.current = target;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return val;
+}
+
+// ═══ CARD FIREWORKS ═══ Three small bursts looping inside the Total Estimate panel, staggered so
+// only one is ever in the air. Centres and angles are fixed at module scope rather than randomised
+// per render — random inline styles would change on every re-render and restart particles mid-flight.
+// Distinct from the full-screen markSold fireworks; these are ambient and never fire particles
+// outside the card (the panel clips them with overflow:hidden).
+const TE_BURSTS = [
+  { cx: 17, cy: 32, col: "#C9A96E", delay: 1.1, n: 14, dist: 46 },
+  { cx: 83, cy: 64, col: "#A78BFA", delay: 3.5, n: 12, dist: 40 },
+  { cx: 51, cy: 22, col: "#F5E0B7", delay: 5.9, n: 16, dist: 54 },
+];
+const TE_FW_PARTICLES = TE_BURSTS.flatMap((b, bi) =>
+  Array.from({ length: b.n }, (_, p) => {
+    const ang = (p / b.n) * Math.PI * 2 + bi * 0.4;   // offset each burst so the spokes don't line up
+    const d = b.dist * (0.72 + ((p * 37) % 11) / 22); // deterministic spread, cheap hash instead of random
+    return {
+      key: `${bi}-${p}`, col: b.col, delay: b.delay,
+      dx: `${(Math.cos(ang) * d).toFixed(1)}px`,
+      dy: `${(Math.sin(ang) * d).toFixed(1)}px`,
+      cx: b.cx, cy: b.cy,
+    };
+  })
+);
+
+// Own component, not a hook call in StudioSummary — the roll ticks every frame, and StudioSummary
+// re-renders the whole cost breakdown (collectAllFunctionData et al) each time it does. Keeping the
+// state down here means only this one line repaints.
+function AnimatedTotal({ value, fmt }) {
+  return <>{fmt(Math.round(useCountUp(value || 0)))}</>;
+}
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
@@ -609,10 +664,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    cancelling alone would leave the whole header invisible. */
 @keyframes shPop{0%{opacity:0;transform:scale(.72)}62%{transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
 @keyframes shRise{0%{opacity:0;transform:translateY(11px)}100%{opacity:1;transform:none}}
-@keyframes shHalo{0%{opacity:.45;transform:scale(.86)}100%{opacity:0;transform:scale(1.55)}}
+/* Ripple keeps its original 2.1s travel but now sits in a 3.6s cycle — the tail 42% is rest, so it
+   loops forever as a slow pulse rather than a continuous strobe. */
+@keyframes shHalo{0%{opacity:.45;transform:scale(.86)}58%,100%{opacity:0;transform:scale(1.55)}}
 @keyframes shRule{0%{width:0;opacity:0}100%{width:56px;opacity:1}}
 .sh-badge{opacity:0;animation:shPop .62s cubic-bezier(.34,1.4,.5,1) .05s forwards}
-.sh-halo{animation:shHalo 2.1s ease-out .55s 2}
+.sh-halo{animation:shHalo 3.6s ease-out .55s infinite}
 .sh-1{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .18s forwards}
 .sh-2{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .26s forwards}
 .sh-3{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .34s forwards}
@@ -630,12 +687,60 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 .sh-pv:hover{background:linear-gradient(135deg,#E8CFA0,#C9A96E);filter:brightness(1.06);transform:translateY(-1.5px)}
 .sh-pv:active{transform:translateY(0);filter:brightness(.96)}
 .sh-pv-glow{position:absolute;inset:-6px;border-radius:12px;background:radial-gradient(closest-side,rgba(201,169,110,.5),transparent 72%);filter:blur(7px);pointer-events:none;animation:pvHalo 2.4s ease-in-out infinite}
+/* ═══ SOLD BUTTON ═══ Only the enabled button carries this class, so the hover never fires on the
+   greyed-out state. Green + shadow live here rather than inline so :hover can actually override. */
+.sh-sold{background:linear-gradient(135deg,#10B981,#059669);box-shadow:0 4px 20px rgba(16,185,129,.35);transition:background .18s,box-shadow .18s,transform .18s}
+.sh-sold:hover{background:linear-gradient(135deg,#34D399,#10B981);box-shadow:0 6px 26px rgba(16,185,129,.55);transform:translateY(-1.5px)}
+.sh-sold:active{transform:translateY(0);box-shadow:0 3px 14px rgba(16,185,129,.4)}
+/* ═══ TOTAL ESTIMATE CARD ═══ Entrance is staggered to land just after the header's .5s rule, so
+   the page resolves top-down. Two drifting aurora blobs and a slow sheen give the panel some life
+   once it's settled; both are decorative siblings behind a positioned content wrapper. */
+@keyframes teRise{0%{opacity:0;transform:translateY(16px) scale(.985)}100%{opacity:1;transform:none}}
+@keyframes tePop{0%{opacity:0;transform:scale(.8)}64%{transform:scale(1.06)}100%{opacity:1;transform:scale(1)}}
+@keyframes teAurora{0%,100%{transform:translate(-6%,-8%) scale(1);opacity:.45}50%{transform:translate(9%,7%) scale(1.18);opacity:.8}}
+@keyframes teAurora2{0%,100%{transform:translate(5%,6%) scale(1.12);opacity:.5}50%{transform:translate(-7%,-6%) scale(1);opacity:.28}}
+/* One sweep every 7s — the travel is squeezed into the first ~18% so the rest of the cycle is rest. */
+@keyframes teSheen{0%{transform:translateX(-150%) skewX(-18deg);opacity:0}
+  3%{opacity:.55}14%{opacity:.55}
+  18%,100%{transform:translateX(330%) skewX(-18deg);opacity:0}}
+.sh-te{opacity:0;animation:teRise .62s cubic-bezier(.22,.61,.36,1) .5s forwards}
+.sh-te-aurora{position:absolute;left:4%;top:-34%;width:56%;height:168%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(closest-side,rgba(124,58,237,.5),transparent 70%);filter:blur(40px);animation:teAurora 9s ease-in-out infinite}
+.sh-te-aurora2{position:absolute;right:2%;top:-24%;width:46%;height:150%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(closest-side,rgba(201,169,110,.34),transparent 70%);filter:blur(44px);animation:teAurora2 11s ease-in-out infinite}
+.sh-te-sheen{position:absolute;top:0;bottom:0;left:0;width:34%;pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);animation:teSheen 7s ease-in-out 1.3s infinite}
+/* Fireworks: 8s cycle, but the burst itself only occupies the first ~16% — the rest is dead air so
+   the three staggered bursts read as occasional sparkle, not a constant shower. */
+@keyframes teFw{
+  0%{transform:translate(0,0) scale(1);opacity:0}
+  2%{opacity:1}
+  10%{opacity:.85}
+  16%,100%{transform:translate(var(--dx),calc(var(--dy) + 16px)) scale(.2);opacity:0}}
+.sh-te-fw{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.sh-te-fw span{position:absolute;width:3.5px;height:3.5px;border-radius:50%;opacity:0;animation:teFw 8s ease-out infinite}
+.sh-te-lbl{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .64s forwards}
+.sh-te-amt{opacity:0;animation:shRise .55s cubic-bezier(.22,.61,.36,1) .72s forwards;text-shadow:0 2px 18px rgba(201,169,110,.28)}
+.sh-te-pill{opacity:0;animation:tePop .5s cubic-bezier(.34,1.4,.5,1) .84s forwards}
+.sh-te-cta{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .94s forwards}
+/* ═══ FOOTER NAV (Adjust / Start New) ═══ These keep S.btn(false) for their resting look, so the
+   hover has to out-specify an inline style — hence !important on the two properties it changes. */
+.sh-nav{transition:background .18s,color .18s,transform .18s,box-shadow .18s}
+.sh-nav:hover{background:${isDark?"rgba(201,169,110,0.16)":"#EFE8DA"} !important;color:${accentText} !important;
+  transform:translateY(-1.5px);box-shadow:0 4px 14px ${isDark?"rgba(0,0,0,0.4)":"rgba(201,169,110,0.28)"}}
+.sh-nav:active{transform:translateY(0) scale(.985)}
+.sh-nav:focus-visible{outline:2px solid ${accent};outline-offset:2px}
 @media (prefers-reduced-motion: reduce){
   .sh-badge,.sh-1,.sh-2,.sh-3,.sh-4{animation:none;opacity:1;transform:none}
   .sh-rule{animation:none;opacity:1;width:56px}
   .sh-halo{animation:none;opacity:0}
   .sh-pv{animation:none;box-shadow:0 0 0 1px rgba(201,169,110,.7)}
   .sh-pv-glow{animation:none;opacity:.4}
+  .sh-te,.sh-te-lbl,.sh-te-amt,.sh-te-pill,.sh-te-cta{animation:none;opacity:1;transform:none}
+  .sh-te-aurora,.sh-te-aurora2{animation:none;opacity:.45}
+  .sh-te-sheen,.sh-te-fw{animation:none;opacity:0}
+  .sh-te-fw span{animation:none;opacity:0}
+  .sh-nav:hover,.sh-nav:active{transform:none}
 }
       `}</style>
       <div style={{textAlign:"center",marginBottom:28}}>
@@ -675,33 +780,47 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           100%{transform:translate(var(--dx),calc(var(--dy) + 30px)) scale(.3);opacity:0}}
           @media (prefers-reduced-motion: reduce){.fw-p{animation:none !important;opacity:0}}`}</style>
       </div>}
-      <div style={{position:"relative",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:20,padding:"28px 32px",color:"#fff",textAlign:"center",marginBottom:28}}>
+      <div className="sh-te" style={{position:"relative",overflow:"hidden",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:18,padding:"20px 26px",color:"#fff",textAlign:"center",marginBottom:22}}>
+        {/* Decorative layers — absolutely positioned, so the content below needs its own positioned
+            wrapper to paint above them. */}
+        <span className="sh-te-aurora"/>
+        <span className="sh-te-aurora2"/>
+        <div className="sh-te-fw" aria-hidden="true">
+          {TE_FW_PARTICLES.map(p=><span key={p.key} style={{left:`${p.cx}%`,top:`${p.cy}%`,background:p.col,boxShadow:`0 0 7px ${p.col}`,animationDelay:`${p.delay}s`,"--dx":p.dx,"--dy":p.dy}}/>)}
+        </div>
+        <span className="sh-te-sheen"/>
         {/* Preview — opens the full cost-sheet overlay (csData). Only gate is having at least one
             function to show; the sheet itself is editable and exports to PDF/PPT/Canva. */}
         <button className="sh-pv" onClick={()=>setCsData(buildCombinedCostSheetData())} title="Preview the full cost sheet"
-          style={{position:"absolute",top:16,right:16,padding:"7px 16px",borderRadius:9,border:"none",cursor:"pointer",
-            fontSize:12,fontWeight:700,letterSpacing:.3,
-            display:"inline-flex",alignItems:"center",gap:7,zIndex:1}}>
+          style={{position:"absolute",top:13,right:13,padding:"5px 12px",borderRadius:8,border:"none",cursor:"pointer",
+            fontSize:11,fontWeight:700,letterSpacing:.3,
+            display:"inline-flex",alignItems:"center",gap:6,zIndex:2}}>
           <span className="sh-pv-glow"/>
           <span style={{position:"relative"}}>{"👁"} Preview</span>
         </button>
-        <div style={{fontSize:13,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>Total Estimate</div>
-        <div style={{fontSize:42,fontWeight:700,marginBottom:8}}>{fmt(eventGrandTotal)}</div>
-        <div style={{display:"inline-block",padding:"6px 20px",borderRadius:14,fontSize:14,fontWeight:600,background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
+        <div style={{position:"relative",zIndex:1}}>
+        <div className="sh-te-lbl" style={{fontSize:11.5,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>Total Estimate</div>
+        <div className="sh-te-amt" style={{fontSize:33,fontWeight:700,marginBottom:7}}><AnimatedTotal value={eventGrandTotal} fmt={fmt}/></div>
+        <div className="sh-te-pill" style={{display:"inline-block",padding:"4px 15px",borderRadius:12,fontSize:12.5,fontWeight:600,background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
             rather than a full-width bar above the panel. */}
-        <div style={{marginTop:16}}>
+        <div className="sh-te-cta" style={{marginTop:12}}>
         {activeClient?.status==="booked"
-          ? <div style={{padding:"14px 16px",borderRadius:12,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",textAlign:"center"}}><span style={{fontSize:16}}>{"✅"}</span> <span style={{fontSize:14,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:11,color:textS,marginLeft:8}}>by {activeClient.bookedBy}</span>}</div>
+          ? /* Inline-flex, not a block — it shrinks to its text and the card's textAlign:center
+               keeps it centred, instead of stretching a near-empty bar the full panel width. */
+            <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:9,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)"}}><span style={{fontSize:11.5}}>{"✅"}</span><span style={{fontSize:11.5,fontWeight:600,color:"#10B981"}}>Booked{activeClient.bookedAt&&` on ${new Date(activeClient.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</span>{activeClient.bookedBy&&<span style={{fontSize:10,color:"#a5b4fc"}}>by {activeClient.bookedBy}</span>}</div>
           : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
-          <button onClick={markSold} disabled={!canSold} style={{padding:"9px 22px",borderRadius:10,border:"none",cursor:canSold?"pointer":"not-allowed",fontSize:12.5,fontWeight:700,background:canSold?"linear-gradient(135deg,#10B981,#059669)":"#333",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSold?"0 4px 20px rgba(16,185,129,0.35)":"none",opacity:canSold?1:0.5}}>{"🎉"} SOLD — Confirm Booking</button>
+          {/* Enabled state gets its green + shadow from .sh-sold so the :hover rule can override
+              them — an inline background would always win over the stylesheet. */}
+          <button onClick={markSold} disabled={!canSold} className={canSold?"sh-sold":""} style={{padding:"7px 18px",borderRadius:9,border:"none",cursor:canSold?"pointer":"not-allowed",fontSize:11.5,fontWeight:700,background:canSold?undefined:"#333",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSold?undefined:"none",opacity:canSold?1:0.5}}>{"🎉"} SOLD — Confirm Booking</button>
           {!canSold&&<div style={{fontSize:10,color:textS,textAlign:"center",marginTop:6}}>Requires: {missing.join(", ")}</div>}
           </>;})()}
         </div>
         {(() => {
           const allFns = collectAllFunctionData();
-          return allFns.length > 1 ? <div style={{fontSize:11,color:"#a5b4fc",marginTop:10}}>{allFns.length} functions · {allFns.map(f => f.fnType || "—").join(" + ")}</div> : null;
+          return allFns.length > 1 ? <div className="sh-te-cta" style={{fontSize:11,color:"#a5b4fc",marginTop:10}}>{allFns.length} functions · {allFns.map(f => f.fnType || "—").join(" + ")}</div> : null;
         })()}
+        </div>
       </div>
       {sourceEvent&&<div style={{...S.card,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}><div style={{fontSize:11,color:textS}}>Design based on:</div><div style={{fontSize:13,fontWeight:600}}>{sourceEvent.name}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:accentBg,color:accentText}}>{sourceEvent.venue}</span>{sourceEvent.venue!==venue&&<><span style={{fontSize:11,color:textS}}>{"→"}</span><span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:transportCalc.isNew?"rgba(245,158,11,0.15)":"rgba(99,102,241,0.15)",color:transportCalc.isNew?"#F59E0B":"#818cf8"}}>{"📍"} Function at {venue}</span></>}</div>}
 
@@ -889,8 +1008,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         ) : null;
       })()}
       <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}>
-        <button onClick={()=>setStep(2)} style={S.btn(false)}>{"←"} Adjust</button>
-        <button onClick={()=>{setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setNewCzName("");setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");}} style={S.btn(false)}>Start New</button>
+        <button className="sh-nav" onClick={()=>setStep(2)} style={S.btn(false)}>{"←"} Adjust</button>
+        <button onClick={()=>{setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setNewCzName("");setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");}} className="sh-nav" style={S.btn(false)}>Start New</button>
       </div>
     </div>
 
