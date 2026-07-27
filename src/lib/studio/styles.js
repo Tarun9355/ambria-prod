@@ -25,7 +25,9 @@ export const makeS = (isDark = false) => {
   const { bg, cardBg, textP, textS, border, accent, accentBg, accentText } = deriveTheme(isDark);
   const S = {
     app: { fontFamily:"'Outfit','Plus Jakarta Sans',system-ui,sans-serif", minHeight:"100vh", background:bg, color:textP },
-    header: { background:isDark?"linear-gradient(180deg,#161625,#0F0F1A)":"linear-gradient(135deg,#0F0F1A,#2d1b69)", padding:"12px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, flexWrap:"wrap", gap:10 },
+    // borderBottom + cast give the sticky header a defined edge, so content scrolling under it
+    // reads as passing beneath a bar rather than bleeding into the gradient.
+    header: { background:isDark?"linear-gradient(180deg,#161625,#0F0F1A)":"linear-gradient(135deg,#0F0F1A,#2d1b69)", padding:"11px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, flexWrap:"wrap", gap:10, borderBottom:`1px solid ${accent}26`, boxShadow:"0 1px 0 rgba(255,255,255,0.04) inset, 0 6px 20px -8px rgba(0,0,0,0.45)" },
     main: { maxWidth:1200, margin:"0 auto", padding:"24px 20px 100px" },
     card: { background:cardBg, borderRadius:14, border:`1px solid ${border}`, overflow:"hidden" },
     pill: a => ({ padding:"6px 14px", borderRadius:16, fontSize:11, fontWeight:a?600:400, cursor:"pointer", border:a?`1px solid ${accentText}30`:`1px solid ${border}`, background:a?accentBg:"transparent", color:a?accentText:textS, transition:"all 0.15s", display:"inline-block" }),

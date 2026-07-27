@@ -1,4 +1,9 @@
 import { Fragment, useState, useRef, useEffect } from "react";
+import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
+import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
+  IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
+  IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
+  IconPlay, IconBox, IconSave, IconSliders } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
@@ -18,15 +23,291 @@ import InventoryItemPickerModal from "../../../components/shared/InventoryItemPi
 // master"). Flip to false (one-line deploy) once all photos are verified to remove the button.
 const CORRECTION_MODE = true;
 
+
+// ═══ TrussCard ═══
+// The truss subsystem: type pills, dimensions, the span tip, truss type / material / drape
+// density — and masking nested inside it, because masking panels attach to the truss.
+// Module-scope so the icon components and MASK_OPTS / TRUSS_MATERIALS stay in scope.
+// Compact page list: first, last, and a window around the current page. A library category can
+// hold hundreds of photos, and 40 numbered buttons is not a pager.
+// The four sections of a zone body, two per row. Order is the order of work: what goes in the
+// zone, what holds it up, what it stands on, what gets printed.
+const ZONE_SECTIONS = [
+  { id: "elements", label: "Elements",        Icon: IconClipboard },
+  { id: "truss",    label: "Truss & Masking", Icon: IconWall },
+  { id: "platform", label: "Platform",        Icon: IconPlatform },
+  { id: "print",    label: "Print",           Icon: IconPrinter },
+];
+
+function pageWindow(page, count, span = 1) {
+  if (count <= 7) return Array.from({ length: count }, (_, i) => i);
+  const keep = new Set([0, count - 1, page]);
+  for (let d = 1; d <= span; d++) { keep.add(Math.max(0, page - d)); keep.add(Math.min(count - 1, page + d)); }
+  const sorted = [...keep].sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i && sorted[i] - sorted[i - 1] > 1) out.push("…");
+    out.push(sorted[i]);
+  }
+  return out;
+}
+
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField }) {
+  // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
+  // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
+  // unselected options rendered as plain text and did not look clickable. `border` is never
+  // "none" here, and the fill/tick match the filter pills used elsewhere in the app.
+  const optPill = (sel) => ({
+    display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 999,
+    fontSize: 11.5, fontWeight: sel ? 700 : 500, cursor: "pointer", whiteSpace: "nowrap",
+    lineHeight: 1.3, transition: "all 0.15s",
+    background: sel ? (isDark ? "rgba(201,169,110,0.2)" : "#F6E7C8") : "transparent",
+    color: sel ? (isDark ? "#D9BE86" : "#8A6A2F") : textS,
+    border: `1px solid ${sel ? accent : border}`,
+  });
+  // Uppercase micro-caption, replacing "Truss Material:" sentence case with a colon.
+  const rowCap = { fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS, minWidth: 62, flexShrink: 0 };
+  return (
+              <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
+                {zm.defaultTruss&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>Truss</span>
+                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
+                </div>}
+              <div style={{display:"flex",gap:8,marginBottom:6}}>
+                {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
+                  <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
+                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss Qty</div>
+                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
+                  <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+                {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
+                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
+              </div>
+              {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
+              {(() => {
+                const dims = zc.dims || {};
+                const L = parseFloat(dims.L) || 0;
+                const W = parseFloat(dims.W) || 0;
+                if (L < 4 && W < 4) return null;  // no dims yet
+                const span = Math.max(L, W);
+                // Sweet spots for clean truss (using standard 15/12/10/8/5/4/3/2 beam stock + 1ft/pillar budget)
+                // 2-pillar (span ≤ 30): 12, 17, 24, 27, 29, 32 → these give 0/1 joint, 0-gap
+                // 3-pillar (31-60): 43, 47, 53, 57, 63 → 1-2 joints per segment
+                // 4-pillar (61-90): 64, 74, 84 → 2 joints per segment
+                const sweetSpots2 = [12, 17, 24, 27, 29, 32];
+                const sweetSpots3 = [43, 47, 53, 57, 63];
+                const sweetSpots4 = [64, 74, 84];
+                const all = [...sweetSpots2, ...sweetSpots3, ...sweetSpots4];
+                const isExact = all.includes(span);
+                // Find nearest sweet spot within ±5ft
+                let nearest = null;
+                let nearestDist = 999;
+                for (const s of all) {
+                  const d = Math.abs(s - span);
+                  if (d > 0 && d <= 5 && d < nearestDist) {
+                    nearest = s;
+                    nearestDist = d;
+                  }
+                }
+                if (isExact) {
+                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.25)",fontSize:11.5,color:"#15803D",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                    <span>✓</span><span>Smart truss: clean allocation (minimum joints).</span>
+                  </div>;
+                }
+                if (nearest) {
+                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{display:"flex",color:"#B45309"}}><IconBulb size={12}/></span><span>Tip: try <strong>{nearest}ft</strong> for cleanest truss (fewer joints, less ops effort).</span>
+                  </div>;
+                }
+                return null;
+              })()}
+              {/* ── §23 Truss Type selector + Height-anchor validation ── */}
+              {(()=>{
+                const tr = resolveTrussConfig(zc);
+                // Don't render anything when no truss intended (all blank)
+                if (tr.source === "none") return null;
+                // Validation error → inline red message (soft-block via Summary nav warning)
+                if (tr.source === "invalid") {
+                  return <div style={{marginBottom:10,padding:"8px 12px",borderRadius:8,background:"rgba(220,38,38,0.08)",border:"1px solid rgba(220,38,38,0.3)",fontSize:12,color:"#B91C1C",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                    <span>⚠️</span><span>{tr.error}</span>
+                  </div>;
+                }
+                // 3-dim filled → auto-Full Box (read-only label, no choice)
+                if (tr.source === "auto-3dim") {
+                  return <div style={{marginBottom:10,padding:"6px 10px",borderRadius:8,background:"rgba(220,38,38,0.06)",border:"1px solid rgba(220,38,38,0.2)",fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{color:textS}}>Truss Type:</span>
+                    <span style={{fontWeight:700,color:"#B91C1C"}}>Full Box <span style={{fontWeight:400,color:textS,fontSize:11.5}}>(auto — all 3 dims filled)</span></span>
+                  </div>;
+                }
+                // 2-dim → sales picks U or Half Box (default Half if not picked)
+                const picked = zc.trussType;
+                const opts = [
+                  { id:"u_only",   label:"U Truss",       hint:"Cheapest — top + 2 sides only" },
+                  { id:"half_box", label:"Half Box Truss", hint:"Middle — 3 sides (no back beam)" },
+                ];
+                return <div style={{marginBottom:10,padding:"8px 10px",borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8",border:`1px solid ${border}`}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={{fontSize:12,fontWeight:600,color:textS}}>Truss Type:</span>
+                    {tr.source==="default-on-forget" && <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:"rgba(217,119,6,0.12)",color:"#A16207",fontWeight:600}}>defaulted to Single U</span>}
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {opts.map(o=>{
+                      const isOn = picked === o.id;
+                      // When not picked, Single U (u_only) visually shows as the default (lighter highlight)
+                      const isDefault = !picked && o.id === "u_only";
+                      return <button key={o.id} onClick={()=>sZ({trussType:o.id})}
+                        style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${isOn?textP:(isDefault?"rgba(217,119,6,0.4)":border)}`,background:isOn?"rgba(0,0,0,0.06)":(isDefault?"rgba(217,119,6,0.06)":"transparent"),color:isOn?textP:textS,fontSize:11.5,cursor:"pointer",fontWeight:isOn?700:(isDefault?600:400)}}
+                        title={o.hint}>{o.label}</button>;
+                    })}
+                  </div>
+                </div>;
+              })()}
+              {zc.trT && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                  <span style={rowCap}>Material</span>
+                  {TRUSS_MATERIALS.map(m=>{
+                    const sel=(zc.trussMaterial|| "iron")===m.key;
+                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
+                  })}
+                  {zc.trT==="box" && customCeilingField(k, zc)}
+                </div>
+              )}
+              {zc.trT && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                  <span style={rowCap}>Drape</span>
+                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
+                    const sel=(zc.drapeDensity||"moderate")===o.v;
+                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
+                  })}
+                </div>
+              )}
+                {/* ═══ MASKING ═══ Nested inside Truss: masking panels attach to the truss, which is why
+                    the original code grouped them. Sits after the truss's own controls so the card reads
+                    "configure the truss → then what's masked onto it". */}
+                <div style={{marginTop:10,marginLeft:12,paddingLeft:11,borderLeft:`3px solid ${accent}33`}}>
+                  <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginBottom:5}}>Masking <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· on the truss</span></div>
+                {zm.hasMasking&&(()=>{
+                  const dL=zc.dims?.L||zc.dims?.S||0,dW=zc.dims?.W||zc.dims?.S||0,dH=zc.dims?.H||0;
+                  const mw=zc.mkWalls||{};
+                  const toggleWall=(wall)=>sZ({mkWalls:{...mw,[wall]:!mw[wall]},mkOn:true});
+                  // §23 Phase 2.8 — config-aware walls (3 branches)
+                  //   Full Box  → back/left/right toggleable (front always open)
+                  //   Half Box  → back (L-span) + left/right (backDepth) all toggleable
+                  //   U Truss   → back only (L-span). No left/right options.
+                  const _trCfg = resolveTrussConfig(zc);
+                  const _cfg = _trCfg?.config || (zc.trT==="box" ? "full_box" : "half_box");
+                  const _spanL = _trCfg?.spanFt || dL || dW;
+                  const _backDepth = zc.trussBackDepth || 4;
+                  // §23 Phase 2.8 silent migration — set defaults once per zone.
+                  // FIX A (26 May): For existing zones, force-tick left/right ON for Half Box
+                  // and back ON for U Truss — overwriting prior `false` values. Runs once per
+                  // zone, guarded by _mkWallsMigratedV28 flag. After migration, the user can
+                  // untick freely; flag prevents re-migration.
+                  if (zc.mkOn && !zc._mkWallsMigratedV28) {
+                    const _nextMw = {...mw};
+                    let _changed = false;
+                    if (_cfg === "half_box") {
+                      if (_nextMw.back  !== true) { _nextMw.back  = true; _changed = true; }
+                      if (_nextMw.left  !== true) { _nextMw.left  = true; _changed = true; }
+                      if (_nextMw.right !== true) { _nextMw.right = true; _changed = true; }
+                    } else if (_cfg === "u_only") {
+                      if (_nextMw.back !== true) { _nextMw.back = true; _changed = true; }
+                    }
+                    // Always mark migrated + record current config (even if no change needed)
+                    setTimeout(() => sZ(_changed ? {mkWalls: _nextMw, _mkWallsMigratedV28: true, _lastMkCfg: _cfg} : {_mkWallsMigratedV28: true, _lastMkCfg: _cfg}), 0);
+                  }
+                  // §23 Phase 2.8 type-transition handler — if user adds/removes W dim and the truss
+                  // config flips (half_box ↔ full_box, full_box → u_only, etc.), reset mkWalls per
+                  // the new type's defaults. Half Box → Full Box: all OFF (opt-in). Anything → Half Box:
+                  // all ON (default). Anything → U Truss: back ON, left/right cleared.
+                  else if (zc.mkOn && zc._lastMkCfg && zc._lastMkCfg !== _cfg) {
+                    let _resetMw;
+                    if (_cfg === "full_box") {
+                      // Opt-in per spec — start fully unchecked
+                      _resetMw = {back: false, left: false, right: false};
+                    } else if (_cfg === "half_box") {
+                      _resetMw = {back: true, left: true, right: true};
+                    } else if (_cfg === "u_only") {
+                      _resetMw = {back: true};
+                    } else {
+                      _resetMw = mw;
+                    }
+                    setTimeout(() => sZ({mkWalls: _resetMw, _lastMkCfg: _cfg}), 0);
+                  }
+                  const walls = _cfg === "full_box" ? [
+                    {id:"back",label:"Back",dim:`${dW}×${dH}`,sqft:dW*dH},
+                    {id:"left",label:"Left",dim:`${dL}×${dH}`,sqft:dL*dH},
+                    {id:"right",label:"Right",dim:`${dL}×${dH}`,sqft:dL*dH}
+                  ] : _cfg === "half_box" ? [
+                    {id:"back",label:"Back",dim:`${_spanL}×${dH}`,sqft:_spanL*dH},
+                    {id:"left",label:"Left",dim:`${_backDepth}×${dH}`,sqft:_backDepth*dH},
+                    {id:"right",label:"Right",dim:`${_backDepth}×${dH}`,sqft:_backDepth*dH}
+                  ] : [
+                    {id:"back",label:"Back",dim:`${_spanL}×${dH}`,sqft:_spanL*dH}
+                  ];
+                  return <div style={{padding:"4px 0",borderBottom:`1px solid ${border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconWall size={12}/>Masking</span>
+                      <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
+                    </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.masking)}</span>}
+                  </div>
+                  {zc.mkOn&&<div style={{marginTop:4,paddingLeft:20}}>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
+                      {MASK_OPTS.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                      {customMaskingField(k, zc)}
+                    </div>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      {walls.map(w=>{const on=mw[w.id];return <button key={w.id} onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:11.5,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>;})}
+                    </div>
+                  </div>}
+                </div>;})()}
+                </div>{/* /masking (nested in truss) */}
+              </div>
+  );
+}
+
+// ═══ FloorCard ═══
+// Platform and carpet. They share one set of floor dimensions (floorDims drives both areas),
+// which is why they are one card rather than two.
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, textP, textS, imsPrintMaterials }) {
+  return (
+              <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
+              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,margin:"14px 0 6px"}}>Floor</div>
+              <div style={{fontSize:12.5,marginBottom:6}}>
+                {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconPlatform size={12}/>Platform</span>
+                    {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:11.5,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
+                </div>}
+                {zm.hasCarpet&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconCarpet size={12}/>Carpet</span>
+                    <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:11.5,padding:"3px 8px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                      <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
+                      {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                    </select>
+                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
+                </div>}
+              </div>
+              <div style={{display:"flex",gap:8,marginBottom:4}}>
+                <div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
+                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
+                <div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
+                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
+                <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:11.5,color:textS,lineHeight:1.3}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div></div>
+              </div>
+              </div>
+  );
+}
+
 export default function StudioBuild({ ctx }) {
   const {
     // theme / chrome
-    S, isDark, accent, border, textS, textP, cardBg, fmt, cat,
+    S, isDark, accent, border, textS: textSRaw, textP, cardBg, fmt, cat,
     // events / library / video sources
     events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
     // client / function meta
-    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
+    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions,
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
@@ -84,7 +365,100 @@ export default function StudioBuild({ ctx }) {
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
-  const toggleZoneCollapse = (k) => setZoneCollapsed((p) => ({ ...p, [k]: p[k] === false ? true : false }));
+  // Demand for the event date, derived once. The header chip and the date banner's tint both read
+  // it, so they cannot drift apart. isLow is deliberately absent: a client should never be told the
+  // date is quiet.
+  const dateDemand = (() => {
+    if (!clientDate) return null;
+    const dt = dateTypes[clientDate];
+    const booked = clientLedger.filter(c => c.eventDate === clientDate && c.status === "booked").length;
+    const ongoing = clientLedger.filter(c => c.eventDate === clientDate && c.status === "ongoing" && c.id !== activeClientId).length;
+    const isHigh = booked >= 2 || dt === "saya";
+    return { dt, booked, ongoing, isHigh, isMod: !isHigh && booked === 1 };
+  })();
+  // Height of the sticky header plus a little air, so what we scroll to clears it.
+  const SCROLL_OFFSET = 74;
+  // Which zone just opened, if any. An effect (below) does the scrolling: it runs after React has
+  // committed the newly revealed content, whereas requestAnimationFrame only guesses at that moment.
+  const [scrollToZone, setScrollToZone] = useState(null);
+  useEffect(() => {
+    if (!scrollToZone || typeof document === "undefined") return;
+    setScrollToZone(null);
+    // The SECTION TILES, not the zone card. The card's header is already on screen — you just
+    // clicked a chip in it — so scrolling there moves up, not down to the details. Custom zones have
+    // no tiles, so they fall back to their card.
+    const el = document.getElementById(`zone-sec-${scrollToZone}`) || document.getElementById(`zone-${scrollToZone}`);
+    if (!el) return;
+    const top = el.getBoundingClientRect().top + window.scrollY - SCROLL_OFFSET;
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
+  }, [scrollToZone]);
+  const toggleZoneCollapse = (k) => {
+    const opening = isCollapsed(k);          // collapsed now means this click opens it
+    setZoneCollapsed((p) => ({ ...p, [k]: p[k] === false ? true : false }));
+    if (opening) setScrollToZone(k);         // never on collapse — that would yank the page
+  };
+  // Which of the four zone sections is open, per zone. Undefined = none, so a zone body starts
+  // as four tiles and nothing else. The element card's collapse reads this too, so the tile and
+  // the card header can never disagree about whether the list is showing.
+  const [zoneSection, setZoneSection] = useState({});
+  const openZoneSection = (k, id) => setZoneSection((p) => ({ ...p, [k]: p[k] === id ? undefined : id }));
+  const isElCardOpen = (k) => zoneSection[k] === "elements";
+  const toggleElCard = (k) => openZoneSection(k, "elements");
+  // A folded rail: a 38px strip on its own edge that brings the panel back. The label reads
+  // vertically so the strip stays narrow.
+  const railTab = (side, label, icon) => (
+    <div className="rail-tab" onClick={()=>setRailsOpen(true)} title={`Show ${label}`}
+      style={{width:38,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start",cursor:"pointer",
+        display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"12px 0 14px",
+        borderRadius:10,border:`1px solid ${border}`,background:cardBg}}>
+      <span style={{display:"flex",color:accent}}>{icon}</span>
+      <span style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:9.5,fontWeight:700,
+        letterSpacing:1,textTransform:"uppercase",color:textS,whiteSpace:"nowrap"}}>{label}</span>
+      <span style={{display:"flex",color:textS,transform:side==="left"?"rotate(-90deg)":"rotate(90deg)"}}><IconChevron size={11}/></span>
+    </div>
+  );
+  // Sub-label under each tile's title. Read straight off zoneConfig — no cost maths here, so it
+  // cannot drift from the figures inside the panels.
+  const zoneSectionSub = (k, id) => {
+    const zc = zoneConfig[k] || {}, zm = zoneMeta[k] || {}, d = zc.dims || {}, fd = zc.floorDims || {};
+    if (id === "elements") { const n = (zoneElements[k] || []).length; return n ? `${n} item${n === 1 ? "" : "s"}` : "No items yet"; }
+    if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zm.hasMasking && zc.mkT ? " · masking" : ""}` : "Not set";
+    if (id === "platform") return (fd.W || fd.D) ? `${fd.W || "–"} × ${fd.D || "–"} ft` : "Not set";
+    const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
+  };
+  const sectionTile = (k, sec) => {
+    const on = zoneSection[k] === sec.id;
+    return <div key={sec.id} className="sec-tile" data-on={on?"1":"0"} onClick={()=>openZoneSection(k,sec.id)}
+      style={{display:"flex",alignItems:"center",gap:9,padding:"11px 12px",borderRadius:10,cursor:"pointer",
+        border:`1px solid ${on?accent:border}`,background:on?`${accent}12`:cardBg}}>
+      <span style={{display:"flex",flexShrink:0,color:on?accent:textS}}><sec.Icon size={16}/></span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
+        <div style={{fontSize:10.5,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{zoneSectionSub(k,sec.id)}</div>
+      </div>
+      <span style={{display:"flex",flexShrink:0,color:on?accent:textS,transform:on?"rotate(180deg)":"none",transition:"transform .18s ease"}}><IconChevron size={12}/></span>
+    </div>;
+  };
+  // Ratio / 100% share one selected-state. `border` is never "none": an inactive pill has to
+  // look clickable. Active is a tint, not a solid fill — these sit inside a dense row.
+  const floralPill = (on) => ({
+    padding: "2px 8px", borderRadius: 999, cursor: "pointer", fontSize: 11, fontWeight: on ? 700 : 500,
+    border: `1px solid ${on ? "#EC4899" : border}`,
+    background: on ? (isDark ? "rgba(236,72,153,0.22)" : "rgba(236,72,153,0.12)") : "transparent",
+    color: on ? (isDark ? "#F9A8D4" : "#BE185D") : textS,
+    transition: "all 0.15s",
+  });
+  // Shown in the header while collapsed, so a closed card still says what is inside it.
+  const elCardSummary = (k) => {
+    const els = zoneElements[k] || [];
+    if (!els.length) return null;
+    const total = showCosts ? calcElsCost(els, true, zoneConfig[k]) : 0;
+    return <span style={{fontSize:10.5,fontWeight:600,color:textS,display:"inline-flex",alignItems:"center",gap:6,marginLeft:2}}>
+      <span>{els.length} item{els.length === 1 ? "" : "s"}</span>
+      {showCosts && total > 0 && <span style={{color:textP,fontWeight:700}}>{fmt(total)}</span>}
+    </span>;
+  };
   const [notesOpen, setNotesOpen] = useState({}); // per-zone: reveal the client-note field (else a small icon)
   // Per-zone photo-strip scroll containers, keyed by zone key — lets us scroll a strip back to
   // the start after picking a photo (it gets pinned to the front, but the scroll position doesn't
@@ -93,7 +467,28 @@ export default function StudioBuild({ ctx }) {
 
   const getLibPhotosForZone = ctx.getLibPhotosForZone;
   // ═══ Zone-photo filter pills — shared style + venue-type-aware venue list ═══
-  const zpPill = (active) => ({ padding: "2px 8px", borderRadius: 8, fontSize: 9, cursor: "pointer", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 400 });
+  // ═══ SECONDARY TEXT COLOUR ═══
+  // The theme's `textS` is #8b8fa3 — a pale lavender-grey measuring ~3.1:1 on the light card,
+  // below WCAG AA. It's what made disabled zone names ("Stage", "Centre Lounge") look washed out.
+  // Shadowing it here upgrades all 125 call sites on this page at once, with no churn: every
+  // `color: textS` below now resolves to the AA-contrast value. `textSRaw` keeps the original
+  // available should anything ever need the lighter tone.
+  const textS = isDark ? "#A6ADC0" : "#5A6076";   // 6.4:1 on white
+
+  // One definition of "what does this zone cost" — lifted verbatim out of the zone header so the
+  // header and the live-pricing tile share it and cannot drift apart. Arithmetic is unchanged.
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  void textSRaw;
+
+  // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
+  // to hit and too faint to read. One geometry, used by all 25 call sites on this page.
+  const zpTextM = textS;
+  const zpGold  = isDark ? "#D9BE86" : "#8A6A2F";
+  // Panel / section / pill come from the shared module, so this panel is literally the same
+  // component tree as the Browse filters — the two cannot drift apart.
+  const { Panel: FPanel, Section: FSection, Pill: FPill, css: filterCSS } =
+    makeFilterUI({ isDark, accent, textP, S });
+  const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
   const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
   const zpOutdoorVenues = [
     ...allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") !== "Indoor"),
@@ -109,29 +504,85 @@ export default function StudioBuild({ ctx }) {
   // shared app-wide state (every zone's own filter button reads/writes the exact same values), so
   // this only needs its own open/close flag; setting a value here instantly narrows every zone's
   // photo picker too, without forcing every zone's own panel open at the same time.
-  const [topZpFilterOpen, setTopZpFilterOpen] = useState(false);
+  // Which photo-filter groups are expanded. All closed by default — dumping six groups at once
+  // (Color palette alone has ~40 options) pushed the build itself off the screen.
+  const [zpOpen, setZpOpen] = useState({});
+  const zpToggleOpen = (k) => setZpOpen(p => ({ ...p, [k]: !p[k] }));
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
   const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
+  const [phPage, setPhPage] = useState({});   // per-zone page index for the photo picker
+  // Both side rails fold away together, from the one control in the Photo filters header.
+  const [railsOpen, setRailsOpen] = useState(true);
+  const PH_COLS = 4;                          // always four across: a wider column means BIGGER
+  const PH_PER_PAGE = railsOpen ? 4 : 8;      // photos, not more of them squeezed into a row
+  const RAIL_W = 258;
+  // A filter change re-orders the whole matched set, so "page 3" of the old list is meaningless.
+  useEffect(() => { setPhPage({}); }, [zpFilters]);
+  const phDot = (on) => ({ minWidth: 27, height: 27, padding: "0 7px", borderRadius: 8, cursor: "pointer",
+    fontSize: 11.5, fontWeight: on ? 700 : 500, border: `1px solid ${on ? accent : border}`,
+    background: on ? `${accent}18` : "transparent", color: on ? accent : textS });
+  const phNav = (off) => ({ ...phDot(false), display: "inline-flex", alignItems: "center", justifyContent: "center",
+    cursor: off ? "default" : "pointer", opacity: off ? 0.35 : 1, color: off ? textS : textP });
+  // One ref is enough: there is only ever one gesture in flight. It records which zone started it,
+  // so a fast swipe cannot page a different zone's strip, and `swiped` suppresses the click that
+  // a touchend would otherwise deliver to the tile under the finger.
+  const phSwipe = useRef({ k: null, x: 0, y: 0, dx: 0, swiped: false });
+  // Which slide animation each zone's grid is currently running. Alternates between …1 and …2 so
+  // that paging twice the same way restarts the animation instead of leaving it finished.
+  const [phAnim, setPhAnim] = useState({});
+  const phGoTo = (k, next, page) => {
+    if (next === page) return;
+    const dir = next > page ? "L" : "R";                       // L: moving forward, content enters from the right
+    setPhAnim(a => ({ ...a, [k]: `phIn${dir}${a[k] === `phIn${dir}1` ? 2 : 1}` }));
+    setPhPage(p => ({ ...p, [k]: next }));
+  };
+  const phTurn = (k, dir, page, pageCount) => {
+    phGoTo(k, Math.min(pageCount - 1, Math.max(0, page + dir)), page);
+  };
+  // Nothing is attached when there is only one page — grid view included.
+  const phSwipeHandlers = (k, page, pageCount) => pageCount <= 1 ? {} : {
+    onTouchStart: (e) => { const t = e.touches[0]; phSwipe.current = { k, x: t.clientX, y: t.clientY, dx: 0, swiped: false }; },
+    onTouchEnd: (e) => {
+      const st = phSwipe.current;
+      if (st.k !== k) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - st.x, dy = t.clientY - st.y;
+      // horizontal intent only, and far enough that a tap on a tile can never qualify
+      const isSwipe = Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5;
+      phSwipe.current = { k: null, x: 0, y: 0, dx: 0, swiped: isSwipe };
+      if (isSwipe) { e.preventDefault(); phTurn(k, dx < 0 ? 1 : -1, page, pageCount); }
+    },
+    // trackpad two-finger swipe. Accumulated because one gesture arrives as many small deltas.
+    onWheel: (e) => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;   // vertical scrolling stays vertical
+      const acc = (phSwipe.current.k === k ? phSwipe.current.dx : 0) + e.deltaX;
+      if (Math.abs(acc) < 90) { phSwipe.current = { k, x: 0, y: 0, dx: acc, swiped: false }; return; }
+      phSwipe.current = { k, x: 0, y: 0, dx: 0, swiped: false };
+      phTurn(k, acc < 0 ? -1 : 1, page, pageCount);
+    },
+  };
+  // A swipe that paged leaves a click behind on some browsers; tiles check this before opening.
+  const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
   // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
   const [customPicker, setCustomPicker] = useState(null);
   const customCeilingField = (k, zc, dense) => {
     const item = zc.customCeilingItemId ? (imsInventory || []).find(i => i.id === zc.customCeilingItemId) : null;
     const fs = dense ? 9 : 10;
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600, marginLeft: 8 }}>
-      🎬 {item.name}
+      <IconPlay size={12}/> {item.name}
       <span onClick={() => setZoneConfig(p => ({ ...p, [k]: { ...p[k], customCeilingItemId: null } }))} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
-    return <button onClick={() => setCustomPicker({ k, kind: "ceiling" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}>🎬 Custom Ceiling</button>;
+    return <button onClick={() => setCustomPicker({ k, kind: "ceiling" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}><IconPlay size={11}/> Custom Ceiling</button>;
   };
   const customMaskingField = (k, zc, dense) => {
     const item = zc.customMaskingItemId ? (imsInventory || []).find(i => i.id === zc.customMaskingItemId) : null;
     const fs = dense ? 9 : 10;
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 5, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600 }}>
-      🖼️ {item.name}
+      <IconCamera size={12}/> {item.name}
       <span onClick={() => setZoneConfig(p => ({ ...p, [k]: { ...p[k], customMaskingItemId: null } }))} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
-    return <button onClick={() => setCustomPicker({ k, kind: "masking" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}>🖼️ Custom Masking</button>;
+    return <button onClick={() => setCustomPicker({ k, kind: "masking" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
   };
   // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
   // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
@@ -365,12 +816,248 @@ export default function StudioBuild({ ctx }) {
     return photos;
   };
 
+
+  // ═══ PHOTO FILTER PANEL ═══ Built here so the render below stays a readable two-column
+  // skeleton. Every group, option source and handler is unchanged from the inline version.
+  const ZP_PANEL = (()=>{
+      // ═══ PHOTO FILTERS ═══ Same six groups, same option sources, same handlers — but as
+      // collapsible rows instead of a 2-column dump. The old grid was ~400px tall, left a dead
+      // gap under "Design style" because Color palette is far taller, and pushed the build itself
+      // below the fold. Closed rows still name what's selected, so nothing is hidden.
+      const groups = [
+        { key:"eventType",    label:"Event type",    opts: taxOr(taxonomy.eventType, FUNCTIONS) },
+        { key:"venueType",    label:"Venue type",    opts: taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]) },
+        { key:"designStyle",  label:"Design style",  opts: taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]) },
+        { key:"colorPalette", label:"Color palette", cols:1, opts: (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])) },
+        { key:"timeSetting",  label:"Day / Night",   opts: taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]) },
+        { key:"venue",        cols:2, label:`Venue${zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}`, opts: zpVenueChoices, empty:"No venues configured yet" },
+      ];
+      const total = Object.values(zpFilters).flat().length;
+      const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
+      return <FPanel title="Photo filters" total={total} onClear={clearAll} note="Applies to every zone"
+        action={<span className="rail-btn" onClick={()=>setRailsOpen(false)} title="Fold both side panels away and widen the build"
+          style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.4,
+            textTransform:"uppercase",color:textS,padding:"3px 7px",borderRadius:7,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>
+          <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
+        </span>}>
+        {groups.map((g,gi)=>{
+          const sel=zpFilters[g.key]||[];
+          // Groups with long values (palette, venue names) get fewer columns and left-aligned rows.
+          const align = g.cols === 1 ? "start" : undefined;
+          return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
+            cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
+            <FPill on={sel.length===0} align={align} onClick={()=>setZpFilters(p=>({...p,[g.key]:[]}))}>All</FPill>
+            {g.opts.map(v=><FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{v}</FPill>)}
+            {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:zpTextM}}>{g.empty}</span>}
+          </FSection>;
+        })}
+      </FPanel>;
+    })();
+
+  // ═══ LIVE PRICING TILE ═══ Sticky right column. Every figure is read from the same source
+  // the rest of the page uses — grandTotal / totalCost() / transportCalc / cat / zoneTotal —
+  // so it is a view, never a second calculation. Hidden entirely when costs are hidden.
+  const PRICING_TILE = showCosts && (()=>{
+    const rule = isDark ? "rgba(255,255,255,0.07)" : "rgba(26,26,46,0.07)";
+    const rows = [...zoneKeys, ...customZones.map(cz=>cz.id)]
+      .filter(k=>enabledEls[k])
+      .map(k=>{
+        const cz = customZones.find(c=>c.id===k);
+        return { k, label: (cz ? cz.name : (zoneLabelsD[k]||{}).label) || k, amt: zoneTotal(k) };
+      })
+      .sort((a,b)=>b.amt-a.amt);
+    const zonesSum = rows.reduce((a,r)=>a+r.amt,0);
+    const line = (label, value, opts={}) => (
+      <div style={{display:"flex",alignItems:"baseline",gap:8,padding:"5px 0",fontSize:11.5,color:opts.strong?textP:textS}}>
+        <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:opts.strong?600:400}}>{label}</span>
+        <span style={{fontWeight:opts.strong?700:600,color:textP,fontVariantNumeric:"tabular-nums"}}>{value}</span>
+      </div>
+    );
+    return (
+      <div className="pt-card" style={{...S.card,padding:0,overflow:"hidden",boxShadow:isDark?"0 1px 2px rgba(0,0,0,0.45), 0 10px 26px -12px rgba(0,0,0,0.6)":"0 1px 2px rgba(26,26,46,0.06), 0 10px 26px -12px rgba(26,26,46,0.2)"}}>
+        {/* Gilt rule, matching the Event Info sheet */}
+        <div style={{height:3,background:`linear-gradient(90deg,${accent},${accent}66 42%,transparent)`}}/>
+        <div style={{padding:"13px 15px",borderBottom:`1px solid ${rule}`}}>
+          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",color:textS}}>Live estimate</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:5,flexWrap:"wrap"}}>
+            <div style={{fontSize:23,fontWeight:700,color:textP,letterSpacing:-0.6,fontVariantNumeric:"tabular-nums"}}>{fmt(grandTotal)}</div>
+            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:6,background:cat.bg,color:cat.color}}>{cat.label}</span>
+          </div>
+        </div>
+        <div style={{padding:"9px 15px",borderBottom:`1px solid ${rule}`}}>
+          {line("Décor", fmt(totalCost()))}
+          {line("Transport", fmt(transportCalc.total))}
+        </div>
+        <div style={{padding:"11px 15px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+            <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:textS}}>By zone</span>
+            {rows.length>0&&<span style={{marginLeft:"auto",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:5,background:isDark?"rgba(201,169,110,0.18)":"#F6E7C8",color:zpGold,border:`1px solid ${accent}44`}}>{rows.length}</span>}
+          </div>
+          {rows.length===0
+            ? <div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"3px 0"}}>No zones switched on yet — turn one on below and its cost appears here.</div>
+            : rows.map(r=>(
+              <div key={r.k} className="pt-row" style={{display:"flex",alignItems:"baseline",gap:8,padding:"4px 6px",margin:"0 -6px",borderRadius:6,fontSize:11.5}}>
+                <span style={{width:3,height:3,borderRadius:"50%",background:accent,flexShrink:0,marginBottom:2}}/>
+                <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:textS}}>{r.label}</span>
+                <span style={{fontWeight:600,color:textP,fontVariantNumeric:"tabular-nums"}}>{fmt(r.amt)}</span>
+              </div>
+            ))}
+          {/* Zones only ever sum to the décor side; transport is added on top, so a mismatch
+              here is expected and shown rather than hidden. */}
+          {rows.length>0&&<div style={{marginTop:7,paddingTop:7,borderTop:`1px solid ${rule}`}}>{line("Zones subtotal", fmt(zonesSum), {strong:true})}</div>}
+        </div>
+      </div>
+    );
+  })();
+  // Wider than S.main's 1200px cap, which left ~350px of dead gutter either side on a desktop
+  // monitor and pushed the filter rail far off the left edge. Matches the Browse page.
   return (
-  <div style={S.main}>
+  <div style={{...S.main,maxWidth:1800}}>
+    <style>{filterCSS + `
+/* Element rows are very wide, so name-left / controls-right leaves a long void.
+   A hover track lets the eye follow one row across it. */
+/* ═══ RAIL TABS ═══ A folded rail, and the control that folds them. */
+.rail-tab{transition:border-color .18s ease, background-color .18s ease, box-shadow .2s ease}
+.rail-tab:hover{border-color:${accent} !important;background:${isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.06)"} !important;
+  box-shadow:${isDark?"0 8px 18px -12px rgba(0,0,0,0.7)":"0 8px 18px -12px rgba(26,26,46,0.22)"}}
+.rail-btn{transition:border-color .16s ease, color .16s ease, background-color .16s ease}
+.rail-btn:hover{border-color:${accent} !important;color:${accent} !important;
+  background:${isDark?"rgba(201,169,110,0.1)":"rgba(201,169,110,0.08)"} !important}
+@media (prefers-reduced-motion: reduce){.rail-tab,.rail-btn{transition:none}}
+/* ═══ SECTION TILES ═══ The four entry points into a zone body, all in one row. They share the
+   build column with two 258px rails, so they fall back to 2×2 and then to a single column rather
+   than squashing "Truss & Masking" into an ellipsis. */
+.sec-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:12px}
+@media (max-width:1200px){.sec-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:700px){.sec-grid{grid-template-columns:minmax(0,1fr)}}
+.sec-tile{transition:transform .14s ease, box-shadow .2s ease, border-color .18s ease}
+.sec-tile:hover{transform:translateY(-2px);border-color:${accent} !important;
+  box-shadow:${isDark?"0 10px 22px -12px rgba(0,0,0,0.7)":"0 10px 22px -12px rgba(26,26,46,0.22)"}}
+.sec-tile[data-on="1"]{box-shadow:${isDark?"0 8px 18px -12px rgba(0,0,0,0.7)":"0 8px 18px -12px rgba(26,26,46,0.2)"}}
+@media (prefers-reduced-motion: reduce){.sec-tile{transition:none}.sec-tile:hover{transform:none}}
+/* ═══ ELEMENT CARD GRID ═══
+   auto-fill, so the browser decides the column count from the 272px minimum rather than me guessing
+   it: 3 across with the side rails open, 5 with them folded, and the gap is 16px at every width.
+   align-items:start — stretching made a plain card as tall as the kit card beside it.
+   A KIT card takes the whole row; every other card takes one track. Grid rows are uniform height, so
+   a ~450px kit sharing a row with two ~104px cards left a chasm under each of them — roughly 960px of
+   dead space across a nine-card list, against 272px once kits get their own row. Order is preserved
+   either way (no dense packing); the cost is that the row before a kit can end with an empty cell,
+   which is a short gap rather than a tall one. */
+.el-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px;align-items:start}
+/* ═══ ELEMENT CARD HOVER ═══
+   Resting cards are flat outlines so the grid reads as one calm surface. Hover lifts exactly one
+   card out of it: a two-layer shadow (a tight contact edge that keeps it attached to the page, plus
+   a broad soft cast that does the lifting), the surface warmed a few percent toward the gold accent,
+   and a gold spine that grows down the left edge. The spine is a ::before rather than a border so it
+   can animate its own height without the 1px border reflowing the card's contents.
+   background/border are inline styles on the card, hence !important on both. */
+.el-row{position:relative;
+  transition:transform .24s cubic-bezier(.22,.61,.36,1), box-shadow .28s ease, border-color .24s ease, background-color .24s ease}
+.el-row::before{content:"";position:absolute;left:0;top:11px;bottom:11px;width:2px;border-radius:0 2px 2px 0;
+  background:${accent};opacity:0;transform:scaleY(.35);transform-origin:center;pointer-events:none;
+  transition:opacity .24s ease, transform .3s cubic-bezier(.22,.61,.36,1)}
+.el-row:hover{transform:translateY(-3px);
+  border-color:${isDark?"rgba(201,169,110,0.55)":"rgba(201,169,110,0.6)"} !important;
+  background:${isDark?"rgba(201,169,110,0.05)":"rgba(201,169,110,0.045)"} !important;
+  box-shadow:${isDark
+    ? "0 1px 2px rgba(0,0,0,0.5), 0 16px 32px -14px rgba(0,0,0,0.75)"
+    : "0 1px 2px rgba(26,26,46,0.06), 0 16px 32px -14px rgba(26,26,46,0.28)"}}
+.el-row:hover::before{opacity:1;transform:scaleY(1)}
+/* pressing a card settles it back onto the page rather than leaving it floating */
+.el-row:active{transform:translateY(-1px);
+  box-shadow:${isDark?"0 1px 2px rgba(0,0,0,0.5), 0 8px 18px -12px rgba(0,0,0,0.7)":"0 1px 2px rgba(26,26,46,0.06), 0 8px 18px -12px rgba(26,26,46,0.22)"}}
+/* Zone rows are full-width with controls at the far right — a hover track ties the two ends. */
+.zone-row{transition:border-color .15s ease, box-shadow .18s ease}
+.zone-row:hover{border-color:${isDark?"rgba(201,169,110,0.45)":"rgba(201,169,110,0.5)"} !important;
+  box-shadow:${isDark?"0 6px 18px -10px rgba(0,0,0,0.6)":"0 6px 18px -10px rgba(26,26,46,0.22)"}}
+@media (prefers-reduced-motion: reduce){.zone-row{transition:none}}
+/* ═══ ZONE INTERIOR HOVER ═══
+   Element selectors, not classes: these controls are built inline all over the zone body, so
+   scoping by tag under .zone-row reaches all of them at once. */
+.zone-row button,.zone-row select,.zone-row input,.zone-row span[title],.zone-row img{
+  transition:filter .15s ease, border-color .15s ease, box-shadow .16s ease, transform .13s ease}
+/* every button lifts and darkens slightly, whatever its own background is */
+.zone-row button:not(:disabled):hover{box-shadow:0 0 0 2px ${accent}66, 0 5px 12px -5px rgba(26,26,46,0.32) !important;transform:translateY(-1px);filter:brightness(1.03)}
+.zone-row button:not(:disabled):active{transform:translateY(0) scale(0.98)}
+.zone-row button:disabled{opacity:.55;cursor:not-allowed}
+/* fields warm their border so it is obvious which one is under the cursor */
+.zone-row select:hover,.zone-row input:hover:not(:disabled){border-color:${accent}88 !important}
+.zone-row select:focus-visible,.zone-row input:focus-visible{outline:2px solid ${accent};outline-offset:1px}
+/* the icon actions are <span title=…> with inline tints — an outline reads on any of them */
+.zone-row span[title]:hover{box-shadow:0 0 0 2px ${accent}66 !important;border-radius:7px;filter:brightness(1.03)}
+/* photo tiles */
+.zone-row img:hover{filter:brightness(1.06)}
+/* ═══ PHOTO TILES ═══ The whole tile responds: it lifts, the border warms, and the photo
+   pushes in. The tile already clips overflow, so the zoom stays inside its rounded corners.
+   A selected tile keeps its green border and check — only the elevation changes on hover. */
+.ph-tile{transition:transform .18s ease, box-shadow .2s ease, border-color .2s ease}
+.ph-tile:hover{transform:translateY(-3px);border-color:${accent} !important;
+  box-shadow:${isDark?"0 16px 30px -12px rgba(0,0,0,0.75)":"0 16px 30px -12px rgba(26,26,46,0.32)"} !important}
+.ph-tile img{transition:transform .35s ease}
+.ph-tile:hover img{transform:scale(1.06)}
+/* the generic ring would double up on a tile that now has its own hover */
+.ph-tile:hover{outline:none}
+@media (prefers-reduced-motion: reduce){
+  .ph-tile,.ph-tile img{transition:none}
+  .ph-tile:hover,.ph-tile:hover img{transform:none}
+}
+/* ═══ "TAP TO SELECT" ═══ The caption is a separate click target from the image above it (select
+   vs. preview), so it gets its own hover. [data-sel="0"] keeps it off already-selected tiles,
+   whose green fill should not be replaced by a gold one. */
+/* The caption is the click target — the image above it opens the preview instead — so it gets the
+   hover. [data-sel="0"] keeps it off an already-selected card, whose green fill should not be
+   replaced by a gold one. !important because the resting background is an inline style. */
+.ph-sel{transition:background .15s ease}
+.ph-sel[data-sel="0"]:hover{background:${isDark?"rgba(201,169,110,0.1)":"rgba(201,169,110,0.09)"} !important}
+   so that paging twice the same way restarts the animation; a React key would remount the images. */
+@keyframes phInL1{from{opacity:0;transform:translate3d(26px,0,0)}to{opacity:1;transform:none}}
+@keyframes phInL2{from{opacity:0;transform:translate3d(26px,0,0)}to{opacity:1;transform:none}}
+@keyframes phInR1{from{opacity:0;transform:translate3d(-26px,0,0)}to{opacity:1;transform:none}}
+@keyframes phInR2{from{opacity:0;transform:translate3d(-26px,0,0)}to{opacity:1;transform:none}}
+/* Pages 2+ are fetched on first visit, so an image can pop in mid-slide. Fade it instead. */
+@keyframes phImgIn{from{opacity:0}to{opacity:1}}
+.ph-img{animation:phImgIn .34s ease}
+/* Pager buttons — the only controls on the page that had no feedback at all. */
+.ph-pg{transition:background .16s ease, border-color .16s ease, color .16s ease, transform .12s ease}
+.ph-pg:hover:not(:disabled){border-color:${accent} !important;color:${accent} !important;transform:translateY(-1px)}
+.ph-pg:active:not(:disabled){transform:translateY(0) scale(0.94)}
+.ph-pg:focus-visible{outline:2px solid ${accent};outline-offset:2px}
+@media (prefers-reduced-motion: reduce){
+  /* !important because the slide is set as an inline style, which a plain rule cannot override */
+  .ph-grid{animation:none !important}
+  .ph-img{animation:none}
+  .ph-pg{transition:none}
+  .ph-pg:hover:not(:disabled),.ph-pg:active:not(:disabled){transform:none}
+  .ph-sel{transition:none}
+}
+/* the transition companion for the clickable-div ring (lost in an earlier bad edit) */
+.zone-row div[style*="cursor:pointer"]{transition:box-shadow .15s ease}
+/* ═══ LIVE ESTIMATE TILE ═══ Resting elevation + hover, matching the filter panel. */
+.pt-card{transition:box-shadow .24s ease}
+.pt-card:hover{box-shadow:${isDark?"0 2px 4px rgba(0,0,0,0.5), 0 18px 36px -14px rgba(0,0,0,0.7)":"0 2px 4px rgba(26,26,46,0.08), 0 18px 36px -14px rgba(26,26,46,0.28)"} !important}
+/* per-zone rows get a track so a figure stays tied to its zone name */
+.pt-row{transition:background .13s ease}
+.pt-row:hover{background:${isDark?"rgba(201,169,110,0.10)":"rgba(201,169,110,0.12)"}}
+@media (prefers-reduced-motion: reduce){.pt-card,.pt-row{transition:none}}
+/* clickable inline-styled divs (wall chips, pickers) — same ring so nothing is left dead */
+.zone-row div[style*="cursor:pointer"]:not([style*="padding:14px"]):hover{box-shadow:0 0 0 2px ${accent}55 !important;border-radius:7px}
+undefined
+@media (prefers-reduced-motion: reduce){
+  .zone-row button,.zone-row select,.zone-row input,.zone-row span[title],.zone-row img{transition:none}
+  .zone-row button:not(:disabled):hover,.zone-row button:not(:disabled):active{transform:none}
+}
+@media (prefers-reduced-motion: reduce){
+  .el-row,.el-row::before{transition:none}
+  .el-row:hover,.el-row:active{transform:none}
+  /* the spine still appears, it just does not grow into place */
+  .el-row:hover::before{transform:scaleY(1)}
+}
+` + `@media (prefers-reduced-motion: reduce){.sb-pill,.sb-head{transition:none}.sb-pill:hover{transform:none}}`}</style>
     {customPicker && (
       <InventoryItemPickerModal
         title={customPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
-        icon={customPicker.kind === "ceiling" ? "🎬" : "🖼️"}
+        icon={customPicker.kind === "ceiling" ? <IconPlay size={14}/> : <IconCamera size={14}/>}
         accent="#7C3AED"
         imsInventory={imsInventory}
         categoryMatch="fabric"
@@ -381,109 +1068,80 @@ export default function StudioBuild({ ctx }) {
         isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
       />
     )}
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:6}}>
-      <div style={{fontSize:28,fontWeight:700}}>Build Your Decor</div>
-      <div style={{display:"flex",alignItems:"center",gap:6}}>
-        <button onClick={()=>setTopZpFilterOpen(!topZpFilterOpen)} title="Set the photo filter for every zone at once (same filter each zone's own 🔍 uses)" style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${topZpFilterOpen||zpHasFilters?accent:border}`,background:topZpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:topZpFilterOpen||zpHasFilters?accent:textS,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>🔍 Filter whole build{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
-        {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} title="Reset every filter section back to All" style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>All</button>}
+    {/* Step header, left-aligned on the same axis as the content below. The row this replaced was
+        a flex pair holding the title and a "Filter whole build" toggle; with the toggle gone it
+        only ever had one child, so it is a plain block. */}
+    <div style={{marginBottom:6}}>
+      <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",color:accent,marginBottom:4}}>Step 3 of 4 · Décor Build</div>
+      {/* Greets the client by name. Falls back to the old title when there is no name yet — a page
+          heading reading "Welcome," with nothing after it would look broken. */}
+      <div style={{fontSize:26,fontWeight:700,letterSpacing:-0.5,lineHeight:1.1}}>
+        {clientName ? <>Welcome, {clientName}</> : "Build Your Decor"}
       </div>
     </div>
-    <div style={{fontSize:14,color:textS,marginBottom:clientDate?8:24,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-      {clientName&&<strong>{clientName} · </strong>}
+    {/* The date lives on this line, under the title. The day-note banner below is conditional, so
+        this margin can no longer shrink assuming something always follows it. */}
+    <div style={{fontSize:14,color:textS,marginBottom:24,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      {/* The name moved into the heading above, so it is not repeated here. */}
       <span>{activeFnMeta.venue || venue} · {activeFnMeta.type || fn}</span>
+      {clientDate&&<span style={{opacity:0.45}}>·</span>}
+      {clientDate&&<span style={{color:textP,fontWeight:600,display:"inline-flex",alignItems:"center",gap:5}}>
+        <IconCalendar size={13}/>
+        {new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}
+      </span>}
+      {dateDemand?.isHigh&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(239,68,68,0.1)",color:"#DC2626",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#EF4444",marginRight:6}}/>High demand</span>}
+      {dateDemand?.isMod&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(245,158,11,0.1)",color:"#B45309",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6}}/>Moderate</span>}
       {extraFunctions.length > 0 && <span style={{padding:"2px 10px",borderRadius:8,fontSize:10,fontWeight:600,background:`${accent}20`,color:accent,letterSpacing:0.3}}>Function {activeFnIdx + 1} of {extraFunctions.length + 1}</span>}
     </div>
-    {topZpFilterOpen&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:12,marginBottom:16,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
-      <div>
-        <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Event type</div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          <span onClick={()=>setZpFilters(p=>({...p,eventType:[]}))} style={zpPill(zpFilters.eventType.length===0)}>All</span>
-          {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={zpPill(zpFilters.eventType.includes(v))}>{v}</span>)}
-        </div>
-      </div>
-      <div>
-        <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Venue type</div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={zpPill(zpFilters.venueType.length===0)}>All</span>
-          {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={zpPill(zpFilters.venueType.includes(v))}>{v}</span>)}
-        </div>
-      </div>
-      <div>
-        <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Design style</div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          <span onClick={()=>setZpFilters(p=>({...p,designStyle:[]}))} style={zpPill(zpFilters.designStyle.length===0)}>All</span>
-          {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={zpPill(zpFilters.designStyle.includes(v))}>{v}</span>)}
-        </div>
-      </div>
-      <div>
-        <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Color palette</div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
-          {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
-        </div>
-      </div>
-      <div>
-        <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Day / Night</div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          <span onClick={()=>setZpFilters(p=>({...p,timeSetting:[]}))} style={zpPill(zpFilters.timeSetting.length===0)}>All</span>
-          {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={zpPill(zpFilters.timeSetting.includes(v))}>{v}</span>)}
-        </div>
-      </div>
-      <div style={{gridColumn:"1/-1"}}>
-        <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>
-          Venue{zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}
-        </div>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap",maxHeight:110,overflowY:"auto"}}>
-          <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
-          {zpVenueChoices.map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
-          {zpVenueChoices.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
-        </div>
-      </div>
-      {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
-    </div>}
+    {/* ═══ TWO-COLUMN SHELL ═══ Photo filters live permanently in a sticky left rail, exactly
+        as on Browse — always visible, no toggle. ═══ */}
+    <div style={{display:"flex",gap:railsOpen?22:12,alignItems:"flex-start"}}>
+      {railsOpen
+        ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start"}}>{ZP_PANEL}</div>
+        : railTab("left","Photo filters",<IconSliders size={14}/>)}
+      <div style={{flex:1,minWidth:0}}>
 
+    {/* Event Palette strip removed on request. The palette still comes from the selected
+        video's tag via clientPalette / extraFunctions[].palette — there is simply no override
+        control on Build any more. */}
 
     {/* ═══ DATE DEMAND BANNER ═══ */}
-    {clientDate&&(()=>{
-      const dt=dateTypes[clientDate];const booked=clientLedger.filter(c=>c.eventDate===clientDate&&c.status==="booked").length;const ongoing=clientLedger.filter(c=>c.eventDate===clientDate&&c.status==="ongoing"&&c.id!==activeClientId).length;
-      const dtInfo=dt==="saya"?{bg:"rgba(239,68,68,0.08)",border:"rgba(239,68,68,0.2)",icon:"🔴",label:"Saya Day"}:dt==="competition"?{bg:"rgba(100,100,100,0.08)",border:"rgba(100,100,100,0.2)",icon:"⚫",label:"Competition Day"}:null;
-      const isHigh=booked>=2||dt==="saya";const isMod=!isHigh&&booked===1;const isLow=!isHigh&&!isMod&&!dt;
+    {clientDate&&dateDemand&&(()=>{
+      const { dt, booked, ongoing, isHigh } = dateDemand;   // one source, shared with the chip above
+      const dtInfo=dt==='saya'?{bg:"rgba(239,68,68,0.08)",border:"rgba(239,68,68,0.2)",label:"Saya Day"}:dt==='competition'?{bg:"rgba(100,100,100,0.08)",border:"rgba(100,100,100,0.2)",label:"Competition Day"}:null;
+      if (!dtInfo && !booked && !ongoing) return null;   // nothing to report once the date moved up
       return <div style={{padding:"8px 14px",borderRadius:10,marginBottom:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",fontSize:12,background:isHigh?"rgba(239,68,68,0.08)":(dtInfo?dtInfo.bg:(isDark?"rgba(201,169,110,0.05)":"#FFFDF7")),border:`1px solid ${isHigh?"rgba(239,68,68,0.2)":(dtInfo?dtInfo.border:border)}`}}>
-        <span style={{fontWeight:600}}>📅 {new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"})}</span>
-        {dtInfo&&<span style={{padding:"2px 8px",borderRadius:6,fontSize:10,fontWeight:600,background:dtInfo.bg,color:dt==="saya"?"#EF4444":"#888"}}>{dtInfo.icon} {dtInfo.label}</span>}
-        {booked>0&&<span style={{color:"#10B981",fontWeight:600}}>🟢 {booked} booked</span>}
-        {ongoing>0&&<span style={{color:"#F59E0B"}}>🟡 {ongoing} ongoing</span>}
-        {isHigh&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(239,68,68,0.1)",color:"#EF4444",fontWeight:600}}>🔴 High demand</span>}
-        {isMod&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(245,158,11,0.1)",color:"#F59E0B",fontWeight:600}}>🟡 Moderate</span>}
-        {isLow&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(16,185,129,0.1)",color:"#10B981",fontWeight:600}}>🟢 Low demand</span>}
+        {dtInfo&&<span style={{padding:"2px 8px",borderRadius:6,fontSize:10,fontWeight:600,background:dtInfo.bg,color:dt==="saya"?"#EF4444":"#888"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dt==="saya"?"#EF4444":"#666",marginRight:6,verticalAlign:"middle"}}/>{dtInfo.label}</span>}
+        {booked>0&&<span style={{color:"#047857",fontWeight:600}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#10B981",marginRight:6,verticalAlign:"middle"}}/>{booked} booked</span>}
+        {ongoing>0&&<span style={{color:"#B45309"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6,verticalAlign:"middle"}}/>{ongoing} ongoing</span>}
       </div>;
     })()}
 
     {/* ═══ SOURCE EVENT BANNER ═══ */}
-    {sourceEvent&&<div style={{...S.card,marginBottom:20,overflow:"hidden"}}>
+    {sourceEvent&&<div style={{...S.card,marginBottom:14,overflow:"hidden"}}>
       <div style={{display:"flex",gap:0}}>
-        <div style={{width:220,minHeight:140,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
+        <div style={{width:168,minHeight:108,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
           <LazyYT src={sourceEvent.video} gradient={sourceEvent.gradient} poster={sourceEvent.img||sourceEvent.photos?.[0]} style={{position:"absolute",inset:0}}/>
         </div>
-        <div style={{flex:1,padding:"14px 18px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+        <div style={{flex:1,padding:"10px 14px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
             <div>
-              <div style={{fontSize:10,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:4}}>Building from reference</div>
-              <div style={{fontSize:17,fontWeight:700}}>{sourceEvent.name}</div>
-              <div style={{fontSize:12,color:textS,marginTop:2}}>{sourceEvent.venue} · {sourceEvent.fn} · {sourceEvent.space}</div>
+              <div style={{fontSize:9,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:3}}>Building from reference</div>
+              <div style={{fontSize:14.5,fontWeight:700}}>{sourceEvent.name}</div>
+              <div style={{fontSize:11,color:textS,marginTop:2}}>{sourceEvent.venue} · {sourceEvent.fn} · {sourceEvent.space}</div>
             </div>
             {showCosts&&<div style={{textAlign:"right"}}>
-              <div style={{fontSize:18,fontWeight:700,color:textP}}>{fmt(grandTotal)}</div>
+              <div style={{fontSize:16,fontWeight:700,color:textP}}>{fmt(grandTotal)}</div>
               <div style={{fontSize:9,color:textS}}>{fmt(totalCost())} decor + {fmt(transportCalc.total)} transport</div>
-              <span style={{fontSize:10,padding:"3px 10px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+              <span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
             </div>}
           </div>
-          <div style={{fontSize:12,color:textS,lineHeight:1.5,marginBottom:8}}>{sourceEvent.desc}</div>
+          <div style={{fontSize:11,color:textS,lineHeight:1.45,marginBottom:6,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{sourceEvent.desc}</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-            {(sourceEvent.tags||[]).map((t,i)=><span key={i} style={{fontSize:10,padding:"3px 8px",borderRadius:8,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS,fontWeight:500}}>{t}</span>)}
+            {(sourceEvent.tags||[]).map((t,i)=><span key={i} style={{fontSize:9.5,padding:"2px 7px",borderRadius:8,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS,fontWeight:500}}>{t}</span>)}
           </div>
-          {sourceEvent.photos?.length>0&&<div style={{display:"flex",gap:6,marginTop:10,overflowX:"auto"}}>
-            {sourceEvent.photos.map((p,i)=><img key={i} src={p} alt="" loading="lazy" style={{width:70,height:46,objectFit:"cover",borderRadius:6,flexShrink:0,cursor:"pointer",border:`2px solid ${border}`}} onClick={()=>setPreviewImg(p)} onError={e=>{e.target.style.display="none"}}/>)}
+          {sourceEvent.photos?.length>0&&<div style={{display:"flex",gap:5,marginTop:7,overflowX:"auto"}}>
+            {sourceEvent.photos.map((p,i)=><img key={i} src={p} alt="" loading="lazy" style={{width:54,height:36,objectFit:"cover",borderRadius:6,flexShrink:0,cursor:"pointer",border:`2px solid ${border}`}} onClick={()=>setPreviewImg(p)} onError={e=>{e.target.style.display="none"}}/>)}
           </div>}
         </div>
       </div>
@@ -522,7 +1180,7 @@ export default function StudioBuild({ ctx }) {
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
               <button onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}} style={{padding:"4px 14px",borderRadius:6,border:"none",background:"rgba(255,0,0,0.9)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>{"▶"} Play Video</button>
-              {ytWatchUrl&&<button onClick={()=>{try{navigator.clipboard.writeText(ytWatchUrl);showMsg("✓ YouTube link copied!","green");}catch{}}} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:600,cursor:"pointer"}}>{"📋"} Copy Link</button>}
+              {ytWatchUrl&&<button onClick={()=>{try{navigator.clipboard.writeText(ytWatchUrl);showMsg("✓ YouTube link copied!","green");}catch{}}} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:600,cursor:"pointer"}}><IconCopy size={11}/> Copy Link</button>}
             </div>
           </div>
         </div>
@@ -533,26 +1191,26 @@ export default function StudioBuild({ ctx }) {
 
 
     {/* ═══ FLORAL RATIO CONTROL — art/real split is a design control, show it even when costs are hidden ═══ */}
-    {<div style={{borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12}}>
+    {<div style={{borderRadius:10,padding:"13px 18px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12}}>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-        <span style={{fontSize:13}}>{"🌸"}</span>
-        <span style={{fontSize:11,fontWeight:600,color:textP}}>Artificial</span>
+        <span style={{display:"flex",color:accent}}><IconFlower size={16}/></span>
+        <span style={{fontSize:12.5,fontWeight:600,color:textP}}>Artificial</span>
       </div>
-      <input type="range" min={0} max={100} step={5} value={floralRatio} onChange={e=>setFloralRatio(parseInt(e.target.value))} style={{flex:1,accentColor:"#888",cursor:"pointer",minWidth:80}}/>
+      <input type="range" min={0} max={100} step={5} value={floralRatio} onChange={e=>setFloralRatio(parseInt(e.target.value))} style={{flex:1,accentColor:accent,cursor:"pointer",minWidth:80}}/>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-        <span style={{fontSize:13,fontWeight:700,color:textP,minWidth:32,textAlign:"right"}}>{floralRatio}%</span>
-        <div style={{fontSize:9,color:textS,lineHeight:1.2}}>art<br/>/{100-floralRatio}% real</div>
+        <span style={{fontSize:17,fontWeight:700,color:textP,letterSpacing:-0.3,minWidth:44,textAlign:"right"}}>{floralRatio}%</span>
+        <div style={{fontSize:10.5,color:textS,lineHeight:1.3}}>art<br/>/{100-floralRatio}% real</div>
       </div>
       <div style={{display:"flex",gap:3,flexShrink:0}}>
-        {[0,50,70,100].map(v=><button key={v} onClick={()=>setFloralRatio(v)} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:9,fontWeight:floralRatio===v?700:400,cursor:"pointer",background:floralRatio===v?"rgba(0,0,0,0.08)":"transparent",color:floralRatio===v?textP:textS}}>{v}%</button>)}
+        {[0,50,70,100].map(v=><button key={v} onClick={()=>setFloralRatio(v)} style={{padding:"5px 11px",borderRadius:8,border:"none",fontSize:11,fontWeight:floralRatio===v?700:500,cursor:"pointer",background:floralRatio===v?"rgba(0,0,0,0.08)":"transparent",color:floralRatio===v?textP:textS}}>{v}%</button>)}
       </div>
     </div>}
 
-    {/* ═══ ELEMENT CARDS — photos change with tier ═══ */}
+    {/* ═══ ELEMENT CARDS ═══ One unified photo strip per zone (no Silver/Gold split). ═══ */}
     {[...zoneKeys, ...customZones.filter(cz=>cz.sourceType).map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
-      const el=czSrc?{label:czSrc.name,icon:czSrc.icon||"📦"}:zoneLabelsD[k];
+      const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
       const isCentrepieceZone=/centre\s*piece|center\s*piece|centrepiece/i.test(el?.label||k||"");
       const isOn=enabledEls[k];const isCust=customMode[k];
       let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
@@ -573,20 +1231,30 @@ export default function StudioBuild({ ctx }) {
         matchedPhotos = [existing || selP, ...matchedPhotos.filter(ph => ph.src !== selP.src)];
       }
       const isDuplicate=!!czSrc?.sourceType;
-      return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
+      return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : toggleEl(k)}>
-          <div style={{display:"flex",alignItems:"center",gap:12}}><span style={{fontSize:22}}>{el.icon}</span><div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{el.label}</div>{isDuplicate&&<span style={{fontSize:9,padding:"2px 8px",borderRadius:4,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}{isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}>{isCollapsed(k)?"▶":"▼"} Details & Pricing</span>}</div>
+          <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>{/* zone emoji removed — the label carries the row */}<div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
+                row still says what is in the zone. Derived from existing state only. */}
+            {(()=>{
+              const n=(zoneElements[k]||[]).length;
+              if(!isOn) return <span style={{fontSize:11,color:textS,fontWeight:400}}>Not included</span>;
+              const bits=[n?`${n} element${n===1?"":"s"}`:"no elements yet"];
+              if(zoneConfig[k]?.trT) bits.push("truss");
+              if(zoneConfig[k]?.plH) bits.push("platform");
+              return <span style={{fontSize:11,color:textS,fontWeight:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bits.join(" · ")}</span>;
+            })()}
+            {isDuplicate&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}{isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details & Pricing</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&!isCollapsed(k)&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0))}</div>}
-            <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(168,85,247,0.08)"}}>🏭</span>
-            <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",fontSize:13,opacity:0.6,padding:"2px 4px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>🛒</span>
-            {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",fontSize:16,opacity:0.5}}>📋</span>}
+            {isOn&&showCosts&&!isCollapsed(k)&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(zoneTotal(k))}</div>}
+            <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
+            <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
+            {!isDuplicate&&<span title="Duplicate this zone" onClick={e=>{e.stopPropagation();const count=customZones.filter(cz=>cz.sourceType===k).length+2;const id="cz_"+Date.now();const newCz={id,name:`${el.label} (${count})`,sourceType:k,icon:el.icon};setCustomZones(p=>[...p,newCz]);setEnabledEls(p=>({...p,[id]:true}));showMsg(`✓ ${newCz.name} added`,"green");}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:textS,borderRadius:7,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)"}}><IconCopy size={14}/></span>}
             {isDuplicate&&<span onClick={e=>{e.stopPropagation();if(confirm("Remove "+el.label+"?")){setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});}}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
             {isOn&&isCentrepieceZone&&<span onClick={e=>e.stopPropagation()} title="Scale the whole set — multiplies every element count below (e.g. 10 tables → 10× tables, chairs, centre pieces…). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
               <input type="number" min="1" step="1" value={zoneScaleVal(k)} onClick={e=>e.stopPropagation()} onChange={e=>setZoneScale(k, e.target.value)} onFocus={e=>e.target.select()} style={{width:40,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
             </span>}
-            {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}>{isRepeat(k)?"♻️ Repeat":"✨ Fresh"}</span>}
+            {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{isRepeat(k)?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{isRepeat(k)?"Repeat":"Fresh"}</span></span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
           </div>
         </div>
@@ -594,15 +1262,15 @@ export default function StudioBuild({ ctx }) {
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
           <div style={{marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS}}>📷 {el.label} — tap to apply pricing</div>
+                <div style={{fontSize:11,fontWeight:600,color:textS,display:"flex",alignItems:"center",gap:6}}><IconCamera size={12}/>{el.label} — tap to apply pricing</div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {elSelectedPhoto[k]&&<div style={{fontSize:10,color:"#059669",fontWeight:600}}>✓ {elSelectedPhoto[k].eventName}</div>}
                   <label style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading===k?accent+"20":"transparent",color:zoneUploading===k?accent:accent,fontSize:10,fontWeight:600,cursor:zoneUploading?"wait":"pointer",display:"flex",alignItems:"center",gap:3}}>
-                    {zoneUploading===k?"⏳ Uploading...":"📷 Upload"}
+                    {zoneUploading===k?"Uploading…":<><IconCamera size={11}/>Upload</>}
                     <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                   </label>
                   <button onClick={()=>setGridZones(g=>({...g,[k]:!g[k]}))} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>
-                  <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>🔍{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
+                  <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
                 </div>
               </div>
               {zpFilterOpen&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
@@ -653,45 +1321,68 @@ export default function StudioBuild({ ctx }) {
                 </div>
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
-              {matchedPhotos.length>0 ? (
-              <div ref={el=>{stripRefs.current[k]=el;}} style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
-              {matchedPhotos.map((ph,i)=>{
+              {matchedPhotos.length>0 ? (()=>{
+                // Strip view shows PH_PER_PAGE at a time with a pager underneath, so each card is
+                // large enough to judge a stage from. The ▦ grid toggle still shows everything.
+                const paged = !gridZones[k];
+                const pageCount = paged ? Math.max(1, Math.ceil(matchedPhotos.length / PH_PER_PAGE)) : 1;
+                const page = Math.min(phPage[k] || 0, pageCount - 1);   // clamp: filters can shrink the list
+                const start = paged ? page * PH_PER_PAGE : 0;
+                const shown = paged ? matchedPhotos.slice(start, start + PH_PER_PAGE) : matchedPhotos;
+                return (<>
+              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" {...phSwipeHandlers(k,page,pageCount)}>
+              {shown.map((ph,pi)=>{
+                const i = start + pi;   // absolute index: the lightbox browses the whole matched set
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
                 const isSelected = elSelectedPhoto[k]?.src === ph.src;
                 // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
                 const photoFullCost = calcPhotoCost(k, ph);
                 return (
-                <div key={i} style={{flexShrink:0,width:gridZones[k]?"auto":160,borderRadius:10,overflow:"hidden",
+                <div key={i} className="ph-tile" style={{flexShrink:0,width:"auto",minWidth:0,borderRadius:10,overflow:"hidden",
                   border:isSelected?`3px solid #059669`:isSource?`2px solid #C9A96E`:`2px solid ${border}`,
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}}>
-                    <img src={ph.src} alt={ph.eventName} loading="lazy" style={{width:gridZones[k]?"100%":160,height:95,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
-                    <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"2px 6px",borderRadius:4,fontSize:8}}>🔍 Preview</div>
-                    {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:700}}>{fmt(photoFullCost)}</div>}
-                    {ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"rgba(124,58,237,0.8)",color:"#fff",padding:"2px 6px",borderRadius:4,fontSize:8,fontWeight:600}}>Library</div>}
+                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}}>
+                    <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
+                    <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:5,fontSize:9.5,display:"inline-flex",alignItems:"center",gap:3}}><IconSearch size={10}/>Preview</div>
+                    {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:12.5,fontWeight:700}}>{fmt(photoFullCost)}</div>}
+                    {ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"rgba(124,58,237,0.8)",color:"#fff",padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:600}}>Library</div>}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
-                    {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:8,fontWeight:700,padding:"2px 6px",borderRadius:4}}>SOURCE</div>}
+                    {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>SOURCE</div>}
+                    {ph.isVideoDefault&&!isSelected&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>Default</div>}
                   </div>
-                  <div style={{padding:"6px 8px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{selectElPhoto(k,ph);requestAnimationFrame(()=>{const strip=stripRefs.current[k];if(strip)strip.scrollTo({left:0,top:0,behavior:"smooth"});});}}>
-                    <div style={{fontSize:10,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
-                    <div style={{fontSize:9,color:isSelected?"#059669":textS,marginTop:3}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} style={{padding:"9px 11px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);}}>
+                    <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
+                    <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
                     </div>
-                    <div style={{fontSize:9,color:accent,marginTop:2,fontWeight:500}}>{isSelected ? "✓ Selected" : "Tap to select"}</div>
+                    {isSelected&&<div style={{marginTop:5,fontSize:10.5,fontWeight:700,color:"#047857",display:"flex",alignItems:"center",gap:4}}>✓ Selected</div>}
                   </div>
                 </div>);
               })}
               </div>
-              ) : (
-            <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:12,padding:"16px 20px",textAlign:"center"}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#D97706",marginBottom:4}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
-              <div style={{fontSize:11,color:textS,marginBottom:8}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div>
-              <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"8px 18px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:12,fontWeight:600,cursor:"pointer"}}>✕ Clear filters</button>}
-                <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"8px 20px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:12,fontWeight:600,cursor:zoneUploading?"wait":"pointer"}}>
-                  {zoneUploading===k?"⏳ Uploading...":"📷 Upload Client Photo"}
+              {paged&&pageCount>1&&<div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                <button onClick={()=>phGoTo(k,Math.max(0,page-1),page)} disabled={page===0} title="Previous photos" className="ph-pg" style={phNav(page===0)}>
+                  <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={13}/></span>
+                </button>
+                {pageWindow(page,pageCount).map((n,gi)=>n==="…"
+                  ? <span key={`gap${gi}`} style={{fontSize:11,color:textS,padding:"0 2px"}}>…</span>
+                  : <button key={n} onClick={()=>phGoTo(k,n,page)} className="ph-pg" style={phDot(n===page)}>{n+1}</button>)}
+                <button onClick={()=>phGoTo(k,Math.min(pageCount-1,page+1),page)} disabled={page===pageCount-1} title="More photos" className="ph-pg" style={phNav(page===pageCount-1)}>
+                  <span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={13}/></span>
+                </button>
+                <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+PH_PER_PAGE,matchedPhotos.length)} of {matchedPhotos.length}</span>
+              </div>}
+              </>);
+              })() : (
+            <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:10,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:200}}><div style={{fontSize:12,fontWeight:600,color:"#B45309"}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
+              <div style={{fontSize:10.5,color:textS,marginTop:2,lineHeight:1.4}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div></div>
+              <div style={{display:"flex",gap:7,flexShrink:0,flexWrap:"wrap"}}>
+                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
+                <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
+                  {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
                   <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                 </label>
               </div>
@@ -701,15 +1392,21 @@ export default function StudioBuild({ ctx }) {
 
           {/* ═══ AI INSPIRATION per element — HIDDEN pending search integration ═══ */}
 
+
           {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
           {showCosts&&!isCollapsed(k)&&<Fragment>
 
+          {/* ═══ FOUR SECTIONS ═══ Two per row. Details for one open below on click. ═══ */}
+          <div className="sec-grid" id={`zone-sec-${k}`}>
+            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
+          </div>
+
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
-          {zoneElements[k] ? (
+          {zoneSection[k]==="elements"&&(zoneElements[k] ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div onClick={()=>toggleZoneCollapse(k)} title="Collapse this zone" style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{fontSize:10,color:"#999"}}>{isCollapsed(k)?"▶":"▼"}</span>{"📋"} Element card — {elSelectedPhoto[k]?.eventName || "Library photo"}</div>
-                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
+                {isElCardOpen(k)&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
                       master library photo so the fix sticks for everyone. Visible for ANY selected
                       photo while CORRECTION_MODE is on, so it can be tagged whenever — if the photo
@@ -721,24 +1418,18 @@ export default function StudioBuild({ ctx }) {
                     const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
                     const verified = !!master?._verified;
                     return <button onClick={()=>{
-                      if (isLib) {
-                        if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
-                        // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
-                        const mv=master.tags?.venue||"";
-                        setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
-                        setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
-                      } else {
-                        // No master yet — blank tags to fill in; save() creates the Library row on confirm.
-                        setCorrVenueGrp("");
-                        setCorrectPhoto({ libId:null, zoneKey:k, name: selP.eventName||"", tags:{eventType:[],venueType:[],venue:"",areasElements:[],colorPalette:[],categoryTier:[],designStyle:[],timeSetting:[]}, draftSrc: selP.src });
-                      }
-                    }} title={isLib ? "Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)" : "Save this photo + its tags/elements as a new shared Library photo"}
-                      style={{...S.btn(false),fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
-                      ✏️ {isLib ? (verified?"Correct & update master":"Correct & save to master") : "Save to Library"}
+                      if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
+                      // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
+                      const mv=master.tags?.venue||"";
+                      setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
+                      setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
+                    }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+                      style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
+                      <IconPencil size={11}/>{verified?"Correct & update master":"Correct & save to master"}
                     </button>;
                   })()}
                   <div style={{position:"relative"}}>
-                    <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
+                    <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
                       // A kit's own components are already covered by that kit — don't offer adding
@@ -761,16 +1452,16 @@ export default function StudioBuild({ ctx }) {
                               if(!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
-                            style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                            style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
                             <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
                               <span style={{fontSize:22,opacity:0.5}}>🌺</span>
                             </div>
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pt.name}</span>
-                                <span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700,flexShrink:0}}>🌺 RECIPE</span>
+                                <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700,flexShrink:0}}>🌺 RECIPE</span>
                               </div>
-                              <div style={{fontSize:9,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
                             </div>
                           </div>; }
                           const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
@@ -781,25 +1472,27 @@ export default function StudioBuild({ ctx }) {
                               if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
-                            style={{padding:"8px 10px",fontSize:11,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
+                            style={{padding:"8px 10px",fontSize:12,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
                             <ItemHoverThumb src={src} size={56} name={it.name} sub={(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):it.cat} dims={itemDimsText(it)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark?"#1a1a2e":"#eee"} />
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
-                                {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>📦 KIT</span>}
-                                {isBlocked&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
-                                {!isBlocked&&remaining!=null&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
+                                {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
+                                {isBlocked&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>fully used in this event</span>}
+                                {!isBlocked&&remaining!=null&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
                               </div>
-                              <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{itemDimsText(it)?` · 📐 ${itemDimsText(it)}`:""}</div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{itemDimsText(it)?` · ${itemDimsText(it)}`:""}</div>
                             </div>
                           </div>;
                         })}
-                      </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS,width:320}}>No matches</div>;
+                      </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>;
                     })()}
                   </div>
-                </div>
+                </div>}
               </div>
-              <div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+              {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+                {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
+              <div className="el-grid">
                 {(zoneElements[k]||[]).map((el, idx) => {
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                   const rc = priceInfo.rc;
@@ -817,10 +1510,10 @@ export default function StudioBuild({ ctx }) {
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
-                  <div key={idx} style={{display:"flex",flexDirection:"column",padding:"6px 0",borderBottom:`1px solid ${border}`}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
                         <div style={{position:"relative",flexShrink:0}}
                           onMouseEnter={(e)=>{
                             if(!thumbSrc) return;
@@ -830,27 +1523,28 @@ export default function StudioBuild({ ctx }) {
                             setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
                           }}
                           onMouseLeave={()=>setElThumbHover(null)}>
-                          {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📦</div>}
+                          {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11.5}}><IconBox size={12}/></div>}
                           {elThumbHover?.key===thumbKey && thumbSrc && (
                             <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
                               <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                             </div>
                           )}
                         </div>
-                        <span title={isUnavail?"Not available for this date — tap 📦 to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none"}}>{invItem?.name || el.name}</span>
-                        {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>📦 KIT</span>}
-                        {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
-                        {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
-                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={isUnavail?"Not available for this date — tap to pick a different item":"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:isUnavail?13:11,opacity:isUnavail?1:0.5,padding:isUnavail?"1px 3px":"0 1px",borderRadius:4,background:isUnavail?"rgba(239,68,68,0.15)":"transparent",lineHeight:1}}>📦</span>}
-                        {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📌 {(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned"}</span>}
-                        {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
-                        {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
+                        <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
+                        {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:11,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
+                        {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
+                        {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
+                        {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
+                        {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title="Check stock availability & pick an item" style={{cursor:"pointer",fontSize:12,opacity:0.5,padding:"0 1px",lineHeight:1}}><IconBox size={12}/></span>}
+                        {el.imsId&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={`Booking: ${(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"selected item"} — tap to change`} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:2,fontSize:10.5,padding:"2px 7px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#059669",fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(imsInventory||[]).find(i=>i.id===el.imsId)?.name||el.imsName||"pinned"}</span>}
+                        {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
+                        {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
-                        {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
-                        {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
-                        {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,{...el,size:ns,qty:1});setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:9,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
-                        {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:9,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:undefined};setZoneElements(p=>({...p,[k]:elems}));}} title="Use this sub-category's default real/artificial ratio" style={{padding:"1px 6px",borderRadius:3,border:"none",cursor:"pointer",background:typeof el.realPct!=="number"?"#EC4899":"rgba(236,72,153,0.12)",color:typeof el.realPct!=="number"?"#fff":"#EC4899"}}>🌐 Ratio</button><button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:100};setZoneElements(p=>({...p,[k]:elems}));}} title="Price this element at 100% the recipe's Studio rate, overriding the sub-category's default" style={{padding:"1px 6px",borderRadius:3,border:"none",cursor:"pointer",background:el.realPct===100?"#EC4899":"rgba(236,72,153,0.12)",color:el.realPct===100?"#fff":"#EC4899"}}>🎯 100%</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:42,padding:"1px 4px",borderRadius:3,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:9,textAlign:"center"}} /></span>}
+                        {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
+                        {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
+                        {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,{...el,size:ns,qty:1});setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
+                        {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
                         {/* §23 Phase 2.9 → Paint Allocation Ops (05 Jun 2026) — item-level paintability */}
                         {(()=>{
                           // New rule: paintable iff sub-category has ≥1 IMS item with paintCost > 0
@@ -891,11 +1585,11 @@ export default function StudioBuild({ ctx }) {
                                 border: isOverridden ? "1.5px solid #EC4899" : `1.5px dashed ${isDark?"rgba(255,255,255,0.25)":"rgba(124,58,237,0.4)"}`,
                                 background: isOverridden ? "rgba(236,72,153,0.10)" : (isDark?"rgba(124,58,237,0.08)":"rgba(124,58,237,0.05)"),
                                 cursor:"pointer",
-                                fontSize:10,
+                                fontSize:11.5,
                                 fontWeight:isOverridden?700:600,
                                 color: isOverridden ? "#EC4899" : (isDark?"#C4B5FD":"#7c3aed")
                               }}>
-                              <span style={{fontSize:11}}>🎨</span>
+                              <IconPalette size={12}/>
                               {/* Split-chip swatch when 2+ colours */}
                               {cObj2 ? (
                                 <span style={{display:"inline-flex",width:14,height:10,borderRadius:2,overflow:"hidden",border:"1px solid rgba(0,0,0,0.15)"}}>
@@ -906,16 +1600,16 @@ export default function StudioBuild({ ctx }) {
                                 <span style={{width:10,height:10,borderRadius:2,border:"1px solid rgba(0,0,0,0.15)",background:cObj1?.hex||"#F5F0E1"}} />
                               )}
                               <span>{label}</span>
-                              {isOverridden && <span style={{fontSize:8,padding:"0 4px",borderRadius:3,background:"#EC4899",color:"#fff",fontWeight:700,marginLeft:2}}>🖌</span>}
+                              {isOverridden && <span style={{fontSize:10.5,padding:"1px 6px",borderRadius:3,background:"#EC4899",color:"#fff",fontWeight:700,marginLeft:2}}><IconPencil size={10}/></span>}
                             </button>
                           );
                         })()}
-                        {showCosts&&<span style={{fontSize:10,color:textS,marginLeft:4}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
                       </div>
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
                       {isTrussSqft ? (
-                        <div style={{fontSize:11,fontWeight:600,color:textS,padding:"3px 8px",borderRadius:6,background:isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)",minWidth:64,textAlign:"center"}}>{priceInfo.area>0?`× ${priceInfo.area} sqft`:"× — sqft"}</div>
+                        <div style={{fontSize:12,fontWeight:600,color:textS,padding:"3px 8px",borderRadius:6,background:isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)",minWidth:64,textAlign:"center"}}>{priceInfo.area>0?`× ${priceInfo.area} sqft`:"× — sqft"}</div>
                       ) : (
                         <>
                           <button onClick={()=>{
@@ -927,7 +1621,7 @@ export default function StudioBuild({ ctx }) {
                             const allocs = normalizePaintAllocation(el, baseColour);
                             const allocTotal = allocs.reduce((s,a) => s + a.qty, 0);
                             if (allocTotal > 0 && nextQty < allocTotal) {
-                              showMsg(`Cannot reduce qty below ${allocTotal} — paint allocation is set. Open 🎨 picker to adjust allocation first.`, "red");
+                              showMsg(`Cannot reduce qty below ${allocTotal} — paint allocation is set. Open the paint picker to adjust the allocation first.`, "red");
                               return;
                             }
                             elems[idx]={...elems[idx],qty:nextQty};
@@ -942,7 +1636,7 @@ export default function StudioBuild({ ctx }) {
                             const allocs = normalizePaintAllocation(el, baseColour);
                             const allocTotal = allocs.reduce((s,a) => s + a.qty, 0);
                             if (allocTotal > 0 && nextQty < allocTotal) {
-                              showMsg(`Cannot set qty below ${allocTotal} — paint allocation is set. Open 🎨 picker first.`, "red");
+                              showMsg(`Cannot set qty below ${allocTotal} — paint allocation is set. Open the paint picker first.`, "red");
                               return;
                             }
                             elems[idx]={...elems[idx],qty:nextQty};
@@ -951,11 +1645,12 @@ export default function StudioBuild({ ctx }) {
                           <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],qty:(el.qty||0)+1};setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                         </>
                       )}
-                      {showCosts&&<div style={{fontSize:12,fontWeight:600,color:lineTotal>0?textP:textS,minWidth:60,textAlign:"right"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>}
-                      <span onClick={()=>{const elems=(zoneElements[k]||[]).filter((_,i)=>i!==idx);setZoneElements(p=>({...p,[k]:elems}));}} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12}}>×</span>
+                      </div>
+                      {showCosts?<div style={{fontSize:13,fontWeight:600,color:lineTotal>0?textP:textS,textAlign:"left",whiteSpace:"nowrap"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>:<span/>}
+                      <span onClick={()=>{const elems=(zoneElements[k]||[]).filter((_,i)=>i!==idx);setZoneElements(p=>({...p,[k]:elems}));}} style={{marginLeft:"auto",cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>
                     </div>
                     </div>
-                    {isTrussSqft&&priceInfo.warning&&<div style={{fontSize:10,color:"#F59E0B",marginTop:4,padding:"4px 6px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>{priceInfo.warning}</div>}
+                    {isTrussSqft&&priceInfo.warning&&<div style={{fontSize:11.5,color:"#F59E0B",marginTop:4,padding:"4px 6px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>{priceInfo.warning}</div>}
                     {isKit&&<KitComponentsEditor
                       item={invItem}
                       overrides={el.kitOverrides}
@@ -973,28 +1668,29 @@ export default function StudioBuild({ ctx }) {
                     />}
                   </div>);
                 })}
-                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k]))}</div>}
               </div>
+                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k]))}</div>}
+              </div>}
             </div>
           ) : (
-            <div style={{background:isDark?"rgba(124,58,237,0.06)":"#F5F3FF",borderRadius:12,padding:"20px 16px",marginBottom:10,textAlign:"center"}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#666",marginBottom:4}}>{"📷"} Select a photo above to load element pricing</div>
-              <div style={{fontSize:11,color:textS}}>Pick a library photo with an element card — items, quantities, and Rate Card pricing will load automatically</div>
+            <div style={{background:isDark?"rgba(255,255,255,0.03)":"#FAFAFB",border:`1px dashed ${border}`,borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+              <div style={{fontSize:12.5,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:7}}><IconCamera size={12}/>Select a photo above to load element pricing</div>
+              <div style={{fontSize:11.5,color:textS,marginTop:3,lineHeight:1.4}}>Pick a library photo with an element card — items, quantities, and Rate Card pricing will load automatically</div>
             </div>
-          )}
+          ))}
 
           {/* Print — a print job (Flex/Vinyl/Sunboard etc.). Stored on zoneConfig[k].prints so it
               free-rides every existing zoneConfig save/load/copy path without needing its own
               persistence plumbing (mirrors Library's ManageLibrary.jsx). Linking a print row to an
               inventory element is optional, not required — a print isn't always for something
               already in Inventory (e.g. a custom banner/backdrop graphic). */}
-          <div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
+          {zoneSection[k]==="print"&&<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"9px 12px",marginBottom:10,border:`1px solid ${border}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div style={{fontSize:11,fontWeight:600,color:"#0EA5E9"}}>{"🖨️"} Print</div>
+              <div style={{fontSize:11.5,fontWeight:600,color:"#0369A1",display:"flex",alignItems:"center",gap:6}}><IconPrinter size={12}/>Print</div>
               <button onClick={()=>{
                 const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null};
                 setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
-              }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:10,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
+              }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
             </div>
             {(()=>{
               // Opens with one ready-to-edit blank row instead of a "no prints" empty state — purely
@@ -1019,38 +1715,44 @@ export default function StudioBuild({ ctx }) {
                   };
                   const removePrint=()=>setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).filter((_,i)=>i!==pi)}}));
                   const linkQ=zonePrintSearch[p.id]||"";
-                  return <div key={p.id} style={{padding:"8px 10px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
+                  return <div key={p.id} style={{padding:"7px 9px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:10,padding:"3px 6px",width:"auto"}}>
+                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
                         <option value="">Material…</option>
                         {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
                       </select>
-                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:10,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
-                      <span style={{fontSize:10,color:textS}}>×</span>
-                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:10,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
-                      <span style={{fontSize:10,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
-                      {showCosts&&<span style={{fontSize:11,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
-                      {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12}}>×</span>}
+                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:11.5,color:textS}}>×</span>
+                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
+                      {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
-                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:10,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
+                    {/* Two OPTIONAL fields side by side — they were stacked full-width, making every print
+                        row ~3 rows tall for fields most jobs leave blank. */}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
+                      <div>
+                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
                     {p.refImageUrl&&<img src={p.refImageUrl} alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
+                      </div>
+                      <div style={{position:"relative"}}>
                     {/* Optional link to an inventory element — for cross-reference only, never required */}
                     {p.invId ? (
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <div style={{width:20,height:20,borderRadius:4,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:10,opacity:0.3}}>📦</span>}
+                          {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={12}/></span>}
                         </div>
-                        <span style={{fontSize:10,color:invItem?textS:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{"🔗 "}{invItem?invItem.name:`⚠ ${p.invId} not in IMS`}</span>
-                        <span onClick={()=>setPrint({invId:null})} style={{cursor:"pointer",color:textS,fontSize:9,textDecoration:"underline"}}>Unlink</span>
+                        <span style={{fontSize:11.5,color:invItem?textS:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{invItem?invItem.name:`⚠ ${p.invId} not in IMS`}</span>
+                        <span onClick={()=>setPrint({invId:null})} style={{cursor:"pointer",color:textS,fontSize:11,textDecoration:"underline"}}>Unlink</span>
                       </div>
                     ) : (
-                      <div style={{position:"relative",marginTop:6}}>
-                        <input value={linkQ} onChange={e=>setZonePrintSearch(prev=>({...prev,[p.id]:e.target.value}))} placeholder="🔗 Link to an inventory item (optional)" style={{...S.input,fontSize:10,padding:"3px 8px",width:"100%",marginBottom:0}} />
+                      <div>
+                        <input value={linkQ} onChange={e=>setZonePrintSearch(prev=>({...prev,[p.id]:e.target.value}))} placeholder="Link to an inventory item (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",width:"100%",marginBottom:0}} />
                         {linkQ.trim() && (()=>{
                           const tokens=linkQ.toLowerCase().trim().split(/\s+/).filter(Boolean);
                           const matches=(imsInventory||[]).filter(it=>tokens.every(t=>(it.name+" "+(it.subCat||it.subcategory||"")+" "+(it.cat||"")).toLowerCase().includes(t))).slice(0,40);
                           return <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:260,overflowY:"auto"}}>
-                            {matches.length===0&&<div style={{padding:"8px 10px",fontSize:10,color:textS}}>No matches</div>}
+                            {matches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
                             {matches.map(it=>{
                               const src=it.img||it.photoUrls?.[0];
                               return <div key={it.id} onClick={()=>{
@@ -1059,13 +1761,13 @@ export default function StudioBuild({ ctx }) {
                                 if(!p.areaW&&!p.areaD){if(it.printW)patch.areaW=toFt(it.printW,it.printUnit);if(it.printL)patch.areaD=toFt(it.printL,it.printUnit);}
                                 setPrint(patch);
                                 setZonePrintSearch(prev=>({...prev,[p.id]:""}));
-                              }} style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                              }} style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
                                 <div style={{width:32,height:32,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                  {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:15,opacity:0.3}}>📦</span>}
+                                  {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={15}/></span>}
                                 </div>
                                 <div style={{flex:1,minWidth:0}}>
                                   <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{it.name}</div>
-                                  <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{it.printW?" · print area on file":""}</div>
+                                  <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{it.printW?" · print area on file":""}</div>
                                 </div>
                               </div>;
                             })}
@@ -1073,19 +1775,21 @@ export default function StudioBuild({ ctx }) {
                         })()}
                       </div>
                     )}
+                      </div>
+                    </div>{/* /optional-fields grid */}
                   </div>;
                 })}
-                {showCosts&&((zoneConfig[k]||{}).prints||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:11,fontWeight:700,paddingTop:4}}>
+                {showCosts&&((zoneConfig[k]||{}).prints||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:700,paddingTop:4}}>
                   <span style={{color:textP}}>Print Total</span>
                   <span style={{color:"#0EA5E9"}}>{fmt(((zoneConfig[k]||{}).prints||[]).reduce((sum,p)=>{const m=(imsPrintMaterials||[]).find(x=>x.id===p.material);const s=(Number(p.areaW)||0)*(Number(p.areaD)||0);return sum+s*(m?.ratePerSqft||0);},0))}</span>
                 </div>}
               </div>
               );
             })()}
-          </div>
+          </div>}
 
           {/* Zone structure — always visible, costs hidden behind toggle */}
-          {zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
+          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
             const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc,structRates);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
@@ -1097,226 +1801,32 @@ export default function StudioBuild({ ctx }) {
             const fd=zc.floorDims||{};
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS}}>{"📐"} Zone Structure</div>
+                <div style={{fontSize:12.5,fontWeight:700,color:textP,display:"flex",alignItems:"center",gap:7}}><IconRuler size={13}/>Zone Structure</div>
                 {showCosts&&<div style={{fontSize:13,fontWeight:700,color:textP}}>{fmt(st.total)}</div>}
               </div>
-              {/* ── TRUSS + MASKING → then truss dims ── */}
-              <div style={{fontSize:12,marginBottom:6}}>
-                {zm.defaultTruss&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span>{"🔩"} Truss</span>
-                    {/* Box vs Single U is set by how many Truss dims are filled below (2 ⇒ Single U,
-                        3 ⇒ Box) — this used to also be a manual toggle here, but any dim edit
-                        silently overrode it, so it never actually held a manual choice. Read-only. */}
-                    {zc.trT&&<span style={{fontSize:10,fontWeight:600,color:textS}} title="Set by how many Truss dims are filled below — 2 dims = Single U, 3 dims = Box">{zc.trT==="box"?"Box":"Single U"}{showCosts?` · ₹${zc.trT==="box"?50:30}/sqft`:""}</span>}
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
-                </div>}
-                {zm.hasMasking&&(()=>{
-                  const dL=zc.dims?.L||zc.dims?.S||0,dW=zc.dims?.W||zc.dims?.S||0,dH=zc.dims?.H||0;
-                  const mw=zc.mkWalls||{};
-                  const toggleWall=(wall)=>sZ({mkWalls:{...mw,[wall]:!mw[wall]},mkOn:true});
-                  // §23 Phase 2.8 — config-aware walls (3 branches)
-                  //   Full Box  → back/left/right toggleable (front always open)
-                  //   Half Box  → back (L-span) + left/right (backDepth) all toggleable
-                  //   U Truss   → back only (L-span). No left/right options.
-                  const _trCfg = resolveTrussConfig(zc);
-                  const _cfg = _trCfg?.config || (zc.trT==="box" ? "full_box" : "half_box");
-                  const _spanL = _trCfg?.spanFt || dL || dW;
-                  const _backDepth = zc.trussBackDepth || 4;
-                  // §23 Phase 2.8 silent migration — set defaults once per zone.
-                  // FIX A (26 May): For existing zones, force-tick left/right ON for Half Box
-                  // and back ON for U Truss — overwriting prior `false` values. Runs once per
-                  // zone, guarded by _mkWallsMigratedV28 flag. After migration, the user can
-                  // untick freely; flag prevents re-migration.
-                  if (zc.mkOn && !zc._mkWallsMigratedV28) {
-                    const _nextMw = {...mw};
-                    let _changed = false;
-                    if (_cfg === "half_box") {
-                      if (_nextMw.back  !== true) { _nextMw.back  = true; _changed = true; }
-                      if (_nextMw.left  !== true) { _nextMw.left  = true; _changed = true; }
-                      if (_nextMw.right !== true) { _nextMw.right = true; _changed = true; }
-                    } else if (_cfg === "u_only") {
-                      if (_nextMw.back !== true) { _nextMw.back = true; _changed = true; }
-                    }
-                    // Always mark migrated + record current config (even if no change needed)
-                    setTimeout(() => sZ(_changed ? {mkWalls: _nextMw, _mkWallsMigratedV28: true, _lastMkCfg: _cfg} : {_mkWallsMigratedV28: true, _lastMkCfg: _cfg}), 0);
-                  }
-                  // §23 Phase 2.8 type-transition handler — if user adds/removes W dim and the truss
-                  // config flips (half_box ↔ full_box, full_box → u_only, etc.), reset mkWalls per
-                  // the new type's defaults. Half Box → Full Box: all OFF (opt-in). Anything → Half Box:
-                  // all ON (default). Anything → U Truss: back ON, left/right cleared.
-                  else if (zc.mkOn && zc._lastMkCfg && zc._lastMkCfg !== _cfg) {
-                    let _resetMw;
-                    if (_cfg === "full_box") {
-                      // Opt-in per spec — start fully unchecked
-                      _resetMw = {back: false, left: false, right: false};
-                    } else if (_cfg === "half_box") {
-                      _resetMw = {back: true, left: true, right: true};
-                    } else if (_cfg === "u_only") {
-                      _resetMw = {back: true};
-                    } else {
-                      _resetMw = mw;
-                    }
-                    setTimeout(() => sZ({mkWalls: _resetMw, _lastMkCfg: _cfg}), 0);
-                  }
-                  const walls = _cfg === "full_box" ? [
-                    {id:"back",label:"Back",dim:`${dW}×${dH}`,sqft:dW*dH},
-                    {id:"left",label:"Left",dim:`${dL}×${dH}`,sqft:dL*dH},
-                    {id:"right",label:"Right",dim:`${dL}×${dH}`,sqft:dL*dH}
-                  ] : _cfg === "half_box" ? [
-                    {id:"back",label:"Back",dim:`${_spanL}×${dH}`,sqft:_spanL*dH},
-                    {id:"left",label:"Left",dim:`${_backDepth}×${dH}`,sqft:_backDepth*dH},
-                    {id:"right",label:"Right",dim:`${_backDepth}×${dH}`,sqft:_backDepth*dH}
-                  ] : [
-                    {id:"back",label:"Back",dim:`${_spanL}×${dH}`,sqft:_spanL*dH}
-                  ];
-                  return <div style={{padding:"4px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🧱"} Masking</span>
-                      <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
-                    </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.masking)}</span>}
-                  </div>
-                  {zc.mkOn&&<div style={{marginTop:4,paddingLeft:20}}>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
-                      {MASK_OPTS.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                      {customMaskingField(k, zc)}
-                    </div>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      {walls.map(w=>{const on=mw[w.id];return <button key={w.id} onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:10,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>;})}
-                    </div>
-                  </div>}
-                </div>;})()}
-              </div>
-              <div style={{display:"flex",gap:8,marginBottom:6}}>
-                {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
-                  <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Truss Qty</div>
-                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} placeholder="0" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
-                {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
-              </div>
-              {/* §23 Phase 5 (28 May 2026) — Smart truss tip: add 1ft per pillar to physical span */}
-              {(() => {
-                const dims = zc.dims || {};
-                const L = parseFloat(dims.L) || 0;
-                const W = parseFloat(dims.W) || 0;
-                if (L < 4 && W < 4) return null;  // no dims yet
-                const span = Math.max(L, W);
-                // Sweet spots for clean truss (using standard 15/12/10/8/5/4/3/2 beam stock + 1ft/pillar budget)
-                // 2-pillar (span ≤ 30): 12, 17, 24, 27, 29, 32 → these give 0/1 joint, 0-gap
-                // 3-pillar (31-60): 43, 47, 53, 57, 63 → 1-2 joints per segment
-                // 4-pillar (61-90): 64, 74, 84 → 2 joints per segment
-                const sweetSpots2 = [12, 17, 24, 27, 29, 32];
-                const sweetSpots3 = [43, 47, 53, 57, 63];
-                const sweetSpots4 = [64, 74, 84];
-                const all = [...sweetSpots2, ...sweetSpots3, ...sweetSpots4];
-                const isExact = all.includes(span);
-                // Find nearest sweet spot within ±5ft
-                let nearest = null;
-                let nearestDist = 999;
-                for (const s of all) {
-                  const d = Math.abs(s - span);
-                  if (d > 0 && d <= 5 && d < nearestDist) {
-                    nearest = s;
-                    nearestDist = d;
-                  }
-                }
-                if (isExact) {
-                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.25)",fontSize:10,color:"#15803D",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                    <span>✓</span><span>Smart truss: clean allocation (minimum joints).</span>
-                  </div>;
-                }
-                if (nearest) {
-                  return <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:10,color:"#1E40AF",display:"flex",alignItems:"center",gap:6}}>
-                    <span>💡</span><span>Tip: try <strong>{nearest}ft</strong> for cleanest truss (fewer joints, less ops effort).</span>
-                  </div>;
-                }
-                return null;
-              })()}
-              {/* ── §23 Truss Type selector + Height-anchor validation ── */}
+              {/* ── WHAT'S INCLUDED ── Derived from the very same flags and costs the rows below use,
+                  so it can never disagree with them. Lets you read the zone without scanning every row. */}
               {(()=>{
-                const tr = resolveTrussConfig(zc);
-                // Don't render anything when no truss intended (all blank)
-                if (tr.source === "none") return null;
-                // Validation error → inline red message (soft-block via Summary nav warning)
-                if (tr.source === "invalid") {
-                  return <div style={{marginBottom:10,padding:"8px 12px",borderRadius:8,background:"rgba(220,38,38,0.08)",border:"1px solid rgba(220,38,38,0.3)",fontSize:11,color:"#B91C1C",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                    <span>⚠️</span><span>{tr.error}</span>
-                  </div>;
-                }
-                // 3-dim filled → auto-Full Box (read-only label, no choice)
-                if (tr.source === "auto-3dim") {
-                  return <div style={{marginBottom:10,padding:"6px 10px",borderRadius:8,background:"rgba(220,38,38,0.06)",border:"1px solid rgba(220,38,38,0.2)",fontSize:11,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{color:textS}}>Truss Type:</span>
-                    <span style={{fontWeight:700,color:"#B91C1C"}}>🔴 Full Box <span style={{fontWeight:400,color:textS,fontSize:10}}>(auto — all 3 dims filled)</span></span>
-                  </div>;
-                }
-                // 2-dim → sales picks U or Half Box (default Half if not picked)
-                const picked = zc.trussType;
-                const opts = [
-                  { id:"u_only",   label:"🟢 U Truss",       hint:"Cheapest — top + 2 sides only" },
-                  { id:"half_box", label:"🟡 Half Box Truss", hint:"Middle — 3 sides (no back beam)" },
-                ];
-                return <div style={{marginBottom:10,padding:"8px 10px",borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8",border:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                    <span style={{fontSize:11,fontWeight:600,color:textS}}>Truss Type:</span>
-                    {tr.source==="default-on-forget" && <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"rgba(217,119,6,0.12)",color:"#A16207",fontWeight:600}}>defaulted to Single U</span>}
-                  </div>
-                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                    {opts.map(o=>{
-                      const isOn = picked === o.id;
-                      // When not picked, Single U (u_only) visually shows as the default (lighter highlight)
-                      const isDefault = !picked && o.id === "u_only";
-                      return <button key={o.id} onClick={()=>sZ({trussType:o.id})}
-                        style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${isOn?textP:(isDefault?"rgba(217,119,6,0.4)":border)}`,background:isOn?"rgba(0,0,0,0.06)":(isDefault?"rgba(217,119,6,0.06)":"transparent"),color:isOn?textP:textS,fontSize:10,cursor:"pointer",fontWeight:isOn?700:(isDefault?600:400)}}
-                        title={o.hint}>{o.label}</button>;
-                    })}
-                  </div>
+                const parts=[["Truss",!!zm.defaultTruss,st.truss],["Masking",!!(zm.hasMasking&&zc.mkOn),st.masking],
+                  ["Platform",!!(zm.hasPlatform&&zc.plH),st.platform],["Carpet",!!(zm.hasCarpet&&zc.cpT),st.carpet]];
+                const on=parts.filter(p=>p[1]), off=parts.filter(p=>!p[1]);
+                const rule=isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.07)";
+                return <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10,paddingBottom:9,borderBottom:`1px solid ${rule}`}}>
+                  <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginRight:2}}>Includes</span>
+                  {on.length===0&&<span style={{fontSize:11.5,color:textS}}>Nothing yet — pick a truss, masking, platform or carpet below</span>}
+                  {on.map(([label,,cost])=><span key={label} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:999,fontSize:11,fontWeight:600,color:zpGold,background:isDark?"rgba(201,169,110,0.16)":"#F6E7C8",border:`1px solid ${accent}44`}}>
+                    <IconCheck size={9}/>{label}{showCosts&&cost>0?<span style={{fontWeight:500,opacity:0.85}}>{fmt(cost)}</span>:null}</span>)}
+                  {off.map(([label])=><span key={label} style={{padding:"3px 9px",borderRadius:999,fontSize:11,color:textS,border:`1px dashed ${rule}`}}>{label}</span>)}
                 </div>;
               })()}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                  <span style={{fontSize:11,fontWeight:600,color:textS}}>Truss Material:</span>
-                  {TRUSS_MATERIALS.map(m=>{
-                    const sel=(zc.trussMaterial|| "iron")===m.key;
-                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"3px 9px",borderRadius:6,fontSize:10,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
-                  })}
-                  {zc.trT==="box" && customCeilingField(k, zc)}
-                </div>
-              )}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                  <span style={{fontSize:11,fontWeight:600,color:textS}}>🪡 Drape density:</span>
-                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
-                    const sel=(zc.drapeDensity||"moderate")===o.v;
-                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={{padding:"3px 9px",borderRadius:6,fontSize:10,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?"#EC4899":border}`,background:sel?"rgba(236,72,153,0.12)":"transparent",color:sel?"#9D174D":textS}}>{o.l}</span>;
-                  })}
-                </div>
-              )}
+              {/* ── TRUSS (with masking nested inside it) → then the floor card ── */}
+              
+              {zoneSection[k]==="truss"&&<TrussCard S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
+                customMaskingField={customMaskingField} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
-              <div style={{fontSize:12,marginBottom:6}}>
-                {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🏗️"} Platform</span>
-                    {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
-                </div>}
-                {zm.hasCarpet&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}><span>{"🟫"} Carpet</span>
-                    <select value={zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
-                      <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                      {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                    </select>
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
-                </div>}
-              </div>
-              <div style={{display:"flex",gap:8,marginBottom:4}}>
-                <div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Floor Width (ft)</div>
-                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
-                <div style={{flex:1}}><div style={{fontSize:10,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
-                <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:10,color:textS,lineHeight:1.3}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div></div>
-              </div>
+              {zoneSection[k]==="platform"&&<FloorCard S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} imsPrintMaterials={imsPrintMaterials} />}
             </div>);
           })()}
           </Fragment>}
@@ -1327,20 +1837,20 @@ export default function StudioBuild({ ctx }) {
               {dcCustomItems.filter(ci => ci.fnIdx === (activeFnIdx||0) && ci.zoneKey === k).map(ci => {
                 const isP = ci.type === "production";
                 const ciColor = isP ? "#A855F7" : "#F59E0B";
-                const ciIcon = isP ? "🏭" : "🛒";
+                const ciIcon = isP ? <IconFactory size={16}/> : <IconCart size={16}/>;
                 const unitCost = ci.manualPrice || ci.refPrice || 0;
                 return (
                   <div key={ci.id} style={{padding:"10px 14px",borderRadius:10,border:`1px solid ${ciColor}30`,background:isDark?`${ciColor}08`:`${ciColor}06`,marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:18}}>{ciIcon}</span>
+                    <span style={{display:"flex"}}>{ciIcon}</span>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:12,fontWeight:600,color:textP}}>{ci.subCat} <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
-                      <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:textP}}>{ci.subCat} <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
+                      <div style={{fontSize:11.5,color:textS,marginTop:2}}>× {ci.qty}{ci.dims.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:13,fontWeight:700,color:ciColor}}>₹{Math.round(unitCost * (Number(ci.qty)||1)).toLocaleString("en-IN")}</div>
-                      {ci.qty > 1 && <div style={{fontSize:9,color:textS}}>₹{Math.round(unitCost).toLocaleString("en-IN")} × {ci.qty}</div>}
+                      {ci.qty > 1 && <div style={{fontSize:11,color:textS}}>₹{Math.round(unitCost).toLocaleString("en-IN")} × {ci.qty}</div>}
                     </div>
-                    <button onClick={()=>setDcCustomItems(prev=>prev.filter(x=>x.id!==ci.id))} style={{padding:"4px 8px",borderRadius:6,border:`1px solid #E11D4820`,background:"#E11D4810",color:"#E11D48",fontSize:11,cursor:"pointer",fontWeight:600}}>✕</button>
+                    <button onClick={()=>setDcCustomItems(prev=>prev.filter(x=>x.id!==ci.id))} style={{padding:"4px 8px",borderRadius:6,border:`1px solid #E11D4820`,background:"#E11D4810",color:"#E11D48",fontSize:12,cursor:"pointer",fontWeight:600}}>✕</button>
                   </div>
                 );
               })}
@@ -1350,18 +1860,18 @@ export default function StudioBuild({ ctx }) {
           {(notesOpen[k] || elNotes[k]) ? (
             <div style={{marginTop:10,background:elNotes[k]?(isDark?"rgba(201,169,110,0.06)":"#FFFDF7"):"transparent",borderRadius:10,padding:"10px 12px",border:`1px solid ${elNotes[k]?textP+"40":border}`}}>
               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                <span style={{fontSize:12}}>📝</span>
-                <span style={{fontSize:11,fontWeight:600,color:elNotes[k]?textP:textS}}>Client Notes</span>
-                {elNotes[k]&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Will appear in PPT</span>}
+                <span style={{display:"flex",color:textS}}><IconNote size={12}/></span>
+                <span style={{fontSize:12,fontWeight:600,color:elNotes[k]?textP:textS}}>Client Notes</span>
+                {elNotes[k]&&<span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Will appear in PPT</span>}
                 {!elNotes[k]&&<span onClick={()=>setNotesOpen(p=>({...p,[k]:false}))} title="Close" style={{marginLeft:"auto",cursor:"pointer",color:textS,fontSize:14,lineHeight:1}}>×</span>}
               </div>
               <textarea autoFocus={!!notesOpen[k]&&!elNotes[k]} value={elNotes[k]||""} onChange={e=>setElNotes(p=>({...p,[k]:e.target.value}))}
                 placeholder={`e.g. "Remove couch from stage", "Use only white roses", "Client wants minimal lighting"...`}
-                style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"#12121F":"#fff",color:textP,fontSize:12,outline:"none",resize:"vertical",minHeight:36,maxHeight:100,boxSizing:"border-box",fontFamily:"inherit"}}/>
+                style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"#12121F":"#fff",color:textP,fontSize:12.5,outline:"none",resize:"vertical",minHeight:36,maxHeight:100,boxSizing:"border-box",fontFamily:"inherit"}}/>
             </div>
           ) : (
             <div style={{marginTop:10}}>
-              <span onClick={()=>setNotesOpen(p=>({...p,[k]:true}))} title="Add a client note (shows in the PPT)" style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,fontWeight:600,color:textS,padding:"4px 10px",borderRadius:8,border:`1px dashed ${border}`}}>📝 Add note</span>
+              <span onClick={()=>setNotesOpen(p=>({...p,[k]:true}))} title="Add a client note (shows in the PPT)" style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:12,fontWeight:600,color:textS,padding:"4px 10px",borderRadius:8,border:`1px dashed ${border}`}}><IconNote size={11}/> Add note</span>
             </div>
           )}
 
@@ -1375,13 +1885,13 @@ export default function StudioBuild({ ctx }) {
       const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k]);
       const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
       const czTotal=czElCost+czStructCost;
-      return(<div key={k} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
+      return(<div key={k} id={`zone-${k}`} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : setEnabledEls(p=>({...p,[k]:!p[k]}))}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:22}}>{cz.icon||"📦"}</span>
+            <span style={{fontSize:22,display:"flex",alignItems:"center"}}>{cz.icon||<IconBox size={20}/>}</span>
             <div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{cz.name}</div>
-            <span style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Custom</span>
-            {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}>{isCollapsed(k)?"▶":"▼"} Details & Pricing</span>}
+            <span style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Custom</span>
+            {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:11.5,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details & Pricing</span>}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(czTotal)}</div>}
@@ -1393,8 +1903,12 @@ export default function StudioBuild({ ctx }) {
           {/* Element card — add items from Rate Card */}
           <div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div style={{fontSize:11,fontWeight:600,color:"#666"}}>📋 Items — {cz.name}</div>
-              <div style={{position:"relative"}}>
+                  <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the item list":"Show the item list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}>
+                    <span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>
+                    <IconClipboard size={12}/> Items — {cz.name}
+                    {!isElCardOpen(k)&&elCardSummary(k)}
+                  </div>
+              {isElCardOpen(k)&&<div style={{position:"relative"}}>
                 <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                 {(zoneElSearch[k]||"").length>=1&&(()=>{
                   const q=(zoneElSearch[k]||"").toLowerCase();
@@ -1443,8 +1957,8 @@ export default function StudioBuild({ ctx }) {
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
-                            {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>📦 KIT</span>}
-                            {isBlocked&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>🚫 fully used in this event</span>}
+                            {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
+                            {isBlocked&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>fully used in this event</span>}
                             {!isBlocked&&remaining!=null&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
                           </div>
                           <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}</div>
@@ -1453,9 +1967,10 @@ export default function StudioBuild({ ctx }) {
                     })}
                   </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS,width:320}}>No matches</div>;
                 })()}
-              </div>
+              </div>}
             </div>
-            {(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+            {isElCardOpen(k)&&(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+              <div className="el-grid">
               {(zoneElements[k]||[]).map((el, idx) => {
                 const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                 const rc = priceInfo.rc;
@@ -1473,10 +1988,10 @@ export default function StudioBuild({ ctx }) {
                 const thumbKey = `${k}:${idx}`;
                 const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
-                <div key={idx} style={{display:"flex",flexDirection:"column",padding:"6px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
                       <div style={{position:"relative",flexShrink:0}}
                         onMouseEnter={(e)=>{
                           if(!thumbSrc) return;
@@ -1486,15 +2001,16 @@ export default function StudioBuild({ ctx }) {
                           setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
                         }}
                         onMouseLeave={()=>setElThumbHover(null)}>
-                        {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>📦</div>}
+                        {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}><IconBox size={11}/></div>}
                         {elThumbHover?.key===thumbKey && thumbSrc && (
                           <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
                             <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                           </div>
                         )}
                       </div>
-                      <span title={isUnavail?"Not available for this date — tap 📦 to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none"}}>{invItem?.name || el.name}</span>
-                      {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>📦 KIT</span>}
+                      <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
+                        {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:10,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
+                      {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
                       {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
                       {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
                       {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={isUnavail?"Not available for this date — tap to pick a different item":"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:isUnavail?13:11,opacity:isUnavail?1:0.5,padding:isUnavail?"1px 3px":"0 1px",borderRadius:4,background:isUnavail?"rgba(239,68,68,0.15)":"transparent",lineHeight:1}}>📦</span>}
@@ -1504,11 +2020,11 @@ export default function StudioBuild({ ctx }) {
                       {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
                       {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
                       {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,{...el,size:ns,qty:1});setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:9,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
-                      {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:9,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:undefined};setZoneElements(p=>({...p,[k]:elems}));}} title="Use this sub-category's default real/artificial ratio" style={{padding:"1px 6px",borderRadius:3,border:"none",cursor:"pointer",background:typeof el.realPct!=="number"?"#EC4899":"rgba(236,72,153,0.12)",color:typeof el.realPct!=="number"?"#fff":"#EC4899"}}>🌐 Ratio</button><button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:100};setZoneElements(p=>({...p,[k]:elems}));}} title="Price this element at 100% the recipe's Studio rate, overriding the sub-category's default" style={{padding:"1px 6px",borderRadius:3,border:"none",cursor:"pointer",background:el.realPct===100?"#EC4899":"rgba(236,72,153,0.12)",color:el.realPct===100?"#fff":"#EC4899"}}>🎯 100%</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:42,padding:"1px 4px",borderRadius:3,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:9,textAlign:"center"}} /></span>}
-                      {showCosts&&<span style={{fontSize:10,color:textS,marginLeft:4}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
+                      {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
                     </div>
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
                     {isTrussSqft ? (
                       <div style={{fontSize:11,fontWeight:600,color:textS,padding:"3px 8px",borderRadius:6,background:isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)",minWidth:64,textAlign:"center"}}>{priceInfo.area>0?`× ${priceInfo.area} sqft`:"× — sqft"}</div>
                     ) : (
@@ -1518,8 +2034,9 @@ export default function StudioBuild({ ctx }) {
                         <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],qty:(el.qty||0)+1};setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                       </>
                     )}
-                    {showCosts&&<div style={{fontSize:12,fontWeight:600,color:lineTotal>0?textP:textS,minWidth:60,textAlign:"right"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>}
-                    <span onClick={()=>{const elems=(zoneElements[k]||[]).filter((_,i)=>i!==idx);setZoneElements(p=>({...p,[k]:elems}));}} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12}}>×</span>
+                      </div>
+                    {showCosts?<div style={{fontSize:13,fontWeight:600,color:lineTotal>0?textP:textS,textAlign:"left",whiteSpace:"nowrap"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>:<span/>}
+                    <span onClick={()=>{const elems=(zoneElements[k]||[]).filter((_,i)=>i!==idx);setZoneElements(p=>({...p,[k]:elems}));}} style={{marginLeft:"auto",cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12}}>×</span>
                   </div>
                   </div>
                   {isTrussSqft&&priceInfo.warning&&<div style={{fontSize:10,color:"#F59E0B",marginTop:4,padding:"4px 6px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>{priceInfo.warning}</div>}
@@ -1540,6 +2057,7 @@ export default function StudioBuild({ ctx }) {
                   />}
                 </div>);
               })}
+              </div>
               {showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>Items: {fmt(czElCost)}</div>}
             </div>}
           </div>
@@ -1558,7 +2076,7 @@ export default function StudioBuild({ ctx }) {
             const mw={back:true,left:true,right:true};
             return <div style={{borderRadius:10,padding:"10px 14px",border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",marginBottom:8}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS}}>📐 Zone Structure</div>
+                <div style={{fontSize:11,fontWeight:600,color:textS}}><IconRuler size={11}/> Zone Structure</div>
                 {showCosts&&st.total>0&&<div style={{fontWeight:600,color:textP}}>{fmt(st.total)}</div>}
               </div>
               {/* Truss type — Box vs Single U is set by how many dims are filled below (2 ⇒ Single
@@ -1591,13 +2109,13 @@ export default function StudioBuild({ ctx }) {
                 if (tr.source === "auto-3dim") {
                   return <div style={{marginBottom:8,padding:"5px 10px",borderRadius:8,background:"rgba(220,38,38,0.06)",border:"1px solid rgba(220,38,38,0.2)",fontSize:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <span style={{color:textS}}>Truss Type:</span>
-                    <span style={{fontWeight:700,color:"#B91C1C"}}>🔴 Full Box <span style={{fontWeight:400,color:textS,fontSize:9}}>(auto · 3 dims)</span></span>
+                    <span style={{fontWeight:700,color:"#B91C1C"}}>Full Box <span style={{fontWeight:400,color:textS,fontSize:9}}>(auto · 3 dims)</span></span>
                   </div>;
                 }
                 const picked = zc.trussType;
                 const opts = [
-                  { id:"u_only",   label:"🟢 U Truss" },
-                  { id:"half_box", label:"🟡 Half Box" },
+                  { id:"u_only",   label:"U Truss" },
+                  { id:"half_box", label:"Half Box" },
                 ];
                 return <div style={{marginBottom:8,padding:"6px 10px",borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8",border:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
@@ -1626,7 +2144,7 @@ export default function StudioBuild({ ctx }) {
               )}
               {zc.trT && (
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
-                  <span style={{fontWeight:600,color:textS}}>🪡 Density:</span>
+                  <span style={{fontWeight:600,color:textS}}>Density:</span>
                   {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
                     const sel=(zc.drapeDensity||"moderate")===o.v;
                     return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?"#EC4899":border}`,background:sel?"rgba(236,72,153,0.12)":"transparent",color:sel?"#9D174D":textS}}>{o.l}</span>;
@@ -1636,7 +2154,7 @@ export default function StudioBuild({ ctx }) {
               {showCosts&&st.truss>0&&<div style={{fontSize:10,color:textS,marginBottom:6}}>Truss: {fmt(st.truss)}</div>}
               {/* Masking */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}><span>🧱 Masking</span>
+                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}><span><IconWall size={11}/> Masking</span>
                   <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
                 </div>{showCosts&&st.masking>0&&<span style={{fontWeight:600,fontSize:11,color:textP}}>{fmt(st.masking)}</span>}
               </div>
@@ -1646,14 +2164,14 @@ export default function StudioBuild({ ctx }) {
               </div>}
               {/* Platform */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,fontSize:11}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}><span>🏗️ Platform</span>
+                <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconPlatform size={11}/> Platform</span>
                   {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                 </div>{showCosts&&st.platform>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
               </div>
               {/* Carpet */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:11}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}><span>🟫 Carpet</span>
-                  <select value={zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconCarpet size={11}/> Carpet</span>
+                  <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
@@ -1675,18 +2193,18 @@ export default function StudioBuild({ ctx }) {
 
     {/* ═══ + ADD CUSTOM ZONE ═══ */}
     <div style={{borderRadius:14,border:`2px dashed ${border}`,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
-      <input value={newCzName} onChange={e=>setNewCzName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&newCzName.trim()){const id="cz_"+Date.now();setCustomZones(p=>[...p,{id,name:newCzName.trim(),icon:"📦"}]);setEnabledEls(p=>({...p,[id]:true}));setNewCzName("");}}} placeholder="e.g. Banquet Carpet, Artist Stage, Gajra Counter..." style={{...S.input,flex:1,marginBottom:0,fontSize:13}}/>
-      <button onClick={()=>{if(newCzName.trim()){const id="cz_"+Date.now();setCustomZones(p=>[...p,{id,name:newCzName.trim(),icon:"📦"}]);setEnabledEls(p=>({...p,[id]:true}));setNewCzName("");}}} style={{...S.btn(!!newCzName.trim()),padding:"10px 20px",fontSize:12,opacity:newCzName.trim()?1:0.5}}>+ Add Zone</button>
+      <input value={newCzName} onChange={e=>setNewCzName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&newCzName.trim()){const id="cz_"+Date.now();setCustomZones(p=>[...p,{id,name:newCzName.trim(),icon:""}]);setEnabledEls(p=>({...p,[id]:true}));setNewCzName("");}}} placeholder="e.g. Banquet Carpet, Artist Stage, Gajra Counter..." style={{...S.input,flex:1,marginBottom:0,fontSize:13}}/>
+      <button onClick={()=>{if(newCzName.trim()){const id="cz_"+Date.now();setCustomZones(p=>[...p,{id,name:newCzName.trim(),icon:""}]);setEnabledEls(p=>({...p,[id]:true}));setNewCzName("");}}} style={{...S.btn(!!newCzName.trim()),padding:"10px 20px",fontSize:12,opacity:newCzName.trim()?1:0.5}}>+ Add Zone</button>
     </div>
 
     {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ */}
     {showCosts&&venue&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
-        <span style={{fontSize:12,color:"#a5b4fc"}}>{"🏗"} Decor (all zones)</span>
+        <span style={{fontSize:12,color:"#a5b4fc"}}><IconPlatform size={12}/> Decor (all zones)</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(totalCost())}</span>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,paddingBottom:10,borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
-        <span style={{fontSize:12,color:"#a5b4fc"}}>{"🚚"} Transport ({transportCalc.trucks} trucks + genset)</span>
+        <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} trucks + genset)</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(transportCalc.total)}</span>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1790,7 +2308,7 @@ export default function StudioBuild({ ctx }) {
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:9,color:textS,marginBottom:3}}>Name</div>
               <input value={correctPhoto.name} onChange={e=>setCorrectPhoto(p=>({...p,name:e.target.value}))} style={{...S.input,fontSize:13,fontWeight:600}}/>
-              <div style={{fontSize:9,color:textS,marginTop:6}}>📋 {(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements{(()=>{const c=zoneConfig[correctPhoto.zoneKey];if(!c)return "";const d=c.dims||{};const hasDims=(d.L||d.W||d.H||d.S);const nPrints=(c.prints||[]).length;const bits=[];if(hasDims)bits.push(`dims ${d.L||0}×${d.W||0}${d.H?"×"+d.H:""}`);if(c.trT)bits.push(c.trT);if(nPrints)bits.push(`${nPrints} print${nPrints>1?"s":""}`);return bits.length?` · ${bits.join(" · ")}`:"";})()} <span style={{color:accent}}>(saved from your edits above)</span></div>
+              <div style={{fontSize:9,color:textS,marginTop:6}}>{(zoneElements[correctPhoto.zoneKey]||master?.elements||[]).length} elements{(()=>{const c=zoneConfig[correctPhoto.zoneKey];if(!c)return "";const d=c.dims||{};const hasDims=(d.L||d.W||d.H||d.S);const nPrints=(c.prints||[]).length;const bits=[];if(hasDims)bits.push(`dims ${d.L||0}×${d.W||0}${d.H?"×"+d.H:""}`);if(c.trT)bits.push(c.trT);if(nPrints)bits.push(`${nPrints} print${nPrints>1?"s":""}`);return bits.length?` · ${bits.join(" · ")}`:"";})()} <span style={{color:accent}}>(saved from your edits above)</span></div>
             </div>
           </div>
           {/* Specific named venue (2-level: Inhouse / Outside) */}
@@ -1824,7 +2342,7 @@ export default function StudioBuild({ ctx }) {
           })}
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
             <button onClick={()=>setCorrectPhoto(null)} style={{...S.btn(false),fontSize:12}}>Cancel</button>
-            <button onClick={save} style={{...S.btn(true),fontSize:12,background:"#7C3AED"}}>💾 {isNewMaster?"Save to Library":"Save to master"}</button>
+            <button onClick={save} style={{...S.btn(true),fontSize:12,background:"#7C3AED"}}><IconSave size={12}/> Save to master</button>
           </div>
         </div>
       </div>;
@@ -1838,7 +2356,7 @@ export default function StudioBuild({ ctx }) {
         <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
           <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
             <div>
-              <div style={{fontSize:16,fontWeight:700,color:textP}}>📦 Availability — {availModal.elName}</div>
+              <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
               <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</div>
             </div>
             <span onClick={()=>setAvailModal(null)} style={{cursor:"pointer",fontSize:22,color:textS,lineHeight:1}}>×</span>
@@ -1857,10 +2375,10 @@ export default function StudioBuild({ ctx }) {
                     <div key={it.id} onClick={()=>setAvailModal(m=>({...m,selectedId: sel?null:it.id}))} style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
                       {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                       <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
-                      {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}>🪑</div>}
+                      {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                       <div style={{padding:"8px 10px"}}>
                         <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
-                        {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}>📐 {it.dims}</div>}
+                        {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
                         <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
                       </div>
                     </div>
@@ -1879,6 +2397,11 @@ export default function StudioBuild({ ctx }) {
         </div>
       </div>
     )}
+      </div>{/* /right column */}
+      {PRICING_TILE&&(railsOpen
+        ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
+        : railTab("right","Live estimate",<IconBolt size={14}/>))}
+    </div>{/* /two-column shell */}
   </div>
   );
 }
