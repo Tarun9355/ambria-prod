@@ -165,12 +165,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   );
   const resetKit = () => onChange(undefined);
   return (
-    <div style={{ marginTop: 6, marginBottom: 6, marginLeft: 18, padding: "9px 12px", borderRadius: 8, borderLeft: "3px solid rgba(99,102,241,0.45)", background: isDark ? "rgba(99,102,241,0.06)" : "rgba(99,102,241,0.05)", border: `1px solid rgba(99,102,241,0.25)` }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+    <div style={{ marginTop: 5, marginBottom: 4, marginLeft: 10, padding: "6px 8px", borderRadius: 7, borderLeft: "2px solid rgba(99,102,241,0.45)", background: isDark ? "rgba(99,102,241,0.06)" : "rgba(99,102,241,0.05)", border: `1px solid rgba(99,102,241,0.25)` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: indigo, letterSpacing: 0.3, display: "inline-flex", alignItems: "center", gap: 6 }}><IconBox size={12}/>Kit — includes:{isEdited && <span style={{ color: "#F59E0B", marginLeft: 5 }}>· edited</span>}</span>
         {isEdited && <span onClick={resetKit} style={{ fontSize: 11, color: textS, cursor: "pointer", textDecoration: "underline" }}>reset to default</span>}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {/* Column header. No qty column: each stepper sits with its item, and its tooltip says
             the figure is per kit. The next figure is × the element's qty. */}
         <div style={{ ...rowGrid, fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", color: textS, opacity: 0.75 }}>
@@ -297,9 +297,9 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
           </div>
         )}
       </div>
-      <div style={{ marginTop: 5, position: "relative" }}>
+      <div style={{ marginTop: 4, position: "relative" }}>
         <input value={addSearch} onChange={(e) => setAddSearch(e.target.value)} placeholder="Search by name or sub-category to add…"
-          style={{ width: "100%", fontSize: 11.5, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
+          style={{ width: "100%", fontSize: 11, padding: "3px 7px", borderRadius: 6, border: `1px solid ${border}`, background: "transparent", color: textP }} />
         {addSearch.trim() && (() => {
           const tokens = addSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
           const matches = (imsInventory || []).filter((x) => x.id !== item.id && !comps.some((c) => c.itemId === x.id) && !isHiddenSubcat(x, rcSubcatFactors) && tokens.every((t) => (x.name + " " + (x.subCat || x.subcategory || "") + " " + (x.cat || x.category || "")).toLowerCase().includes(t))).slice(0, 40);

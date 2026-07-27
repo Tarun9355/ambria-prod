@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect } from "react";
+import { Fragment, useState, useRef, useEffect, useMemo } from "react";
 import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
@@ -365,6 +365,27 @@ export default function StudioBuild({ ctx }) {
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
+  // id → library item. The photo strip needs a master per tile (verified flag, filters), and doing
+  // that as a linear find per tile is O(photos x library) every render.
+  const libById = useMemo(() => new Map((libItems || []).map((i) => [i.id, i])), [libItems]);
+  // Is this element a kit? One definition, shared by the grouping sort below and by each card's own
+  // body, so the two can never disagree about which cards are kits.
+  const elIsKit = (el) => {
+    const inv = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+    return !!(inv && Array.isArray(inv.subItems) && inv.subItems.length > 0);
+  };
+  // Plain cards first, kits after — stable within each group, so the order items were added still
+  // holds inside a group. `idx` is the ORIGINAL array index and stays that way: it is what every qty
+  // edit and delete writes through, so re-indexing here would point each edit at the wrong element.
+  // `firstKit` marks the boundary card, which is pinned to column 1 so the kits start a fresh row.
+  const groupedEls = (k) => {
+    const rows = (zoneElements[k] || [])
+      .map((el, idx) => ({ el, idx, isKit: elIsKit(el) }))
+      .sort((a, b) => (a.isKit ? 1 : 0) - (b.isKit ? 1 : 0));
+    const first = rows.findIndex((r) => r.isKit);
+    return rows.map((r, i) => ({ ...r, firstKit: i === first }));
+  };
+
   // Demand for the event date, derived once. The header chip and the date banner's tint both read
   // it, so they cannot drift apart. isLow is deliberately absent: a client should never be told the
   // date is quiet.
@@ -562,6 +583,16 @@ export default function StudioBuild({ ctx }) {
       phTurn(k, acc < 0 ? -1 : 1, page, pageCount);
     },
   };
+  // The ▦ grid view scrolls inside itself, so after selecting — which moves the photo to the front —
+  // that container has to be taken back to the top or the selection sits above the fold. In the
+  // paginated strip scrollTop is always 0, so this does nothing there.
+  const phScrollTop = (k) => {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById(`ph-grid-${k}`);
+    if (!el || el.scrollTop === 0) return;
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  };
   // A swipe that paged leaves a click behind on some browsers; tiles check this before opening.
   const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
   // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
@@ -702,6 +733,19 @@ export default function StudioBuild({ ctx }) {
   const zoneFetchInFlight = useRef(new Set());
   const [matchGen, setMatchGen] = useState(0);
   useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters)]);
+  // Which library "areas / zones" tags feed this zone. Static map first; custom or renamed zones
+  // have no entry, so fall back to their display label — reverse-looked-up into the area-set that
+  // contains it, else used as an area name of its own. One definition, three callers: the strip, the
+  // prefetch effect, and the tag-correction save below.
+  const areaNamesFor = (elKey) => {
+    const raw = ZONE_TYPE_TO_AREA[elKey];
+    const names = Array.isArray(raw) ? [...raw] : (raw ? [raw] : []);
+    if (names.length) return names;
+    const label = (zoneLabelsD[elKey]?.label) || elKey || "";
+    if (!label) return [];
+    const hit = Object.values(ZONE_TYPE_TO_AREA).find((arr) => (arr || []).includes(label));
+    return hit ? [...hit] : [label];
+  };
   const ensureZoneMatches = (areaNames) => {
     if (!areaNames.length) return;
     const cacheKey = `${matchGen}::${areaNames.join("|")}`;
@@ -717,32 +761,13 @@ export default function StudioBuild({ ctx }) {
     keys.forEach((k) => {
       const czSrc = customZones.find(cz => cz.id === k);
       const srcType = czSrc?.sourceType || k;
-      const areaNamesRaw = ZONE_TYPE_TO_AREA[srcType];
-      let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
-      if (!areaNames.length) {
-        const label = (zoneLabelsD[srcType]?.label) || srcType || "";
-        if (label) { const hit = Object.values(ZONE_TYPE_TO_AREA).find(arr => (arr || []).includes(label)); areaNames = hit ? [...hit] : [label]; }
-      }
-      ensureZoneMatches(areaNames);
+      ensureZoneMatches(areaNamesFor(srcType));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneKeys, customZones, matchGen]);
 
   const getMatchedPhotos = (elKey) => {
-    const areaNamesRaw = ZONE_TYPE_TO_AREA[elKey];
-    let areaNames = Array.isArray(areaNamesRaw) ? areaNamesRaw : (areaNamesRaw ? [areaNamesRaw] : []);
-    // Custom / renamed zones (keys living in zoneDefs.meta, not the static map) have no direct
-    // area mapping. Resolve them by display label so they're still zone-restricted instead of
-    // falling through to the "show any library photo" padding below (which leaks e.g. Bar photos
-    // into a Lounge section). Reverse-lookup the area-set that contains the label; else use the
-    // label itself as the area name.
-    if (!areaNames.length) {
-      const label = (zoneLabelsD[elKey]?.label) || elKey || "";
-      if (label) {
-        const hit = Object.values(ZONE_TYPE_TO_AREA).find(arr => (arr || []).includes(label));
-        areaNames = hit ? [...hit] : [label];
-      }
-    }
+    const areaNames = areaNamesFor(elKey);
     const photos = [];
     const seen = new Set();
 
@@ -936,15 +961,22 @@ export default function StudioBuild({ ctx }) {
 .sec-tile[data-on="1"]{box-shadow:${isDark?"0 8px 18px -12px rgba(0,0,0,0.7)":"0 8px 18px -12px rgba(26,26,46,0.2)"}}
 @media (prefers-reduced-motion: reduce){.sec-tile{transition:none}.sec-tile:hover{transform:none}}
 /* ═══ ELEMENT CARD GRID ═══
-   auto-fill, so the browser decides the column count from the 272px minimum rather than me guessing
-   it: 3 across with the side rails open, 5 with them folded, and the gap is 16px at every width.
-   align-items:start — stretching made a plain card as tall as the kit card beside it.
-   A KIT card takes the whole row; every other card takes one track. Grid rows are uniform height, so
-   a ~450px kit sharing a row with two ~104px cards left a chasm under each of them — roughly 960px of
-   dead space across a nine-card list, against 272px once kits get their own row. Order is preserved
-   either way (no dense packing); the cost is that the row before a kit can end with an empty cell,
-   which is a short gap rather than a tall one. */
-.el-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px;align-items:start}
+   4 across with the side rails open, 6 with them folded. The count is set rather than derived from
+   a minimum width, because auto-fill gave only 3 whenever the column sat just under the threshold for
+   a 4th track. Cards fill their track exactly - no width cap - so a fixed count leaks no slack.
+   align-items:stretch — every card in a row is the same height. This was start for a while,
+   because a tall kit stretched the short card beside it into a mostly-empty box; grouping kits
+   into their own rows removed that, so a row now only ever holds one kind of card.
+   Every card takes one track. Cards are GROUPED — plain first, kits after — and the first kit is
+   pinned to column 1 so the kits begin a fresh row: grouping alone still let one kit share the last
+   plain row and set its height. Kits then stretch to their row height so they match each other, while
+   plain cards keep their natural height (uniform already, via minHeight). */
+.el-grid{display:grid;grid-template-columns:repeat(var(--el-cols,4),minmax(0,1fr));gap:16px;align-items:stretch}
+/* The count comes from the rails; these only stop the cards getting too narrow to hold the
+   S/M/B + Ratio row on smaller screens. */
+@media (max-width:1200px){.el-grid{--el-cols:3 !important}}
+@media (max-width:900px){.el-grid{--el-cols:2 !important}}
+@media (max-width:620px){.el-grid{--el-cols:1 !important}}
 /* ═══ ELEMENT CARD HOVER ═══
    Resting cards are flat outlines so the grid reads as one calm surface. Hover lifts exactly one
    card out of it: a two-layer shadow (a tight contact edge that keeps it attached to the page, plus
@@ -994,6 +1026,7 @@ export default function StudioBuild({ ctx }) {
 .ph-tile{transition:transform .18s ease, box-shadow .2s ease, border-color .2s ease}
 .ph-tile:hover{transform:translateY(-3px);border-color:${accent} !important;
   box-shadow:${isDark?"0 16px 30px -12px rgba(0,0,0,0.75)":"0 16px 30px -12px rgba(26,26,46,0.32)"} !important}
+/* The badge is a real control now: the photo itself selects, this opens the full preview. */
 .ph-tile img{transition:transform .35s ease}
 .ph-tile:hover img{transform:scale(1.06)}
 /* the generic ring would double up on a tile that now has its own hover */
@@ -1216,7 +1249,7 @@ undefined
       let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
-        const li = libItems.find(l => l.id === ph.eventId);
+        const li = libById.get(ph.eventId);
         if (!li) return true;
         return zpFilterPhoto(li);
       });
@@ -1267,7 +1300,7 @@ undefined
                   {elSelectedPhoto[k]&&<div style={{fontSize:10,color:"#059669",fontWeight:600}}>✓ {elSelectedPhoto[k].eventName}</div>}
                   <label style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading===k?accent+"20":"transparent",color:zoneUploading===k?accent:accent,fontSize:10,fontWeight:600,cursor:zoneUploading?"wait":"pointer",display:"flex",alignItems:"center",gap:3}}>
                     {zoneUploading===k?"Uploading…":<><IconCamera size={11}/>Upload</>}
-                    <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                    <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                   </label>
                   <button onClick={()=>setGridZones(g=>({...g,[k]:!g[k]}))} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>
                   <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
@@ -1330,7 +1363,7 @@ undefined
                 const start = paged ? page * PH_PER_PAGE : 0;
                 const shown = paged ? matchedPhotos.slice(start, start + PH_PER_PAGE) : matchedPhotos;
                 return (<>
-              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" {...phSwipeHandlers(k,page,pageCount)}>
+              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...phSwipeHandlers(k,page,pageCount)}>
               {shown.map((ph,pi)=>{
                 const i = start + pi;   // absolute index: the lightbox browses the whole matched set
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
@@ -1343,16 +1376,30 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}}>
+                  <div style={{position:"relative",cursor:"pointer"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
-                    <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:5,fontSize:9.5,display:"inline-flex",alignItems:"center",gap:3}}><IconSearch size={10}/>Preview</div>
-                    {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:12.5,fontWeight:700}}>{fmt(photoFullCost)}</div>}
-                    {ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"rgba(124,58,237,0.8)",color:"#fff",padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:600}}>Library</div>}
+                    {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
+                    {(()=>{
+                      // Verified only. An unverified photo shows nothing here, so the tick means
+                      // something — same rule the Library grid uses, minus its AI/untagged states.
+                      const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
+                      if (!li?._verified) return null;
+                      const by = li._verifiedBy || "unknown";
+                      const on = li._verifiedAt ? new Date(li._verifiedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : null;
+                      // Solid green with a white ring and a drop shadow. The Library grid's dark disc
+                      // with a thin coloured ring works on its plain cards, but over a photo — light
+                      // stage, dark stage, foliage — it disappears.
+                      return <div title={`Verified by ${by}${on ? " on " + on : ""}`} style={{position:"absolute",top:6,right:6,width:21,height:21,borderRadius:11,
+                        background:"#059669",border:"2px solid rgba(255,255,255,0.92)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                        boxShadow:"0 2px 7px rgba(0,0,0,0.4)"}}>
+                        <IconCheck size={12}/>
+                      </div>;
+                    })()}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
                     {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>SOURCE</div>}
                     {ph.isVideoDefault&&!isSelected&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>Default</div>}
                   </div>
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} style={{padding:"9px 11px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} style={{padding:"9px 11px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
                     <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
@@ -1362,18 +1409,47 @@ undefined
                 </div>);
               })}
               </div>
-              {paged&&pageCount>1&&<div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap"}}>
-                <button onClick={()=>phGoTo(k,Math.max(0,page-1),page)} disabled={page===0} title="Previous photos" className="ph-pg" style={phNav(page===0)}>
-                  <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={13}/></span>
-                </button>
-                {pageWindow(page,pageCount).map((n,gi)=>n==="…"
-                  ? <span key={`gap${gi}`} style={{fontSize:11,color:textS,padding:"0 2px"}}>…</span>
-                  : <button key={n} onClick={()=>phGoTo(k,n,page)} className="ph-pg" style={phDot(n===page)}>{n+1}</button>)}
-                <button onClick={()=>phGoTo(k,Math.min(pageCount-1,page+1),page)} disabled={page===pageCount-1} title="More photos" className="ph-pg" style={phNav(page===pageCount-1)}>
-                  <span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={13}/></span>
-                </button>
-                <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+PH_PER_PAGE,matchedPhotos.length)} of {matchedPhotos.length}</span>
-              </div>}
+              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6,flexWrap:"wrap"}}>
+                {/* Pager on the left — only when there is more than one page to move between. */}
+                {paged&&pageCount>1&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <button onClick={()=>phGoTo(k,Math.max(0,page-1),page)} disabled={page===0} title="Previous photos" className="ph-pg" style={phNav(page===0)}>
+                    <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={13}/></span>
+                  </button>
+                  {pageWindow(page,pageCount).map((n,gi)=>n==="…"
+                    ? <span key={`gap${gi}`} style={{fontSize:11,color:textS,padding:"0 2px"}}>…</span>
+                    : <button key={n} onClick={()=>phGoTo(k,n,page)} className="ph-pg" style={phDot(n===page)}>{n+1}</button>)}
+                  <button onClick={()=>phGoTo(k,Math.min(pageCount-1,page+1),page)} disabled={page===pageCount-1} title="More photos" className="ph-pg" style={phNav(page===pageCount-1)}>
+                    <span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={13}/></span>
+                  </button>
+                  <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+PH_PER_PAGE,matchedPhotos.length)} of {matchedPhotos.length}</span>
+                </div>}
+                {/* Photo-level actions, moved up from the Element card header. Gated on the zone
+                    having photos rather than on the panel being open: up here they are outside the
+                    Elements panel, and vanishing with it would read as a bug. */}
+                <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
+                  {/* Permanent correction (Phase 1b) — push the corrected element list back to the
+                      master library photo so the fix sticks for everyone. Visible for ANY selected
+                      photo while CORRECTION_MODE is on, so it can be tagged whenever — if the photo
+                      isn't a Library photo yet (fresh upload, event photo), save() below creates a
+                      new Library entry for it instead of updating an existing one. */}
+                  {CORRECTION_MODE && elSelectedPhoto[k]?.src && (()=>{
+                    const selP = elSelectedPhoto[k];
+                    const isLib = selP.isLibrary && selP.eventId;
+                    const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
+                    const verified = !!master?._verified;
+                    return <button onClick={()=>{
+                      if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
+                      // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
+                      const mv=master.tags?.venue||"";
+                      setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
+                      setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
+                    }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+                      style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
+                      <IconPencil size={11}/>{verified?"Correct & update master":"Correct & save to master"}
+                    </button>;
+                  })()}
+                </div>
+              </div>
               </>);
               })() : (
             <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:10,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
@@ -1383,7 +1459,7 @@ undefined
                 {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
                 <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
                   {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
-                  <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                  <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
                 </label>
               </div>
             </div>
@@ -1406,29 +1482,9 @@ undefined
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
-                {isElCardOpen(k)&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  {/* Permanent correction (Phase 1b) — push the corrected element list back to the
-                      master library photo so the fix sticks for everyone. Visible for ANY selected
-                      photo while CORRECTION_MODE is on, so it can be tagged whenever — if the photo
-                      isn't a Library photo yet (fresh upload, event photo), save() below creates a
-                      new Library entry for it instead of updating an existing one. */}
-                  {CORRECTION_MODE && elSelectedPhoto[k]?.src && (()=>{
-                    const selP = elSelectedPhoto[k];
-                    const isLib = selP.isLibrary && selP.eventId;
-                    const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
-                    const verified = !!master?._verified;
-                    return <button onClick={()=>{
-                      if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
-                      // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
-                      const mv=master.tags?.venue||"";
-                      setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
-                      setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
-                    }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
-                      style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
-                      <IconPencil size={11}/>{verified?"Correct & update master":"Correct & save to master"}
-                    </button>;
-                  })()}
-                  <div style={{position:"relative"}}>
+                {/* Adding an element belongs beside the element list, not up on the photo pager.
+                    Gated on the panel: adding to a collapsed list would look like nothing happened. */}
+                {isElCardOpen(k)&&<div style={{position:"relative"}}>
                     <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
@@ -1487,13 +1543,12 @@ undefined
                         })}
                       </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>;
                     })()}
-                  </div>
                 </div>}
               </div>
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
-              <div className="el-grid">
-                {(zoneElements[k]||[]).map((el, idx) => {
+              <div className="el-grid" style={{"--el-cols":railsOpen?4:6}}>
+                {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
@@ -1504,13 +1559,12 @@ undefined
                     ? applyFloralRatio(priceInfo.lineCost, rc)
                     : (el.qty||0) * adjUp;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
-                  const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length>0);
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                   const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${railsOpen?2:3}`:`span ${railsOpen?2:3}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -1970,8 +2024,8 @@ undefined
               </div>}
             </div>
             {isElCardOpen(k)&&(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
-              <div className="el-grid">
-              {(zoneElements[k]||[]).map((el, idx) => {
+              <div className="el-grid" style={{"--el-cols":railsOpen?4:6}}>
+              {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                 const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                 const rc = priceInfo.rc;
                 const hasSizes = rcIsSMB(rc);
@@ -1982,13 +2036,12 @@ undefined
                   ? applyFloralRatio(priceInfo.lineCost, rc)
                   : (el.qty||0) * adjUp;
                 const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
-                const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length>0);
                 const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                 const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
                 const thumbKey = `${k}:${idx}`;
                 const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${railsOpen?2:3}`:`span ${railsOpen?2:3}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -2246,7 +2299,7 @@ undefined
       const taxLabel=(key)=>({eventType:"Event type",venueType:"Venue type",areasElements:"Areas / zones",colorPalette:"Palette",categoryTier:"Category tier",tier:"Tier",designStyle:"Design style",timeSetting:"Time / setting"}[key]||key);
       const toggle=(key,val)=>setCorrectPhoto(p=>{const cur=p.tags?.[key]||[];const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val];return {...p,tags:{...p.tags,[key]:next}};});
       const isNewMaster=!correctPhoto.libId;
-      const save=()=>{
+      const save=async ()=>{
         if(!isNewMaster && !master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const zk=correctPhoto.zoneKey;
         const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[]));
@@ -2281,18 +2334,33 @@ undefined
           const newId="LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
           const created={id:newId,url:correctPhoto.draftSrc,name:correctPhoto.name||"Untitled",tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,addedAt:Date.now(),source:"build",_verified:true,...stamp,_correctedOn:"build"};
           mergeLibItems([created]);
-          saveLib([created]);
+          await saveLib([created]);
           // Point this zone's selection at the new Library entry going forward (same src, now backed by a real row).
           setElSelectedPhoto(p=>({...p,[zk]:{...p[zk],isLibrary:true,eventId:newId}}));
           logVerificationEvent?.({photoId:newId,photoName:created.name,source:"build"});
           showMsg("✅ Saved as a new Library photo — thanks!","green");
         } else {
           const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
-          saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
+          await saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
           // Only the first verification counts as a contribution — re-corrections of an already-
           // verified photo update _lastEditedBy above but don't log again.
           if(!wasVerified) logVerificationEvent?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
           showMsg("✅ Correction saved to master — thanks!","green");
+        }
+        // The zone strips read a CACHED server query, not libItems, so the write alone changes
+        // nothing on screen. Bumping matchGen invalidates every cached zone set and refetches —
+        // the corrected photo leaves its old strip and appears in the newly tagged one, live.
+        setMatchGen(g => g + 1);
+        // Refetching is not enough on its own: the strip pins the SELECTED photo even when the zone
+        // no longer returns it, and the photo being corrected is always this zone's selection. If its
+        // new tags no longer cover this zone, release the selection so it can actually leave.
+        // zoneElements / zoneConfig stay — the elements were built by hand and are not the photo's.
+        {
+          const czSrcZ = customZones.find(cz => cz.id === zk);
+          const areas = areaNamesFor(czSrcZ?.sourceType || zk);
+          const tagged = correctPhoto.tags?.areasElements || [];
+          const stillInZone = areas.length ? tagged.some(a => areas.includes(a)) : true;
+          if (!stillInZone) setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
         }
         setCorrectPhoto(null);
       };

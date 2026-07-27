@@ -53,7 +53,7 @@ export const ZONE_LABELS={
 export const EL_KEYS=Object.keys(ZONE_LABELS);
 export const TIERS=["simple","enhanced","premium"];
 export const CATEGORIES=["Silver","Gold","Platinum"];
-export const SPACES=["Indoor","Outdoor","Semi-Outdoor"];
+export const SPACES=["Indoor","Outdoor","Semi-Outdoor","Both"];
 
 // ═══ TIER → CATEGORY MAPPING ═══
 export const TIER_TO_CAT = { simple: "Silver", enhanced: "Gold", premium: "Platinum" };
@@ -160,7 +160,7 @@ export const ZONE_PRESETS={
 
 export const DEFAULT_TAX={
   eventType:["Wedding","Reception","Sangeet","Mehendi","Haldi","Engagement","Cocktail","Ring Ceremony","Anniversary","Birthday","Corporate"],
-  venueType:["Indoor","Outdoor","Semi-Outdoor"],
+  venueType:["Indoor","Outdoor","Semi-Outdoor","Both"],
   areasElements:["Stage","Entry Passage","Centre Lounge","Side Lounge","Vedi","Centre Pieces","Open Lounges","Photobooth","Installations","Props"],
   colorPalette:["White & Green","Red & Gold","Pastels","Blue & White","Pink & Gold","Multi-color","Burgundy & Gold","Yellow & Orange","white & black","Navy Blue & silver","All ivory"],
   tier:["Silver","Gold","Platinum"],
