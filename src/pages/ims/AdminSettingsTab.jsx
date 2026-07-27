@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, AddInlineItem, FlowerPicker, Btn } from "../../components/ui";
+import { canvaAuthUrl, canvaConnectionStatus } from "../../lib/canva";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
@@ -8,40 +9,7 @@ import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
-
-// Smart swatch: resolve a colour NAME → hex so the team doesn't have to know hex codes. Order:
-// a manual override (row.hex) → the colour catalogue → a curated decor-colour map → a CSS colour name
-// (spaces removed, e.g. "sky blue" → "skyblue") → grey. Keeps blue-collar data entry correct-by-default.
-const DECOR_COLOURS = {
-  "ivory": "#FFFFF0", "off-white": "#FAF9F6", "offwhite": "#FAF9F6", "white": "#FFFFFF", "cream": "#FFFDD0", "beige": "#F5F5DC",
-  "rose gold": "#B76E79", "rosegold": "#B76E79", "gold": "#D4AF37", "silver": "#C0C0C0", "maroon": "#800000", "burgundy": "#800020",
-  "wine": "#722F37", "red": "#D32F2F", "rani": "#E3006D", "pink": "#FF69B4", "magenta": "#FF00FF", "fuchsia": "#C154C1",
-  "orange": "#FFA500", "rust orange": "#B7410E", "rust": "#B7410E", "peach": "#FFCBA4", "coral": "#FF7F50",
-  "yellow": "#FFD54F", "mustard": "#E1AD01", "black": "#111111", "brown": "#8B5A2B", "tan": "#D2B48C", "charcoal": "#36454F",
-  "grey": "#9E9E9E", "gray": "#9E9E9E", "purple": "#800080", "lilac": "#C8A2C8", "lavender": "#B57EDC",
-  "light blue": "#ADD8E6", "sky blue": "#87CEEB", "blue": "#1976D2", "navy": "#000080", "teal": "#008080", "turquoise": "#40E0D0",
-  "green": "#2E7D32", "sage green": "#9CAF88", "sage": "#9CAF88", "olive": "#808000", "mint": "#98D8A0",
-};
-const cssColourToHex = (name) => {
-  try {
-    const spaceless = String(name || "").trim().toLowerCase().replace(/\s+/g, "");
-    if (!spaceless) return null;
-    const ctx = document.createElement("canvas").getContext("2d");
-    ctx.fillStyle = "#000"; ctx.fillStyle = spaceless; const a = ctx.fillStyle;
-    ctx.fillStyle = "#fff"; ctx.fillStyle = spaceless; const b = ctx.fillStyle;
-    return a === b ? a : null; // invalid names leave the base value unchanged in both passes
-  } catch { return null; }
-};
-const swatchHexFor = (name, colourCatalogue, override) => {
-  if (override && /^#/.test(override)) return override;
-  const key = String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
-  if (!key) return "#cccccc";
-  const cat = (colourCatalogue || []).find((c) => String(c.name || "").trim().replace(/\s+/g, " ").toLowerCase() === key);
-  if (cat?.hex && /^#/.test(cat.hex)) return cat.hex;
-  if (DECOR_COLOURS[key]) return DECOR_COLOURS[key];
-  const css = cssColourToHex(key);
-  return css || "#cccccc";
-};
+import { swatchHexFor } from "../../lib/studio/colours";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -172,7 +140,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "printmaterials", label: "🖨️ Print Materials" },
     { id: "carpetmaterials", label: "🟫 Carpet Materials" },
     { id: "structurerates", label: "🏗️ Truss & Masking" },
+    { id: "canva", label: "🎨 Canva" },
   ];
+
+  // Canva connect status — one shared account authorizes the integration for the whole team, so
+  // this just reports whether that's been done, and re-checks whenever this panel opens (e.g.
+  // right after the OAuth redirect banner in App.jsx completes the connect elsewhere in the tab).
+  const [canvaConnected, setCanvaConnected] = useState(null); // null = loading
+  const [canvaConnecting, setCanvaConnecting] = useState(false);
+  const refreshCanvaStatus = () => { canvaConnectionStatus().then(setCanvaConnected).catch(() => setCanvaConnected(false)); };
+  useEffect(() => { if (activePanel === "canva") refreshCanvaStatus(); }, [activePanel]);
 
   function addSupervisor() {
     const id = "S" + String(supervisors.length + 1).padStart(3, "0");
@@ -2132,6 +2109,31 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             ))}
             {(settings.carpetMaterials || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No carpet materials yet — add one above (e.g. Carpet Old, Carpet New).</p>}
           </div>
+        </div>
+      )}
+      {activePanel === "canva" && (
+        <div className="space-y-4">
+          <div>
+            <p className="font-bold text-gray-900 mb-1">🎨 Canva</p>
+            <p className="text-xs text-gray-500">Connect ONE Canva account here to power Studio Summary's "Open in Canva" button — every salesperson's generated cost-sheet deck goes through this same connection. No Brand Template needed; it just imports the generated PPT as an editable Canva design.</p>
+          </div>
+          <div className="flex items-center justify-between gap-3 bg-gray-50 border rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2">
+              {canvaConnected === null && <span className="text-sm text-gray-400">Checking…</span>}
+              {canvaConnected === true && <span className="text-sm font-semibold text-emerald-700">✅ Connected</span>}
+              {canvaConnected === false && <span className="text-sm font-semibold text-gray-500">Not connected</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={refreshCanvaStatus} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">🔄 Refresh</button>
+              <button
+                disabled={canvaConnecting}
+                onClick={() => { setCanvaConnecting(true); canvaAuthUrl().then((url) => { window.location.href = url; }).catch((e) => { alert("Couldn't start Canva connect: " + e.message); setCanvaConnecting(false); }); }}
+                className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">
+                {canvaConnecting ? "Redirecting…" : canvaConnected ? "🔄 Reconnect" : "Connect to Canva"}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">Connecting redirects to Canva to authorize, then back here automatically. Reconnecting is safe any time — it just re-authorizes the same shared account.</p>
         </div>
       )}
       {activePanel === "structurerates" && (() => {

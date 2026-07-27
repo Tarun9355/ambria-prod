@@ -41,7 +41,7 @@ export default function StudioBrowse({ ctx }) {
     sourceVideo, venue, showMsg,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
-    inhouseParentNames, subVenuesOfParent, allInhouseVenueOrParentNames,
+    subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   } = ctx;
   // Search narrows what the filters already produced, so the two compose instead of competing.
@@ -473,11 +473,10 @@ export default function StudioBrowse({ ctx }) {
                         {chip("Outside", activeGroup === "outside", () => { setTaxVenueGroup("outside"); setTaxOutsideSub("all"); })}
                         {curVenue && <span onClick={() => { setVidVenue(""); setTaxVenueGroup(""); }} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
                       </div>
-                      {/* Property chips first (🏢 — picks the property itself, for when no single room
-                          fits), then individual rooms. */}
+                      {/* Sub-venues only — property/group names (e.g. "Exotica") are excluded here
+                          since they aren't a specific bookable room. */}
                       {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>
-                        {inhouseParentNames.map(p => chip("🏢 " + p, curVenue === p, () => setVidVenue(curVenue === p ? "" : p)))}
-                        {allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
+                        {leafInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
                       </div>}
                       {activeGroup === "outside" && <>
                         <div style={{ ...chipRow, marginTop: 6 }}>

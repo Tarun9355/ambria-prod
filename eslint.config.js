@@ -24,6 +24,7 @@ export default [
         matchMedia: "readonly", getComputedStyle: "readonly", ResizeObserver: "readonly",
         IntersectionObserver: "readonly", MutationObserver: "readonly", structuredClone: "readonly",
         crypto: "readonly", btoa: "readonly", atob: "readonly", performance: "readonly",
+        TextEncoder: "readonly", TextDecoder: "readonly",
         HTMLElement: "readonly", Element: "readonly", Node: "readonly", Event: "readonly",
         CustomEvent: "readonly", DOMParser: "readonly", XMLHttpRequest: "readonly",
         MediaRecorder: "readonly", MediaStream: "readonly", AudioContext: "readonly",

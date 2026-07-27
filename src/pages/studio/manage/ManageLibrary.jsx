@@ -143,7 +143,7 @@ export default function ManageLibrary({ ctx }) {
     taxonomy, setTaxonomy, saveTax, TAX_LABELS, imsPaletteCatalogue, setImsPaletteCatalogue, imsColourCatalogue, setImsColourCatalogue, savePaletteData,
     taxOr, FUNCTIONS, CATEGORIES,
     // derived venue memos
-    allInhouseVenues, allOutdoorDB, customOutdoor, inhouseParentNames, allInhouseVenueOrParentNames, subVenuesOfParent,
+    allInhouseVenues, allOutdoorDB, customOutdoor, inhouseParentNames, allInhouseVenueOrParentNames, subVenuesOfParent, leafInhouseVenues,
     // permissions
     studioLibraryAllowed,
     // library state + persistence
@@ -817,7 +817,7 @@ export default function ManageLibrary({ ctx }) {
                         {curVenue && <div onClick={() => { setPhVenue(""); setTagVenueGroup(""); }} style={{ padding: "4px 8px", borderRadius: 12, fontSize: 9, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</div>}
                       </div>
                       {activeGroup === "inhouse" && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                        {allInhouseVenues.map(vn => { const on = curVenue === vn; return <div key={vn} onClick={() => setPhVenue(on ? "" : vn)} style={{ ...S.pill(on), background: on ? `${accent}22` : "transparent", color: on ? accentText : textS, border: on ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 9, padding: "3px 8px" }}>{vn}</div>; })}
+                        {leafInhouseVenues.map(vn => { const on = curVenue === vn; return <div key={vn} onClick={() => setPhVenue(on ? "" : vn)} style={{ ...S.pill(on), background: on ? `${accent}22` : "transparent", color: on ? accentText : textS, border: on ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 9, padding: "3px 8px" }}>{vn}</div>; })}
                       </div>}
                       {activeGroup === "outside" && <>
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
@@ -2110,11 +2110,10 @@ export default function ManageLibrary({ ctx }) {
                           <div onClick={()=>{setTagVenueGroup("outside");setTagOutsideSub("all");}} style={S.pill(activeGroup==="outside")}>Outside</div>
                           {curVenue&&<div onClick={()=>{setVidVenue("");setTagVenueGroup("");}} style={{padding:"4px 8px",borderRadius:12,fontSize:9,cursor:"pointer",color:textS,border:`1px dashed ${border}`}}>✕ {curVenue}</div>}
                         </div>
-                        {/* Property chips (🏢) first — pick the property itself when no single room
-                            fits — then individual rooms. */}
+                        {/* Sub-venues only — property/group names are excluded, they aren't a
+                            specific bookable room. */}
                         {activeGroup==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
-                          {inhouseParentNames.map(p=>{const on=curVenue===p;return <div key={"p-"+p} onClick={()=>setVidVenue(on?"":p)} title={`Tag at the ${p} property level (no specific room)`} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px",fontWeight:700}}>🏢 {p}</div>;})}
-                          {allInhouseVenues.map(vn=>{const on=curVenue===vn;return <div key={vn} onClick={()=>setVidVenue(on?"":vn)} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px"}}>{vn}</div>;})}
+                          {leafInhouseVenues.map(vn=>{const on=curVenue===vn;return <div key={vn} onClick={()=>setVidVenue(on?"":vn)} style={{...S.pill(on),background:on?`${accent}22`:"transparent",color:on?accentText:textS,border:on?`1px solid ${accent}55`:`1px solid ${border}`,fontSize:10,padding:"4px 10px"}}>{vn}</div>;})}
                         </div>}
                         {activeGroup==="outside"&&<>
                           <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
@@ -2277,11 +2276,10 @@ export default function ManageLibrary({ ctx }) {
                       {chip("Outside", activeGroup === "outside", () => { setTagVenueGroup("outside"); setTagOutsideSub("all"); })}
                       {curVenue && <span onClick={() => { setVidVenue(""); setTagVenueGroup(""); }} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
                     </div>
-                    {/* Property chips (🏢) first — pick the property itself when no single room fits
-                        — then individual rooms. */}
+                    {/* Sub-venues only — property/group names are excluded, they aren't a specific
+                        bookable room. */}
                     {activeGroup === "inhouse" && <div style={{ ...chipRow, marginTop: 6 }}>
-                      {inhouseParentNames.map(p => chip("🏢 " + p, curVenue === p, () => setVidVenue(curVenue === p ? "" : p)))}
-                      {allInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
+                      {leafInhouseVenues.map(vn => chip(vn, curVenue === vn, () => setVidVenue(curVenue === vn ? "" : vn)))}
                     </div>}
                     {activeGroup === "outside" && <>
                       <div style={{ ...chipRow, marginTop: 6 }}>

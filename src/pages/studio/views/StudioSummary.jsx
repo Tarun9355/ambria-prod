@@ -13,9 +13,15 @@
 import { useState } from "react";
 import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
+import { swatchHexFor } from "../../../lib/studio/colours";
+import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
+  // "🎨 Canva" button state — idle | building | uploading | processing | ready | error
+  const [canvaState, setCanvaState] = useState("idle");
+  const [canvaEditUrl, setCanvaEditUrl] = useState("");
+  const [canvaError, setCanvaError] = useState("");
   const {
     // theme / chrome
     S, isDark, accent, border, textS, textP, accentBg, accentText, fmt,
@@ -30,6 +36,9 @@ export default function StudioSummary({ ctx }) {
     getElPriceForFn, transportCalc,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — for the carpet label below
     imsPrintMaterials, imsCarpetMaterials,
+    // Inventory (per-item photos for the MOODBOARD/zone-visual slides' reference grid) + colour/
+    // palette catalogues (moodboard swatches, resolved from each function's picked palette name)
+    imsInventory, imsColourCatalogue, imsPaletteCatalogue,
     // build canvas / source
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
     // sold flow
@@ -151,9 +160,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     return html;
   };
 
-  const exportPPT = async (combined) => {
+  // Builds the full PptxGenJS deck and returns it UNWRITTEN (no writeFile/download) — shared by the
+  // "📊 PPT" download button and the "🎨 Canva" flow below, which uploads the same bytes instead of
+  // saving them locally. Throws on failure; callers decide their own error message.
+  const buildPptx = async (combined) => {
     if (!combined) combined = buildCombinedCostSheetData();
-    showMsg("Generating PPT...", "blue");
     try {
       // Dynamically load pptxgenjs
       if (!window.PptxGenJS) {
@@ -174,7 +185,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const pptx = new window.PptxGenJS();
       pptx.author = "Ambria Decorations";
       pptx.title = `Cost Estimate${combined.clientName ? " - " + combined.clientName : ""}`;
-      pptx.layout = "LAYOUT_16x9";
+      // Every slide below is coordinate-authored for a 10x7.5in canvas (content routinely reaches
+      // y:6.4-6.9in — footers, total bands, zone photos). LAYOUT_16x9 is 10x5.63in, so on that layout
+      // all of that was being silently clipped off the bottom of every slide. LAYOUT_4x3 matches the
+      // canvas the coordinates were actually written for.
+      pptx.layout = "LAYOUT_4x3";
 
       const gold = "C9A96E";
       const dark = "1A1A2E";
@@ -206,38 +221,108 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       });
       slide.addText("Pushpanjali, Bijwasan, New Delhi", { x: 0.8, y: 6.7, w: 8.4, fontSize: 9, fontFace: "Arial", color: "505060", align: "center" });
 
+      // Looks up an inventory item's own photo by name (best-effort — items only carry a name/qty/
+      // rate in this cost-sheet data, not their inventory id, so this is a name match same as
+      // buildZonesForFn's own paint-cost lookup). Used by the per-zone visual slide's item grid.
+      const itemPhotoFor = (name) => {
+        const inv = (imsInventory || []).find(i => (i.name || "").toLowerCase() === String(name || "").toLowerCase());
+        return inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || null;
+      };
+
       // ═══ Per-function blocks ═══
       combined.functions.forEach(fnObj => {
-        // ── Section header slide ──
-        slide = pptx.addSlide();
-        slide.background = { fill: "FFFFFF" };
-        slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 0.35, w: 8.8, fontSize: 18, fontFace: "Arial", color: dark, bold: true });
-        slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
         if (fnObj.isEmpty) {
-          // Empty function placeholder
+          // Empty function placeholder — single slide, nothing to show a moodboard/zone-visual for.
+          slide = pptx.addSlide();
+          slide.background = { fill: "FFFFFF" };
+          slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 0.35, w: 8.8, fontSize: 18, fontFace: "Arial", color: dark, bold: true });
+          slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
           slide.addText("Design pending", { x: 0.6, y: 3.0, w: 8.8, fontSize: 22, fontFace: "Arial", color: gray, align: "center", italic: true });
           slide.addText("Zones for this function have not been built yet.", { x: 0.6, y: 3.6, w: 8.8, fontSize: 11, fontFace: "Arial", color: "A0A0B0", align: "center" });
-          return; // skip overview/zone/transport slides for empty fn
+          return; // skip moodboard/overview/zone/transport slides for empty fn
         }
-        // Zone-photo thumbnail grid for non-empty fn (cap at 6 to prevent overflow into bottom band)
-        const photos = fnObj.zones.map(z => ({ photo: z.photo, label: z.label })).filter(p => p.photo).slice(0, 6);
-        if (photos.length > 0) {
-          const cols = photos.length <= 2 ? 2 : 3;
-          const cellW = (9.0 - 0.6 - (cols - 1) * 0.2) / cols; // total width 9.0, margins 0.6 left/right
-          const cellH = cellW * 0.6; // 5:3 aspect
-          const startY = 1.2;
-          photos.forEach((p, i) => {
-            const r = Math.floor(i / cols);
-            const c = i % cols;
-            const x = 0.6 + c * (cellW + 0.2);
-            const y = startY + r * (cellH + 0.4);
+
+        // ═══ MOODBOARD slide — palette swatches + a collage of this function's zone photos,
+        // mirrors the sample deck's opening page. Falls back to a neutral palette when the
+        // function has no palette picked, so the slide is never blank. ═══
+        const paletteObj = (imsPaletteCatalogue || []).find(p => p.name === fnObj.palette);
+        const anchorNames = paletteObj?.anchorColours?.length ? paletteObj.anchorColours : ["Ivory", "Blush Pink", "Sage Green", "Gold"];
+        const swatchHexes = anchorNames.slice(0, 6).map((n) => swatchHexFor(n, imsColourCatalogue).replace("#", ""));
+        const moodPhotos = fnObj.zones.map((z) => z.photo).filter(Boolean).slice(0, 3);
+        slide = pptx.addSlide();
+        slide.background = { fill: "FFFFFF" };
+        slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 0.5, w: 3.4, h: 0.8, fill: { color: "F7DCD0" }, rectRadius: 0.15, line: { type: "none" } });
+        slide.addText("MOODBOARD", { x: 0.6, y: 0.5, w: 3.4, h: 0.8, fontSize: 24, fontFace: "Arial", color: dark, bold: true, align: "center", valign: "middle" });
+        slide.addText(fnLine(fnObj), { x: 0.6, y: 1.4, w: 3.4, fontSize: 11, fontFace: "Arial", color: gray });
+        slide.addText("Color Palette", { x: 0.6, y: 5.0, w: 3.4, fontSize: 16, fontFace: "Arial", color: "D9694F", italic: true });
+        swatchHexes.forEach((hex, i) => {
+          slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6 + i * 0.56, y: 5.45, w: 0.5, h: 1.3, fill: { color: hex }, rectRadius: 0.22, line: { type: "none" } });
+        });
+        // Landscape-shaped boxes — event photos are almost always wide shots, so the collage is
+        // stacked strips/tiles rather than tall narrow columns (a tall column cover-crops a landscape
+        // photo down to a thin vertical sliver of its center, which read as badly cropped).
+        if (moodPhotos.length > 0) {
+          const positions = moodPhotos.length === 1
+            ? [{ x: 4.3, y: 1.8, w: 5.0, h: 3.5 }]
+            : moodPhotos.length === 2
+            ? [{ x: 4.3, y: 0.5, w: 5.0, h: 2.9 }, { x: 4.3, y: 3.55, w: 5.0, h: 2.9 }]
+            : [{ x: 4.3, y: 0.5, w: 5.0, h: 3.3 }, { x: 4.3, y: 3.95, w: 2.42, h: 2.35 }, { x: 6.88, y: 3.95, w: 2.42, h: 2.35 }];
+          moodPhotos.forEach((photo, i) => {
+            const pos = positions[i]; if (!pos) return;
+            try { const imgOpts = { ...pos, sizing: { type: "cover", w: pos.w, h: pos.h } }; if (photo.startsWith("data:")) imgOpts.data = photo; else imgOpts.path = photo; slide.addImage(imgOpts); } catch {}
+          });
+        }
+
+        // ═══ Per-zone visual slides — hero photo + a labeled grid of that zone's own item photos.
+        // Closest automatable match to the sample's annotated zone pages: we can't reproduce
+        // hand-drawn arrows pointing at a specific spot in the photo (no data says where in the
+        // image the truss vs. the drape is), so items are called out as a labeled reference grid
+        // instead, same pattern as the sample's own "Wooden Partition / Carved Console Table" grids. ═══
+        fnObj.zones.forEach((z) => {
+          if (!z.photo) return;
+          slide = pptx.addSlide();
+          slide.background = { fill: "FFFFFF" };
+          slide.addText(z.label.toUpperCase(), { x: 0.6, y: 0.3, w: 8.8, fontSize: 20, fontFace: "Arial", color: dark, bold: true });
+          slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.78, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+          try {
+            const imgOpts = { x: 0.6, y: 1.0, w: 5.3, h: 5.9, sizing: { type: "cover", w: 5.3, h: 5.9 } };
+            if (z.photo.startsWith("data:")) imgOpts.data = z.photo; else imgOpts.path = z.photo;
+            slide.addImage(imgOpts);
+          } catch {}
+          const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img).slice(0, 4);
+          const gx = 6.2, gw = 2.8, cellH = 1.7, gap = 0.15;
+          withPhoto.forEach((it, i) => {
+            const y = 1.0 + i * (cellH + gap);
+            const imgH = cellH * 0.72;
             try {
-              const imgOpts = { x, y, w: cellW, h: cellH, rounding: true };
-              if (p.photo.startsWith("data:")) imgOpts.data = p.photo; else imgOpts.path = p.photo;
+              const imgOpts = { x: gx, y, w: gw, h: imgH, sizing: { type: "cover", w: gw, h: imgH } };
+              if (it.img.startsWith("data:")) imgOpts.data = it.img; else imgOpts.path = it.img;
               slide.addImage(imgOpts);
             } catch {}
-            slide.addText(p.label, { x, y: y + cellH + 0.05, w: cellW, fontSize: 9, color: gray, align: "center" });
+            slide.addText(it.name, { x: gx, y: y + cellH * 0.72 + 0.03, w: gw, fontSize: 9, color: gray, align: "center" });
           });
+        });
+
+        // ── Section header slide — a full-bleed photo title card when a zone photo exists (this used
+        // to be title + gold line + a total band floating over a mostly-blank white slide, which read
+        // as an empty/unfinished page since the Overview slide right after already shows the same
+        // total). A hero photo behind the function name is the standard decor-deck divider pattern. ──
+        slide = pptx.addSlide();
+        const dividerPhoto = moodPhotos[0] || null;
+        if (dividerPhoto) {
+          slide.background = { fill: dark };
+          try {
+            const imgOpts = { x: 0, y: 0, w: 10, h: 7.5, sizing: { type: "cover", w: 10, h: 7.5 } };
+            if (dividerPhoto.startsWith("data:")) imgOpts.data = dividerPhoto; else imgOpts.path = dividerPhoto;
+            slide.addImage(imgOpts);
+          } catch {}
+          slide.addShape(pptx.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 7.5, fill: { color: dark, transparency: 42 }, line: { type: "none" } });
+          slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.8, y: 3.2, w: 8.4, fontSize: 26, fontFace: "Arial", color: "FFFFFF", bold: true, align: "center" });
+          slide.addShape(pptx.shapes.LINE, { x: 4.0, y: 3.95, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+        } else {
+          slide.background = { fill: "FFFFFF" };
+          slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 3.2, w: 8.8, fontSize: 22, fontFace: "Arial", color: dark, bold: true, align: "center" });
+          slide.addShape(pptx.shapes.LINE, { x: 4.0, y: 3.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
         }
         // Function-level grand total band at bottom
         slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 6.4, w: 8.8, h: 0.7, fill: { color: dark }, rectRadius: 0.1 });
@@ -287,7 +372,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.82, w: 2.0, h: 0, line: { color: gold, width: 2 } });
           if (z.photo) {
             try {
-              const imgOpts = { x: 6.2, y: 0.25, w: 3.0, h: 1.8, rounding: true };
+              const imgOpts = { x: 6.2, y: 0.25, w: 3.0, h: 1.8, sizing: { type: "cover", w: 3.0, h: 1.8 } };
               if (z.photo.startsWith("data:")) imgOpts.data = z.photo; else imgOpts.path = z.photo;
               slide.addImage(imgOpts);
               if (z.photoName) slide.addText(z.photoName, { x: 6.2, y: 2.1, w: 3.0, fontSize: 7, color: "A0A0B0", align: "center" });
@@ -394,12 +479,56 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       slide.addText("Ambria Decorations · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com", { x: 0.6, y: 6.6, w: 8.8, fontSize: 8, color: "A0A0B0", align: "center" });
       slide.addText("This is an estimate. Final pricing may vary based on customization and availability.", { x: 0.6, y: 6.9, w: 8.8, fontSize: 7, color: "C0C0C0", align: "center" });
 
-      const fileName = `Ambria_Estimate${combined.clientName ? "_" + combined.clientName.replace(/\s+/g, "_") : ""}_${new Date().toISOString().slice(0, 10)}`;
+      return { pptx, combined };
+    } catch (err) {
+      console.error("PPT build error:", err);
+      throw err;
+    }
+  };
+
+  const exportPPT = async (combined) => {
+    showMsg("Generating PPT...", "blue");
+    try {
+      const { pptx, combined: c } = await buildPptx(combined);
+      const fileName = `Ambria_Estimate${c.clientName ? "_" + c.clientName.replace(/\s+/g, "_") : ""}_${new Date().toISOString().slice(0, 10)}`;
       pptx.writeFile({ fileName });
       showMsg("✓ PPT downloaded!", "green");
     } catch (err) {
       console.error("PPT export error:", err);
       showMsg("PPT export failed — " + (err.message || "try again after deployment"), "red");
+    }
+  };
+
+  // "🎨 Canva" — same deck, uploaded as a Design Import job instead of downloaded, so the
+  // salesperson gets back an editable Canva draft. Polls client-side (each poll is one fast Canva
+  // GET via the edge function) rather than blocking one long edge-function call, since imports can
+  // take a few seconds and edge functions have a short execution ceiling.
+  const sendToCanva = async (combined) => {
+    setCanvaState("building"); setCanvaEditUrl(""); setCanvaError("");
+    try {
+      const connected = await canvaConnectionStatus();
+      if (!connected) {
+        setCanvaState("error");
+        setCanvaError('Canva isn\'t connected — ask an admin to connect it in IMS → Admin → Settings.');
+        return;
+      }
+      const { pptx, combined: c } = await buildPptx(combined);
+      setCanvaState("uploading");
+      const base64 = await pptx.write({ outputType: "base64" });
+      const title = `${c.clientName || "Ambria"} Cost Estimate`;
+      const jobId = await canvaCreateImport(base64, title);
+      setCanvaState("processing");
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const res = await canvaPollImport(jobId);
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); return; }
+        if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
+      }
+      setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
+    } catch (err) {
+      console.error("Canva send error:", err);
+      setCanvaState("error");
+      setCanvaError(err.message || "Canva generation failed");
     }
   };
 
@@ -707,9 +836,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
             <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
             <button onClick={csExportPPT} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} PPT</button>
+            {(() => {
+              const busy = canvaState === "building" || canvaState === "uploading" || canvaState === "processing";
+              const busyLabel = canvaState === "building" ? "Building…" : canvaState === "uploading" ? "Uploading…" : "Generating…";
+              if (canvaState === "ready") return <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>;
+              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Send this deck to Canva as an editable draft"} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry Canva":"🎨 Canva"}</button>;
+            })()}
             <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
           </div>
         </div>
+        {canvaState==="error"&&canvaError&&<div style={{padding:"6px 20px",background:"rgba(239,68,68,0.15)",color:"#FCA5A5",fontSize:11,flexShrink:0}}>{canvaError}</div>}
         {/* Scrollable body */}
         <div style={{flex:1,overflowY:"auto",padding:"20px 24px",maxWidth:960,margin:"0 auto",width:"100%"}}>
           {/* Stacked function lines (mirrors PPT cover) */}

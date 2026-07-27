@@ -3577,6 +3577,11 @@ export default function StudioApp() {
   // Every value a video's venue tag can legitimately hold for an INHOUSE property — individual
   // sub-venues (rooms) plus the ambiguous-property fallback names themselves.
   const allInhouseVenueOrParentNames = useMemo(() => [...new Set([...allInhouseVenues, ...inhouseParentNames])], [allInhouseVenues, inhouseParentNames]);
+  // Sub-venues that are ONLY ever a leaf/room — excludes any name that's itself used as another
+  // venue's `parent` (i.e. it groups its own rooms, so it functions as a property even though the
+  // data model stores it as a flat venue entry too). Tagging/filter-chip UIs should offer only these
+  // plus the property row, not both a property AND that same name again as a "sub-venue".
+  const leafInhouseVenues = useMemo(() => allInhouseVenues.filter(v => !inhouseParentNames.includes(v)), [allInhouseVenues, inhouseParentNames]);
 
   // ═══ CLOUDINARY PHOTO BROWSER (reference ~4111) — rewired /api/cloudinary → cldAdmin ═══
   const fetchCldFolders = useCallback(async (path = "") => {
@@ -5609,6 +5614,7 @@ export default function StudioApp() {
         fnVenue: fnData.fnVenue,
         fnShift: fnData.fnShift,
         fnPax: fnData.fnPax,
+        palette: fnData.fnPalette || "",
         zones,
         transport: bd.transport,
         decorTotal: bd.decorTotal,
@@ -6260,7 +6266,7 @@ export default function StudioApp() {
     // taxonomy constants (module-scope)
     taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, PAINT_TOKENS_FALLBACK,
     // derived memos
-    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames,
+    activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames, leafInhouseVenues,
     allVenueData, outdoorVenueList, browseVideos, allVideos,
     // handlers
     loadClientSession, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
