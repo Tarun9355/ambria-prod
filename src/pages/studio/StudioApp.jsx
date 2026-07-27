@@ -5599,6 +5599,7 @@ export default function StudioApp() {
         fnVenue: fnData.fnVenue,
         fnShift: fnData.fnShift,
         fnPax: fnData.fnPax,
+        palette: fnData.fnPalette || "",
         zones,
         transport: bd.transport,
         decorTotal: bd.decorTotal,

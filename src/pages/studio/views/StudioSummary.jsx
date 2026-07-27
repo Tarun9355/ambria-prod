@@ -12,6 +12,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState } from "react";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
+import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 
 export default function StudioSummary({ ctx }) {
@@ -34,6 +35,9 @@ export default function StudioSummary({ ctx }) {
     getElPriceForFn, transportCalc,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — for the carpet label below
     imsPrintMaterials, imsCarpetMaterials,
+    // Inventory (per-item photos for the MOODBOARD/zone-visual slides' reference grid) + colour/
+    // palette catalogues (moodboard swatches, resolved from each function's picked palette name)
+    imsInventory, imsColourCatalogue, imsPaletteCatalogue,
     // build canvas / source
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
     // sold flow
@@ -212,39 +216,89 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       });
       slide.addText("Pushpanjali, Bijwasan, New Delhi", { x: 0.8, y: 6.7, w: 8.4, fontSize: 9, fontFace: "Arial", color: "505060", align: "center" });
 
+      // Looks up an inventory item's own photo by name (best-effort — items only carry a name/qty/
+      // rate in this cost-sheet data, not their inventory id, so this is a name match same as
+      // buildZonesForFn's own paint-cost lookup). Used by the per-zone visual slide's item grid.
+      const itemPhotoFor = (name) => {
+        const inv = (imsInventory || []).find(i => (i.name || "").toLowerCase() === String(name || "").toLowerCase());
+        return inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || null;
+      };
+
       // ═══ Per-function blocks ═══
       combined.functions.forEach(fnObj => {
+        if (fnObj.isEmpty) {
+          // Empty function placeholder — single slide, nothing to show a moodboard/zone-visual for.
+          slide = pptx.addSlide();
+          slide.background = { fill: "FFFFFF" };
+          slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 0.35, w: 8.8, fontSize: 18, fontFace: "Arial", color: dark, bold: true });
+          slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+          slide.addText("Design pending", { x: 0.6, y: 3.0, w: 8.8, fontSize: 22, fontFace: "Arial", color: gray, align: "center", italic: true });
+          slide.addText("Zones for this function have not been built yet.", { x: 0.6, y: 3.6, w: 8.8, fontSize: 11, fontFace: "Arial", color: "A0A0B0", align: "center" });
+          return; // skip moodboard/overview/zone/transport slides for empty fn
+        }
+
+        // ═══ MOODBOARD slide — palette swatches + a collage of this function's zone photos,
+        // mirrors the sample deck's opening page. Falls back to a neutral palette when the
+        // function has no palette picked, so the slide is never blank. ═══
+        const paletteObj = (imsPaletteCatalogue || []).find(p => p.name === fnObj.palette);
+        const anchorNames = paletteObj?.anchorColours?.length ? paletteObj.anchorColours : ["Ivory", "Blush Pink", "Sage Green", "Gold"];
+        const swatchHexes = anchorNames.slice(0, 6).map((n) => swatchHexFor(n, imsColourCatalogue).replace("#", ""));
+        const moodPhotos = fnObj.zones.map((z) => z.photo).filter(Boolean).slice(0, 3);
+        slide = pptx.addSlide();
+        slide.background = { fill: "FFFFFF" };
+        slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 0.5, w: 3.4, h: 0.8, fill: { color: "F7DCD0" }, rectRadius: 0.15, line: { type: "none" } });
+        slide.addText("MOODBOARD", { x: 0.6, y: 0.5, w: 3.4, h: 0.8, fontSize: 24, fontFace: "Arial", color: dark, bold: true, align: "center", valign: "middle" });
+        slide.addText(fnLine(fnObj), { x: 0.6, y: 1.4, w: 3.4, fontSize: 11, fontFace: "Arial", color: gray });
+        slide.addText("Color Palette", { x: 0.6, y: 5.0, w: 3.4, fontSize: 16, fontFace: "Arial", color: "D9694F", italic: true });
+        swatchHexes.forEach((hex, i) => {
+          slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6 + i * 0.56, y: 5.45, w: 0.5, h: 1.3, fill: { color: hex }, rectRadius: 0.22, line: { type: "none" } });
+        });
+        if (moodPhotos.length > 0) {
+          const positions = moodPhotos.length === 1
+            ? [{ x: 4.3, y: 0.5, w: 4.5, h: 6.3 }]
+            : moodPhotos.length === 2
+            ? [{ x: 4.3, y: 0.5, w: 2.7, h: 6.3 }, { x: 7.1, y: 0.5, w: 1.7, h: 6.3 }]
+            : [{ x: 4.3, y: 0.5, w: 2.3, h: 6.3 }, { x: 6.7, y: 0.5, w: 2.1, h: 3.05 }, { x: 6.7, y: 3.65, w: 2.1, h: 3.15 }];
+          moodPhotos.forEach((photo, i) => {
+            const pos = positions[i]; if (!pos) return;
+            try { const imgOpts = { ...pos }; if (photo.startsWith("data:")) imgOpts.data = photo; else imgOpts.path = photo; slide.addImage(imgOpts); } catch {}
+          });
+        }
+
+        // ═══ Per-zone visual slides — hero photo + a labeled grid of that zone's own item photos.
+        // Closest automatable match to the sample's annotated zone pages: we can't reproduce
+        // hand-drawn arrows pointing at a specific spot in the photo (no data says where in the
+        // image the truss vs. the drape is), so items are called out as a labeled reference grid
+        // instead, same pattern as the sample's own "Wooden Partition / Carved Console Table" grids. ═══
+        fnObj.zones.forEach((z) => {
+          if (!z.photo) return;
+          slide = pptx.addSlide();
+          slide.background = { fill: "FFFFFF" };
+          slide.addText(z.label.toUpperCase(), { x: 0.6, y: 0.3, w: 8.8, fontSize: 20, fontFace: "Arial", color: dark, bold: true });
+          slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.78, w: 2.0, h: 0, line: { color: gold, width: 2 } });
+          try {
+            const imgOpts = { x: 0.6, y: 1.0, w: 5.3, h: 5.9, rounding: true };
+            if (z.photo.startsWith("data:")) imgOpts.data = z.photo; else imgOpts.path = z.photo;
+            slide.addImage(imgOpts);
+          } catch {}
+          const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img).slice(0, 4);
+          const gx = 6.2, gw = 2.8, cellH = 1.7, gap = 0.15;
+          withPhoto.forEach((it, i) => {
+            const y = 1.0 + i * (cellH + gap);
+            try {
+              const imgOpts = { x: gx, y, w: gw, h: cellH * 0.72, rounding: true };
+              if (it.img.startsWith("data:")) imgOpts.data = it.img; else imgOpts.path = it.img;
+              slide.addImage(imgOpts);
+            } catch {}
+            slide.addText(it.name, { x: gx, y: y + cellH * 0.72 + 0.03, w: gw, fontSize: 9, color: gray, align: "center" });
+          });
+        });
+
         // ── Section header slide ──
         slide = pptx.addSlide();
         slide.background = { fill: "FFFFFF" };
         slide.addText(fnLine(fnObj).toUpperCase(), { x: 0.6, y: 0.35, w: 8.8, fontSize: 18, fontFace: "Arial", color: dark, bold: true });
         slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.85, w: 2.0, h: 0, line: { color: gold, width: 2 } });
-        if (fnObj.isEmpty) {
-          // Empty function placeholder
-          slide.addText("Design pending", { x: 0.6, y: 3.0, w: 8.8, fontSize: 22, fontFace: "Arial", color: gray, align: "center", italic: true });
-          slide.addText("Zones for this function have not been built yet.", { x: 0.6, y: 3.6, w: 8.8, fontSize: 11, fontFace: "Arial", color: "A0A0B0", align: "center" });
-          return; // skip overview/zone/transport slides for empty fn
-        }
-        // Zone-photo thumbnail grid for non-empty fn (cap at 6 to prevent overflow into bottom band)
-        const photos = fnObj.zones.map(z => ({ photo: z.photo, label: z.label })).filter(p => p.photo).slice(0, 6);
-        if (photos.length > 0) {
-          const cols = photos.length <= 2 ? 2 : 3;
-          const cellW = (9.0 - 0.6 - (cols - 1) * 0.2) / cols; // total width 9.0, margins 0.6 left/right
-          const cellH = cellW * 0.6; // 5:3 aspect
-          const startY = 1.2;
-          photos.forEach((p, i) => {
-            const r = Math.floor(i / cols);
-            const c = i % cols;
-            const x = 0.6 + c * (cellW + 0.2);
-            const y = startY + r * (cellH + 0.4);
-            try {
-              const imgOpts = { x, y, w: cellW, h: cellH, rounding: true };
-              if (p.photo.startsWith("data:")) imgOpts.data = p.photo; else imgOpts.path = p.photo;
-              slide.addImage(imgOpts);
-            } catch {}
-            slide.addText(p.label, { x, y: y + cellH + 0.05, w: cellW, fontSize: 9, color: gray, align: "center" });
-          });
-        }
         // Function-level grand total band at bottom
         slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 6.4, w: 8.8, h: 0.7, fill: { color: dark }, rectRadius: 0.1 });
         slide.addText([{ text: "Function Total  ", options: { fontSize: 12, color: "A5B4FC" } }, { text: f(fnObj.grand), options: { fontSize: 18, color: gold, bold: true } }], { x: 0.8, y: 6.45, w: 8.4, h: 0.6, align: "center", valign: "middle" });
