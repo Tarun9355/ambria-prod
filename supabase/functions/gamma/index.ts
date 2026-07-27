@@ -51,6 +51,17 @@ Deno.serve(async (req) => {
           title: String(title || "Ambria Cost Estimate").slice(0, 500),
           imageOptions: { source: "noImages" }, // only OUR embedded Cloudinary photos, no AI/stock filler
           cardOptions: { dimensions: "16x9" },
+          themeId: "gold-leaf", // Gamma's built-in gold/champagne/ivory luxury theme — matches Ambria's actual brand palette
+          additionalInstructions:
+            "This is a luxury wedding and event décor proposal for high-end clients. Use sophisticated, " +
+            "editorial-style layouts, not plain text-on-white cards. Whenever a card includes a photo, treat " +
+            "it as the visual lead — large, full-bleed or near full-bleed placement, not a small inset " +
+            "thumbnail. Moodboard cards should read like an actual mood board: bold hero photography with " +
+            "the color palette as a small refined accent, not the focal point. Zone highlight cards should " +
+            "read like a gallery showcasing that zone's pieces. Cost tables should look like a refined, " +
+            "minimal financial statement — generous spacing, subtle dividers, right-aligned figures, no " +
+            "cramped rows. Use elegant typography and tasteful gold accent details consistent with the " +
+            "gold-leaf theme. Prioritize visual elegance and breathing room over information density.",
         }),
       });
       const data = await resp.json();
