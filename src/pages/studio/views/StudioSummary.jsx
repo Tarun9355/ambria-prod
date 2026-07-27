@@ -184,7 +184,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const pptx = new window.PptxGenJS();
       pptx.author = "Ambria Decorations";
       pptx.title = `Cost Estimate${combined.clientName ? " - " + combined.clientName : ""}`;
-      pptx.layout = "LAYOUT_16x9";
+      // Every slide below is coordinate-authored for a 10x7.5in canvas (content routinely reaches
+      // y:6.4-6.9in — footers, total bands, zone photos). LAYOUT_16x9 is 10x5.63in, so on that layout
+      // all of that was being silently clipped off the bottom of every slide. LAYOUT_4x3 matches the
+      // canvas the coordinates were actually written for.
+      pptx.layout = "LAYOUT_4x3";
 
       const gold = "C9A96E";
       const dark = "1A1A2E";
@@ -253,15 +257,18 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         swatchHexes.forEach((hex, i) => {
           slide.addShape(pptx.shapes.ROUNDED_RECTANGLE, { x: 0.6 + i * 0.56, y: 5.45, w: 0.5, h: 1.3, fill: { color: hex }, rectRadius: 0.22, line: { type: "none" } });
         });
+        // Landscape-shaped boxes — event photos are almost always wide shots, so the collage is
+        // stacked strips/tiles rather than tall narrow columns (a tall column cover-crops a landscape
+        // photo down to a thin vertical sliver of its center, which read as badly cropped).
         if (moodPhotos.length > 0) {
           const positions = moodPhotos.length === 1
-            ? [{ x: 4.3, y: 0.5, w: 4.5, h: 6.3 }]
+            ? [{ x: 4.3, y: 1.8, w: 5.0, h: 3.5 }]
             : moodPhotos.length === 2
-            ? [{ x: 4.3, y: 0.5, w: 2.7, h: 6.3 }, { x: 7.1, y: 0.5, w: 1.7, h: 6.3 }]
-            : [{ x: 4.3, y: 0.5, w: 2.3, h: 6.3 }, { x: 6.7, y: 0.5, w: 2.1, h: 3.05 }, { x: 6.7, y: 3.65, w: 2.1, h: 3.15 }];
+            ? [{ x: 4.3, y: 0.5, w: 5.0, h: 2.9 }, { x: 4.3, y: 3.55, w: 5.0, h: 2.9 }]
+            : [{ x: 4.3, y: 0.5, w: 5.0, h: 3.3 }, { x: 4.3, y: 3.95, w: 2.42, h: 2.35 }, { x: 6.88, y: 3.95, w: 2.42, h: 2.35 }];
           moodPhotos.forEach((photo, i) => {
             const pos = positions[i]; if (!pos) return;
-            try { const imgOpts = { ...pos }; if (photo.startsWith("data:")) imgOpts.data = photo; else imgOpts.path = photo; slide.addImage(imgOpts); } catch {}
+            try { const imgOpts = { ...pos, sizing: { type: "cover", w: pos.w, h: pos.h } }; if (photo.startsWith("data:")) imgOpts.data = photo; else imgOpts.path = photo; slide.addImage(imgOpts); } catch {}
           });
         }
 
@@ -277,7 +284,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           slide.addText(z.label.toUpperCase(), { x: 0.6, y: 0.3, w: 8.8, fontSize: 20, fontFace: "Arial", color: dark, bold: true });
           slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.78, w: 2.0, h: 0, line: { color: gold, width: 2 } });
           try {
-            const imgOpts = { x: 0.6, y: 1.0, w: 5.3, h: 5.9, rounding: true };
+            const imgOpts = { x: 0.6, y: 1.0, w: 5.3, h: 5.9, sizing: { type: "cover", w: 5.3, h: 5.9 } };
             if (z.photo.startsWith("data:")) imgOpts.data = z.photo; else imgOpts.path = z.photo;
             slide.addImage(imgOpts);
           } catch {}
@@ -285,8 +292,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           const gx = 6.2, gw = 2.8, cellH = 1.7, gap = 0.15;
           withPhoto.forEach((it, i) => {
             const y = 1.0 + i * (cellH + gap);
+            const imgH = cellH * 0.72;
             try {
-              const imgOpts = { x: gx, y, w: gw, h: cellH * 0.72, rounding: true };
+              const imgOpts = { x: gx, y, w: gw, h: imgH, sizing: { type: "cover", w: gw, h: imgH } };
               if (it.img.startsWith("data:")) imgOpts.data = it.img; else imgOpts.path = it.img;
               slide.addImage(imgOpts);
             } catch {}
@@ -347,7 +355,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           slide.addShape(pptx.shapes.LINE, { x: 0.6, y: 0.82, w: 2.0, h: 0, line: { color: gold, width: 2 } });
           if (z.photo) {
             try {
-              const imgOpts = { x: 6.2, y: 0.25, w: 3.0, h: 1.8, rounding: true };
+              const imgOpts = { x: 6.2, y: 0.25, w: 3.0, h: 1.8, sizing: { type: "cover", w: 3.0, h: 1.8 } };
               if (z.photo.startsWith("data:")) imgOpts.data = z.photo; else imgOpts.path = z.photo;
               slide.addImage(imgOpts);
               if (z.photoName) slide.addText(z.photoName, { x: 6.2, y: 2.1, w: 3.0, fontSize: 7, color: "A0A0B0", align: "center" });
