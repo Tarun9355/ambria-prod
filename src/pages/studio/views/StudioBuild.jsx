@@ -365,6 +365,19 @@ export default function StudioBuild({ ctx }) {
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
+  // Is this element a kit? One definition, shared by the grouping sort below and by each card's own
+  // body, so the two can never disagree about which cards are kits.
+  const elIsKit = (el) => {
+    const inv = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+    return !!(inv && Array.isArray(inv.subItems) && inv.subItems.length > 0);
+  };
+  // Plain cards first, kits after — stable within each group, so the order items were added still
+  // holds inside a group. Returns [element, ORIGINAL index] because idx is what the handlers write
+  // through; re-indexing here would point every edit at the wrong row.
+  const groupedEls = (k) => (zoneElements[k] || [])
+    .map((el, idx) => [el, idx])
+    .sort((a, b) => (elIsKit(a[0]) ? 1 : 0) - (elIsKit(b[0]) ? 1 : 0));
+
   // Demand for the event date, derived once. The header chip and the date banner's tint both read
   // it, so they cannot drift apart. isLow is deliberately absent: a client should never be told the
   // date is quiet.
@@ -939,11 +952,10 @@ export default function StudioBuild({ ctx }) {
    auto-fill, so the browser decides the column count from the 272px minimum rather than me guessing
    it: 3 across with the side rails open, 5 with them folded, and the gap is 16px at every width.
    align-items:start — stretching made a plain card as tall as the kit card beside it.
-   A KIT card takes the whole row; every other card takes one track. Grid rows are uniform height, so
-   a ~450px kit sharing a row with two ~104px cards left a chasm under each of them — roughly 960px of
-   dead space across a nine-card list, against 272px once kits get their own row. Order is preserved
-   either way (no dense packing); the cost is that the row before a kit can end with an empty cell,
-   which is a short gap rather than a tall one. */
+   Every card takes one track. Kits used to need the whole row because a tall kit beside two short
+   cards left a chasm under them — but the cards are now GROUPED (plain first, kits after), so a row
+   never mixes the two heights and the full-row span is not needed. One track keeps a kit as narrow as
+   everything else. */
 .el-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px;align-items:start}
 /* ═══ ELEMENT CARD HOVER ═══
    Resting cards are flat outlines so the grid reads as one calm surface. Hover lifts exactly one
@@ -1493,7 +1505,7 @@ undefined
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
               <div className="el-grid">
-                {(zoneElements[k]||[]).map((el, idx) => {
+                {groupedEls(k).map(([el, idx]) => {
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
@@ -1504,13 +1516,13 @@ undefined
                     ? applyFloralRatio(priceInfo.lineCost, rc)
                     : (el.qty||0) * adjUp;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
-                  const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length>0);
+                  const isKit = elIsKit(el);
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                   const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -1971,7 +1983,7 @@ undefined
             </div>
             {isElCardOpen(k)&&(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
               <div className="el-grid">
-              {(zoneElements[k]||[]).map((el, idx) => {
+              {groupedEls(k).map(([el, idx]) => {
                 const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                 const rc = priceInfo.rc;
                 const hasSizes = rcIsSMB(rc);
@@ -1982,13 +1994,13 @@ undefined
                   ? applyFloralRatio(priceInfo.lineCost, rc)
                   : (el.qty||0) * adjUp;
                 const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
-                const isKit = !!(invItem && Array.isArray(invItem.subItems) && invItem.subItems.length>0);
+                const isKit = elIsKit(el);
                 const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
                 const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
                 const thumbKey = `${k}:${idx}`;
                 const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?"1/-1":"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
