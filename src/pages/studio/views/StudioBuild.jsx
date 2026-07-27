@@ -2284,7 +2284,7 @@ undefined
       const taxLabel=(key)=>({eventType:"Event type",venueType:"Venue type",areasElements:"Areas / zones",colorPalette:"Palette",categoryTier:"Category tier",tier:"Tier",designStyle:"Design style",timeSetting:"Time / setting"}[key]||key);
       const toggle=(key,val)=>setCorrectPhoto(p=>{const cur=p.tags?.[key]||[];const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val];return {...p,tags:{...p.tags,[key]:next}};});
       const isNewMaster=!correctPhoto.libId;
-      const save=()=>{
+      const save=async ()=>{
         if(!isNewMaster && !master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const zk=correctPhoto.zoneKey;
         const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[]));
@@ -2319,19 +2319,23 @@ undefined
           const newId="LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
           const created={id:newId,url:correctPhoto.draftSrc,name:correctPhoto.name||"Untitled",tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,addedAt:Date.now(),source:"build",_verified:true,...stamp,_correctedOn:"build"};
           mergeLibItems([created]);
-          saveLib([created]);
+          await saveLib([created]);
           // Point this zone's selection at the new Library entry going forward (same src, now backed by a real row).
           setElSelectedPhoto(p=>({...p,[zk]:{...p[zk],isLibrary:true,eventId:newId}}));
           logVerificationEvent?.({photoId:newId,photoName:created.name,source:"build"});
           showMsg("✅ Saved as a new Library photo — thanks!","green");
         } else {
           const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
-          saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
+          await saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
           // Only the first verification counts as a contribution — re-corrections of an already-
           // verified photo update _lastEditedBy above but don't log again.
           if(!wasVerified) logVerificationEvent?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});
           showMsg("✅ Correction saved to master — thanks!","green");
         }
+        // The zone strips read a CACHED server query, not libItems, so the write alone changes
+        // nothing on screen. Bumping matchGen invalidates every cached zone set and refetches —
+        // the corrected photo leaves its old strip and appears in the newly tagged one, live.
+        setMatchGen(g => g + 1);
         setCorrectPhoto(null);
       };
       return <div onClick={()=>setCorrectPhoto(null)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",display:"flex",justifyContent:"center",alignItems:"flex-start",overflow:"auto",padding:20}}>
