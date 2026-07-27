@@ -12,9 +12,14 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState } from "react";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
+import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
+  // "🎨 Canva" button state — idle | building | uploading | processing | ready | error
+  const [canvaState, setCanvaState] = useState("idle");
+  const [canvaEditUrl, setCanvaEditUrl] = useState("");
+  const [canvaError, setCanvaError] = useState("");
   const {
     // theme / chrome
     S, isDark, border, textS, textP, accentBg, accentText, fmt,
@@ -150,9 +155,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     return html;
   };
 
-  const exportPPT = async (combined) => {
+  // Builds the full PptxGenJS deck and returns it UNWRITTEN (no writeFile/download) — shared by the
+  // "📊 PPT" download button and the "🎨 Canva" flow below, which uploads the same bytes instead of
+  // saving them locally. Throws on failure; callers decide their own error message.
+  const buildPptx = async (combined) => {
     if (!combined) combined = buildCombinedCostSheetData();
-    showMsg("Generating PPT...", "blue");
     try {
       // Dynamically load pptxgenjs
       if (!window.PptxGenJS) {
@@ -393,12 +400,56 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       slide.addText("Ambria Decorations · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com", { x: 0.6, y: 6.6, w: 8.8, fontSize: 8, color: "A0A0B0", align: "center" });
       slide.addText("This is an estimate. Final pricing may vary based on customization and availability.", { x: 0.6, y: 6.9, w: 8.8, fontSize: 7, color: "C0C0C0", align: "center" });
 
-      const fileName = `Ambria_Estimate${combined.clientName ? "_" + combined.clientName.replace(/\s+/g, "_") : ""}_${new Date().toISOString().slice(0, 10)}`;
+      return { pptx, combined };
+    } catch (err) {
+      console.error("PPT build error:", err);
+      throw err;
+    }
+  };
+
+  const exportPPT = async (combined) => {
+    showMsg("Generating PPT...", "blue");
+    try {
+      const { pptx, combined: c } = await buildPptx(combined);
+      const fileName = `Ambria_Estimate${c.clientName ? "_" + c.clientName.replace(/\s+/g, "_") : ""}_${new Date().toISOString().slice(0, 10)}`;
       pptx.writeFile({ fileName });
       showMsg("✓ PPT downloaded!", "green");
     } catch (err) {
       console.error("PPT export error:", err);
       showMsg("PPT export failed — " + (err.message || "try again after deployment"), "red");
+    }
+  };
+
+  // "🎨 Canva" — same deck, uploaded as a Design Import job instead of downloaded, so the
+  // salesperson gets back an editable Canva draft. Polls client-side (each poll is one fast Canva
+  // GET via the edge function) rather than blocking one long edge-function call, since imports can
+  // take a few seconds and edge functions have a short execution ceiling.
+  const sendToCanva = async (combined) => {
+    setCanvaState("building"); setCanvaEditUrl(""); setCanvaError("");
+    try {
+      const connected = await canvaConnectionStatus();
+      if (!connected) {
+        setCanvaState("error");
+        setCanvaError('Canva isn\'t connected — ask an admin to connect it in IMS → Admin → Settings.');
+        return;
+      }
+      const { pptx, combined: c } = await buildPptx(combined);
+      setCanvaState("uploading");
+      const base64 = await pptx.write({ outputType: "base64" });
+      const title = `${c.clientName || "Ambria"} Cost Estimate`;
+      const jobId = await canvaCreateImport(base64, title);
+      setCanvaState("processing");
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const res = await canvaPollImport(jobId);
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); return; }
+        if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
+      }
+      setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
+    } catch (err) {
+      console.error("Canva send error:", err);
+      setCanvaState("error");
+      setCanvaError(err.message || "Canva generation failed");
     }
   };
 
@@ -654,9 +705,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
             <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
             <button onClick={csExportPPT} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} PPT</button>
+            {(() => {
+              const busy = canvaState === "building" || canvaState === "uploading" || canvaState === "processing";
+              const busyLabel = canvaState === "building" ? "Building…" : canvaState === "uploading" ? "Uploading…" : "Generating…";
+              if (canvaState === "ready") return <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>;
+              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Send this deck to Canva as an editable draft"} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry Canva":"🎨 Canva"}</button>;
+            })()}
             <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
           </div>
         </div>
+        {canvaState==="error"&&canvaError&&<div style={{padding:"6px 20px",background:"rgba(239,68,68,0.15)",color:"#FCA5A5",fontSize:11,flexShrink:0}}>{canvaError}</div>}
         {/* Scrollable body */}
         <div style={{flex:1,overflowY:"auto",padding:"20px 24px",maxWidth:960,margin:"0 auto",width:"100%"}}>
           {/* Stacked function lines (mirrors PPT cover) */}

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, AddInlineItem, FlowerPicker, Btn } from "../../components/ui";
+import { canvaAuthUrl, canvaConnectionStatus } from "../../lib/canva";
 import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
@@ -172,7 +173,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "printmaterials", label: "🖨️ Print Materials" },
     { id: "carpetmaterials", label: "🟫 Carpet Materials" },
     { id: "structurerates", label: "🏗️ Truss & Masking" },
+    { id: "canva", label: "🎨 Canva" },
   ];
+
+  // Canva connect status — one shared account authorizes the integration for the whole team, so
+  // this just reports whether that's been done, and re-checks whenever this panel opens (e.g.
+  // right after the OAuth redirect banner in App.jsx completes the connect elsewhere in the tab).
+  const [canvaConnected, setCanvaConnected] = useState(null); // null = loading
+  const [canvaConnecting, setCanvaConnecting] = useState(false);
+  const refreshCanvaStatus = () => { canvaConnectionStatus().then(setCanvaConnected).catch(() => setCanvaConnected(false)); };
+  useEffect(() => { if (activePanel === "canva") refreshCanvaStatus(); }, [activePanel]);
 
   function addSupervisor() {
     const id = "S" + String(supervisors.length + 1).padStart(3, "0");
@@ -2132,6 +2142,31 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             ))}
             {(settings.carpetMaterials || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No carpet materials yet — add one above (e.g. Carpet Old, Carpet New).</p>}
           </div>
+        </div>
+      )}
+      {activePanel === "canva" && (
+        <div className="space-y-4">
+          <div>
+            <p className="font-bold text-gray-900 mb-1">🎨 Canva</p>
+            <p className="text-xs text-gray-500">Connect ONE Canva account here to power Studio Summary's "Open in Canva" button — every salesperson's generated cost-sheet deck goes through this same connection. No Brand Template needed; it just imports the generated PPT as an editable Canva design.</p>
+          </div>
+          <div className="flex items-center justify-between gap-3 bg-gray-50 border rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2">
+              {canvaConnected === null && <span className="text-sm text-gray-400">Checking…</span>}
+              {canvaConnected === true && <span className="text-sm font-semibold text-emerald-700">✅ Connected</span>}
+              {canvaConnected === false && <span className="text-sm font-semibold text-gray-500">Not connected</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={refreshCanvaStatus} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">🔄 Refresh</button>
+              <button
+                disabled={canvaConnecting}
+                onClick={() => { setCanvaConnecting(true); canvaAuthUrl().then((url) => { window.location.href = url; }).catch((e) => { alert("Couldn't start Canva connect: " + e.message); setCanvaConnecting(false); }); }}
+                className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">
+                {canvaConnecting ? "Redirecting…" : canvaConnected ? "🔄 Reconnect" : "Connect to Canva"}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">Connecting redirects to Canva to authorize, then back here automatically. Reconnecting is safe any time — it just re-authorizes the same shared account.</p>
         </div>
       )}
       {activePanel === "structurerates" && (() => {

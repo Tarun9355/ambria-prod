@@ -1,11 +1,34 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { landingPath, userApps } from "./lib/auth";
 import { useVersionCheck } from "./lib/useVersionCheck";
+import { canvaHandleOAuthRedirect } from "./lib/canva";
 import Login from "./pages/Login.jsx";
 import Studio from "./pages/Studio.jsx";
 import IMS from "./pages/ims/IMS.jsx";
+
+// Canva's OAuth redirect lands back on the site's bare base URL with ?code=&state= — BEFORE the
+// HashRouter's own #/... fragment, so it's readable/strippable here regardless of which route (or
+// login state) the tab was on. One-time per redirect; the admin who clicked "Connect" in IMS →
+// Admin → Settings sees the result here, then the app renders normally.
+function CanvaOAuthBanner() {
+  const [msg, setMsg] = useState(null); // {text, color} | null
+  useEffect(() => {
+    let cancelled = false;
+    canvaHandleOAuthRedirect((text, color) => { if (!cancelled) setMsg({ text, color }); }).then((wasCallback) => {
+      if (wasCallback) window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  if (!msg) return null;
+  return (
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] rounded-full text-white text-sm px-4 py-2 shadow-xl"
+      style={{ background: msg.color === "red" ? "#DC2626" : msg.color === "green" ? "#059669" : "#374151" }}>
+      {msg.text}
+    </div>
+  );
+}
 
 // One-click "a newer build is live" banner — so the team never has to hard-refresh manually.
 function UpdateBanner() {
@@ -56,6 +79,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <UpdateBanner />
+      <CanvaOAuthBanner />
     </>
   );
 }
