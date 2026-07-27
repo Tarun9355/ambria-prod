@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect } from "react";
+import { Fragment, useState, useRef, useEffect, useMemo } from "react";
 import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
@@ -365,6 +365,9 @@ export default function StudioBuild({ ctx }) {
   const [zoneCollapsed, setZoneCollapsed] = useState({});
   // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
+  // id → library item. The photo strip needs a master per tile (verified flag, filters), and doing
+  // that as a linear find per tile is O(photos x library) every render.
+  const libById = useMemo(() => new Map((libItems || []).map((i) => [i.id, i])), [libItems]);
   // Is this element a kit? One definition, shared by the grouping sort below and by each card's own
   // body, so the two can never disagree about which cards are kits.
   const elIsKit = (el) => {
@@ -1246,7 +1249,7 @@ undefined
       let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
-        const li = libItems.find(l => l.id === ph.eventId);
+        const li = libById.get(ph.eventId);
         if (!li) return true;
         return zpFilterPhoto(li);
       });
@@ -1376,7 +1379,18 @@ undefined
                   <div style={{position:"relative",cursor:"pointer"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
-                    {ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"rgba(124,58,237,0.8)",color:"#fff",padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:600}}>Library</div>}
+                    {(()=>{
+                      // Verified only. An unverified photo shows nothing here, so the tick means
+                      // something — same rule the Library grid uses, minus its AI/untagged states.
+                      const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
+                      if (!li?._verified) return null;
+                      const by = li._verifiedBy || "unknown";
+                      const on = li._verifiedAt ? new Date(li._verifiedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : null;
+                      return <div title={`Verified by ${by}${on ? " on " + on : ""}`} style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:9,
+                        background:"rgba(0,0,0,0.6)",border:"1.5px solid #059669",color:"#059669",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <IconCheck size={11}/>
+                      </div>;
+                    })()}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
                     {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>SOURCE</div>}
                     {ph.isVideoDefault&&!isSelected&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>Default</div>}
