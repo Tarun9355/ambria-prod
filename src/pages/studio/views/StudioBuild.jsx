@@ -580,6 +580,16 @@ export default function StudioBuild({ ctx }) {
       phTurn(k, acc < 0 ? -1 : 1, page, pageCount);
     },
   };
+  // The ▦ grid view scrolls inside itself, so after selecting — which moves the photo to the front —
+  // that container has to be taken back to the top or the selection sits above the fold. In the
+  // paginated strip scrollTop is always 0, so this does nothing there.
+  const phScrollTop = (k) => {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById(`ph-grid-${k}`);
+    if (!el || el.scrollTop === 0) return;
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  };
   // A swipe that paged leaves a click behind on some browsers; tiles check this before opening.
   const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
   // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
@@ -1360,7 +1370,7 @@ undefined
                 const start = paged ? page * PH_PER_PAGE : 0;
                 const shown = paged ? matchedPhotos.slice(start, start + PH_PER_PAGE) : matchedPhotos;
                 return (<>
-              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" {...phSwipeHandlers(k,page,pageCount)}>
+              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...phSwipeHandlers(k,page,pageCount)}>
               {shown.map((ph,pi)=>{
                 const i = start + pi;   // absolute index: the lightbox browses the whole matched set
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
@@ -1373,7 +1383,7 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"pointer"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);}}>
+                  <div style={{position:"relative",cursor:"pointer"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     <div onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}} title="Open the full-size preview" className="ph-prev" style={{position:"absolute",bottom:4,right:4,cursor:"zoom-in",background:"rgba(0,0,0,0.62)",color:"#fff",padding:"3px 8px",borderRadius:5,fontSize:9.5,display:"inline-flex",alignItems:"center",gap:3}}><IconSearch size={10}/>Preview</div>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:12.5,fontWeight:700}}>{fmt(photoFullCost)}</div>}
@@ -1382,7 +1392,7 @@ undefined
                     {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>SOURCE</div>}
                     {ph.isVideoDefault&&!isSelected&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>Default</div>}
                   </div>
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} style={{padding:"9px 11px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} style={{padding:"9px 11px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
                     <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
