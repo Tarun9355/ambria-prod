@@ -364,6 +364,15 @@ export default function StudioBuild({ ctx }) {
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
   const [zoneCollapsed, setZoneCollapsed] = useState({});
+  // Full-screen photo preview. Tapping a zone photo still selects it for pricing; the little
+  // magnifier on each tile opens the image large here instead — { src, name }.
+  const [lightbox, setLightbox] = useState(null);
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e) => { if (e.key === "Escape") setLightbox(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
   // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
   // id → library item. The photo strip needs a master per tile (verified flag, filters), and doing
@@ -1378,7 +1387,7 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"pointer"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
+                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setLightbox({src:ph.src,name:ph.eventName});}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
                     {(()=>{
@@ -2465,6 +2474,15 @@ undefined
             </div>
           </div>
         </div>
+      </div>
+    )}
+
+    {/* ═══ FULL-SCREEN PHOTO LIGHTBOX — opened by the magnifier on any zone photo tile ═══ */}
+    {lightbox && (
+      <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
+        <span onClick={()=>setLightbox(null)} style={{position:"absolute",top:16,right:20,fontSize:30,lineHeight:1,color:"#fff",cursor:"pointer",fontWeight:300}}>×</span>
+        <img src={lightbox.src} alt={lightbox.name||""} onClick={e=>e.stopPropagation()} style={{maxWidth:"95vw",maxHeight:"88vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",cursor:"default"}}/>
+        {lightbox.name&&<div style={{position:"absolute",bottom:18,left:0,right:0,textAlign:"center",color:"#fff",fontSize:13,fontWeight:600,textShadow:"0 1px 4px rgba(0,0,0,0.8)"}}>{lightbox.name}</div>}
       </div>
     )}
       </div>{/* /right column */}
