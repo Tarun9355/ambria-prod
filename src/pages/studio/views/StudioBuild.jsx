@@ -1448,7 +1448,43 @@ undefined
                       <IconPencil size={11}/>{verified?"Correct & update master":"Correct & save to master"}
                     </button>;
                   })()}
-                  <div style={{position:"relative"}}>
+                </div>
+              </div>
+              </>);
+              })() : (
+            <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:10,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:200}}><div style={{fontSize:12,fontWeight:600,color:"#B45309"}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
+              <div style={{fontSize:10.5,color:textS,marginTop:2,lineHeight:1.4}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div></div>
+              <div style={{display:"flex",gap:7,flexShrink:0,flexWrap:"wrap"}}>
+                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
+                <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
+                  {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
+                  <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
+                </label>
+              </div>
+            </div>
+          )}
+          </div>
+
+          {/* ═══ AI INSPIRATION per element — HIDDEN pending search integration ═══ */}
+
+
+          {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
+          {showCosts&&!isCollapsed(k)&&<Fragment>
+
+          {/* ═══ FOUR SECTIONS ═══ Two per row. Details for one open below on click. ═══ */}
+          <div className="sec-grid" id={`zone-sec-${k}`}>
+            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
+          </div>
+
+          {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
+          {zoneSection[k]==="elements"&&(zoneElements[k] ? (
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
+                {/* Adding an element belongs beside the element list, not up on the photo pager.
+                    Gated on the panel: adding to a collapsed list would look like nothing happened. */}
+                {isElCardOpen(k)&&<div style={{position:"relative"}}>
                     <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:11.5,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
@@ -1507,41 +1543,7 @@ undefined
                         })}
                       </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS,width:320}}>No matches</div>;
                     })()}
-                  </div>
-                </div>
-              </div>
-              </>);
-              })() : (
-            <div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFBEB",borderRadius:10,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-              <div style={{flex:1,minWidth:200}}><div style={{fontSize:12,fontWeight:600,color:"#B45309"}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
-              <div style={{fontSize:10.5,color:textS,marginTop:2,lineHeight:1.4}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div></div>
-              <div style={{display:"flex",gap:7,flexShrink:0,flexWrap:"wrap"}}>
-                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
-                <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
-                  {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
-                  <input type="file" accept="image/*" capture="environment" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
-                </label>
-              </div>
-            </div>
-          )}
-          </div>
-
-          {/* ═══ AI INSPIRATION per element — HIDDEN pending search integration ═══ */}
-
-
-          {/* ═══ ELEMENT CARD + ZONE STRUCTURE — hidden when the zone is collapsed ═══ */}
-          {showCosts&&!isCollapsed(k)&&<Fragment>
-
-          {/* ═══ FOUR SECTIONS ═══ Two per row. Details for one open below on click. ═══ */}
-          <div className="sec-grid" id={`zone-sec-${k}`}>
-            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
-          </div>
-
-          {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
-          {zoneSection[k]==="elements"&&(zoneElements[k] ? (
-            <div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
+                </div>}
               </div>
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
