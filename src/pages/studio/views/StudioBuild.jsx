@@ -954,14 +954,20 @@ export default function StudioBuild({ ctx }) {
 .sec-tile[data-on="1"]{box-shadow:${isDark?"0 8px 18px -12px rgba(0,0,0,0.7)":"0 8px 18px -12px rgba(26,26,46,0.2)"}}
 @media (prefers-reduced-motion: reduce){.sec-tile{transition:none}.sec-tile:hover{transform:none}}
 /* ═══ ELEMENT CARD GRID ═══
-   auto-fill, so the browser decides the column count from the 272px minimum rather than me guessing
-   it: 3 across with the side rails open, 5 with them folded, and the gap is 16px at every width.
+   4 across with the side rails open, 6 with them folded. The count is set rather than derived from
+   a minimum width, because auto-fill gave only 3 whenever the column sat just under the threshold for
+   a 4th track. Cards fill their track exactly - no width cap - so a fixed count leaks no slack.
    align-items:start — stretching made a plain card as tall as the kit card beside it.
    Every card takes one track. Cards are GROUPED — plain first, kits after — and the first kit is
    pinned to column 1 so the kits begin a fresh row: grouping alone still let one kit share the last
    plain row and set its height. Kits then stretch to their row height so they match each other, while
    plain cards keep their natural height (uniform already, via minHeight). */
-.el-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px;align-items:start}
+.el-grid{display:grid;grid-template-columns:repeat(var(--el-cols,4),minmax(0,1fr));gap:16px;align-items:start}
+/* The count comes from the rails; these only stop the cards getting too narrow to hold the
+   S/M/B + Ratio row on smaller screens. */
+@media (max-width:1200px){.el-grid{--el-cols:3 !important}}
+@media (max-width:900px){.el-grid{--el-cols:2 !important}}
+@media (max-width:620px){.el-grid{--el-cols:1 !important}}
 /* ═══ ELEMENT CARD HOVER ═══
    Resting cards are flat outlines so the grid reads as one calm surface. Hover lifts exactly one
    card out of it: a two-layer shadow (a tight contact edge that keeps it attached to the page, plus
@@ -1509,7 +1515,7 @@ undefined
               </div>
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
-              <div className="el-grid">
+              <div className="el-grid" style={{"--el-cols":railsOpen?4:6}}>
                 {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                   const rc = priceInfo.rc;
@@ -1986,7 +1992,7 @@ undefined
               </div>}
             </div>
             {isElCardOpen(k)&&(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
-              <div className="el-grid">
+              <div className="el-grid" style={{"--el-cols":railsOpen?4:6}}>
               {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                 const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                 const rc = priceInfo.rc;
