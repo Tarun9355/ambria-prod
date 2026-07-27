@@ -1019,6 +1019,11 @@ export default function StudioBuild({ ctx }) {
 .ph-tile{transition:transform .18s ease, box-shadow .2s ease, border-color .2s ease}
 .ph-tile:hover{transform:translateY(-3px);border-color:${accent} !important;
   box-shadow:${isDark?"0 16px 30px -12px rgba(0,0,0,0.75)":"0 16px 30px -12px rgba(26,26,46,0.32)"} !important}
+/* The badge is a real control now: the photo itself selects, this opens the full preview. */
+.ph-prev{transition:background .16s ease, transform .12s ease}
+.ph-tile:hover .ph-prev{background:rgba(0,0,0,0.8) !important}
+.ph-prev:hover{transform:scale(1.06)}
+@media (prefers-reduced-motion: reduce){.ph-prev{transition:none}.ph-prev:hover{transform:none}}
 .ph-tile img{transition:transform .35s ease}
 .ph-tile:hover img{transform:scale(1.06)}
 /* the generic ring would double up on a tile that now has its own hover */
@@ -1368,9 +1373,9 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}}>
+                  <div style={{position:"relative",cursor:"pointer"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
-                    <div style={{position:"absolute",bottom:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:5,fontSize:9.5,display:"inline-flex",alignItems:"center",gap:3}}><IconSearch size={10}/>Preview</div>
+                    <div onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setElGallery({elKey:k,photos:matchedPhotos,title:el.label});setGalleryIdx(i);}} title="Open the full-size preview" className="ph-prev" style={{position:"absolute",bottom:4,right:4,cursor:"zoom-in",background:"rgba(0,0,0,0.62)",color:"#fff",padding:"3px 8px",borderRadius:5,fontSize:9.5,display:"inline-flex",alignItems:"center",gap:3}}><IconSearch size={10}/>Preview</div>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",top:6,left:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:12.5,fontWeight:700}}>{fmt(photoFullCost)}</div>}
                     {ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"rgba(124,58,237,0.8)",color:"#fff",padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:600}}>Library</div>}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
