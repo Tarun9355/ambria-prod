@@ -81,7 +81,7 @@ import {
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
-  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, TAG_KB_SK,
+  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
@@ -1938,6 +1938,16 @@ export default function StudioApp() {
             const out = { ...tp };
             let merged = false;
             for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
+            // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
+            // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
+            // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
+            try {
+              const bothDone = await kvGet(TAX_BOTH_MIG_SK);
+              if (bothDone == null) {
+                if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
+                reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+              }
+            } catch {}
             if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
             loadedTax = out; if (!cancelled) setTaxonomy(out);
           }
