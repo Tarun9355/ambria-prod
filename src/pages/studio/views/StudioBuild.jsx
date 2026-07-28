@@ -70,10 +70,13 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const rowCap = { fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS, minWidth: 62, flexShrink: 0 };
   return (
               <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
-                {zm.defaultTruss&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
+                {/* Not gated on zm.defaultTruss any more — that flag is off for every zone created
+                    from an area name, which left the card empty on the zones people actually build
+                    in. It now only seeds which truss type is preselected. */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>Truss</span>
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
-                </div>}
+                </div>
               <div style={{display:"flex",gap:8,marginBottom:6}}>
                 {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
                   <input type="number" value={zc.dims?.[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
@@ -187,7 +190,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     "configure the truss → then what's masked onto it". */}
                 <div style={{marginTop:10,marginLeft:12,paddingLeft:11,borderLeft:`3px solid ${accent}33`}}>
                   <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginBottom:5}}>Masking <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· on the truss</span></div>
-                {zm.hasMasking&&(()=>{
+                {(()=>{
                   const dL=zc.dims?.L||zc.dims?.S||0,dW=zc.dims?.W||zc.dims?.S||0,dH=zc.dims?.H||0;
                   const mw=zc.mkWalls||{};
                   const toggleWall=(wall)=>sZ({mkWalls:{...mw,[wall]:!mw[wall]},mkOn:true});
@@ -275,19 +278,21 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
               <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
               <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,margin:"14px 0 6px"}}>Floor</div>
               <div style={{fontSize:12.5,marginBottom:6}}>
-                {zm.hasPlatform&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
+                {/* hasPlatform / hasCarpet no longer gate these rows — same reason as the truss row
+                    above: they are off on every area-created zone, which emptied the card. */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconPlatform size={12}/>Platform</span>
                     {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:11.5,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
-                </div>}
-                {zm.hasCarpet&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconCarpet size={12}/>Carpet</span>
                     <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:11.5,padding:"3px 8px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                       <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
                       {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                     </select>
                   </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
-                </div>}
+                </div>
               </div>
               <div style={{display:"flex",gap:8,marginBottom:4}}>
                 <div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
@@ -461,20 +466,6 @@ export default function StudioBuild({ ctx }) {
     if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zm.hasMasking && zc.mkT ? " · masking" : ""}` : "";
     if (id === "platform") return (fd.W || fd.D) ? `${fd.W || "–"} × ${fd.D || "–"} ft` : "";
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
-  };
-  // Can this zone have this section at all? Drives BOTH the tile list and the panel below, so a
-  // tile can never be offered for something that will refuse to open.
-  //
-  // Read off the zone's capability flags, never off dimFields: TrussCard and FloorCard hardcode
-  // their own W/L/H inputs, so dimFields is not wired to anything, and every zone created from an
-  // area name is born with `dimFields: []` (defaultZoneFromArea). Gating on it hid the structure
-  // panel on Centre Lounge, Side Lounge, Open Lounges, Food Stalls, Installations and
-  // Entertainment Stage — all six of which are configured with a truss/platform/carpet/masking.
-  const zoneHasSection = (k, id) => {
-    const zm = zoneMeta[k] || {};
-    if (id === "truss") return !!zm.defaultTruss || !!zm.hasMasking;
-    if (id === "platform") return !!zm.hasPlatform || !!zm.hasCarpet;
-    return true;   // Elements and Print apply to every zone
   };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
@@ -1504,7 +1495,7 @@ undefined
 
           {/* ═══ FOUR SECTIONS ═══ Two per row. Details for one open below on click. ═══ */}
           <div className="sec-grid" id={`zone-sec-${k}`}>
-            {ZONE_SECTIONS.filter(sec=>zoneHasSection(k,sec.id)).map(sec=>sectionTile(k,sec))}
+            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
           </div>
 
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
@@ -1878,8 +1869,7 @@ undefined
               nothing at all. The form now opens blank on an empty object and the setters below
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
-          {/* Same zoneHasSection() the tile row filters on, so the panel and the tile always agree. */}
-          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&zoneHasSection(k,zoneSection[k])&&(()=>{
+          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
             const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
@@ -1894,11 +1884,13 @@ undefined
                 <div style={{fontSize:12.5,fontWeight:700,color:textP,display:"flex",alignItems:"center",gap:7}}><IconRuler size={13}/>Zone Structure</div>
                 {showCosts&&<div style={{fontSize:13,fontWeight:700,color:textP}}>{fmt(st.total)}</div>}
               </div>
-              {/* ── WHAT'S INCLUDED ── Derived from the very same flags and costs the rows below use,
-                  so it can never disagree with them. Lets you read the zone without scanning every row. */}
+              {/* ── WHAT'S INCLUDED ── Reads what the zone actually HAS, not what its meta permits.
+                  It used to key off zm.defaultTruss / hasPlatform / hasCarpet, which now no longer
+                  gate the rows below — leaving those in would have reported "Truss" as absent on
+                  every area-created zone even with dimensions typed in. */}
               {(()=>{
-                const parts=[["Truss",!!zm.defaultTruss,st.truss],["Masking",!!(zm.hasMasking&&zc.mkOn),st.masking],
-                  ["Platform",!!(zm.hasPlatform&&zc.plH),st.platform],["Carpet",!!(zm.hasCarpet&&zc.cpT),st.carpet]];
+                const parts=[["Truss",!!(zc.trT||st.truss>0),st.truss],["Masking",!!zc.mkOn,st.masking],
+                  ["Platform",!!zc.plH,st.platform],["Carpet",!!(zc.cpT&&zc.cpT!==CARPET_OFF),st.carpet]];
                 const on=parts.filter(p=>p[1]), off=parts.filter(p=>!p[1]);
                 const rule=isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.07)";
                 return <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10,paddingBottom:9,borderBottom:`1px solid ${rule}`}}>
