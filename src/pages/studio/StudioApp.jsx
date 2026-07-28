@@ -1216,6 +1216,24 @@ export default function StudioApp() {
   // Remember the active deal pointer + screen across a refresh / Studio↔IMS route switch (per-tab). The
   // build data itself lives in the client's rolling auto-session; these just say WHICH deal + WHERE to
   // restore on mount (see the restore effect after loadClientSession).
+  //
+  // Read during the FIRST RENDER, not inside the restore effect. The three persist effects below all
+  // fire on mount with the initial state — activeClientId null, step 0 — so by the time the restore
+  // effect ran, the client pointer had been removeItem'd and the step overwritten with "0". Restore
+  // then found nothing and dropped every refresh back onto Event Info. Snapshotting here happens
+  // before any effect, so the values survive.
+  const restoreRef = useRef(null);
+  if (restoreRef.current === null) {
+    let id = null, st = null, fn = 0;
+    try { id = sessionStorage.getItem("ambria-active-client") || null; } catch { /* storage disabled */ }
+    try { const s = parseInt(sessionStorage.getItem("ambria-studio-step"), 10); if (!isNaN(s)) st = s; } catch { /* */ }
+    try { fn = parseInt(sessionStorage.getItem("ambria-active-fn"), 10) || 0; } catch { /* */ }
+    restoreRef.current = { id, step: st, fn };
+  }
+  // True from the very first render whenever there is a deal to bring back. The ledger loads async,
+  // so without this the app rendered step 0 — Event Info — for the second or two until restore
+  // fired, then jumped to Browse/Build. Gate the step body on it and that flash never happens.
+  const [restoring, setRestoring] = useState(() => !!restoreRef.current?.id);
   useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
   useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
   // Each step/tab swaps the whole page body while the document keeps scrolling — so the browser
@@ -1994,7 +2012,17 @@ export default function StudioApp() {
       // Video tags
       try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
       // Client ledger — now row-per-client in the `client_ledger` TABLE (off the settings blob).
-      try { const rows = await loadClientRows(); if (Array.isArray(rows) && !cancelled) setClientLedger(rows.map(rowToClient).filter(Boolean)); } catch { /* ignore */ }
+      // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
+      // session uploads only what genuinely changed instead of the entire ledger.
+      try {
+        const rows = await loadClientRows();
+        if (Array.isArray(rows) && !cancelled) {
+          const list = rows.map(rowToClient).filter(Boolean);
+          const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
+          clientJsonRef.current = seed;
+          setClientLedger(list);
+        }
+      } catch { /* ignore */ }
       // Date types
       try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
       // Event orders
@@ -2258,11 +2286,15 @@ export default function StudioApp() {
   useEffect(() => {
     const ch = subscribeTable("client_ledger", (payload) => {
       try {
+        // Keep the dirty-check baseline in step with rows arriving from other tabs/users, so a
+        // remote change isn't mistaken for a local edit (or the reverse) on the next save.
         if (payload.eventType === "DELETE") {
           const id = payload.old?.id; if (!id) return;
+          if (clientJsonRef.current) delete clientJsonRef.current[id];
           setClientLedger((prev) => prev.filter((c) => c.id !== id));
         } else if (payload.new) {
           const c = rowToClient(payload.new); if (!c?.id) return;
+          if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(c);
           setClientLedger((prev) => { const i = prev.findIndex((x) => x.id === c.id); return i >= 0 ? prev.map((x) => (x.id === c.id ? c : x)) : [...prev, c]; });
         }
       } catch { /* ignore */ }
@@ -2350,11 +2382,30 @@ export default function StudioApp() {
   // slice(0,500) cap in the Client Tracker can't drop rows). Mirrors the library approach.
   const clientLedgerRef = useRef([]);
   useEffect(() => { clientLedgerRef.current = clientLedger; }, [clientLedger]);
+  // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
+  // the previous client OBJECTS and compare them to the incoming ones — but callers build their new
+  // ledger with `[...clientLedger]`, a shallow copy, then mutate the client in place
+  // (`client.sessions = …` in saveSession, `client.name = …` in doSaveClient). Old and new were
+  // therefore the same object, every comparison said "unchanged", and nothing was ever upserted.
+  // Only brand-new clients — absent from the map — got through, which is why deals were being
+  // created and then never updated again: sessions and edited details went nowhere.
+  // Strings can't be mutated behind our back, so comparing against these is sound.
+  const clientJsonRef = useRef(null);
   const saveClientLedger = useCallback(async (nl, deletedIds) => {
-    const prev = clientLedgerRef.current || [];
-    const prevById = {}; prev.forEach((c) => { if (c && c.id) prevById[c.id] = c; });
+    // No baseline yet (a save landing before the load effect seeded one) means we cannot tell what
+    // is dirty — upsert everything rather than risk dropping a write. The load effect seeds it, so
+    // this is the rare path, not the normal one.
+    const prevJson = clientJsonRef.current || {};
+    const nextJson = {};
+    const changed = [];
+    for (const c of (nl || [])) {
+      if (!c || !c.id) continue;
+      const j = JSON.stringify(c);
+      nextJson[c.id] = j;
+      if (prevJson[c.id] !== j) changed.push(c);
+    }
+    clientJsonRef.current = nextJson;
     clientLedgerRef.current = nl; setClientLedger(nl);
-    const changed = (nl || []).filter((c) => c && c.id && JSON.stringify(prevById[c.id]) !== JSON.stringify(c));
     const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
     try {
       if (changed.length) {
@@ -4390,8 +4441,15 @@ export default function StudioApp() {
     // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
     // activeClientId yet (saveSession creates the client + sets the id). Without this a new build was
     // never persisted, so a refresh/route-switch lost everything.
+    // `activeClientId` alone is enough now. It only exists once Event Info's Continue has committed
+    // the deal to the ledger, so a committed deal keeps its details saved from that moment — before
+    // a single zone is switched on. Previously nothing was written until there was build data, so
+    // browsing or filling in dimensions and then refreshing lost the lot, and the deal sat with
+    // `sessions: []`. Typing a name on Event Info still saves nothing: no id yet, no build data, and
+    // saveSession would otherwise mint a client per keystroke.
     buildHasDataRef.current = !!(clientName.trim() && (
-      Object.keys(zoneElements || {}).length > 0
+      activeClientId
+      || Object.keys(zoneElements || {}).length > 0
       || Object.keys(elSelectedPhoto || {}).length > 0
       || Object.values(enabledEls || {}).some(Boolean)
     ));
@@ -4402,7 +4460,12 @@ export default function StudioApp() {
     if (!buildHasDataRef.current) return;
     const t = setTimeout(autoSaveBuild, 1500);
     return () => clearTimeout(t);
-  }, [activeClientId, clientName, zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades, customZones, customMode, activeFnIdx, fnBuilds, autoSaveBuild]);
+    // Event Info fields are in here too — date, venue, function, shift, pax, the extra functions.
+    // They were absent, so editing the deal's details never scheduled a save; only touching the
+    // build did, and the details rode along by accident whenever that happened to fire.
+  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions,
+      zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
+      customZones, customMode, activeFnIdx, fnBuilds, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.
   useEffect(() => {
     const id = setInterval(autoSaveBuild, 15000);
@@ -4622,20 +4685,36 @@ export default function StudioApp() {
   const buildRestoredRef = useRef(false);
   useEffect(() => {
     if (buildRestoredRef.current) return;
-    if (activeClientId) { buildRestoredRef.current = true; return; }   // a live deal is already open
+    if (activeClientId) { buildRestoredRef.current = true; setRestoring(false); return; }   // a live deal is already open
     if (!Array.isArray(clientLedger) || clientLedger.length === 0) return; // ledger not loaded yet
-    let savedId = null; try { savedId = sessionStorage.getItem("ambria-active-client"); } catch { /* */ }
-    if (!savedId) { buildRestoredRef.current = true; return; }
+    const savedId = restoreRef.current?.id || null;   // snapshotted at first render — see restoreRef
+    if (!savedId) { buildRestoredRef.current = true; setRestoring(false); return; }
     const client = clientLedger.find(c => c.id === savedId);
     const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
     buildRestoredRef.current = true;
-    if (!client || !session) return;
-    let savedStep = 3, savedFn = 0;
-    try { const s = parseInt(sessionStorage.getItem("ambria-studio-step"), 10); if (!isNaN(s)) savedStep = s; } catch { /* */ }
-    try { savedFn = parseInt(sessionStorage.getItem("ambria-active-fn"), 10) || 0; } catch { /* */ }
-    loadClientSession(client, session, savedStep >= 1 ? savedStep : 3);
+    setRestoring(false);
+    // Only the client has to exist. This used to bail without a session too, but a deal gets its
+    // first auto-session only once something is built — so refreshing on Browse, or on Build before
+    // adding anything, threw you back to Event Info to retype a form you had already filled in.
+    // loadClientSession handles a null session: client details and the screen come back, and the
+    // build state stays empty, which is all there was to restore anyway.
+    if (!client) return;
+    const savedStep = restoreRef.current?.step ?? null;
+    const savedFn = restoreRef.current?.fn || 0;
+    // With a session and no usable stored step, Summary stays the default as before. Without one
+    // there is nothing to summarise, so fall back to Event Info instead.
+    const landingStep = (savedStep !== null && savedStep >= 1) ? savedStep : (session ? 3 : 0);
+    loadClientSession(client, session, landingStep);
     if (savedFn > 0) setActiveFnIdx(savedFn);
   }, [clientLedger, activeClientId, loadClientSession]);
+
+  // Backstop: if the ledger never arrives — offline, a failed fetch — drop the gate anyway rather
+  // than leaving the app on a spinner with no way forward.
+  useEffect(() => {
+    if (!restoring) return;
+    const t = setTimeout(() => setRestoring(false), 6000);
+    return () => clearTimeout(t);
+  }, [restoring]);
 
   // ── Load LMS lead — VERBATIM ──
   const loadLmsLead = useCallback((lead) => {
@@ -6644,12 +6723,22 @@ export default function StudioApp() {
       })()}
 
       {/* STUDIO MODE */}
-      {mode === "studio" && <>
+      {/* While a saved deal is being brought back, hold the body. `step` is still 0 until the ledger
+          lands, so rendering it would show Event Info for a second and then snap to Browse/Build. */}
+      {mode === "studio" && (restoring ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: "120px 20px", color: textS }}>
+          <div className="sa-restore-spin" style={{ width: 26, height: 26, borderRadius: "50%", border: `2.5px solid ${border}`, borderTopColor: accent }} />
+          <div style={{ fontSize: 12.5, fontWeight: 600 }}>Restoring your deal…</div>
+          <style>{`@keyframes saRestoreSpin{to{transform:rotate(360deg)}}
+.sa-restore-spin{animation:saRestoreSpin .7s linear infinite}
+@media (prefers-reduced-motion: reduce){.sa-restore-spin{animation-duration:2.4s}}`}</style>
+        </div>
+      ) : <>
         {step === 0 && <StudioEventInfo ctx={ctx} />}
         {step === 1 && <StudioBrowse ctx={ctx} />}
         {step === 2 && <StudioBuild ctx={ctx} />}
         {step === 3 && <StudioSummary ctx={ctx} />}
-      </>}
+      </>)}
 
       {/* DEAL CHECK FULL-PAGE OVERLAY */}
       {authUser && dcFullPageOpen && <DealCheckOverlay ctx={ctx} />}
