@@ -52,9 +52,32 @@ export const isPlaceholderPalette = (p) => {
   return name.toLowerCase() === "new palette" && !(p?.anchorColours || []).length;
 };
 
+// Palette names are typed by hand and the live catalogue shows it — 11 of 33 carry a trailing or
+// doubled space ("Gold ", "Ivory &  Rose Gold"), and "Brown " / "Brown" exist as two separate
+// entries. Comparing raw strings means "Brown " and "Brown" are different palettes: two identical
+// pills in the filter, each matching a different half of the photos. Normalise for every
+// comparison and for what gets displayed.
+export const normPaletteName = (s) => String(s || "").replace(/\s+/g, " ").trim();
+export const samePalette = (a, b) => normPaletteName(a).toLowerCase() === normPaletteName(b).toLowerCase();
+// True when `name` is in `list`, ignoring case and stray whitespace on either side.
+export const paletteInList = (list, name) => (list || []).some((x) => samePalette(x, name));
+
 export const paletteNames = (paletteCatalogue, taxonomyPalettes, fallback = []) => {
-  const real = (paletteCatalogue || []).filter((p) => !isPlaceholderPalette(p)).map((p) => p.name);
+  // Trim on the way out and drop case/whitespace duplicates, keeping first seen.
+  const dedupe = (arr) => {
+    const seen = new Set(), out = [];
+    for (const raw of arr) {
+      const name = normPaletteName(raw);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out;
+  };
+  const real = dedupe((paletteCatalogue || []).filter((p) => !isPlaceholderPalette(p)).map((p) => p.name));
   if (real.length) return real;
-  const tax = (taxonomyPalettes || []).filter(Boolean);
-  return tax.length ? tax : fallback;
+  const tax = dedupe((taxonomyPalettes || []).filter(Boolean));
+  return tax.length ? tax : dedupe(fallback);
 };

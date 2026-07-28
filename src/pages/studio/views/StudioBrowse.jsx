@@ -3,6 +3,7 @@ import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconSparkle, IconCrown, IconSave, IconAlert, IconPlay,
   IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
+import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 
 export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
@@ -18,6 +19,9 @@ export default function StudioBrowse({ ctx }) {
   // Library's own tagVenueGroup/tagOutsideSub, kept local here since this modal is self-contained.
   const [taxVenueGroup, setTaxVenueGroup] = useState("");
   const [taxOutsideSub, setTaxOutsideSub] = useState("all");
+  // Palette filter search. Lives here rather than inside the Section so it survives the panel's
+  // re-renders — the section subtree is rebuilt on every filter change.
+  const [paletteQ, setPaletteQ] = useState("");
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
@@ -185,7 +189,7 @@ export default function StudioBrowse({ ctx }) {
     // ═══ FILTER PANEL PRESENTATION ═══
     // Now sourced from components/studio/filterUI.jsx so Browse and Build share one panel
     // implementation and cannot drift apart. Emits identical markup to the previous inline copy.
-    const { hairline, gold, textM, ghostPill, Pill, Section: FSection, css: filterCSS } = makeFilterUI({ isDark, accent, textP, S });
+    const { hairline, gold, textM, ghostPill, Pill, Section: FSection, SearchBox: FSearchBox, css: filterCSS } = makeFilterUI({ isDark, accent, textP, S });
 
     // How many filters each section is applying — surfaced as a count chip on the section header
     // so you can tell at a glance which groups are narrowing the results.
@@ -355,8 +359,32 @@ export default function StudioBrowse({ ctx }) {
 
             {/* Palette */}
             <FSection open={!!openSections["palette"]} onToggle={()=>toggleSection("palette")} id="palette" label="Palette" count={sectionCounts.palette} cols={1} last>
-              <Pill on={filterPalette.length===0} onClick={()=>setFilterPalette([])}>All</Pill>
-              {azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(c=>{const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;})}
+              {(()=>{
+                const all = azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
+                const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
+                // Ranked, not alphabetical — the closest name has to come first.
+                const shown = paletteSearch(all, paletteQ, anchorsOf);
+                // An active filter must never be hidden by the search — you'd be filtering on a
+                // palette with nothing on screen saying so, and no way to switch it off.
+                const selectedHidden = filterPalette.filter(c => all.includes(c) && !shown.includes(c));
+                const pill = (c) => {const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;};
+                return <>
+                  <div style={{gridColumn:"1/-1"}}>
+                    <FSearchBox value={paletteQ} onChange={setPaletteQ} placeholder="Search palettes…" resultCount={shown.length} totalCount={all.length}/>
+                  </div>
+                  <Pill on={filterPalette.length===0} onClick={()=>setFilterPalette([])}>All</Pill>
+                  {/* Split name hits from colour-only hits — searching "gold" legitimately turns up
+                      "Ivory & Peach" if gold is one of its anchour colours, but unlabelled that
+                      reads as a broken search rather than a useful one. */}
+                  {shown.filter(c=>paletteMatches(c,paletteQ)).map(pill)}
+                  {(()=>{const byColour=shown.filter(c=>!paletteMatches(c,paletteQ));return byColour.length===0?null:<>
+                    <div style={{gridColumn:"1/-1",fontSize:9,color:textM,marginTop:2}}>Contains this colour</div>
+                    {byColour.map(pill)}
+                  </>;})()}
+                  {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:textM,marginTop:2}}>Selected, outside this search</div>}
+                  {selectedHidden.map(pill)}
+                </>;
+              })()}
             </FSection>
             </div>
           </div>

@@ -1,4 +1,51 @@
-import { IconCheck, IconChevron } from "../icons.jsx";
+import { IconCheck, IconChevron, IconSearch } from "../icons.jsx";
+
+// ═══ PALETTE SEARCH ═══ Palette names are compound and inconsistently punctuated — "Ivory & Rani
+// Pink / Magenta", "white & black", "MIX PASTELS" — so a plain substring test makes you type the
+// separators exactly right and match nothing otherwise. Normalise both sides to bare words, then
+// require every typed token to appear somewhere: order-free, punctuation-free, case-free, so
+// "pink ivory" and "ivory & rani pink" both land on the same palette.
+const normWords = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+// A palette matches when every token hits its name OR one of its anchour colours — so searching
+// "magenta" still finds a palette that lists magenta as a colour without saying so in the name.
+export function paletteMatches(name, query, anchorColours) {
+  const tokens = normWords(query).split(" ").filter(Boolean);
+  if (!tokens.length) return true;
+  const hay = normWords([name, ...(anchorColours || [])].join(" "));
+  return tokens.every((t) => hay.includes(t));
+}
+
+// Filter AND rank. Sorting the matches alphabetically buried the obvious answer: searching "ivory"
+// put "Emerald Green & Ivory" above plain "Ivory", because E < I. Rank by how well the name matches
+// first, alphabetically only within a rank.
+//   0  exact name              "Ivory"
+//   1  name starts with it     "Ivory & Rose Gold"
+//   2  prefix mid-word         "Ivorywash"
+//   3  whole word later on     "Emerald Green & Ivory"
+//   4  substring anywhere
+//   5  matched only through its anchour colours, nothing in the name
+export function paletteSearch(names, query, anchorsOf) {
+  const q = normWords(query);
+  if (!q) return names;
+  const tokens = q.split(" ").filter(Boolean);
+  const scored = [];
+  for (const name of names) {
+    const n = normWords(name);
+    const hay = normWords([name, ...((anchorsOf && anchorsOf(name)) || [])].join(" "));
+    if (!tokens.every((t) => hay.includes(t))) continue;
+    const rank = n === q ? 0
+      : n.startsWith(q + " ") ? 1
+      : n.startsWith(q) ? 2
+      : (" " + n).includes(" " + q) ? 3
+      : n.includes(q) ? 4
+      : 5;
+    const at = n.indexOf(tokens[0]);
+    scored.push({ name, rank, pos: at < 0 ? Number.MAX_SAFE_INTEGER : at });
+  }
+  scored.sort((a, b) => a.rank - b.rank || a.pos - b.pos || a.name.localeCompare(b.name));
+  return scored.map((s) => s.name);
+}
 
 // ═══ SHARED STUDIO FILTER UI ═══
 // One implementation of the filter panel used by BOTH Browse and Build, so the two can't drift
@@ -10,7 +57,22 @@ import { IconCheck, IconChevron } from "../icons.jsx";
 // `makeFilterUI(theme)` returns the tokens + components bound to the current theme, because the
 // Studio tree is inline-styles (`S`) and every value has to be threaded through explicitly.
 
+// makeFilterUI runs during render, so building the component functions fresh each time gave every
+// one of them a NEW identity — React treats a changed component type as a different component and
+// remounts the entire subtree. Invisible for static pills; fatal for an <input>, which lost focus
+// after every keystroke, so the palette search would only ever accept one character.
+//
+// Cache the built API per theme. Same theme in → the exact same Pill/Section/Panel/SearchBox
+// references out, so the panel reconciles instead of remounting. `S` is rebuilt by the caller on
+// every render (makeS(isDark)) and so can't be part of the key; it goes through a ref the cached
+// Panel reads at render time, which keeps it current without disturbing identity.
+const _uiCache = new Map();
+
 export function makeFilterUI({ isDark, accent, textP, S }) {
+  const cacheKey = `${isDark}|${accent}|${textP}`;
+  const cached = _uiCache.get(cacheKey);
+  if (cached) { cached.sRef.current = S; return cached.api; }
+  const sRef = { current: S };
   const hairline = isDark ? "rgba(255,255,255,0.08)" : "rgba(26,26,46,0.07)";
   const gold     = isDark ? "#D9BE86" : "#8A6A2F";   // accent as *text* (#C9A96E is ~2:1 on white)
   const textM    = isDark ? "#A6ADC0" : "#5A6076";   // stock textS (#8b8fa3) is ~3.1:1 — below AA
@@ -38,6 +100,25 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   const Pill = ({ on, onClick, children, title, align }) => (
     <div className="sb-pill" onClick={onClick} title={title} style={pill(on, align)}>
       {on && <IconCheck size={9} />}{children}
+    </div>
+  );
+
+  // Search box for a section whose value list is long enough to hunt through (palette). Sits inside
+  // the open section, above its grid. Caller owns the query state — the section is remounted as the
+  // panel re-renders, so keeping it here would drop what you had typed.
+  const SearchBox = ({ value, onChange, placeholder = "Search…", resultCount, totalCount }) => (
+    <div style={{ marginTop: 9 }}>
+      <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+        <span style={{ position: "absolute", left: 8, display: "flex", color: textM, pointerEvents: "none" }}><IconSearch size={11} /></span>
+        <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder}
+          style={{ width: "100%", boxSizing: "border-box", padding: "5px 24px 5px 25px", borderRadius: 8, fontSize: 11,
+            border: `1px solid ${value ? accent : hairline}`, background: isDark ? "rgba(255,255,255,0.04)" : "#fff", color: textP, outline: "none" }} />
+        {value && <span onClick={() => onChange("")} title="Clear search" role="button"
+          style={{ position: "absolute", right: 7, cursor: "pointer", fontSize: 12, lineHeight: 1, color: textM }}>×</span>}
+      </div>
+      {value && <div style={{ fontSize: 9, color: textM, marginTop: 4 }}>
+        {resultCount === 0 ? "No palettes match" : `${resultCount} of ${totalCount}`}
+      </div>}
     </div>
   );
 
@@ -87,7 +168,7 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // contain` is the other half: it stops the scroll chaining back to the page once the body bottoms
   // out. The header sits outside the scrollport, so it stays put without needing position:sticky.
   const Panel = ({ title = "Filters", total = 0, onClear, note, action, scroll, children }) => (
-    <div className="sb-panel" style={{...S.card, padding:0, boxShadow: isDark
+    <div className="sb-panel" style={{...sRef.current.card, padding:0, boxShadow: isDark
       ? "0 1px 2px rgba(0,0,0,0.45), 0 10px 26px -12px rgba(0,0,0,0.6)"
       : "0 1px 2px rgba(26,26,46,0.06), 0 10px 26px -12px rgba(26,26,46,0.2)",
       ...(scroll ? {display:"flex",flexDirection:"column",minHeight:0,maxHeight:scroll,overflow:"hidden"} : null)}}>
@@ -135,5 +216,7 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // @media block covering its own classes too, and a second one would just duplicate it.
   // Callers must include `.sb-pill` and `.sb-head` in their own reduced-motion rule.
 
-  return { hairline, gold, textM, pill, ghostPill, Pill, Section, Panel, css };
+  const api = { hairline, gold, textM, pill, ghostPill, Pill, Section, Panel, SearchBox, css };
+  _uiCache.set(cacheKey, { api, sRef });
+  return api;
 }

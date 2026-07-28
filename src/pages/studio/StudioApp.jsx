@@ -29,7 +29,7 @@ import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/
 import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
-import { paletteNames } from "../../lib/studio/colours";
+import { paletteNames, paletteInList } from "../../lib/studio/colours";
 import { makeS } from "../../lib/studio/styles";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
@@ -1493,7 +1493,12 @@ export default function StudioApp() {
       const vals = zpFilters[cat] || [];
       if (!vals.length) continue;
       const it = tags[cat] || [];
-      if (!vals.some(v => it.includes(v))) return false;
+      // Palette pills are trimmed by paletteNames() while photo tags keep whatever was typed, so
+      // this one category has to compare loosely or a trailing space hides the photo.
+      const hit = cat === "colorPalette"
+        ? vals.some(v => paletteInList(it, v))
+        : vals.some(v => it.includes(v));
+      if (!hit) return false;
     }
     // Venue pills — matches the photo's venue tag OR its folder path (photos are often filed under
     // "inhouse venues/<venue>/…" or "Outside Venues/<venue>/…"), so picking "Emerald Green" also
@@ -4183,7 +4188,9 @@ export default function StudioApp() {
     if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
     if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
     if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
-    if (filterPalette.length > 0) out = out.filter(v => v.colors.some(c => filterPalette.includes(c)));
+    // Whitespace/case-insensitive: the pill says "Brown" (trimmed by paletteNames) while the video
+    // may be tagged "Brown " — an exact includes() matched neither half of the library reliably.
+    if (filterPalette.length > 0) out = out.filter(v => (v.colors || []).some(c => paletteInList(filterPalette, c)));
     return out;
   }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
 

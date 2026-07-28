@@ -9,6 +9,7 @@ import {
   maskingOptions, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames } from "../../../lib/studio/colours";
+import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
@@ -527,7 +528,7 @@ export default function StudioBuild({ ctx }) {
   const zpGold  = isDark ? "#D9BE86" : "#8A6A2F";
   // Panel / section / pill come from the shared module, so this panel is literally the same
   // component tree as the Browse filters — the two cannot drift apart.
-  const { Panel: FPanel, Section: FSection, Pill: FPill, css: filterCSS } =
+  const { Panel: FPanel, Section: FSection, Pill: FPill, SearchBox: FSearchBox, css: filterCSS } =
     makeFilterUI({ isDark, accent, textP, S });
   const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
   const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
@@ -555,6 +556,9 @@ export default function StudioBuild({ ctx }) {
   const [phPage, setPhPage] = useState({});   // per-zone page index for the photo picker
   // Both side rails fold away together, from the one control in the Photo filters header.
   const [railsOpen, setRailsOpen] = useState(true);
+  // Palette search in the photo-filter rail. Held here, not in the Section, so it survives the
+  // panel re-rendering on every filter change.
+  const [zpPaletteQ, setZpPaletteQ] = useState("");
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   const PH_PER_PAGE = railsOpen ? 4 : 8;      // photos, not more of them squeezed into a row
   const RAIL_W = 258;
@@ -890,10 +894,29 @@ export default function StudioBuild({ ctx }) {
           const sel=zpFilters[g.key]||[];
           // Groups with long values (palette, venue names) get fewer columns and left-aligned rows.
           const align = g.cols === 1 ? "start" : undefined;
+          // Only the palette group is long and awkwardly punctuated enough to need hunting through;
+          // the others are 3–8 short values where a search box is just another thing in the way.
+          const all = azSort(g.opts);
+          const searchable = g.key === "colorPalette";
+          const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
+          const shown = searchable ? paletteSearch(all, zpPaletteQ, anchorsOf) : all;
+          // Never let the search hide something that is actively filtering the photos.
+          const selectedHidden = searchable ? sel.filter(v => all.includes(v) && !shown.includes(v)) : [];
+          const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{v}</FPill>;
           return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
             cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
+            {searchable&&<div style={{gridColumn:"1/-1"}}>
+              <FSearchBox value={zpPaletteQ} onChange={setZpPaletteQ} placeholder="Search palettes…" resultCount={shown.length} totalCount={all.length}/>
+            </div>}
             <FPill on={sel.length===0} align={align} onClick={()=>setZpFilters(p=>({...p,[g.key]:[]}))}>All</FPill>
-            {azSort(g.opts).map(v=><FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{v}</FPill>)}
+            {/* Colour-only hits are separated out — see the same split in Browse. */}
+            {(searchable?shown.filter(v=>paletteMatches(v,zpPaletteQ)):shown).map(optPill)}
+            {(()=>{if(!searchable)return null;const byColour=shown.filter(v=>!paletteMatches(v,zpPaletteQ));return byColour.length===0?null:<>
+              <div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>Contains this colour</div>
+              {byColour.map(optPill)}
+            </>;})()}
+            {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>Selected, outside this search</div>}
+            {selectedHidden.map(optPill)}
             {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:zpTextM}}>{g.empty}</span>}
           </FSection>;
         })}
