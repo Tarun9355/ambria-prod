@@ -1891,9 +1891,9 @@ export default function ManageLibrary({ ctx }) {
                     <button onClick={() => {
                       const ids = vis.filter(v => videoStatus(v) === "review").map(v => v.id);
                       if (!window.confirm(`Clear tags on ${ids.length} "Needs review" video${ids.length === 1 ? "" : "s"} and move ${ids.length === 1 ? "it" : "them"} back to Untagged?\n\nThis wipes their existing venue/event/tier/style/color tags entirely, so you can re-tag them fresh (e.g. with "Tag all untagged" afterward). Cannot be undone.`)) return;
-                      const nt = { ...ytVideoTags };
-                      ids.forEach(id => delete nt[id]);
-                      saveYtTags(nt);
+                      const patch = {};
+                      ids.forEach(id => { patch[id] = null; });
+                      saveYtTags(patch);
                       showMsg(`Cleared tags on ${ids.length} video${ids.length === 1 ? "" : "s"} — moved to Untagged`, "green");
                     }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#E11D48", border: "1px solid #E11D48" }}>🗑 Reset Needs-review → Untagged ({cnt("review")})</button>
                   )}
@@ -2053,7 +2053,7 @@ export default function ManageLibrary({ ctx }) {
                     const idx=events.findIndex(e=>e.id===ytPicker);
                     if(idx>=0){
                       const upd=[...events];upd[idx]={...upd[idx],video:`https://www.youtube.com/embed/${v.id}`};save(upd);
-                      const nt={...ytVideoTags,[v.id]:{...tag,linkedEvents:[...new Set([...(tag.linkedEvents||[]),ytPicker])]}};saveYtTags(nt);
+                      saveYtTags({[v.id]:{...tag,linkedEvents:[...new Set([...(tag.linkedEvents||[]),ytPicker])]}});
                       setYtPicker(null);
                     }
                   } else {
@@ -2108,7 +2108,7 @@ export default function ManageLibrary({ ctx }) {
                   {/* AI Draft banner */}
                   {hasDraft&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",marginBottom:10,borderRadius:8,background:"rgba(201,169,110,0.12)",border:`1px solid ${accent}40`}}>
                     <span style={{fontSize:11,color:accent,fontWeight:600,flex:1}}>📋 Parsed from description — review & save</span>
-                    <button onClick={()=>{const nt={...ytVideoTags,[v.id]:{...aiVideoDraft.tags,_aiTagged:true,_savedBy:authUser?.name||"—",_savedAt:Date.now()}};saveYtTags(nt);setAiVideoDraft(null);showMsg("✓ AI tags saved — video now live on Browse","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
+                    <button onClick={()=>{saveYtTags({[v.id]:{...aiVideoDraft.tags,_aiTagged:true,_savedBy:authUser?.name||"—",_savedAt:Date.now()}});setAiVideoDraft(null);showMsg("✓ AI tags saved — video now live on Browse","green");}} style={{padding:"4px 12px",borderRadius:6,border:"none",background:accent,color:"#1a1a2e",fontSize:10,fontWeight:600,cursor:"pointer"}}>✓ Save</button>
                     <button onClick={()=>{setAiVideoDraft(null);setYtTagEdit(null);}} style={{padding:"4px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}>✕ Discard</button>
                   </div>}
                   {/* Row 1: Venue (2-level chip picker — mirrors Browse page pattern) */}
@@ -2120,8 +2120,7 @@ export default function ManageLibrary({ ctx }) {
                       // Auto-sync group when venue is already set
                       const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
                       const setVidVenue = (val) => {
-                        const nt = { ...ytVideoTags, [v.id]: { ...tag, venue: val || undefined, venueCustom: undefined } };
-                        if (hasDraft) { setAiVideoDraft(p => ({ ...p, tags: { ...p.tags, venue: val || undefined, venueCustom: undefined } })); } else { saveYtTags(nt); }
+                        if (hasDraft) { setAiVideoDraft(p => ({ ...p, tags: { ...p.tags, venue: val || undefined, venueCustom: undefined } })); } else { saveYtTags({ [v.id]: { ...tag, venue: val || undefined, venueCustom: undefined } }); }
                       };
                       const outsideFiltered = customOutdoor.filter(o => tagOutsideSub === "empanelled" ? o.empanelled : tagOutsideSub === "other" ? !o.empanelled : true);
                       return <>
@@ -2151,21 +2150,21 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Tier</div>
-                      <select value={tag.tier||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,tier:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,tier:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.tier||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,tier:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,tier:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.tier, CATEGORIES).map(c=><option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Indoor / Outdoor</div>
-                      <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,io:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,io:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
                       </select>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Time / Setting</div>
-                      <select value={tag.timeSetting||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,timeSetting:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,timeSetting:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.timeSetting||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,timeSetting:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,timeSetting:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
@@ -2173,7 +2172,7 @@ export default function ManageLibrary({ ctx }) {
                     {/* §23 Phase 2.9c — palette per video (drives Build screen paint picker grouping) */}
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>🎨 Palette</div>
-                      <select value={tag.palette||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,palette:e.target.value||undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,palette:e.target.value||undefined}};saveYtTags(nt);}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.palette||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,palette:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,palette:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {(imsPaletteCatalogue.length>0?imsPaletteCatalogue:[{name:"Custom"}]).map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
                       </select>
@@ -2188,7 +2187,7 @@ export default function ManageLibrary({ ctx }) {
                         return <span key={f} onClick={()=>{
                           const cur=Array.isArray(tag.fn)?tag.fn:(tag.fn?[tag.fn]:[]);
                           const next=cur.includes(f)?cur.filter(x=>x!==f):[...cur,f];
-                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,fn:next.length?next:undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,fn:next.length?next:undefined}};saveYtTags(nt);}
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,fn:next.length?next:undefined}}));}else{saveYtTags({[v.id]:{...tag,fn:next.length?next:undefined}});}
                         }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
                           background:sel?"rgba(168,85,247,0.2)":"transparent",
                           border:`1px solid ${sel?"rgba(168,85,247,0.5)":border}`,
@@ -2205,7 +2204,7 @@ export default function ManageLibrary({ ctx }) {
                         return <span key={s} onClick={()=>{
                           const cur=tag.styles||[];
                           const next=cur.includes(s)?cur.filter(x=>x!==s):[...cur,s];
-                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,styles:next.length?next:undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,styles:next.length?next:undefined}};saveYtTags(nt);}
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,styles:next.length?next:undefined}}));}else{saveYtTags({[v.id]:{...tag,styles:next.length?next:undefined}});}
                         }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
                           background:sel?"rgba(236,72,153,0.2)":"transparent",
                           border:`1px solid ${sel?"rgba(236,72,153,0.5)":border}`,
@@ -2222,7 +2221,7 @@ export default function ManageLibrary({ ctx }) {
                         return <span key={c} onClick={()=>{
                           const cur=tag.colors||[];
                           const next=cur.includes(c)?cur.filter(x=>x!==c):[...cur,c];
-                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,colors:next.length?next:undefined}}));}else{const nt={...ytVideoTags,[v.id]:{...tag,colors:next.length?next:undefined}};saveYtTags(nt);}
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,colors:next.length?next:undefined}}));}else{saveYtTags({[v.id]:{...tag,colors:next.length?next:undefined}});}
                         }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
                           background:sel?"rgba(249,115,22,0.2)":"transparent",
                           border:`1px solid ${sel?"rgba(249,115,22,0.5)":border}`,
@@ -2235,11 +2234,11 @@ export default function ManageLibrary({ ctx }) {
                     <button onClick={(e)=>{e.stopPropagation();const nh={...hiddenVideos};if(nh[v.id])delete nh[v.id];else nh[v.id]=true;saveHiddenVideos(nh);showMsg(nh[v.id]?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
                       {hiddenVideos[v.id]?"👁 Unhide":"👁‍🗨 Hide"}
                     </button>
-                    {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();if(!confirm("Delete this video from app?"))return;saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]);const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);setYtTagEdit(null);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
-                    {hasTag&&<button onClick={()=>{const nt={...ytVideoTags};delete nt[v.id];saveYtTags(nt);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
+                    {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();if(!confirm("Delete this video from app?"))return;saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]);saveYtTags({[v.id]:null});setYtTagEdit(null);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
+                    {hasTag&&<button onClick={()=>saveYtTags({[v.id]:null})} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}
-                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};const nt={...ytVideoTags,[v.id]:{...cur,_verified:true,...stamp}};saveYtTags(nt);if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
+                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};saveYtTags({[v.id]:{...cur,_verified:true,...stamp}});if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
                     <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"📋 Tag from description"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
@@ -2253,7 +2252,7 @@ export default function ManageLibrary({ ctx }) {
       {bigTagVid && (() => {
         const v = allVideos.find(x => x.id === bigTagVid) || {};
         const vTag = ytVideoTags[bigTagVid] || {};
-        const updTag = (patch) => saveYtTags({ ...ytVideoTags, [bigTagVid]: { ...vTag, ...patch } });
+        const updTag = (patch) => saveYtTags({ [bigTagVid]: { ...vTag, ...patch } });
         const toggleArr = (field, val) => { const cur = Array.isArray(vTag[field]) ? vTag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
         const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
         const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
@@ -2269,7 +2268,7 @@ export default function ManageLibrary({ ctx }) {
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
               <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
-              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; const nt = { ...ytVideoTags, [bigTagVid]: { ...vTag, _verified: true, ...stamp } }; saveYtTags(nt); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
+              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; saveYtTags({ [bigTagVid]: { ...vTag, _verified: true, ...stamp } }); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>
             <div style={{ padding: "16px 22px" }}>

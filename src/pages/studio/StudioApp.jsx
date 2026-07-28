@@ -2126,6 +2126,7 @@ export default function StudioApp() {
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
+          else if (key === YT_TAG_SK) { const yv = pj(await kvGet(YT_TAG_SK)); if (yv && typeof yv === "object") setYtVideoTags(yv); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
       })
@@ -2439,7 +2440,28 @@ export default function StudioApp() {
     catch { setDcEoActuals(null); }
   }, [eventOrders, activeClientId, clientName]);
   const saveScanHistory = useCallback(async (nh) => { setScanHistory(nh); await reliableSave(SCAN_HIST_SK, JSON.stringify(nh), "Scan history"); }, []);
-  const saveYtTags = useCallback(async (nt) => { setYtVideoTags(nt); await reliableSave(YT_TAG_SK, JSON.stringify(nt), "Video tags"); }, []);
+  // Merge-on-save — fetches the LATEST server copy right before writing, so a save from this tab
+  // can never silently erase another tab's concurrent edit to a DIFFERENT video. This is the same
+  // bug shape as the palette-catalogue mount race (fixed in 57a2f73): overwriting a whole shared
+  // blob from one tab's local snapshot. There it was a load-timing race; here it's ordinary
+  // concurrent multi-user editing, made worse by YT_TAG_SK never being in the realtime allowlist
+  // below (so a tab's snapshot of OTHER people's edits can be stale for as long as the tab's open).
+  // Callers pass a PATCH — just the id(s) they changed, mapped to the new tag object (or null to
+  // delete that id) — never the whole ytVideoTags object.
+  const saveYtTags = useCallback(async (patch) => {
+    let fresh = {};
+    try {
+      const raw = await kvGet(YT_TAG_SK);
+      const p = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
+      if (p && typeof p === "object") fresh = p;
+    } catch {}
+    const merged = { ...fresh };
+    Object.entries(patch || {}).forEach(([id, val]) => {
+      if (val === null || val === undefined) delete merged[id]; else merged[id] = val;
+    });
+    setYtVideoTags(merged);
+    await reliableSave(YT_TAG_SK, JSON.stringify(merged), "Video tags");
+  }, []);
 
   // AREAS ↔ ZONES SYNC (bidirectional additive) — VERBATIM
   const addTagWithAreaZoneSync = useCallback(async (category, newTag) => {
@@ -3934,11 +3956,11 @@ export default function StudioApp() {
     try {
       const newTag = await buildVideoTagFromAI(videoId);
       if (!newTag) { showMsg("Couldn't fetch video details", "red"); setAiTaggingVideo(null); return; }
-      await saveYtTags({ ...ytVideoTags, [videoId]: { ...newTag, _savedBy: authUser?.name || "Auto", _savedAt: Date.now() } });
+      await saveYtTags({ [videoId]: { ...newTag, _savedBy: authUser?.name || "Auto", _savedAt: Date.now() } });
       showMsg("✓ Tagged from description — review & adjust below", "green");
     } catch (e) { showMsg("Tagging failed: " + e.message, "red"); }
     setAiTaggingVideo(null);
-  }, [aiTaggingVideo, buildVideoTagFromAI, ytVideoTags, saveYtTags, authUser]);
+  }, [aiTaggingVideo, buildVideoTagFromAI, saveYtTags, authUser]);
 
   // Bulk-tag every untagged video from its description (app-wide, like photo bulk). Saves
   // directly with _aiTagged so the team reviews/verifies after — keeps going while you move
@@ -3949,19 +3971,22 @@ export default function StudioApp() {
     if (!targets.length) { showMsg("No untagged videos — every video is already tagged.", "green"); return null; }
     bulkVidStop.current = false;
     setBulkVid({ running: true, done: 0, total: targets.length, ok: 0, fail: 0, finishedAt: 0 });
-    let merged = { ...ytVideoTags };
+    // patch holds only the videos THIS run has newly tagged since the last flush — saveYtTags
+    // merges it onto whatever's live in the DB at flush time, so a long-running bulk pass can never
+    // clobber a verify/edit someone else makes on a different video while this is still going.
+    let patch = {};
     let ok = 0, fail = 0;
     for (let n = 0; n < targets.length; n++) {
       if (bulkVidStop.current) break;
       try {
         const tag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        if (tag) { merged = { ...merged, [targets[n].id]: { ...tag, _savedBy: "Auto (bulk)", _savedAt: Date.now() } }; ok++; }
+        if (tag) { patch = { ...patch, [targets[n].id]: { ...tag, _savedBy: "Auto (bulk)", _savedAt: Date.now() } }; ok++; }
         else fail++;
       } catch { fail++; }
-      if ((n + 1) % 4 === 0) await saveYtTags(merged);
+      if ((n + 1) % 4 === 0) { await saveYtTags(patch); patch = {}; }
       setBulkVid({ running: true, done: n + 1, total: targets.length, ok, fail, finishedAt: 0 });
     }
-    await saveYtTags(merged);
+    await saveYtTags(patch);
     const stopped = bulkVidStop.current;
     setBulkVid({ running: false, done: targets.length, total: targets.length, ok, fail, finishedAt: Date.now() });
     showMsg(`🎬 Video tagging ${stopped ? "stopped" : "complete"} — ${ok} tagged, ${fail} failed. Review them in Library → Videos → Needs review.`, "green");
@@ -3980,22 +4005,24 @@ export default function StudioApp() {
     if (!targets.length) { showMsg("Every video already has a venue tag.", "green"); return null; }
     bulkVidVenueStop.current = false;
     setBulkVidVenue({ running: true, done: 0, total: targets.length, ok: 0, skip: 0, fail: 0, finishedAt: 0 });
-    let merged = { ...ytVideoTags };
+    // Same patch-only-what-changed approach as runBulkTagVideos above — prev falls back to this
+    // tab's local ytVideoTags only to preserve THAT video's own other fields, never anyone else's.
+    let patch = {};
     let ok = 0, skip = 0, fail = 0;
     for (let n = 0; n < targets.length; n++) {
       if (bulkVidVenueStop.current) break;
       try {
         const newTag = await Promise.race([buildVideoTagFromAI(targets[n].id), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 30000))]);
-        const prev = merged[targets[n].id] || {};
+        const prev = patch[targets[n].id] || ytVideoTags[targets[n].id] || {};
         if (newTag?.venue) {
-          merged = { ...merged, [targets[n].id]: { ...prev, venue: newTag.venue, venueCustom: newTag.venueCustom, _lastEditedBy: "Auto (venue backfill)", _lastEditedAt: Date.now() } };
+          patch = { ...patch, [targets[n].id]: { ...prev, venue: newTag.venue, venueCustom: newTag.venueCustom, _lastEditedBy: "Auto (venue backfill)", _lastEditedAt: Date.now() } };
           ok++;
         } else skip++;
       } catch { fail++; }
-      if ((n + 1) % 4 === 0) await saveYtTags(merged);
+      if ((n + 1) % 4 === 0) { await saveYtTags(patch); patch = {}; }
       setBulkVidVenue({ running: true, done: n + 1, total: targets.length, ok, skip, fail, finishedAt: 0 });
     }
-    await saveYtTags(merged);
+    await saveYtTags(patch);
     const stopped = bulkVidVenueStop.current;
     setBulkVidVenue({ running: false, done: targets.length, total: targets.length, ok, skip, fail, finishedAt: Date.now() });
     showMsg(`🗺 Venue backfill ${stopped ? "stopped" : "complete"} — ${ok} tagged (unmatched filed under "Other"), ${skip} had no venue mentioned in their description, ${fail} failed.`, "green");
