@@ -462,6 +462,20 @@ export default function StudioBuild({ ctx }) {
     if (id === "platform") return (fd.W || fd.D) ? `${fd.W || "–"} × ${fd.D || "–"} ft` : "";
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
   };
+  // Can this zone have this section at all? Drives BOTH the tile list and the panel below, so a
+  // tile can never be offered for something that will refuse to open.
+  //
+  // Read off the zone's capability flags, never off dimFields: TrussCard and FloorCard hardcode
+  // their own W/L/H inputs, so dimFields is not wired to anything, and every zone created from an
+  // area name is born with `dimFields: []` (defaultZoneFromArea). Gating on it hid the structure
+  // panel on Centre Lounge, Side Lounge, Open Lounges, Food Stalls, Installations and
+  // Entertainment Stage — all six of which are configured with a truss/platform/carpet/masking.
+  const zoneHasSection = (k, id) => {
+    const zm = zoneMeta[k] || {};
+    if (id === "truss") return !!zm.defaultTruss || !!zm.hasMasking;
+    if (id === "platform") return !!zm.hasPlatform || !!zm.hasCarpet;
+    return true;   // Elements and Print apply to every zone
+  };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
     const sub = zoneSectionSub(k, sec.id);
@@ -1490,7 +1504,7 @@ undefined
 
           {/* ═══ FOUR SECTIONS ═══ Two per row. Details for one open below on click. ═══ */}
           <div className="sec-grid" id={`zone-sec-${k}`}>
-            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
+            {ZONE_SECTIONS.filter(sec=>zoneHasSection(k,sec.id)).map(sec=>sectionTile(k,sec))}
           </div>
 
           {/* ═══ ELEMENT CARD PRICING — from selected photo ═══ */}
@@ -1864,7 +1878,8 @@ undefined
               nothing at all. The form now opens blank on an empty object and the setters below
               create the entry on the first keystroke — calcStructCost already returns all-zero for
               an untouched config, and every field reads through `|| {}`. */}
-          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&(()=>{
+          {/* Same zoneHasSection() the tile row filters on, so the panel and the tile always agree. */}
+          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&zoneHasSection(k,zoneSection[k])&&(()=>{
             const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
