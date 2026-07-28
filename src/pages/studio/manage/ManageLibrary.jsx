@@ -273,6 +273,14 @@ export default function ManageLibrary({ ctx }) {
   const [libSelected, setLibSelected] = useState(new Set()); // IDs selected for manual AI tagging
   useEffect(() => { setLibSelected(new Set()); }, [libStatus]); // clear selection when switching tabs
   const [bigTagVid, setBigTagVid] = useState(null); // video id open in the full-screen tag editor
+  // Videos you open in a tag editor collect at the top of the grid, newest first: the one you just
+  // tagged sits at #1, the one before it at #2, and so on — otherwise each is lost in a 300-card grid.
+  const editingVid = bigTagVid || ytTagEdit || null;
+  const [recentVids, setRecentVids] = useState([]); // video ids, most recently tagged first
+  useEffect(() => {
+    if (editingVid) setRecentVids(p => p[0] === editingVid ? p : [editingVid, ...p.filter(id => id !== editingVid)]);
+  }, [editingVid]);
+  const vidRank = (id) => { const i = recentVids.indexOf(id); return i < 0 ? 1e9 : i; };
   // Permission gate for the Images / Videos / Contributions sub-views. If the current view isn't
   // allowed for this role, fall back to the first one that is.
   const libAllowed = (v) => v === "palettes" ? true : (studioLibraryAllowed ? studioLibraryAllowed(v) : true);
@@ -1998,12 +2006,19 @@ export default function ManageLibrary({ ctx }) {
           {/* Video grid */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
             {allVideos.filter(v=>{
+              // The video open in an editor always stays on screen — tagging it would otherwise
+              // push it out of the current folder (e.g. Untagged) and yank the card out from under you.
+              if(v.id===editingVid) return true;
               // Hidden filter
               const isHid = !!hiddenVideos[v.id];
               if(ytFilterLinked==="hidden") return isHid;
               if(isHid && !showHidden) return false;
               if(ytFilterPL!=="all"&&v.playlistId!==ytFilterPL) return false;
               if(ytSearch.trim()&&!v.title.toLowerCase().includes(ytSearch.toLowerCase())) return false;
+              // Already-tagged videos from this session keep their spot at the top instead of
+              // vanishing out of the folder they no longer belong to (e.g. Untagged). Search and
+              // the hidden filter above still apply — this only exempts the folder/tag filters.
+              if(recentVids.includes(v.id)) return true;
               const tag=ytVideoTags[v.id];
               // Selecting a property (e.g. "Restro") also matches any of its own rooms, plus any
               // video tagged ambiguously at just the property level — same rollup as Browse.
@@ -2022,15 +2037,16 @@ export default function ManageLibrary({ ctx }) {
               if(ytFilterLinked==="review"&&videoStatus(v)!=="review") return false;
               if(ytFilterLinked==="linked"&&!(tag?.linkedEvents?.length>0)) return false;
               return true;
-            }).map(v=>{
+            }).sort((a,b)=>vidRank(a.id)-vidRank(b.id)).map(v=>{
               const savedTag=ytVideoTags[v.id]||{};
               const hasDraft=aiVideoDraft&&aiVideoDraft.videoId===v.id;
               const tag=hasDraft?aiVideoDraft.tags:savedTag;
               const isEditing=ytTagEdit===v.id;
+              const rank=vidRank(v.id); // 0 = most recently tagged, 1e9 = not touched this session
               const linkedEvts=(savedTag.linkedEvents||[]).map(eid=>events.find(e=>e.id===eid)).filter(Boolean);
               const hasTag=savedTag.venue||savedTag.fn||(savedTag.styles||[]).length||savedTag.tier||savedTag.io||(savedTag.colors||[]).length;
               return(
-              <div key={v.id} style={{...S.card,overflow:"hidden",border:isEditing?`2px solid ${accent}`:`1px solid ${border}`,transition:"border 0.2s"}}>
+              <div key={v.id} style={{...S.card,overflow:"hidden",border:(isEditing||rank===0)?`2px solid ${accent}`:rank<1e9?`1px solid ${accent}66`:`1px solid ${border}`,transition:"border 0.2s"}}>
                 {/* Thumbnail */}
                 <div style={{position:"relative",cursor:"pointer"}} onClick={()=>{
                   if(ytPicker){
@@ -2074,6 +2090,7 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4,gap:6}}>
                     <div style={{fontSize:9,color:textS}}>{v.date}</div>
                     <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      {rank<1e9&&<span title={editingVid===v.id?"Open in the tag editor — held at the top of the grid":`Tagged this session — ${rank===0?"the latest one":`${rank} video${rank===1?"":"s"} ago`}. Kept near the top so you can go back to it.`} style={{fontSize:9,color:accent,fontWeight:700,whiteSpace:"nowrap"}}>{editingVid===v.id?"★ Tagging":rank===0?"★ Just tagged":`★ #${rank+1}`}</span>}
                       {!hasTag&&<span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>}
                       {hiddenVideos[v.id]&&<span style={{fontSize:9,color:textS,fontWeight:600}}>🙈 Hidden</span>}
                       <button onClick={(e)=>{e.stopPropagation();setBigTagVid(v.id);}} title="Open the full-screen editor — play, tag, pick zone photos, hide" style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${accent}`,background:`${accent}12`,color:accent,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖥 Open editor</button>
