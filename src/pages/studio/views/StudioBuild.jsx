@@ -873,13 +873,16 @@ export default function StudioBuild({ ctx }) {
       // collapsible rows instead of a 2-column dump. The old grid was ~400px tall, left a dead
       // gap under "Design style" because Color palette is far taller, and pushed the build itself
       // below the fold. Closed rows still name what's selected, so nothing is hidden.
+      // Venue leads — it is the first thing narrowed when hunting for a reference, and it matches
+      // the Browse sidebar, which already opens with Venue. `last` is derived from the index below,
+      // so the section divider follows the order rather than being pinned to a particular group.
       const groups = [
+        { key:"venue",        cols:2, label:`Venue${zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}`, opts: zpVenueChoices, empty:"No venues configured yet" },
         { key:"eventType",    label:"Event type",    opts: taxOr(taxonomy.eventType, FUNCTIONS) },
         { key:"venueType",    label:"Venue type",    opts: taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]) },
         { key:"designStyle",  label:"Design style",  opts: taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]) },
         { key:"colorPalette", label:"Color palette", cols:1, opts: paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]) },
         { key:"timeSetting",  label:"Day / Night",   opts: taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]) },
-        { key:"venue",        cols:2, label:`Venue${zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}`, opts: zpVenueChoices, empty:"No venues configured yet" },
       ];
       const total = Object.values(zpFilters).flat().length;
       const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
