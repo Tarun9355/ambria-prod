@@ -445,7 +445,7 @@ export default function StudioBrowse({ ctx }) {
           const fnArr = Array.isArray(tag.fn) ? tag.fn : (tag.fn ? [tag.fn] : []);
           const styleArr = tag.styles || [];
           const colorArr = tag.colors || [];
-          const updTag = (patch) => saveYtTags({ ...ytVideoTags, [taxFixVid]: { ...(ytVideoTags[taxFixVid] || {}), ...patch, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } });
+          const updTag = (patch) => saveYtTags({ [taxFixVid]: { ...(ytVideoTags[taxFixVid] || {}), ...patch, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } });
           const toggleArr = (field, val) => { const cur = Array.isArray(tag[field]) ? tag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
           const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, ["White & Gold", "Red & Gold", "Pastels", "Teal"]);
           const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 6 };
