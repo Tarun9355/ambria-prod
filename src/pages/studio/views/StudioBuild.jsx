@@ -370,12 +370,19 @@ export default function StudioBuild({ ctx }) {
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
   const [zoneCollapsed, setZoneCollapsed] = useState({});
-  // Full-screen photo preview. Tapping a zone photo still selects it for pricing; the little
-  // magnifier on each tile opens the image large here instead — { src, name }.
+  // Full-screen photo preview — { items: [{src, name}], idx }. Carries the zone's whole matched
+  // set, not just the one photo, so you can step through them without closing and reopening.
   const [lightbox, setLightbox] = useState(null);
+  // Wraps at both ends: the sets are small and a dead arrow on the last photo is just a puzzle.
+  const lightboxStep = (d) => setLightbox(lb => (lb && lb.items?.length)
+    ? { ...lb, idx: (lb.idx + d + lb.items.length) % lb.items.length } : lb);
   useEffect(() => {
     if (!lightbox) return;
-    const onKey = (e) => { if (e.key === "Escape") setLightbox(null); };
+    const onKey = (e) => {
+      if (e.key === "Escape") setLightbox(null);
+      else if (e.key === "ArrowRight") { e.preventDefault(); lightboxStep(1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); lightboxStep(-1); }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lightbox]);
@@ -1312,7 +1319,11 @@ undefined
       }
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : toggleEl(k)}>
+        {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
+            stray click — on the name, the summary text, the empty space — folded the zone away
+            mid-edit. An OFF zone still switches on from anywhere in the row, since there is nothing
+            to lose there and it makes the row an easy target. */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) toggleEl(k); }}>
           <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>{/* zone emoji removed — the label carries the row */}<div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
                 row still says what is in the zone. Derived from existing state only. */}
             {(()=>{
@@ -1417,13 +1428,20 @@ undefined
                 const isSelected = elSelectedPhoto[k]?.src === ph.src;
                 // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
                 const photoFullCost = calcPhotoCost(k, ph);
+                // Column layout so the caption below the photo can take every pixel the image does
+                // not — see .ph-sel's flex:1. The tile is a grid item, so it already stretches to
+                // the tallest card in the row; that slack now belongs to the select target instead
+                // of being dead space.
                 return (
                 <div key={i} className="ph-tile" style={{flexShrink:0,width:"auto",minWidth:0,borderRadius:10,overflow:"hidden",
+                  display:"flex",flexDirection:"column",
                   border:isSelected?`3px solid #059669`:isSource?`2px solid #C9A96E`:`2px solid ${border}`,
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setLightbox({src:ph.src,name:ph.eventName});}}>
+                  {/* Opens on this photo but hands the lightbox the whole matched set, so the
+                      arrows there walk the zone's photos rather than one image in isolation. */}
+                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setLightbox({idx:i,items:matchedPhotos.map(p=>({src:p.src,name:p.eventName}))});}}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
                     {(()=>{
@@ -1446,7 +1464,9 @@ undefined
                     {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>SOURCE</div>}
                     {ph.isVideoDefault&&!isSelected&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>Default</div>}
                   </div>
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} style={{padding:"9px 11px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
+                  {/* The whole strip under the photo selects, not just the two lines of text —
+                      flex:1 claims the leftover height and the padding widens the target. */}
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone"} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
                     <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
@@ -1994,7 +2014,8 @@ undefined
       const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
       const czTotal=czElCost+czStructCost;
       return(<div key={k} id={`zone-${k}`} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:"pointer"}} onClick={()=> isOn ? toggleZoneCollapse(k) : setEnabledEls(p=>({...p,[k]:!p[k]}))}>
+        {/* Same rule as the standard zone header above — Details is the only collapse control. */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) setEnabledEls(p=>({...p,[k]:!p[k]})); }}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <span style={{fontSize:22,display:"flex",alignItems:"center"}}>{cz.icon||<IconBox size={20}/>}</span>
             <div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{cz.name}</div>
@@ -2520,14 +2541,28 @@ undefined
       </div>
     )}
 
-    {/* ═══ FULL-SCREEN PHOTO LIGHTBOX — opened by the magnifier on any zone photo tile ═══ */}
-    {lightbox && (
+    {/* ═══ FULL-SCREEN PHOTO LIGHTBOX — tap any zone photo; ‹ › or arrow keys walk the set ═══ */}
+    {lightbox && (()=>{
+      const items = lightbox.items || [];
+      const cur = items[lightbox.idx] || {};
+      const many = items.length > 1;
+      const navBtn = (side) => ({
+        position:"absolute", [side]:12, top:"50%", transform:"translateY(-50%)",
+        width:46, height:46, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.25)",
+        background:"rgba(0,0,0,0.45)", color:"#fff", fontSize:24, lineHeight:1, cursor:"pointer",
+        display:"flex", alignItems:"center", justifyContent:"center", userSelect:"none",
+      });
+      return (
       <div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:24,cursor:"zoom-out"}}>
         <span onClick={()=>setLightbox(null)} style={{position:"absolute",top:16,right:20,fontSize:30,lineHeight:1,color:"#fff",cursor:"pointer",fontWeight:300}}>×</span>
-        <img src={lightbox.src} alt={lightbox.name||""} onClick={e=>e.stopPropagation()} style={{maxWidth:"95vw",maxHeight:"88vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",cursor:"default"}}/>
-        {lightbox.name&&<div style={{position:"absolute",bottom:18,left:0,right:0,textAlign:"center",color:"#fff",fontSize:13,fontWeight:600,textShadow:"0 1px 4px rgba(0,0,0,0.8)"}}>{lightbox.name}</div>}
-      </div>
-    )}
+        {many&&<span title="Previous (←)" aria-label="Previous photo" onClick={e=>{e.stopPropagation();lightboxStep(-1);}} style={navBtn("left")}>{"‹"}</span>}
+        {many&&<span title="Next (→)" aria-label="Next photo" onClick={e=>{e.stopPropagation();lightboxStep(1);}} style={navBtn("right")}>{"›"}</span>}
+        <img src={cur.src} alt={cur.name||""} onClick={e=>e.stopPropagation()} style={{maxWidth:"88vw",maxHeight:"88vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",cursor:"default"}}/>
+        <div style={{position:"absolute",bottom:18,left:0,right:0,textAlign:"center",color:"#fff",fontSize:13,fontWeight:600,textShadow:"0 1px 4px rgba(0,0,0,0.8)"}}>
+          {cur.name||""}{many&&<span style={{marginLeft:10,fontWeight:400,opacity:0.75}}>{lightbox.idx+1} / {items.length}</span>}
+        </div>
+      </div>);
+    })()}
       </div>{/* /right column */}
       {PRICING_TILE&&(railsOpen
         ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
