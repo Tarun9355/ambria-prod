@@ -116,6 +116,16 @@ export function IconCheck({ size = 15 }) {
   );
 }
 
+// Star — a human has verified this photo's tags. `filled` paints it solid, which is what the badge
+// over a photo needs: a hollow stroke disappears against a busy stage shot.
+export function IconStar({ size = 15, filled = false }) {
+  return (
+    <svg {...svg(size)} {...(filled ? { fill: "currentColor" } : null)}>
+      <path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z" />
+    </svg>
+  );
+}
+
 // Sparkle — AI-generated / AI-tagged content.
 export function IconSparkle({ size = 15 }) {
   return (

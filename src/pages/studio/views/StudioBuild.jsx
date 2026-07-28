@@ -3,7 +3,7 @@ import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
-  IconPlay, IconBox, IconSave, IconSliders } from "../../../components/icons.jsx";
+  IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
   maskingOptions, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
@@ -1451,13 +1451,13 @@ undefined
                       if (!li?._verified) return null;
                       const by = li._verifiedBy || "unknown";
                       const on = li._verifiedAt ? new Date(li._verifiedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : null;
-                      // Solid green with a white ring and a drop shadow. The Library grid's dark disc
-                      // with a thin coloured ring works on its plain cards, but over a photo — light
-                      // stage, dark stage, foliage — it disappears.
+                      // A filled star, not a tick. Same disc treatment as before — solid fill, white
+                      // ring, drop shadow — because a flat badge vanishes over a photo, whether the
+                      // stage behind it is lit pale or dark.
                       return <div title={`Verified by ${by}${on ? " on " + on : ""}`} style={{position:"absolute",top:6,right:6,width:21,height:21,borderRadius:11,
                         background:"#059669",border:"2px solid rgba(255,255,255,0.92)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
                         boxShadow:"0 2px 7px rgba(0,0,0,0.4)"}}>
-                        <IconCheck size={12}/>
+                        <IconStar size={11} filled/>
                       </div>;
                     })()}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
