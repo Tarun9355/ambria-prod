@@ -2,6 +2,7 @@ import { Fragment, useState } from "react";
 import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconSparkle, IconCrown, IconSave, IconAlert, IconPlay,
   IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
+import { paletteNames } from "../../../lib/studio/colours";
 
 export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
@@ -276,14 +277,18 @@ export default function StudioBrowse({ ctx }) {
 
         {/* ═══ SIDEBAR FILTERS ═══ */}
         {/* top is dynamic: +50 when Row 2 function pills are visible (multi-function event) to avoid overlap with sticky header */}
-        {/* Natural height — no inner scroll. Capping the panel meant Palette sat inside a hidden
-            scroll area, and the cue that fixed that covered the last rows of pills. Every section
-            is simply visible, and the page scroll reaches them. */}
-        <div style={{width:248,flexShrink:0,position:"sticky",top:extraFunctions.length>0?120:70,alignSelf:"flex-start"}}>
-          <div style={{...S.card,padding:0}}>
-            {/* Panel header — total active count + one-click reset. Sticks to the panel top so it
+        {/* The panel is capped to the viewport and scrolls its own body. Left at natural height it
+            had no scrollport, so a wheel over the filters scrolled the whole page instead and the
+            sections past the fold were only reachable by scrolling the layout beyond them.
+            `overscrollBehavior:contain` keeps that scroll from chaining back to the page at the
+            ends. The earlier version of this capped the panel and added a fade cue that covered the
+            last rows of pills — there is deliberately no overlay here, just a slim scrollbar. */}
+        <div style={{width:248,flexShrink:0,position:"sticky",top:extraFunctions.length>0?120:70,alignSelf:"flex-start",
+          maxHeight:`calc(100vh - ${(extraFunctions.length>0?120:70)+16}px)`,display:"flex"}}>
+          <div style={{...S.card,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}}>
+            {/* Panel header — total active count + one-click reset. Outside the scrollport, so it
                 stays visible while the sections below scroll. */}
-            <div style={{position:"sticky",top:0,zIndex:1,display:"flex",alignItems:"center",gap:8,
+            <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:8,
               padding:"13px 16px",borderBottom:`1px solid ${hairline}`,
               background:isDark?"#1A1A2E":"linear-gradient(180deg,#FEFCF8,#fff)"}}>
               <div style={{fontSize:13.5,fontWeight:700,color:textP,letterSpacing:-0.1}}>Filters</div>
@@ -292,7 +297,7 @@ export default function StudioBrowse({ ctx }) {
               {activeTotal > 0 && <div className="sb-pill sb-ghost" onClick={clearAllFilters} title="Reset every filter"
                 style={{...ghostPill,marginLeft:"auto"}}>Clear all</div>}
             </div>
-            <div style={{padding:"14px 16px 16px"}}>
+            <div className="sb-scroll" style={{flex:1,minHeight:0,overflowY:"auto",overscrollBehavior:"contain",padding:"14px 16px 16px"}}>
 
             {/* Venue */}
             <FSection open={!!openSections["venue"]} onToggle={()=>toggleSection("venue")} id="venue" label="Venue" count={sectionCounts.venue}>
@@ -347,7 +352,7 @@ export default function StudioBrowse({ ctx }) {
             {/* Palette */}
             <FSection open={!!openSections["palette"]} onToggle={()=>toggleSection("palette")} id="palette" label="Palette" count={sectionCounts.palette} cols={1} last>
               <Pill on={filterPalette.length===0} onClick={()=>setFilterPalette([])}>All</Pill>
-              {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]))).map(c=>{const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;})}
+              {paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]).map(c=>{const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;})}
             </FSection>
             </div>
           </div>
@@ -447,7 +452,7 @@ export default function StudioBrowse({ ctx }) {
           const colorArr = tag.colors || [];
           const updTag = (patch) => saveYtTags({ [taxFixVid]: { ...(ytVideoTags[taxFixVid] || {}), ...patch, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } });
           const toggleArr = (field, val) => { const cur = Array.isArray(tag[field]) ? tag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
-          const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, ["White & Gold", "Red & Gold", "Pastels", "Teal"]);
+          const palettes = paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold", "Red & Gold", "Pastels", "Teal"]);
           const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 6 };
           const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
           const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
