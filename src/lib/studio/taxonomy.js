@@ -69,7 +69,8 @@ export const ZONE_META = {
   tableDecor: {label:"Table Decor",   dimFields:[],            defaultTruss:null,      hasPlatform:false, hasCarpet:false, hasMasking:false},
 };
 export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:100,flex:45,vinyl:90},platform:{"4in":30,"1ft":45},arch:{"2d":60,"3d":100},pillar:2000,glass:{"2d":120,"3d":180}};
-export const MASK_OPTS=[{id:"fabric",l:"Fabric",r:20},{id:"acrylic",l:"Acrylic",r:100},{id:"flex",l:"Flex",r:45},{id:"vinyl",l:"Vinyl",r:90}];
+// MASK_OPTS removed — it was a second, frozen copy of the masking list (with 2024 seed rates baked
+// into `r`) that drifted from whatever the admin had actually set. Use maskingOptions(imsMaskingRates).
 export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}];
 export const ARCH_OPTS=[{id:"2d",l:"2D (Flat)",r:60},{id:"3d",l:"3D (Built-out)",r:100}];
 export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out)",r:180}];
@@ -108,6 +109,19 @@ export function maskingRateFor(key, maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
   const row = list.find((r) => r.key === key) || DEFAULT_MASKING_RATES.find((r) => r.key === key);
   return Number(row?.ratePerSqft) || 0;
+}
+// The masking types a salesperson can PICK, in `MASK_OPTS` shape ({id, l, r}) so every existing
+// call site reads the same. Derived from the admin's saved list rather than a hardcoded array —
+// the four pickers (Build ×2, StudioModals ×2, ManageLibrary ×2) each carried their own literal
+// copy, so a type deleted in IMS Admin would have stayed pickable in Studio, and MASK_OPTS' `r`
+// showed its 2024 seed rate rather than whatever the admin had since set.
+//
+// The DELETED types stay resolvable in maskingRateFor above on purpose: a zone saved against
+// "acrylic" before it was deleted keeps pricing at the default rate instead of silently dropping
+// to ₹0. Deleting removes a type from the menu going forward; it does not rewrite priced history.
+export function maskingOptions(maskingRates) {
+  const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
+  return list.map((r) => ({ id: r.key, l: r.name, r: Number(r.ratePerSqft) || 0 }));
 }
 
 // Sentinel `cpT` value meaning "salesperson explicitly turned carpet off" — any OTHER falsy value

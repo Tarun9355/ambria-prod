@@ -127,11 +127,15 @@ export default function StudioBrowse({ ctx }) {
     };
 
     // ═══ UNIFIED BROWSE PAGE ═══
+    // Filter chips read best alphabetised. azSort for plain string lists; byName for {name} objects.
+    const azSort = (arr) => [...(arr || [])].sort((a, b) => String(a).localeCompare(String(b)));
+    const byName = (arr) => [...(arr || [])].sort((a, b) => String(a?.name).localeCompare(String(b?.name)));
     const outsideVenuesVisible = (() => {
       let list = [...outdoorVenueList];
-      if (outsideSub === "empanelled") list = list.filter(v => v.empanelled);
-      else if (outsideSub === "other") list = list.filter(v => !v.empanelled);
-      else list = [...list.filter(v => v.empanelled), ...list.filter(v => !v.empanelled)];
+      // Empanelled (★) still lead the list; within each group the venues are A–Z.
+      if (outsideSub === "empanelled") list = byName(list.filter(v => v.empanelled));
+      else if (outsideSub === "other") list = byName(list.filter(v => !v.empanelled));
+      else list = [...byName(list.filter(v => v.empanelled)), ...byName(list.filter(v => !v.empanelled))];
       return list;
     })();
 
@@ -307,7 +311,7 @@ export default function StudioBrowse({ ctx }) {
               {/* Sub-venue pills for Inhouse — multi-select. Indented + ruled so it's obvious they
                   narrow the group above rather than being a seventh top-level filter. */}
               {venueGroup==="inhouse"&&<div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,marginTop:8,paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
-                {allInhouseVenues.map(v=>{const on=browseVenues.includes(v);return <Pill key={v} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)}>{v}</Pill>;})}
+                {azSort(allInhouseVenues).map(v=>{const on=browseVenues.includes(v);return <Pill key={v} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)}>{v}</Pill>;})}
                 {browseVenues.length>0&&<div className="sb-pill sb-ghost" onClick={()=>setBrowseVenues([])} title="Clear selected venues" style={ghostPill}>✕</div>}
               </div>}
               {/* Sub-group for Outside */}
@@ -328,7 +332,7 @@ export default function StudioBrowse({ ctx }) {
             {/* Event type */}
             <FSection open={!!openSections["fn"]} onToggle={()=>toggleSection("fn")} id="fn" label="Event type" count={sectionCounts.fn}>
               <Pill on={filterFn.length===0} onClick={()=>setFilterFn([])}>All</Pill>
-              {taxOr(taxonomy.eventType, FUNCTIONS).map(o=>{const on=filterFn.includes(o);return <Pill key={o} on={on} onClick={()=>toggleFilter(filterFn,setFilterFn,o)}>{o}</Pill>;})}
+              {azSort(taxOr(taxonomy.eventType, FUNCTIONS)).map(o=>{const on=filterFn.includes(o);return <Pill key={o} on={on} onClick={()=>toggleFilter(filterFn,setFilterFn,o)}>{o}</Pill>;})}
             </FSection>
 
             {/* Tier */}
@@ -340,19 +344,19 @@ export default function StudioBrowse({ ctx }) {
             {/* Space */}
             <FSection open={!!openSections["space"]} onToggle={()=>toggleSection("space")} id="space" label="Venue type" count={sectionCounts.space}>
               <Pill on={filterSpace.length===0} onClick={()=>setFilterSpace([])}>All</Pill>
-              {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(o=>{const on=filterSpace.includes(o);return <Pill key={o} on={on} onClick={()=>toggleFilter(filterSpace,setFilterSpace,o)}>{o}</Pill>;})}
+              {azSort(taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"])).map(o=>{const on=filterSpace.includes(o);return <Pill key={o} on={on} onClick={()=>toggleFilter(filterSpace,setFilterSpace,o)}>{o}</Pill>;})}
             </FSection>
 
             {/* Design Style */}
             <FSection open={!!openSections["mood"]} onToggle={()=>toggleSection("mood")} id="mood" label="Design Style" count={sectionCounts.mood}>
               <Pill on={filterMood.length===0} onClick={()=>setFilterMood([])}>All</Pill>
-              {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(s=>{const on=filterMood.includes(s);return <Pill key={s} on={on} onClick={()=>toggleFilter(filterMood,setFilterMood,s)}>{s}</Pill>;})}
+              {azSort(taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"])).map(s=>{const on=filterMood.includes(s);return <Pill key={s} on={on} onClick={()=>toggleFilter(filterMood,setFilterMood,s)}>{s}</Pill>;})}
             </FSection>
 
             {/* Palette */}
             <FSection open={!!openSections["palette"]} onToggle={()=>toggleSection("palette")} id="palette" label="Palette" count={sectionCounts.palette} cols={1} last>
               <Pill on={filterPalette.length===0} onClick={()=>setFilterPalette([])}>All</Pill>
-              {paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]).map(c=>{const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;})}
+              {azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(c=>{const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;})}
             </FSection>
             </div>
           </div>

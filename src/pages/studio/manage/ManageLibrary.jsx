@@ -3,7 +3,7 @@ import LazyYT from "../../../components/studio/LazyYT";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
-import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS } from "../../../lib/studio/taxonomy";
+import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
@@ -929,7 +929,7 @@ export default function ManageLibrary({ ctx }) {
                 return <div>
                   <div style={{ fontSize: 9, color: textS, marginBottom: 4 }}>{"🧱"} Masking</div>
                   <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap:"wrap", alignItems:"center" }}>
-                    {[{id:"fabric",l:"Fabric"},{id:"acrylic",l:"Acrylic"},{id:"flex",l:"Flex"},{id:"vinyl",l:"Vinyl"}].map(o=>{
+                    {maskingOptions(imsMaskingRates).map(o=>{
                       const sel=mkT===o.id;
                       return <span key={o.id} onClick={()=>setMkT(sel?"":o.id)} style={{padding:"4px 8px",borderRadius:6,fontSize:9,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}22`:"transparent",color:sel?accent:textS,fontWeight:sel?600:400}}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                     })}
@@ -1011,7 +1011,7 @@ export default function ManageLibrary({ ctx }) {
                       <div>
                         <div style={{ fontSize: 9, color: textS, marginBottom: 4 }}>{"🧱"} Masking</div>
                         <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", alignItems:"center" }}>
-                          {[{ id: "fabric", l: "Fabric" }, { id: "acrylic", l: "Acrylic" }, { id: "flex", l: "Flex" }, { id: "vinyl", l: "Vinyl" }].map(o => {
+                          {maskingOptions(imsMaskingRates).map(o => {
                             const sel = row.mkT === o.id;
                             return <span key={o.id} onClick={() => setRow({ mkT: sel ? "" : o.id, mkOn: !sel })} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 9, cursor: "pointer", border: `1px solid ${sel ? "#7C3AED" : border}`, background: sel ? "#7C3AED22" : "transparent", color: sel ? "#7C3AED" : textS, fontWeight: sel ? 600 : 400 }}>{o.l} ₹{maskingRateFor(o.id,imsMaskingRates)}</span>;
                           })}

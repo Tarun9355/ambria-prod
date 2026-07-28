@@ -6,7 +6,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconPlay, IconBox, IconSave, IconSliders } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
-  MASK_OPTS, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
+  maskingOptions, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames } from "../../../lib/studio/colours";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -28,7 +28,7 @@ const CORRECTION_MODE = true;
 // ═══ TrussCard ═══
 // The truss subsystem: type pills, dimensions, the span tip, truss type / material / drape
 // density — and masking nested inside it, because masking panels attach to the truss.
-// Module-scope so the icon components and MASK_OPTS / TRUSS_MATERIALS stay in scope.
+// Module-scope so the icon components and maskingOptions / TRUSS_MATERIALS stay in scope.
 // Compact page list: first, last, and a window around the current page. A library category can
 // hold hundreds of photos, and 40 numbered buttons is not a pager.
 // The four sections of a zone body, two per row. Order is the order of work: what goes in the
@@ -53,7 +53,7 @@ function pageWindow(page, count, span = 1) {
   return out;
 }
 
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [] }) {
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -254,7 +254,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   </div>
                   {zc.mkOn&&<div style={{marginTop:4,paddingLeft:20}}>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
-                      {MASK_OPTS.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                      {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                       {customMaskingField(k, zc)}
                     </div>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
@@ -373,6 +373,8 @@ export default function StudioBuild({ ctx }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lightbox]);
+  // Filter chips read best alphabetised — one helper, applied to every filter list below.
+  const azSort = (arr) => [...(arr || [])].sort((a, b) => String(a).localeCompare(String(b)));
   // Default = collapsed: a zone is expanded ONLY when explicitly set to false.
   const isCollapsed = (k) => zoneCollapsed[k] !== false;
   // id → library item. The photo strip needs a master per tile (verified flag, filters), and doing
@@ -454,19 +456,22 @@ export default function StudioBuild({ ctx }) {
   const zoneSectionSub = (k, id) => {
     const zc = zoneConfig[k] || {}, zm = zoneMeta[k] || {}, d = zc.dims || {}, fd = zc.floorDims || {};
     if (id === "elements") { const n = (zoneElements[k] || []).length; return n ? `${n} item${n === 1 ? "" : "s"}` : "No items yet"; }
-    if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zm.hasMasking && zc.mkT ? " · masking" : ""}` : "Not set";
-    if (id === "platform") return (fd.W || fd.D) ? `${fd.W || "–"} × ${fd.D || "–"} ft` : "Not set";
+    // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
+    // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
+    if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zm.hasMasking && zc.mkT ? " · masking" : ""}` : "";
+    if (id === "platform") return (fd.W || fd.D) ? `${fd.W || "–"} × ${fd.D || "–"} ft` : "";
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
   };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
+    const sub = zoneSectionSub(k, sec.id);
     return <div key={sec.id} className="sec-tile" data-on={on?"1":"0"} onClick={()=>openZoneSection(k,sec.id)}
       style={{display:"flex",alignItems:"center",gap:9,padding:"11px 12px",borderRadius:10,cursor:"pointer",
         border:`1px solid ${on?accent:border}`,background:on?`${accent}12`:cardBg}}>
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS}}><sec.Icon size={16}/></span>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
-        <div style={{fontSize:10.5,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{zoneSectionSub(k,sec.id)}</div>
+        {sub&&<div style={{fontSize:10.5,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
       </div>
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS,transform:on?"rotate(180deg)":"none",transition:"transform .18s ease"}}><IconChevron size={12}/></span>
     </div>;
@@ -883,7 +888,7 @@ export default function StudioBuild({ ctx }) {
           return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
             cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
             <FPill on={sel.length===0} align={align} onClick={()=>setZpFilters(p=>({...p,[g.key]:[]}))}>All</FPill>
-            {g.opts.map(v=><FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{v}</FPill>)}
+            {azSort(g.opts).map(v=><FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{v}</FPill>)}
             {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:zpTextM}}>{g.empty}</span>}
           </FSection>;
         })}
@@ -1322,35 +1327,35 @@ undefined
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Event type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,eventType:[]}))} style={zpPill(zpFilters.eventType.length===0)}>All</span>
-                    {taxOr(taxonomy.eventType, FUNCTIONS).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={zpPill(zpFilters.eventType.includes(v))}>{v}</span>)}
+                    {azSort(taxOr(taxonomy.eventType, FUNCTIONS)).map(v=><span key={v} onClick={()=>zpToggleFilter("eventType",v)} style={zpPill(zpFilters.eventType.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Venue type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={zpPill(zpFilters.venueType.length===0)}>All</span>
-                    {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={zpPill(zpFilters.venueType.includes(v))}>{v}</span>)}
+                    {azSort(taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"])).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={zpPill(zpFilters.venueType.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Design style</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,designStyle:[]}))} style={zpPill(zpFilters.designStyle.length===0)}>All</span>
-                    {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={zpPill(zpFilters.designStyle.includes(v))}>{v}</span>)}
+                    {azSort(taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("designStyle",v)} style={zpPill(zpFilters.designStyle.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Color palette</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
-                    {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
+                    {azSort(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Day / Night</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,timeSetting:[]}))} style={zpPill(zpFilters.timeSetting.length===0)}>All</span>
-                    {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={zpPill(zpFilters.timeSetting.includes(v))}>{v}</span>)}
+                    {azSort(taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"])).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={zpPill(zpFilters.timeSetting.includes(v))}>{v}</span>)}
                   </div>
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
@@ -1359,7 +1364,7 @@ undefined
                   </div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap",maxHeight:110,overflowY:"auto"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
-                    {zpVenueChoices.map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
+                    {azSort(zpVenueChoices).map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
                     {zpVenueChoices.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
                   </div>
                 </div>
@@ -1854,8 +1859,13 @@ undefined
           </div>}
 
           {/* Zone structure — always visible, costs hidden behind toggle */}
-          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&zoneConfig[k]&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k],st=calcStructCost(k,zc,structRates);
+          {/* No `zoneConfig[k] &&` guard: a zone that has never been touched has no config entry, and
+              requiring one meant clicking Truss or Platform highlighted the tile and then rendered
+              nothing at all. The form now opens blank on an empty object and the setters below
+              create the entry on the first keystroke — calcStructCost already returns all-zero for
+              an untouched config, and every field reads through `|| {}`. */}
+          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&zoneMeta[k]&&zoneMeta[k].dimFields?.length>0&&(()=>{
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
             const dl={L:"Depth",W:"Width",H:"Height",S:"Size"};
             const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
             const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
@@ -1888,7 +1898,7 @@ undefined
               
               {zoneSection[k]==="truss"&&<TrussCard S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorCard S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} imsPrintMaterials={imsPrintMaterials} />}
@@ -2223,7 +2233,7 @@ undefined
                 </div>{showCosts&&st.masking>0&&<span style={{fontWeight:600,fontSize:11,color:textP}}>{fmt(st.masking)}</span>}
               </div>
               {zc.mkOn&&<div style={{display:"flex",gap:4,marginBottom:6,paddingLeft:20,flexWrap:"wrap",alignItems:"center"}}>
-                {MASK_OPTS.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                {maskingOptions(imsMaskingRates).map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                 {customMaskingField(k, zc, true)}
               </div>}
               {/* Platform */}
@@ -2403,10 +2413,10 @@ undefined
                 {curVenue&&<span onClick={()=>setV("")} style={{padding:"3px 9px",borderRadius:8,fontSize:9,cursor:"pointer",color:"#E11D48",border:`1px dashed ${border}`}}>✕ {curVenue}</span>}
               </div>
               {corrVenueGrp==="inhouse"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                {leafInhouseVenues.map(vn=>{const on=curVenue===vn;return <span key={vn} onClick={()=>setV(on?"":vn)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{vn}</span>;})}
+                {azSort(leafInhouseVenues).map(vn=>{const on=curVenue===vn;return <span key={vn} onClick={()=>setV(on?"":vn)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{vn}</span>;})}
               </div>}
               {corrVenueGrp==="outside"&&<div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                {customOutdoor.map(o=>{const on=curVenue===o.name;return <span key={o.name} onClick={()=>setV(on?"":o.name)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</span>;})}
+                {[...customOutdoor].sort((a,b)=>String(a?.name).localeCompare(String(b?.name))).map(o=>{const on=curVenue===o.name;return <span key={o.name} onClick={()=>setV(on?"":o.name)} style={{...pill(on),fontSize:9,padding:"3px 8px"}}>{o.name}{o.empanelled?" ★":""}</span>;})}
               </div>}
             </div>;
           })()}
@@ -2415,7 +2425,7 @@ undefined
             return <div key={key} style={{marginBottom:8}}>
               <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                {(vals||[]).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
+                {(key==="tier"?(vals||[]):azSort(vals||[])).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
               </div>
             </div>;
           })}

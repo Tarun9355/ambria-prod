@@ -85,16 +85,64 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (!fromPrint.length) return;
     setSettings((s) => ({ ...s, carpetMaterials: [...(s.carpetMaterials || []), ...fromPrint.map((m) => ({ id: m.id, name: m.name, ratePerSqft: m.ratePerSqft || 0 }))] }));
   };
-  // Truss/masking rates are a FIXED small set (tied to the truss geometry / wall-area pricing
-  // formulas elsewhere) — only the rate is editable, not the name or the list itself. Seed from the
-  // code defaults until an admin actually customizes one, so the panel never shows blank rows.
+  // TRUSS rates are a fixed grid — one row per (shape × material × density), all three lists live in
+  // code because the truss geometry / wall-area formulas index into them. Rows can't be added or
+  // removed here, only re-rated or reset. Seed from the code defaults until an admin actually
+  // customizes one, so the panel never shows blank rows.
   const updateTrussRate = (shape, material, density, field, value) => {
     const current = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
     setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.shape === shape && r.material === material && r.density === density) ? { ...r, [field]: value } : r) }));
   };
+  // "Delete" on a truss row can only mean reset: drop the row and both the table and trussRateFor()
+  // fall straight back to DEFAULT_TRUSS_RATES, so it would reappear at its seed rate anyway. Doing
+  // it explicitly at least makes the outcome visible instead of looking like a no-op.
+  const resetTrussRate = (shape, material, density) => {
+    const def = DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === material && r.density === density);
+    if (!def) return;
+    const current = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
+    setSettings((s) => ({ ...s, trussRates: current.map((r) => (r.shape === shape && r.material === material && r.density === density) ? { ...def } : r) }));
+  };
+  const trussRateIsCustom = (row, shape, material, density) => {
+    const def = DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === material && r.density === density);
+    if (!def || !row) return false;
+    return (Number(row.ratePerSqft) || 0) !== def.ratePerSqft || (Number(row.ceilingRatePerSqft) || 0) !== def.ceilingRatePerSqft;
+  };
+  // MASKING is a genuine list — types can be added and removed. The pickers in Studio (Build,
+  // tagging, Library) all read it through maskingOptions(), so removing a type here takes it out of
+  // circulation everywhere. Zones already priced against a removed type keep resolving through
+  // maskingRateFor()'s default fallback rather than silently dropping to ₹0 — see taxonomy.js.
   const updateMaskingRate = (key, ratePerSqft) => {
     const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
     setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, ratePerSqft } : r)) }));
+  };
+  const updateMaskingName = (key, name) => {
+    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
+    setSettings((s) => ({ ...s, maskingRates: current.map((r) => (r.key === key ? { ...r, name } : r)) }));
+  };
+  const deleteMaskingRate = (key) => {
+    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
+    const row = current.find((r) => r.key === key);
+    const isSeed = DEFAULT_MASKING_RATES.some((d) => d.key === key);
+    if (!window.confirm(
+      `Remove "${row?.name || key}" from the masking types?\n\n` +
+      `It disappears from the Studio pickers, so no new zone can choose it. Zones already priced ` +
+      `against it keep costing ${isSeed ? "the built-in default rate" : "₹0"} — this does not re-price live deals.`
+    )) return;
+    setSettings((s) => ({ ...s, maskingRates: current.filter((r) => r.key !== key) }));
+  };
+  const [newMaskingName, setNewMaskingName] = useState("");
+  const addMaskingRate = () => {
+    const name = newMaskingName.trim();
+    if (!name) return;
+    const current = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
+    // Key is what zones persist, so it has to be stable and collision-free — slug the name, then
+    // suffix if that slug is already taken (including by a seed type the admin deleted earlier).
+    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "masking";
+    const taken = new Set([...current.map((r) => r.key), ...DEFAULT_MASKING_RATES.map((r) => r.key)]);
+    let key = base, n = 2;
+    while (taken.has(key)) key = `${base}-${n++}`;
+    setSettings((s) => ({ ...s, maskingRates: [...current, { key, name, ratePerSqft: 0 }] }));
+    setNewMaskingName("");
   };
   const [newVenueInput, setNewVenueInput] = useState("");
   const addVenueMin = () => {
@@ -200,6 +248,30 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (!window.confirm(`Delete supervisor "${sup?.name || "this supervisor"}"?\n\nThis cannot be undone.`)) return;
     setSupervisors((prev) => prev.filter((s) => s.id !== id), [id]);
   }
+
+  // Live artificial bunch rates, resolved the same way Studio resolves them (settings value, else
+  // the same fallback the pricing code uses). ₹/bunch is what the Mandi table needs to turn a
+  // flower's "art bunches/unit" into an actual rupee rate — see lib/ims/flowerHelpers.js.
+  const artFlowerPerKg = Number(settings.artificialFlowerRatePerKg ?? 50);
+  const artFlowerBPK = Number(settings.artificialFlowerBunchesPerKg ?? 16) || 16;
+  const artGreenPerKg = Number(settings.artificialGreenRatePerKg ?? 40);
+  const artGreenBPK = Number(settings.artificialGreenBunchesPerKg ?? 23) || 23;
+  const artFlowerPerBunch = artFlowerPerKg / artFlowerBPK;
+  const artGreenPerBunch = artGreenPerKg / artGreenBPK;
+  const artStudioMarkup = Number(settings.defaultStudioMarkup ?? 3) || 3;
+  // Sourcing cost of replacing 1 unit of this real flower with artificial (before Studio markup).
+  // null = not priceable yet (b/u blank, or a Mapping flower with no inventory item picked).
+  const artUnitCost = (p) => {
+    const t = p.flowerType || (p.isGreen ? "green" : "flower");
+    if (t === "real_only") return { cost: null, kind: t };
+    if (t === "mapping") {
+      const c = Number(p.artificialMapCost) || Number(p.artificialMapPrice) || 0;
+      return { cost: c > 0 ? c : null, kind: t };
+    }
+    const bpu = Number(p.artificialBunchesPerUnit) || 0;
+    if (bpu <= 0) return { cost: null, kind: t };
+    return { cost: bpu * (t === "green" ? artGreenPerBunch : artFlowerPerBunch), kind: t };
+  };
 
   return (
     <div className="space-y-4">
@@ -527,6 +599,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <div className="text-left">
                 <h4 className="font-semibold text-pink-800">🌺 Artificial Bunch Cost Settings</h4>
                 <p className="text-xs text-pink-600 mt-0.5">Used in Studio Deal Check to convert real-flower recipes into artificial bunch costs. Customize all 4 rates here.</p>
+                {/* Live rates in the collapsed header too — the "Art ₹/Unit" column below is built
+                    from these, so they need to be readable without expanding the card. */}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-[11px]">
+                  <span className="text-pink-800" title={`₹${artFlowerPerKg}/kg ÷ ${artFlowerBPK} bunches per kg`}>🌹 <b>₹{artFlowerPerBunch.toFixed(2)}</b>/flower bunch <span className="text-pink-400">(₹{artFlowerPerKg}/kg ÷ {artFlowerBPK})</span></span>
+                  <span className="text-green-800" title={`₹${artGreenPerKg}/kg ÷ ${artGreenBPK} bunches per kg`}>🌿 <b>₹{artGreenPerBunch.toFixed(2)}</b>/green bunch <span className="text-green-500">(₹{artGreenPerKg}/kg ÷ {artGreenBPK})</span></span>
+                  <span className="text-gray-500" title="Studio markup applied on top of the sourcing cost to get the client-facing rate (Settings → Studio markup)">× <b>{artStudioMarkup}</b> studio markup → client rate</span>
+                </div>
               </div>
               <span className="text-pink-700 text-sm">{sArtSettingsOpen ? "▲ Hide" : "▼ Show"}</span>
             </button>
@@ -650,7 +729,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-semibold text-gray-800">🌸 Real Flower Mandi Catalogue</h4>
-                  <p className="text-xs text-gray-500 mt-0.5">Update current prices regularly. Previous price always shown for comparison.</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Update current prices regularly. Previous price always shown for comparison. <span className="text-pink-600">Art ₹/Unit</span> column = the artificial rate Studio uses for that flower.</p>
+                  {/* Anything unpriceable silently becomes ₹0 in Studio's artificial blend, so surface
+                      the count here rather than making someone scan 100+ rows for red ⚠ cells. */}
+                  {(() => {
+                    const gaps = (settings.mandiCatalogue || []).filter((f) => artUnitCost(f).cost == null && (f.flowerType || (f.isGreen ? "green" : "flower")) !== "real_only");
+                    if (!gaps.length) return null;
+                    return <p className="text-[11px] text-red-600 font-semibold mt-1" title={gaps.map((f) => f.name).join(", ")}>
+                      ⚠ {gaps.length} flower{gaps.length === 1 ? "" : "s"} ka artificial rate ₹0 hai (bunches/unit ya mapping missing) — Studio unka artificial cost 0 lagata hai.
+                    </p>;
+                  })()}
                 </div>
                 <button onClick={() => {
                   const newId = "F" + Date.now();
@@ -739,7 +827,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
             {/* Column header strip */}
             <div className="px-4 py-2 bg-gray-50 border-t border-b border-gray-200 text-[10px] uppercase tracking-wide font-semibold text-gray-500 select-none"
-              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 70px 110px 40px 20px", gap: "8px", alignItems: "center" }}>
+              style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 20px", gap: "8px", alignItems: "center" }}>
               <span>&nbsp;</span>
               <span className="text-center" title="Parent photo. With variants: shows cheapest variant's photo. Without variants: upload directly.">Photo</span>
               <span>Flower Name</span>
@@ -748,6 +836,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               <span className="text-center" title="How many pieces in 1 bundle / gatthar / dozen">Pcs/Unit</span>
               <span className="text-center" title="Flower vs Green vs Real-Only (toggle)">Type</span>
               <span className="text-center" title="Artificial bunches that replace 1 unit of this real flower">Art Bunches/Unit</span>
+              <span className="text-center" title={`What 1 unit of this flower costs as artificial = bunches/unit × ₹/bunch (🌹 ₹${artFlowerPerBunch.toFixed(2)} · 🌿 ₹${artGreenPerBunch.toFixed(2)}). Mapping flowers use their mapped inventory item's cost instead. Studio charges this × ${artStudioMarkup} markup.`}>Art ₹/Unit</span>
               <span className="text-center" title="Previous price for trend comparison">Prev Price</span>
               <span className="text-center" title="Current price. Auto = lowest variant when variants exist; editable when no variants.">Current Price ₹</span>
               <span className="text-center" title="Price trend vs previous">Trend</span>
@@ -779,7 +868,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 return (
                   <div key={p.id} className="bg-white">
                     <div className="px-4 py-3 hover:bg-gray-50 cursor-pointer"
-                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 70px 110px 40px 20px", gap: "8px", alignItems: "center" }}
+                      style={{ display: "grid", gridTemplateColumns: "16px 56px 140px 110px 80px 70px 110px 70px 84px 70px 110px 40px 20px", gap: "8px", alignItems: "center" }}
                       onClick={() => setSMandiExpanded((prev) => { const s = new Set(prev); if (s.has(p.id)) s.delete(p.id); else s.add(p.id); return s; })}>
                       <span className="text-xs text-gray-400 select-none">{expanded ? "▼" : "▶"}</span>
                       {/* Photo */}
@@ -866,6 +955,29 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           title={`How many artificial ${type === "green" ? "green" : "flower"} bunches replace 1 ${p.unit} of ${p.name}`}
                           className="border rounded px-2 py-1 text-xs text-center w-full" />
                       ) : <span className="text-center text-gray-300">—</span>}
+                      {/* Art ₹/Unit — the rupee rate behind "art b/u". Read-only: it's derived from
+                          the bunch rates above × this flower's b/u, so there's nothing to type here. */}
+                      {(() => {
+                        const { cost } = artUnitCost(p);
+                        if (type === "real_only") return <span className="text-center text-[10px] text-amber-600" title="Real Only — never substituted, so it has no artificial rate.">🔒 real</span>;
+                        if (cost == null) return (
+                          <span className="text-center text-[10px] text-red-500 font-semibold"
+                            title={type === "mapping"
+                              ? `No inventory item mapped yet — Studio prices this flower's artificial portion at ₹0. Click "🔍 Map flower" to fix.`
+                              : `"Art Bunches/Unit" is blank — Studio prices this flower's artificial portion at ₹0. Enter bunches/unit to fix.`}>
+                            ⚠ ₹0
+                          </span>
+                        );
+                        const perBunch = type === "green" ? artGreenPerBunch : artFlowerPerBunch;
+                        return (
+                          <span className="text-center text-xs font-semibold text-pink-700"
+                            title={type === "mapping"
+                              ? `Mapped to "${p.artificialMapName || "inventory item"}" — cost ₹${(Number(p.artificialMapCost) || 0).toLocaleString("en-IN")} / unit, client rate ₹${(Number(p.artificialMapPrice) || 0).toLocaleString("en-IN")}.`
+                              : `${p.artificialBunchesPerUnit} bunch/${p.unit} × ₹${perBunch.toFixed(2)} = ₹${cost.toFixed(2)} sourcing cost per ${p.unit}.\nStudio client rate ≈ ₹${(cost * artStudioMarkup).toFixed(2)} (× ${artStudioMarkup} markup).\nReal mandi price today: ₹${(Number(p.currentPrice) || 0).toLocaleString("en-IN")}.`}>
+                            ₹{cost < 10 ? cost.toFixed(2) : Math.round(cost).toLocaleString("en-IN")}
+                          </span>
+                        );
+                      })()}
                       {/* Prev / Current / Trend */}
                       {(() => {
                         const hasVariants = variantCount > 0;
@@ -2143,7 +2255,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           <div className="space-y-6">
             <div>
               <p className="font-bold text-gray-900 mb-1">🏗️ Truss & Masking Rates</p>
-              <p className="text-xs text-gray-500">₹/sqft rates used to price truss structures and wall masking everywhere in Studio (Tagging, Build, Library). This is a fixed set tied to the pricing formulas, so only the rate is editable here — not the name or the list itself.</p>
+              <p className="text-xs text-gray-500">₹/sqft rates used to price truss structures and wall masking everywhere in Studio (Tagging, Build, Library). Truss rows are a fixed grid tied to the pricing formulas — one per shape × material × density, so only the rates are editable (↺ puts a row back to its default). Masking types can be added and removed.</p>
             </div>
             <div className="space-y-5">
               <p className="text-sm font-semibold text-gray-700 -mb-3">Truss</p>
@@ -2158,6 +2270,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <span className="flex-1">Density</span>
                       <span className="w-32 text-center">Rate (₹/sqft)</span>
                       <span className="w-40 text-center">Ceiling portion (₹/sqft)</span>
+                      <span className="w-8" />
                     </div>
                     {TRUSS_MATERIALS.map((material) => DRAPE_DENSITIES.map((density) => {
                       const row = trussRatesList.find((r) => r.shape === shape.key && r.material === material.key && r.density === density.key)
@@ -2178,6 +2291,16 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               onChange={(e) => updateTrussRate(shape.key, material.key, density.key, "ceilingRatePerSqft", parseFloat(e.target.value) || 0)}
                               className="w-16 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                           </div>
+                          {/* Only offered once the row differs from its seed — a reset that would do
+                              nothing reads as a broken button. */}
+                          <div className="w-8 flex justify-center">
+                            {trussRateIsCustom(row, shape.key, material.key, density.key) && (
+                              <button type="button" onClick={() => resetTrussRate(shape.key, material.key, density.key)}
+                                title={`Reset to the default ₹${DEFAULT_TRUSS_RATES.find((r) => r.shape === shape.key && r.material === material.key && r.density === density.key)?.ratePerSqft ?? 0}/sqft`}
+                                aria-label={`Reset ${material.label} ${density.label} to default`}
+                                className="text-gray-300 hover:text-amber-600 text-sm">↺</button>
+                            )}
+                          </div>
                         </div>
                       );
                     }))}
@@ -2188,18 +2311,34 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-2">Masking</p>
+              <p className="text-xs text-gray-500 mb-2">Unlike truss, this is a real list — add or remove types and the Studio pickers (Build, tagging, Library) follow. Removing one takes it out of circulation for new zones; deals already priced against it are not re-priced.</p>
               <div className="space-y-2">
                 {maskingRatesList.map((r) => (
                   <div key={r.key} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
-                    <span className="flex-1 text-sm font-medium">{r.name}</span>
+                    <input value={r.name} onChange={(e) => updateMaskingName(r.key, e.target.value)}
+                      aria-label="Masking type name"
+                      className="flex-1 border rounded-lg px-2 py-1 text-sm font-medium" />
                     <div className="flex items-center gap-1">
                       <span className="text-xs text-gray-400">₹</span>
                       <input type="number" min="0" value={r.ratePerSqft ?? 0} onChange={(e) => updateMaskingRate(r.key, parseFloat(e.target.value) || 0)}
                         className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                       <span className="text-xs text-gray-400">/sqft</span>
                     </div>
+                    <button type="button" onClick={() => deleteMaskingRate(r.key)}
+                      title={`Remove ${r.name}`} aria-label={`Remove ${r.name}`}
+                      className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
                   </div>
                 ))}
+                {maskingRatesList.length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No masking types yet — add one above (e.g. Fabric, Acrylic, Flex).</p>}
+              </div>
+              <div className="flex gap-2 items-end mt-3">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500">Masking type name</label>
+                  <input value={newMaskingName} onChange={(e) => setNewMaskingName(e.target.value)}
+                    placeholder="e.g. Mirror Panel"
+                    className="w-full border rounded-lg px-3 py-2 text-sm" onKeyDown={(e) => { if (e.key === "Enter") addMaskingRate(); }} />
+                </div>
+                <button onClick={addMaskingRate} className="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">+ Add Material</button>
               </div>
             </div>
           </div>
