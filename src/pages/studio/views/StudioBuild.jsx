@@ -928,14 +928,29 @@ export default function StudioBuild({ ctx }) {
   // have no entry, so fall back to their display label — reverse-looked-up into the area-set that
   // contains it, else used as an area name of its own. One definition, three callers: the strip, the
   // prefetch effect, and the tag-correction save below.
+  // A photo belongs to the zone it was tagged for — nowhere else. Two rules get it there:
+  //
+  // 1. A zone created from an area name (no ZONE_TYPE_TO_AREA entry — which is most of them) owns
+  //    exactly its own name. This used to reverse-look-up the label into the synonym GROUP holding
+  //    it, and ZONE_TYPE_TO_AREA.lounge is ["Lounge","Centre Lounge","Side Lounge","Open Lounges"],
+  //    so all three lounge zones claimed all four names and a photo tagged only "Side Lounge"
+  //    surfaced in every one of them.
+  //
+  // 2. A seed zone keeps its aliases, EXCEPT any that is another zone's own name. ZONE_TYPE_TO_AREA
+  //    predates those zones existing separately: stage lists "Entertainment Stage", ceiling lists
+  //    "Installations", tableDecor lists "Centre Pieces" — all now zones in their own right, so the
+  //    parent was swallowing their photos. Aliases nobody else claims stay ("Entry Passage" /
+  //    "Entry & Passage" are two spellings of one zone, not two zones).
   const areaNamesFor = (elKey) => {
+    const label = (zoneLabelsD[elKey]?.label) || elKey || "";
     const raw = ZONE_TYPE_TO_AREA[elKey];
     const names = Array.isArray(raw) ? [...raw] : (raw ? [raw] : []);
-    if (names.length) return names;
-    const label = (zoneLabelsD[elKey]?.label) || elKey || "";
-    if (!label) return [];
-    const hit = Object.values(ZONE_TYPE_TO_AREA).find((arr) => (arr || []).includes(label));
-    return hit ? [...hit] : [label];
+    if (!names.length) return label ? [label] : [];
+    const otherZoneLabels = new Set(
+      Object.entries(zoneLabelsD).filter(([k]) => k !== elKey).map(([, v]) => v?.label).filter(Boolean)
+    );
+    const kept = names.filter((n) => n === label || !otherZoneLabels.has(n));
+    return kept.length ? kept : names;   // never strip a zone down to nothing
   };
   const ensureZoneMatches = (areaNames) => {
     if (!areaNames.length) return;
