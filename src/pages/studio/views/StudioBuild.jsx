@@ -419,7 +419,7 @@ export default function StudioBuild({ ctx }) {
     zoneUploading, handleZoneUpload,
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
-    zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto,
+    zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto, zpVenueMatch,
     // rate card — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // IMS inventory — "+Add element" sources from here now, not the Rate Card
@@ -895,15 +895,19 @@ export default function StudioBuild({ ctx }) {
     const photos = [];
     const seen = new Set();
 
-    // LIBRARY PHOTOS — every photo tagged for this zone, unranked, capped at 50. No source-video
-    // default, no relevance scoring, no Silver/Gold split — the salesperson always picks manually
-    // from the zone's full tagged set regardless of a photo's categoryTier tag.
+    // LIBRARY PHOTOS — every photo tagged for this zone, unranked. No source-video default, no
+    // relevance scoring, no Silver/Gold split — the salesperson always picks manually from the
+    // zone's full tagged set regardless of a photo's categoryTier tag.
+    //
+    // No cap. This used to stop at 50, which silently hid the rest of a zone's tagged photos: the
+    // pager read "1–4 of 50" no matter how many the zone actually had. The strip is paginated four
+    // at a time and only the visible page renders <img>, so the cost of a longer list is the array
+    // itself, not the images. The DB query behind it already bounds the pool at 1000.
     if (areaNames.length) {
       // Async zone match (getLibPhotosForZone) — read from the cache populated by the effect above
       // (empty array until it resolves, same render cost as before once warm).
       const allMatches = zoneMatchCache[`${matchGen}::${areaNames.join("|")}`] || [];
       for (const img of allMatches) {
-        if (photos.length >= 50) break;
         if (!img.url || seen.has(img.url)) continue;
         seen.add(img.url);
         photos.push({
@@ -918,7 +922,9 @@ export default function StudioBuild({ ctx }) {
     // 2. EVENT PHOTOS — only for zones with NO area mapping (untagged custom zones).
     // For mapped zones we deliberately stop at zone-tagged library photos above; event
     // photos aren't tagged per-zone, so padding with them re-introduces wrong-zone images.
-    if (!areaNames.length && photos.length < 50) {
+    // Uncapped for the same reason as the library branch above — an unmapped custom zone should
+    // show every event photo it has, not the first 50.
+    if (!areaNames.length) {
       const catEvents = events.filter(ev => (ev.enabledEls || []).includes(elKey) || (ev.elements && ev.elements[elKey]));
       const sorted = catEvents.map(ev => {
         let relevance = 0;
@@ -928,7 +934,7 @@ export default function StudioBuild({ ctx }) {
       }).sort((a, b) => b.relevance - a.relevance);
       for (const { ev } of sorted) {
         for (const p of (ev.photos || [])) {
-          if (!seen.has(p) && photos.length < 50) {
+          if (!seen.has(p)) {
             seen.add(p);
             photos.push({
               src: p, eventId: ev.id, eventName: ev.name,
@@ -1400,6 +1406,17 @@ undefined
         if (!li) return true;
         return zpFilterPhoto(li);
       });
+      // Venue ranks instead of filtering — picking one floats its photos to the front of the strip
+      // and keeps the rest behind them, because there is rarely enough tagged per venue to build a
+      // zone from on its own. Stable partition, so relevance order survives inside each group.
+      if ((zpFilters.venue || []).length) {
+        const atVenue = [], elsewhere = [];
+        for (const ph of matchedPhotos) {
+          const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
+          (zpVenueMatch(li) ? atVenue : elsewhere).push(ph);
+        }
+        matchedPhotos = [...atVenue, ...elsewhere];
+      }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
       // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/

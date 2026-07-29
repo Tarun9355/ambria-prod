@@ -455,9 +455,27 @@ export default function StudioBrowse({ ctx }) {
               <div className="sb-pill sb-ghost" onClick={clearAllFilters} style={ghostPill}>Clear all</div>
             </div>}
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
-            {shownVideos.map(v=><VideoCard key={v.id} v={v}/>)}
-          </div>
+          {/* Picking a venue ranks rather than filters (see browseVideos), so the grid holds the
+              chosen venue's videos followed by everything else. Split them under headings —
+              unlabelled, a list that still shows other venues just looks like a broken filter. */}
+          {(()=>{
+            const preferred = shownVideos.filter(v=>v._venueMatch);
+            const others = shownVideos.filter(v=>!v._venueMatch);
+            const grid = {display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14};
+            const heading = (text,sub)=><div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 10px"}}>
+              <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textM}}>{text}</span>
+              {sub&&<span style={{fontSize:10.5,color:textM,fontWeight:400}}>{sub}</span>}
+            </div>;
+            // No venue picked (or nothing matched it) — one plain grid, exactly as before.
+            if (!preferred.length || !others.length) return <div style={grid}>{shownVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
+            return <>
+              {heading(browseVenues.length===1?browseVenues[0]:"Selected venues",`${preferred.length} tagged here`)}
+              <div style={grid}>{preferred.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+              <div style={{height:1,background:border,margin:"22px 0 14px"}}/>
+              {heading("More references","from other venues")}
+              <div style={grid}>{others.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+            </>;
+          })()}
           {shownVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textM,background:cardBg,borderRadius:14,border:`1px dashed ${border}`}}>
             <div style={{fontSize:14,fontWeight:600,color:textP,marginBottom:4}}>No videos match these filters</div>
             <div style={{fontSize:12,marginBottom:activeTotal>0?14:12}}>Try changing filters, or tag more videos in Manage → Library</div>

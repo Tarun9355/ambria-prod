@@ -1524,16 +1524,21 @@ export default function StudioApp() {
         : vals.some(v => it.includes(v));
       if (!hit) return false;
     }
-    // Venue pills — matches the photo's venue tag OR its folder path (photos are often filed under
-    // "inhouse venues/<venue>/…" or "Outside Venues/<venue>/…"), so picking "Emerald Green" also
-    // catches photos that only have it in the folder path, not the venue tag itself.
-    const venueVals = zpFilters.venue || [];
-    if (venueVals.length) {
-      let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); }
-      const hay = (String(tags.venue || "") + " " + url).toLowerCase();
-      if (!venueVals.some(v => hay.includes(String(v).toLowerCase()))) return false;
-    }
+    // Venue deliberately does NOT exclude here — see zpVenueMatch below.
     return true;
+  }, [zpFilters]);
+  // Venue is a preference, not a filter: too few photos are tagged per venue for an exact match to
+  // leave enough to build from, so the zone strips rank the chosen venue first and keep the rest
+  // rather than hiding them. Matches the photo's venue TAG or its folder path — photos are often
+  // filed under "inhouse venues/<venue>/…" — so picking "Emerald Green" also catches ones that only
+  // carry it in the path. True when nothing is picked, i.e. no preference to express.
+  const zpVenueMatch = useCallback((li) => {
+    const venueVals = zpFilters.venue || [];
+    if (!venueVals.length) return true;
+    if (!li) return true;
+    let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); }
+    const hay = (String(li.tags?.venue || "") + " " + url).toLowerCase();
+    return venueVals.some(v => hay.includes(String(v).toLowerCase()));
   }, [zpFilters]);
 
   // ═══ ZONE UPLOAD STATE — VERBATIM (Cloudinary + AI tag) ═══
@@ -4232,14 +4237,18 @@ export default function StudioApp() {
       if (outsideSub === "empanelled") out = out.filter(v => allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
       else if (outsideSub === "other") out = out.filter(v => !allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
     }
+    // Venue is a PREFERENCE, not a filter. Too little is tagged per venue for an exact match to
+    // leave a salesperson enough to show a client, so picking a venue no longer hides everything
+    // else — its own videos are floated to the top and the rest follow. `venueGroup` above stays a
+    // real filter: it is seeded from userVenueScope, so it is a permission boundary, not a taste.
+    //
+    // Selecting a PROPERTY chip (e.g. "Restro") also counts videos tagged at any of its own rooms
+    // ("Banquet"/"Lawn"). Selecting a specific room does NOT reach back up to ambiguous
+    // property-level tags, since those don't confirm which room the video is.
+    let preferredVenues = null;
     if (browseVenues.length > 0) {
-      // Selecting a PROPERTY chip (e.g. "Restro") also surfaces videos tagged at any of its own
-      // rooms ("Banquet"/"Lawn") — filtering "by property" should include everything under it.
-      // Selecting a specific room does NOT reach back up to ambiguous property-level tags, since
-      // those don't actually confirm which room the video is.
-      const expandedVenues = new Set(browseVenues);
-      browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => expandedVenues.add(sv)); });
-      out = out.filter(v => expandedVenues.has(v.venue));
+      preferredVenues = new Set(browseVenues);
+      browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => preferredVenues.add(sv)); });
     }
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
     if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
@@ -4248,6 +4257,14 @@ export default function StudioApp() {
     // Whitespace/case-insensitive: the pill says "Brown" (trimmed by paletteNames) while the video
     // may be tagged "Brown " — an exact includes() matched neither half of the library reliably.
     if (filterPalette.length > 0) out = out.filter(v => (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    // Applied last, so the chosen venue floats to the top of whatever the other filters left. A
+    // stable partition, not a sort — order within each group is untouched. `_venueMatch` lets
+    // Browse draw the divider; without one this reads as the venue filter having stopped working.
+    if (preferredVenues) {
+      const preferred = [], others = [];
+      for (const v of out) (preferredVenues.has(v.venue) ? preferred : others).push({ ...v, _venueMatch: preferredVenues.has(v.venue) });
+      out = [...preferred, ...others];
+    }
     return out;
   }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
 
@@ -6414,7 +6431,7 @@ export default function StudioApp() {
     normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
     lmsCacheRef,
     // zone photo filters + upload
-    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto,
+    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch,
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
