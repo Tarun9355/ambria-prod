@@ -11,6 +11,7 @@ import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
+import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
 import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
@@ -28,6 +29,9 @@ export default function StudioModals({ ctx }) {
     showMsg, pickAndLoad, fmt, getFullCost,
     // zoneUploadReview
     zoneUploadReview, setZoneUploadReview, zoneLabelsD, accent, cardBg, S,
+    // Full taxonomy tag set for the upload-review modal — same fields the Manage → Library editor
+    // offers, so a photo uploaded from Build is tagged once here instead of being corrected later.
+    taxonomy, TAX_LABELS, leafInhouseVenues, allInhouseVenues, allOutdoorDB, accentText,
     rcIsSMB, calcElsCost, zurElSearch, setZurElSearch, applyZoneUpload,
     // Element Breakdown + Print — same IMS-inventory-driven pricing/search the Library editor and
     // Build's zone editor use, so the upload-review modal reflects the same live system instead of
@@ -161,10 +165,22 @@ export default function StudioModals({ ctx }) {
               <div style={{flex:1}}>
                 <div style={{fontSize:10,fontWeight:700,color:textS,marginBottom:3}}>Name</div>
                 <input defaultValue={zoneUploadReview.name} onBlur={e=>setZoneUploadReview(p=>({...p,name:e.target.value}))} key="zur-name" style={{...S.input,fontSize:13,fontWeight:600,marginBottom:8}}/>
-                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                  {Object.entries(zoneUploadReview.tags||{}).map(([cat,vals])=>(vals||[]).map((v,i)=><span key={cat+i} style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:accent+"12",color:accent}}>{v}</span>))}
-                </div>
               </div>
+            </div>
+            {/* ── TAGS ── The same set Manage → Library offers, via one shared component. This modal
+                used to render the AI's tags as read-only chips, so a photo uploaded mid-build went
+                into the library with no way to set its event type, tier, palette, style, time or
+                areas until someone reopened it from Manage. */}
+            <div style={{marginBottom:16,padding:12,background:isDark?"#0F0F1A":"#F9FAFB",borderRadius:10,border:`1px solid ${border}`}}>
+              <div style={{fontSize:12,fontWeight:700,color:accent,marginBottom:8}}>{"🏷️"} Tags</div>
+              <PhotoTagFields
+                tags={zoneUploadReview.tags||{}}
+                onChange={(next)=>setZoneUploadReview(p=>({...p,tags:next}))}
+                taxonomy={taxonomy} imsPaletteCatalogue={imsPaletteCatalogue}
+                leafInhouseVenues={leafInhouseVenues} allInhouseVenues={allInhouseVenues} allOutdoorDB={allOutdoorDB}
+                getTaxLabel={(k)=>(TAX_LABELS||{})[k]||k}
+                S={S} accent={accent} accentText={accentText} border={border} textS={textS} textP={textP} dense
+              />
             </div>
             {/* ── Zone Dimensions (full parity with Build's zone editor) ── */}
             <div style={{marginBottom:16,padding:12,background:isDark?"#0F0F1A":"#F9FAFB",borderRadius:10,border:`1px solid ${border}`}}>
