@@ -6372,7 +6372,11 @@ export default function StudioApp() {
   // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
   // ═══════════════════════════════════════════════════════════════
-  const isDark = mode === "manage";
+  // Manage used to render dark while Studio rendered light, so switching between them flipped the
+  // whole palette mid-session. One light theme throughout now. `isDark` stays as the switch every
+  // component already reads — the dark branches are kept, just never taken, so restoring a dark
+  // mode later is this one line rather than a rewrite.
+  const isDark = false;
   const S = makeS(isDark);
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
