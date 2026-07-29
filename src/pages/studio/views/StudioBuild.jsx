@@ -54,7 +54,11 @@ function pageWindow(page, count, span = 1) {
   return out;
 }
 
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [] }) {
+// `nested` renders this same card as one of a zone's EXTRA truss structures: identical body, but
+// titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
+// rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
+// front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], nested = false, title, onRemove, rowIdx }) {
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -70,13 +74,26 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // Uppercase micro-caption, replacing "Truss Material:" sentence case with a colon.
   const rowCap = { fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS, minWidth: 62, flexShrink: 0 };
   return (
-              <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
+              /* Nested rows sit directly under the parent's masking block, whose accent left-rule
+                 runs to its own bottom edge — flush against a solid card of the same colour, the two
+                 read as one overlapping box. A dashed border, a tinted fill and real top margin
+                 separate them; box-sizing keeps the inner card inside the parent's padding rather
+                 than spilling past it. */
+              <div style={{boxSizing:"border-box",width:"100%",
+                border:nested?`1px dashed ${isDark?"rgba(255,255,255,0.16)":"rgba(26,26,46,0.18)"}`:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,
+                borderRadius:10,padding:"10px 12px",marginTop:nested?12:0,marginBottom:nested?0:9,
+                background:nested?(isDark?"rgba(255,255,255,0.035)":"rgba(26,26,46,0.022)"):(isDark?"rgba(255,255,255,0.015)":"#fff"),
+                fontSize:12.5}}>
                 {/* Not gated on zm.defaultTruss any more — that flag is off for every zone created
                     from an area name, which left the card empty on the zones people actually build
                     in. It now only seeds which truss type is preselected. */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>Truss</span>
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>{title||"Truss"}</span>
+                  </div>
+                  {/* The zone total belongs on the first card only — it already sums every row. */}
+                  {nested
+                    ? <span onClick={onRemove} title="Remove this truss" style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700,lineHeight:1}}>✕</span>
+                    : showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.truss)}</span>}
                 </div>
               <div style={{display:"flex",gap:8,marginBottom:6}}>
                 {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
@@ -174,7 +191,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     const sel=(zc.trussMaterial|| "iron")===m.key;
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
                   })}
-                  {zc.trT==="box" && customCeilingField(k, zc)}
+                  {zc.trT==="box" && customCeilingField(k, zc, false, rowIdx)}
                 </div>
               )}
               {zc.trT && (
@@ -189,7 +206,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {/* ═══ MASKING ═══ Nested inside Truss: masking panels attach to the truss, which is why
                     the original code grouped them. Sits after the truss's own controls so the card reads
                     "configure the truss → then what's masked onto it". */}
-                <div style={{marginTop:10,marginLeft:12,paddingLeft:11,borderLeft:`3px solid ${accent}33`}}>
+                <div style={{marginTop:10,marginLeft:12,paddingLeft:11,paddingBottom:2,borderLeft:`3px solid ${accent}33`}}>
                   <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginBottom:5}}>Masking <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· on the truss</span></div>
                 {(()=>{
                   const dL=zc.dims?.L||zc.dims?.S||0,dW=zc.dims?.W||zc.dims?.S||0,dH=zc.dims?.H||0;
@@ -259,7 +276,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   {zc.mkOn&&<div style={{marginTop:4,paddingLeft:20}}>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
                       {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                      {customMaskingField(k, zc)}
+                      {customMaskingField(k, zc, false, rowIdx)}
                     </div>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                       {walls.map(w=>{const on=mw[w.id];return <button key={w.id} onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:11.5,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>;})}
@@ -267,6 +284,31 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   </div>}
                 </div>;})()}
                 </div>{/* /masking (nested in truss) */}
+
+                {/* ═══ EXTRA TRUSS STRUCTURES ═══ A zone can hold more than one truss. calcStructCost
+                    has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
+                    stock reservation all read them — Build was simply the one place with no way to
+                    create one. Each renders THIS component again, so an added truss is identical to
+                    the first (front ext, auto Box/Single-U line, custom ceiling, its own masking)
+                    rather than a stripped-down copy that drifts from it. */}
+                {!nested && (zc.extraTrussRows||[]).map((row,ri)=>{
+                  const rows=zc.extraTrussRows||[];
+                  const write=(next)=>sZ({extraTrussRows:next});
+                  const setRow=(patch)=>write(rows.map((x,i)=>i===ri?{...x,...patch}:x));
+                  // Same "3 dims ⇒ Box, 2 ⇒ Single U" rule the zone's own row applies.
+                  const setDim=(d,v)=>{const cur=rows[ri]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
+                    const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;
+                    write(rows.map((x,i)=>i===ri?{...x,dims,trT:n>=3?"box":n===2?"singleU":x.trT}:x));};
+                  return <TrussCard key={row.id||ri} nested title={`Truss ${ri+2}`} rowIdx={ri}
+                    onRemove={()=>write(rows.filter((_,i)=>i!==ri))}
+                    S={S} customCeilingField={customCeilingField} customMaskingField={customMaskingField}
+                    k={k} zc={row} zm={zm} st={st} sZ={setRow} sD={setDim} fmt={fmt} showCosts={showCosts}
+                    isDark={isDark} border={border} textP={textP} textS={textS} accent={accent} maskOpts={maskOpts}/>;
+                })}
+                {!nested && <div style={{display:"flex",justifyContent:"flex-end",marginTop:9}}>
+                  <button onClick={()=>sZ({extraTrussRows:[...(zc.extraTrussRows||[]),{id:"TR"+Date.now(),dims:{},trussQty:1,trussMaterial:"iron",drapeDensity:"moderate",mkOn:false,mkT:"",mkWalls:{}}]})}
+                    style={{fontSize:10.5,fontWeight:600,color:"#7C3AED",background:"transparent",border:"1px dashed #7C3AED80",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add Truss</button>
+                </div>}
               </div>
   );
 }
@@ -301,6 +343,45 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                 <div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
                   <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
                 <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:11.5,color:textS,lineHeight:1.3}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div></div>
+              </div>
+
+              {/* ═══ EXTRA PLATFORM FOOTPRINTS ═══ Same story as the truss rows above: platformRowCost
+                  already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one entry
+                  each, so the cost and the ops plan were ready — only the control was missing. Each
+                  footprint keeps its OWN carpet, since two platforms in a zone can be finished
+                  differently. */}
+              {(zc.extraPlatformRows||[]).map((row,ri)=>{
+                const rows=zc.extraPlatformRows||[];
+                const setRow=(patch)=>sZ({extraPlatformRows:rows.map((x,i)=>i===ri?{...x,...patch}:x)});
+                const setFd=(d,v)=>setRow({floorDims:{...(row.floorDims||{}),[d]:parseFloat(v)||0}});
+                const removeRow=()=>sZ({extraPlatformRows:rows.filter((_,i)=>i!==ri)});
+                const rfd=row.floorDims||{};
+                return <div key={row.id||ri} style={{marginTop:9,padding:"10px 12px",borderRadius:10,border:`1px dashed ${border}`,background:isDark?"rgba(255,255,255,0.02)":"rgba(26,26,46,0.015)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                    <span style={{fontSize:11.5,fontWeight:700,color:textP,display:"inline-flex",alignItems:"center",gap:6}}><IconPlatform size={11}/>Platform {ri+2}</span>
+                    <span onClick={removeRow} title="Remove this platform" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:7}}>
+                    <span style={{fontSize:10.5,color:textS,marginRight:2}}>Height</span>
+                    {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>setRow({plH:row.plH===o.id?null:o.id})} style={{padding:"3px 9px",borderRadius:6,border:`1px solid ${row.plH===o.id?textP:border}`,fontSize:11,cursor:"pointer",fontWeight:row.plH===o.id?700:400,background:row.plH===o.id?"rgba(0,0,0,0.06)":"transparent",color:row.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                    <div style={{flex:1,minWidth:88}}><div style={{fontSize:10.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
+                      <input type="number" value={rfd.W||""} onChange={e=>setFd("W",e.target.value)} style={{...S.input,padding:"5px 8px",fontSize:13,fontWeight:600,textAlign:"center"}}/></div>
+                    <div style={{flex:1,minWidth:88}}><div style={{fontSize:10.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
+                      <input type="number" value={rfd.L||""} onChange={e=>setFd("L",e.target.value)} style={{...S.input,padding:"5px 8px",fontSize:13,fontWeight:600,textAlign:"center"}}/></div>
+                    <div style={{flex:1.4,minWidth:140}}><div style={{fontSize:10.5,color:textS,marginBottom:3}}>Carpet</div>
+                      <select value={row.cpT||""} onChange={e=>setRow({cpT:e.target.value})} style={{width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
+                        {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                      </select></div>
+                  </div>
+                  {(rfd.L||rfd.W)?<div style={{fontSize:10.5,color:textS,marginTop:5}}>{rfd.L||0}×{rfd.W||0} = {(rfd.L||0)*(rfd.W||0)} sqft</div>:null}
+                </div>;
+              })}
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:9}}>
+                <button onClick={()=>sZ({extraPlatformRows:[...(zc.extraPlatformRows||[]),{id:"PL"+Date.now(),plH:"",floorDims:{},cpT:""}]})}
+                  style={{fontSize:10.5,fontWeight:600,color:"#059669",background:"transparent",border:"1px dashed #05966980",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add Platform</button>
               </div>
               </div>
   );
@@ -472,7 +553,8 @@ export default function StudioBuild({ ctx }) {
     // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
     // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
     if (id === "truss") return (d.W || d.L) ? `${d.W || "–"} × ${d.L || "–"} ft${zm.hasMasking && zc.mkT ? " · masking" : ""}` : "";
-    if (id === "platform") return (fd.W || fd.D) ? `${fd.W || "–"} × ${fd.D || "–"} ft` : "";
+    // floorDims keys are W/L — `fd.D` never existed, so the depth always rendered as "–".
+    if (id === "platform") return (fd.W || fd.L) ? `${fd.W || "–"} × ${fd.L || "–"} ft` : "";
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
   };
   const sectionTile = (k, sec) => {
@@ -628,23 +710,34 @@ export default function StudioBuild({ ctx }) {
   const phSwipedJustNow = () => { const was = phSwipe.current.swiped; phSwipe.current.swiped = false; return was; };
   // Custom Ceiling / Custom Masking — { k: zoneKey, kind: "ceiling" | "masking" } or null
   const [customPicker, setCustomPicker] = useState(null);
-  const customCeilingField = (k, zc, dense) => {
+  // `rowIdx` addresses an entry of zoneConfig[k].extraTrussRows; undefined means the zone's own
+  // row 0. Without it these wrote straight to zoneConfig[k], so picking a Custom Ceiling on the
+  // second truss silently set it on the first.
+  const patchTrussRow = (k, rowIdx, patch) => setZoneConfig(p => {
+    const zone = p[k] || {};
+    if (rowIdx == null) return { ...p, [k]: { ...zone, ...patch } };
+    const rows = [...(zone.extraTrussRows || [])];
+    if (!rows[rowIdx]) return p;
+    rows[rowIdx] = { ...rows[rowIdx], ...patch };
+    return { ...p, [k]: { ...zone, extraTrussRows: rows } };
+  });
+  const customCeilingField = (k, zc, dense, rowIdx) => {
     const item = zc.customCeilingItemId ? (imsInventory || []).find(i => i.id === zc.customCeilingItemId) : null;
     const fs = dense ? 9 : 10;
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600, marginLeft: 8 }}>
       <IconPlay size={12}/> {item.name}
-      <span onClick={() => setZoneConfig(p => ({ ...p, [k]: { ...p[k], customCeilingItemId: null } }))} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+      <span onClick={() => patchTrussRow(k, rowIdx, { customCeilingItemId: null })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
-    return <button onClick={() => setCustomPicker({ k, kind: "ceiling" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}><IconPlay size={11}/> Custom Ceiling</button>;
+    return <button onClick={() => setCustomPicker({ k, kind: "ceiling", rowIdx })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}><IconPlay size={11}/> Custom Ceiling</button>;
   };
-  const customMaskingField = (k, zc, dense) => {
+  const customMaskingField = (k, zc, dense, rowIdx) => {
     const item = zc.customMaskingItemId ? (imsInventory || []).find(i => i.id === zc.customMaskingItemId) : null;
     const fs = dense ? 9 : 10;
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 5, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600 }}>
       <IconCamera size={12}/> {item.name}
-      <span onClick={() => setZoneConfig(p => ({ ...p, [k]: { ...p[k], customMaskingItemId: null } }))} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+      <span onClick={() => patchTrussRow(k, rowIdx, { customMaskingItemId: null })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
-    return <button onClick={() => setCustomPicker({ k, kind: "masking" })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
+    return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
   };
   // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
   // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
@@ -1150,7 +1243,7 @@ undefined
         categoryMatch="fabric"
         subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
         rcFactorByKey={rcFactorByKey}
-        onSelect={(item) => { setZoneConfig(p => ({ ...p, [customPicker.k]: { ...p[customPicker.k], [customPicker.kind === "ceiling" ? "customCeilingItemId" : "customMaskingItemId"]: item.id } })); setCustomPicker(null); }}
+        onSelect={(item) => { patchTrussRow(customPicker.k, customPicker.rowIdx, { [customPicker.kind === "ceiling" ? "customCeilingItemId" : "customMaskingItemId"]: item.id }); setCustomPicker(null); }}
         onClose={() => setCustomPicker(null)}
         isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
       />
