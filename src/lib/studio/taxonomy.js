@@ -105,6 +105,28 @@ export function trussRateFor(shape, material, density, trussRates) {
     || DEFAULT_TRUSS_RATES.find((r) => r.shape === shape && r.material === mat && r.density === den);
   return { rate: Number(row?.ratePerSqft) || 0, ceilingRate: Number(row?.ceilingRatePerSqft) || 0 };
 }
+// The two dimensions a truss is charged on, and their area. Shared by trussRowCost (the pricing
+// authority) and the Build card's "how did this number happen" caption, so the caption can never
+// describe a different sum from the one being charged.
+//
+// A Box needs all three dims; with only two filled it is physically a Single U and is priced as
+// one, whatever the toggle still says. A Box charges its two LARGEST dims — the footprint plus
+// height, never the smallest face.
+export function trussBaseArea(row = {}) {
+  const d = row.dims || {};
+  const filled = [d.L, (d.W || d.S), d.H].filter((x) => (Number(x) || 0) > 0).length;
+  const mode = (row.trT === "box" && filled < 3) ? "singleU" : row.trT;
+  if (mode === "box") {
+    const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
+    return { mode, a: v[0], b: v[1], area: v[0] * v[1] };
+  }
+  if (mode === "singleU") {
+    const a = d.W || d.S || d.L || 0, b = d.H || 0;
+    return { mode, a, b, area: a * b };
+  }
+  return { mode, a: 0, b: 0, area: 0 };
+}
+
 export function maskingRateFor(key, maskingRates) {
   const list = (Array.isArray(maskingRates) && maskingRates.length) ? maskingRates : DEFAULT_MASKING_RATES;
   const row = list.find((r) => r.key === key) || DEFAULT_MASKING_RATES.find((r) => r.key === key);

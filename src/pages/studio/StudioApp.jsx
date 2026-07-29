@@ -52,7 +52,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
 } from "../../lib/studio/taxonomy";
 
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -230,8 +230,10 @@ function trussRowCost(row, rates) {
   // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at
   // the Single U rate even if the toggle still reads Box (stale from a 3-dim state or an older
   // saved zone) — "2 dims ⇒ Single U, 3 dims ⇒ Box".
-  const _trussDims = [d.L, (d.W || d.S), d.H].filter((x) => (Number(x) || 0) > 0).length;
-  const _trMode = (row.trT === "box" && _trussDims < 3) ? "singleU" : row.trT;
+  // Area + mode come from trussBaseArea so the Build card's cost caption is derived from the same
+  // rule this charges on, rather than a second copy of it that can drift.
+  const _base = trussBaseArea(row);
+  const _trMode = _base.mode;
   const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates);
   const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates);
   // Custom ceiling — the salesperson picked a specific IMS inventory item (a printed ceiling panel)
@@ -242,8 +244,7 @@ function trussRowCost(row, rates) {
   const boxRate = hasCustomCeiling ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
   const singleURate = singleU.rate;
   if (_trMode === "box") {
-    const v = [d.L || 0, d.W || d.S || 0, d.H || 0].sort((a, b) => b - a);
-    truss = v[0] * v[1] * boxRate;
+    truss = _base.area * boxRate;
     // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
     // Single U rate = extension length × extension height. Its own height (can differ from the box).
     // The shared box-corner pillar saves material/fabric, NOT cost — so the rupee cost is the full
@@ -251,7 +252,7 @@ function trussRowCost(row, rates) {
     const ext = Number(row.trussFrontExt) || 0;
     if (ext > 0) { const extH = Number(row.trussFrontExtH) || (d.H || 0); truss += 2 * ext * extH * singleURate; }
   }
-  else if (_trMode === "singleU") { truss = (d.W || d.S || d.L || 0) * (d.H || 0) * singleURate; }
+  else if (_trMode === "singleU") { truss = _base.area * singleURate; }
   // Multiple identical trusses in one row (e.g. 3× Single U) — cost scales by quantity.
   truss *= Math.max(1, row.trussQty || 1);
   if (hasCustomCeiling) {

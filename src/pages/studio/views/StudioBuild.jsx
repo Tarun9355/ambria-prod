@@ -6,7 +6,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
-  maskingOptions, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS,
+  maskingOptions, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames } from "../../../lib/studio/colours";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
@@ -54,11 +54,34 @@ function pageWindow(page, count, span = 1) {
   return out;
 }
 
+// Copy of a truss row, carrying every field trussRowCost reads (see calcStructCost) and nothing
+// else — the zone object also holds platform, carpet and element state that has no business on a
+// truss row. `dims` and `mkWalls` are cloned, not shared, or editing the copy would reach back into
+// the original. A fresh id keeps React keys distinct.
+const cloneTrussRow = (src = {}) => ({
+  id: "TR" + Date.now(),
+  dims: { ...(src.dims || {}) },
+  trT: src.trT,
+  trussType: src.trussType,
+  trussQty: src.trussQty || 1,
+  trussFrontExt: src.trussFrontExt,
+  trussFrontExtH: src.trussFrontExtH,
+  trussBackDepth: src.trussBackDepth,
+  trussMaterial: src.trussMaterial || "iron",
+  drapeDensity: src.drapeDensity || "moderate",
+  mkOn: !!src.mkOn,
+  mkT: src.mkT || "",
+  mkS: src.mkS,
+  mkWalls: { ...(src.mkWalls || {}) },
+  customCeilingItemId: src.customCeilingItemId || null,
+  customMaskingItemId: src.customMaskingItemId || null,
+});
+
 // `nested` renders this same card as one of a zone's EXTRA truss structures: identical body, but
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], nested = false, title, onRemove, rowIdx }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, nested = false, title, onRemove, rowIdx }) {
   // ═══ ONE SELECTED-STATE ═══ These three rows previously used a dark outline (material),
   // PINK (drape) and a borderless grey fill (masking). The borderless one was the real problem:
   // unselected options rendered as plain text and did not look clickable. `border` is never
@@ -74,21 +97,36 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // Uppercase micro-caption, replacing "Truss Material:" sentence case with a colon.
   const rowCap = { fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS, minWidth: 62, flexShrink: 0 };
   return (
-              /* Nested rows sit directly under the parent's masking block, whose accent left-rule
-                 runs to its own bottom edge — flush against a solid card of the same colour, the two
-                 read as one overlapping box. A dashed border, a tinted fill and real top margin
-                 separate them; box-sizing keeps the inner card inside the parent's padding rather
-                 than spilling past it. */
+              /* Every truss is drawn the same — same border, same fill — so a second structure reads
+                 as an equal of the first rather than a lesser sub-item. They stay visually separate
+                 through spacing alone: 14px above a nested card clears the parent's masking block,
+                 whose accent left-rule runs to its own bottom edge and would otherwise touch it.
+                 box-sizing keeps the inner card inside the parent's padding instead of spilling
+                 past its right edge. */
               <div style={{boxSizing:"border-box",width:"100%",
-                border:nested?`1px dashed ${isDark?"rgba(255,255,255,0.16)":"rgba(26,26,46,0.18)"}`:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,
-                borderRadius:10,padding:"10px 12px",marginTop:nested?12:0,marginBottom:nested?0:9,
-                background:nested?(isDark?"rgba(255,255,255,0.035)":"rgba(26,26,46,0.022)"):(isDark?"rgba(255,255,255,0.015)":"#fff"),
+                border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,
+                borderRadius:10,padding:"10px 12px",marginTop:nested?14:0,marginBottom:nested?0:9,
+                background:isDark?"rgba(255,255,255,0.015)":"#fff",
                 fontSize:12.5}}>
                 {/* Not gated on zm.defaultTruss any more — that flag is off for every zone created
                     from an area name, which left the card empty on the zones people actually build
                     in. It now only seeds which truss type is preselected. */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>{title||"Truss"}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>{title||"Truss"}</span>
+                    {/* How the rupees happen. Area and mode come from trussBaseArea — the same helper
+                        trussRowCost charges on — and the rate from the live IMS truss rates for this
+                        material + drape, so the caption cannot claim a different sum from the price.
+                        Shows this ROW's base structure; front extension and a custom ceiling item are
+                        priced on top and are visible in their own fields. */}
+                    {showCosts&&(()=>{
+                      const base=trussBaseArea(zc);
+                      if(!base.area) return null;
+                      const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,trussRates);
+                      const qty=Math.max(1,zc.trussQty||1);
+                      return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
+                        {base.a}×{base.b} = {base.area} sqft × {fmt(r.rate)}/sqft{qty>1?` × ${qty}`:""}
+                      </span>;
+                    })()}
                   </div>
                   {/* The zone total belongs on the first card only — it already sums every row. */}
                   {nested
@@ -155,12 +193,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   </div>;
                 }
                 // 3-dim filled → auto-Full Box (read-only label, no choice)
-                if (tr.source === "auto-3dim") {
-                  return <div style={{marginBottom:10,padding:"6px 10px",borderRadius:8,background:"rgba(220,38,38,0.06)",border:"1px solid rgba(220,38,38,0.2)",fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{color:textS}}>Truss Type:</span>
-                    <span style={{fontWeight:700,color:"#B91C1C"}}>Full Box <span style={{fontWeight:400,color:textS,fontSize:11.5}}>(auto — all 3 dims filled)</span></span>
-                  </div>;
-                }
+                // All 3 dims filled ⇒ Full Box, with nothing to choose. The banner that said so was
+                // a red-tinted restatement of the numbers directly above it, so it read as a warning
+                // while carrying no action. Silent now; the 2-dim picker below still appears when
+                // there IS a decision to make.
+                if (tr.source === "auto-3dim") return null;
                 // 2-dim → sales picks U or Half Box (default Half if not picked)
                 const picked = zc.trussType;
                 const opts = [
@@ -191,7 +228,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     const sel=(zc.trussMaterial|| "iron")===m.key;
                     return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
                   })}
-                  {zc.trT==="box" && customCeilingField(k, zc, false, rowIdx)}
                 </div>
               )}
               {zc.trT && (
@@ -201,6 +237,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     const sel=(zc.drapeDensity||"moderate")===o.v;
                     return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
                   })}
+                  {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
+                      inventory item, so its cost comes out of the drape portion of the rate
+                      (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
+                  {zc.trT==="box" && customCeilingField(k, zc, false, rowIdx)}
                 </div>
               )}
                 {/* ═══ MASKING ═══ Nested inside Truss: masking panels attach to the truss, which is why
@@ -285,106 +325,133 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 </div>;})()}
                 </div>{/* /masking (nested in truss) */}
 
-                {/* ═══ EXTRA TRUSS STRUCTURES ═══ A zone can hold more than one truss. calcStructCost
-                    has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
-                    stock reservation all read them — Build was simply the one place with no way to
-                    create one. Each renders THIS component again, so an added truss is identical to
-                    the first (front ext, auto Box/Single-U line, custom ceiling, its own masking)
-                    rather than a stripped-down copy that drifts from it. */}
-                {!nested && (zc.extraTrussRows||[]).map((row,ri)=>{
-                  const rows=zc.extraTrussRows||[];
-                  const write=(next)=>sZ({extraTrussRows:next});
-                  const setRow=(patch)=>write(rows.map((x,i)=>i===ri?{...x,...patch}:x));
-                  // Same "3 dims ⇒ Box, 2 ⇒ Single U" rule the zone's own row applies.
-                  const setDim=(d,v)=>{const cur=rows[ri]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
-                    const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;
-                    write(rows.map((x,i)=>i===ri?{...x,dims,trT:n>=3?"box":n===2?"singleU":x.trT}:x));};
-                  return <TrussCard key={row.id||ri} nested title={`Truss ${ri+2}`} rowIdx={ri}
-                    onRemove={()=>write(rows.filter((_,i)=>i!==ri))}
-                    S={S} customCeilingField={customCeilingField} customMaskingField={customMaskingField}
-                    k={k} zc={row} zm={zm} st={st} sZ={setRow} sD={setDim} fmt={fmt} showCosts={showCosts}
-                    isDark={isDark} border={border} textP={textP} textS={textS} accent={accent} maskOpts={maskOpts}/>;
-                })}
-                {!nested && <div style={{display:"flex",justifyContent:"flex-end",marginTop:9}}>
-                  <button onClick={()=>sZ({extraTrussRows:[...(zc.extraTrussRows||[]),{id:"TR"+Date.now(),dims:{},trussQty:1,trussMaterial:"iron",drapeDensity:"moderate",mkOn:false,mkT:"",mkWalls:{}}]})}
-                    style={{fontSize:10.5,fontWeight:600,color:"#7C3AED",background:"transparent",border:"1px dashed #7C3AED80",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add Truss</button>
-                </div>}
               </div>
   );
+}
+
+// ═══ TRUSS STACK ═══ The zone's own truss plus any extras, as SIBLING cards.
+// The extras used to render inside the first card, which made every added truss a box within a box
+// — inset by the first card's padding and wrapped by its border, so it read as a sub-item instead
+// of another structure of equal standing. Rendering them here puts every truss at the same level.
+//
+// calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
+// stock reservation all read them — Build was simply the one place with no way to create one.
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates }) {
+  const rows = zc.extraTrussRows || [];
+  const write = (next) => sZ({ extraTrussRows: next });
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates };
+  return (<>
+    <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
+    {rows.map((row, ri) => {
+      const setRow = (patch) => write(rows.map((x, i) => (i === ri ? { ...x, ...patch } : x)));
+      // Same "3 dims ⇒ Box, 2 ⇒ Single U" rule the zone's own row applies.
+      const setDim = (d, v) => { const cur = rows[ri] || {}; const dims = { ...(cur.dims || {}), [d]: parseFloat(v) || 0 };
+        const n = [dims.W, dims.L, dims.H].filter((x) => (Number(x) || 0) > 0).length;
+        write(rows.map((x, i) => (i === ri ? { ...x, dims, trT: n >= 3 ? "box" : n === 2 ? "singleU" : x.trT } : x))); };
+      return <TrussCard key={row.id || ri} {...shared} zc={row} sZ={setRow} sD={setDim}
+        nested title={`Truss ${ri + 2}`} rowIdx={ri} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
+    })}
+    {/* Adds a DUPLICATE, not a blank row: a zone with two trusses almost always has two of the same,
+        so copying is the shorter path and clearing a field beats re-entering five. Copies the LAST
+        truss, so repeated clicks give identical structures and editing Truss 2 before adding Truss 3
+        carries forward rather than reverting to Truss 1. */}
+    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 2, marginBottom: 9 }}>
+      <button title="Adds a copy of the last truss — edit the copy as needed"
+        onClick={() => write([...rows, cloneTrussRow(rows.length ? rows[rows.length - 1] : zc)])}
+        style={{ fontSize: 10.5, fontWeight: 600, color: "#7C3AED", background: "transparent", border: "1px dashed #7C3AED80", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Truss</button>
+    </div>
+  </>);
 }
 
 // ═══ FloorCard ═══
 // Platform and carpet. They share one set of floor dimensions (floorDims drives both areas),
 // which is why they are one card rather than two.
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, textP, textS, imsPrintMaterials }) {
+// `nested` marks one of a zone's EXTRA platform footprints: same card, same colours, titled
+// "Platform N" with a remove control in place of the cost, which the first card already totals
+// across every footprint.
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, textP, textS, imsCarpetMaterials, nested = false, title, onRemove }) {
   return (
-              <div style={{border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,borderRadius:10,padding:"10px 12px",marginBottom:9,background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
-              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,margin:"14px 0 6px"}}>Floor</div>
+              <div style={{boxSizing:"border-box",width:"100%",
+                border:`1px solid ${isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.08)"}`,
+                borderRadius:10,padding:"10px 12px",marginTop:nested?14:0,marginBottom:nested?0:9,
+                background:isDark?"rgba(255,255,255,0.015)":"#fff",fontSize:12.5}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:nested?"2px 0 6px":"14px 0 6px"}}>
+                <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS}}>{title||"Floor"}</span>
+                {nested&&<span onClick={onRemove} title="Remove this platform" style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700,lineHeight:1}}>✕</span>}
+              </div>
               <div style={{fontSize:12.5,marginBottom:6}}>
                 {/* hasPlatform / hasCarpet no longer gate these rows — same reason as the truss row
                     above: they are off on every area-created zone, which emptied the card. */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconPlatform size={12}/>Platform</span>
                     {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:11.5,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconCarpet size={12}/>Carpet</span>
-                    <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:11.5,padding:"3px 8px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
-                      <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                      {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                    </select>
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
+                  {/* st.platform / st.carpet are the zone's totals across every footprint, so they
+                      belong on the first card only. */}
+                  </div>{showCosts&&!nested&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
                 </div>
               </div>
-              <div style={{display:"flex",gap:8,marginBottom:4}}>
-                <div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
+              {/* Carpet sits with the floor dimensions, to the right of depth — it is priced on the
+                  same area those two inputs define, so it belongs beside them rather than in a row
+                  of its own above.
+                  The options come from imsCarpetMaterials, NOT imsPrintMaterials. Carpet moved to
+                  its own master list in IMS and platformRowCost prices against `carpetMaterials`;
+                  this select was still reading the print list, so defaultCarpetMatId found no
+                  "Carpet Old" there and fell through to "— None —" while pricing was quietly
+                  charging the default anyway. Same list on both sides now, so the dropdown shows
+                  the material actually being billed. Only the explicit CARPET_OFF sentinel means
+                  no carpet — leaving it untouched has always meant Carpet Old. */}
+              <div style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-end",flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
-                <div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
+                <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
                   <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
-                <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:11.5,color:textS,lineHeight:1.3}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div></div>
+                <div style={{flex:1.5,minWidth:150}}>
+                  <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
+                  <select value={zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>sZ({cpT:e.target.value})}
+                    style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
+                    {/* "— None —" is no longer offered: every floor gets carpet. It is still rendered
+                        for a zone already saved as CARPET_OFF, otherwise the select would fall back
+                        to showing the first material while platformRowCost kept charging ₹0 for it —
+                        a dropdown disagreeing with the bill. Pick any material there and the option
+                        disappears for good. */}
+                    {zc.cpT===CARPET_OFF&&<option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>}
+                  </select></div>
+                {showCosts&&!nested&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span></div>}
               </div>
+              <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W if empty"}</div>
 
-              {/* ═══ EXTRA PLATFORM FOOTPRINTS ═══ Same story as the truss rows above: platformRowCost
-                  already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one entry
-                  each, so the cost and the ops plan were ready — only the control was missing. Each
-                  footprint keeps its OWN carpet, since two platforms in a zone can be finished
-                  differently. */}
-              {(zc.extraPlatformRows||[]).map((row,ri)=>{
-                const rows=zc.extraPlatformRows||[];
-                const setRow=(patch)=>sZ({extraPlatformRows:rows.map((x,i)=>i===ri?{...x,...patch}:x)});
-                const setFd=(d,v)=>setRow({floorDims:{...(row.floorDims||{}),[d]:parseFloat(v)||0}});
-                const removeRow=()=>sZ({extraPlatformRows:rows.filter((_,i)=>i!==ri)});
-                const rfd=row.floorDims||{};
-                return <div key={row.id||ri} style={{marginTop:9,padding:"10px 12px",borderRadius:10,border:`1px dashed ${border}`,background:isDark?"rgba(255,255,255,0.02)":"rgba(26,26,46,0.015)"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
-                    <span style={{fontSize:11.5,fontWeight:700,color:textP,display:"inline-flex",alignItems:"center",gap:6}}><IconPlatform size={11}/>Platform {ri+2}</span>
-                    <span onClick={removeRow} title="Remove this platform" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
-                  </div>
-                  <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:7}}>
-                    <span style={{fontSize:10.5,color:textS,marginRight:2}}>Height</span>
-                    {PLAT_OPTS.map(o=><button key={o.id} onClick={()=>setRow({plH:row.plH===o.id?null:o.id})} style={{padding:"3px 9px",borderRadius:6,border:`1px solid ${row.plH===o.id?textP:border}`,fontSize:11,cursor:"pointer",fontWeight:row.plH===o.id?700:400,background:row.plH===o.id?"rgba(0,0,0,0.06)":"transparent",color:row.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
-                    <div style={{flex:1,minWidth:88}}><div style={{fontSize:10.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
-                      <input type="number" value={rfd.W||""} onChange={e=>setFd("W",e.target.value)} style={{...S.input,padding:"5px 8px",fontSize:13,fontWeight:600,textAlign:"center"}}/></div>
-                    <div style={{flex:1,minWidth:88}}><div style={{fontSize:10.5,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                      <input type="number" value={rfd.L||""} onChange={e=>setFd("L",e.target.value)} style={{...S.input,padding:"5px 8px",fontSize:13,fontWeight:600,textAlign:"center"}}/></div>
-                    <div style={{flex:1.4,minWidth:140}}><div style={{fontSize:10.5,color:textS,marginBottom:3}}>Carpet</div>
-                      <select value={row.cpT||""} onChange={e=>setRow({cpT:e.target.value})} style={{width:"100%",fontSize:11.5,padding:"5px 8px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
-                        <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                        {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                      </select></div>
-                  </div>
-                  {(rfd.L||rfd.W)?<div style={{fontSize:10.5,color:textS,marginTop:5}}>{rfd.L||0}×{rfd.W||0} = {(rfd.L||0)*(rfd.W||0)} sqft</div>:null}
-                </div>;
-              })}
-              <div style={{display:"flex",justifyContent:"flex-end",marginTop:9}}>
-                <button onClick={()=>sZ({extraPlatformRows:[...(zc.extraPlatformRows||[]),{id:"PL"+Date.now(),plH:"",floorDims:{},cpT:""}]})}
-                  style={{fontSize:10.5,fontWeight:600,color:"#059669",background:"transparent",border:"1px dashed #05966980",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add Platform</button>
-              </div>
               </div>
   );
+}
+
+// ═══ FLOOR STACK ═══ The zone's own floor plus any extra platform footprints, as SIBLING cards —
+// same reasoning as TrussStack: rendering the extras inside the first card made each one a box
+// within a box, inset and wrapped by the first card's border.
+//
+// platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
+// ops entry each, so the cost and the plan were ready long before there was a way to add one.
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, textP, textS, imsCarpetMaterials }) {
+  const rows = zc.extraPlatformRows || [];
+  const write = (next) => sZ({ extraPlatformRows: next });
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, textP, textS, imsCarpetMaterials };
+  return (<>
+    <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
+    {rows.map((row, ri) => {
+      const setRow = (patch) => write(rows.map((x, i) => (i === ri ? { ...x, ...patch } : x)));
+      const setFd = (d, v) => setRow({ floorDims: { ...(rows[ri]?.floorDims || {}), [d]: parseFloat(v) || 0 } });
+      return <FloorCard key={row.id || ri} {...shared} zc={row} sZ={setRow} sFD={setFd} fd={row.floorDims || {}}
+        nested title={`Platform ${ri + 2}`} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
+    })}
+    {/* A copy, like + Add Truss — a second footprint in a zone usually mirrors the first, and its own
+        carpet can then be changed. Copies the LAST one so repeated adds stay consistent. */}
+    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 2, marginBottom: 9 }}>
+      <button title="Adds a copy of the last platform — edit the copy as needed"
+        onClick={() => { const src = rows.length ? rows[rows.length - 1] : zc;
+          write([...rows, { id: "PL" + Date.now(), plH: src.plH || "", floorDims: { ...(src.floorDims || {}) }, cpT: src.cpT || "" }]); }}
+        style={{ fontSize: 10.5, fontWeight: 600, color: "#059669", background: "transparent", border: "1px dashed #05966980", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}>+ Add Platform</button>
+    </div>
+  </>);
 }
 
 export default function StudioBuild({ ctx }) {
@@ -2036,35 +2103,34 @@ undefined
             const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
             const fd=zc.floorDims||{};
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:12.5,fontWeight:700,color:textP,display:"flex",alignItems:"center",gap:7}}><IconRuler size={13}/>Zone Structure</div>
-                {showCosts&&<div style={{fontSize:13,fontWeight:700,color:textP}}>{fmt(st.total)}</div>}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",minWidth:0}}>
+                  <span style={{fontSize:12.5,fontWeight:700,color:textP,display:"inline-flex",alignItems:"center",gap:7}}><IconRuler size={13}/>Zone Structure</span>
+                  {/* What adds up to the total on the right. Only the parts that cost something —
+                      listing the zeros was what made the old chip row noise. calcStructCost returns
+                      each of these separately and sums them into st.total, so the sum shown here is
+                      the sum being charged, not a re-derivation. */}
+                  {showCosts&&(()=>{
+                    const parts=[["Truss",st.truss],["Masking",st.masking],["Platform",st.platform],["Carpet",st.carpet],
+                      ["Arches",st.arches],["Pillars",st.pillars],["Glass",st.glass]].filter(([,v])=>(v||0)>0);
+                    if(!parts.length) return null;
+                    return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
+                      {parts.map(([l,v])=>`${l} ${fmt(v)}`).join("  +  ")}
+                    </span>;
+                  })()}
+                </div>
+                {showCosts&&<div style={{fontSize:13,fontWeight:700,color:textP,flexShrink:0}}>{fmt(st.total)}</div>}
               </div>
-              {/* ── WHAT'S INCLUDED ── Reads what the zone actually HAS, not what its meta permits.
-                  It used to key off zm.defaultTruss / hasPlatform / hasCarpet, which now no longer
-                  gate the rows below — leaving those in would have reported "Truss" as absent on
-                  every area-created zone even with dimensions typed in. */}
-              {(()=>{
-                const parts=[["Truss",!!(zc.trT||st.truss>0),st.truss],["Masking",!!zc.mkOn,st.masking],
-                  ["Platform",!!zc.plH,st.platform],["Carpet",!!(zc.cpT&&zc.cpT!==CARPET_OFF),st.carpet]];
-                const on=parts.filter(p=>p[1]), off=parts.filter(p=>!p[1]);
-                const rule=isDark?"rgba(255,255,255,0.07)":"rgba(26,26,46,0.07)";
-                return <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10,paddingBottom:9,borderBottom:`1px solid ${rule}`}}>
-                  <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginRight:2}}>Includes</span>
-                  {on.length===0&&<span style={{fontSize:11.5,color:textS}}>Nothing yet — pick a truss, masking, platform or carpet below</span>}
-                  {on.map(([label,,cost])=><span key={label} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:999,fontSize:11,fontWeight:600,color:zpGold,background:isDark?"rgba(201,169,110,0.16)":"#F6E7C8",border:`1px solid ${accent}44`}}>
-                    <IconCheck size={9}/>{label}{showCosts&&cost>0?<span style={{fontWeight:500,opacity:0.85}}>{fmt(cost)}</span>:null}</span>)}
-                  {off.map(([label])=><span key={label} style={{padding:"3px 9px",borderRadius:999,fontSize:11,color:textS,border:`1px dashed ${rule}`}}>{label}</span>)}
-                </div>;
-              })()}
+              {/* The "Includes" summary chip row was removed — it restated the per-section costs the
+                  cards below already show, and the panel header's own total covers the roll-up. */}
               {/* ── TRUSS (with masking nested inside it) → then the floor card ── */}
               
-              {zoneSection[k]==="truss"&&<TrussCard S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
+              {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
-              {zoneSection[k]==="platform"&&<FloorCard S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} textP={textP} textS={textS} imsPrintMaterials={imsPrintMaterials} />}
+              {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} />}
             </div>);
           })()}
           </Fragment>}
