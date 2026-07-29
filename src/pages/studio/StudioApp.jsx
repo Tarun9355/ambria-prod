@@ -1233,7 +1233,13 @@ export default function StudioApp() {
   // True from the very first render whenever there is a deal to bring back. The ledger loads async,
   // so without this the app rendered step 0 — Event Info — for the second or two until restore
   // fired, then jumped to Browse/Build. Gate the step body on it and that flash never happens.
-  const [restoring, setRestoring] = useState(() => !!restoreRef.current?.id);
+  //
+  // Step 0 is excluded: a refresh ON Event Info deliberately starts a clean form, so there is
+  // nothing to wait for and no reason to show the gate.
+  const [restoring, setRestoring] = useState(() => {
+    const r = restoreRef.current;
+    return !!(r?.id && r.step !== 0);
+  });
   useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
   useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
   // Each step/tab swaps the whole page body while the document keeps scrolling — so the browser
@@ -4689,6 +4695,10 @@ export default function StudioApp() {
     if (!Array.isArray(clientLedger) || clientLedger.length === 0) return; // ledger not loaded yet
     const savedId = restoreRef.current?.id || null;   // snapshotted at first render — see restoreRef
     if (!savedId) { buildRestoredRef.current = true; setRestoring(false); return; }
+    // Refreshing ON Event Info starts over: that screen is where a deal is begun, so bringing the
+    // previous client's details back into the form is the opposite of what the reload was for.
+    // Browse, Build and Summary still restore — there you are mid-deal and want it back.
+    if (restoreRef.current?.step === 0) { buildRestoredRef.current = true; setRestoring(false); return; }
     const client = clientLedger.find(c => c.id === savedId);
     const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
     buildRestoredRef.current = true;
