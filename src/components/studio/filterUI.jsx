@@ -106,7 +106,9 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // Search box for a section whose value list is long enough to hunt through (palette). Sits inside
   // the open section, above its grid. Caller owns the query state — the section is remounted as the
   // panel re-renders, so keeping it here would drop what you had typed.
-  const SearchBox = ({ value, onChange, placeholder = "Search…", resultCount, totalCount }) => (
+  // `noun` names what is being searched in the empty-result line — the box is no longer
+  // palette-only (Build's venue list uses it too), so the message can't hardcode "palettes".
+  const SearchBox = ({ value, onChange, placeholder = "Search…", resultCount, totalCount, noun = "palettes" }) => (
     <div style={{ marginTop: 9 }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
         <span style={{ position: "absolute", left: 8, display: "flex", color: textM, pointerEvents: "none" }}><IconSearch size={11} /></span>
@@ -117,7 +119,7 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
           style={{ position: "absolute", right: 7, cursor: "pointer", fontSize: 12, lineHeight: 1, color: textM }}>×</span>}
       </div>
       {value && <div style={{ fontSize: 9, color: textM, marginTop: 4 }}>
-        {resultCount === 0 ? "No palettes match" : `${resultCount} of ${totalCount}`}
+        {resultCount === 0 ? `No ${noun} match` : `${resultCount} of ${totalCount}`}
       </div>}
     </div>
   );

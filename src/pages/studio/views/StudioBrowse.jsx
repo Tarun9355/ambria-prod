@@ -3,6 +3,7 @@ import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconSparkle, IconCrown, IconSave, IconAlert, IconPlay,
   IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
+import { venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 
 export default function StudioBrowse({ ctx }) {
@@ -12,6 +13,11 @@ export default function StudioBrowse({ ctx }) {
   const [openSections, setOpenSections] = useState({});
   const toggleSection = (k) => setOpenSections(p => ({ ...p, [k]: !p[k] }));
   const [vq, setVq] = useState("");
+  // Venue pill search + the Inhouse "see all" toggle. Both are pure UI, so they live here rather
+  // than in the shared ctx — nothing else needs to read them. `showMoreOutside` is the pre-existing
+  // ctx twin for the Outside list.
+  const [venueQ, setVenueQ] = useState("");
+  const [showMoreInhouse, setShowMoreInhouse] = useState(false);
   // Video id currently open in the "Fix taxonomy" modal (salesperson-facing correction,
   // separate from Manage's full tag editor) — null when closed.
   const [taxFixVid, setTaxFixVid] = useState(null);
@@ -133,6 +139,9 @@ export default function StudioBrowse({ ctx }) {
     // ═══ UNIFIED BROWSE PAGE ═══
     // Filter chips read best alphabetised. azSort for plain string lists; byName for {name} objects.
     const azSort = (arr) => [...(arr || [])].sort((a, b) => String(a).localeCompare(String(b)));
+    // Sorts by what the pill SHOWS, not the stored value — needed wherever a label differs from its
+    // value (venueTypeLabel), or "Both" sorts to the front while reading "Indoor + Outdoor".
+    const azSortBy = (arr, label) => [...(arr || [])].sort((a, b) => String(label(a)).localeCompare(String(label(b))));
     const byName = (arr) => [...(arr || [])].sort((a, b) => String(a?.name).localeCompare(String(b?.name)));
     const outsideVenuesVisible = (() => {
       let list = [...outdoorVenueList];
@@ -140,11 +149,26 @@ export default function StudioBrowse({ ctx }) {
       if (outsideSub === "empanelled") list = byName(list.filter(v => v.empanelled));
       else if (outsideSub === "other") list = byName(list.filter(v => !v.empanelled));
       else list = [...byName(list.filter(v => v.empanelled)), ...byName(list.filter(v => !v.empanelled))];
+      // Same smart matcher the Build rail uses (token match, ranked exact → prefix → word → rest).
+      // It works on strings, so rank the names and map them back to their {name,empanelled} objects.
+      if (venueQ.trim()) {
+        const objByName = new Map(list.map(v => [v.name, v]));
+        list = paletteSearch(list.map(v => v.name), venueQ).map(n => objByName.get(n)).filter(Boolean);
+      }
       return list;
     })();
+    const inhouseVenuesVisible = venueQ.trim()
+      ? paletteSearch(azSort(allInhouseVenues), venueQ)
+      : azSort(allInhouseVenues);
 
-    const maxOutsidePills = showMoreOutside ? 999 : 10;
+    // A search decides what shows on its own, so it lifts either cap.
+    const maxOutsidePills = (showMoreOutside || venueQ.trim()) ? 999 : 10;
     const overflowCount = Math.max(0, outsideVenuesVisible.length - maxOutsidePills);
+    const maxInhousePills = (showMoreInhouse || venueQ.trim()) ? 999 : 9;
+    const inhouseOverflow = Math.max(0, inhouseVenuesVisible.length - maxInhousePills);
+    // A venue you have already picked must stay on screen even when the search or the cap would
+    // drop it — otherwise it filters the results from somewhere you cannot see or unclick.
+    const withSelected = (slice, pool) => [...slice, ...browseVenues.filter(v => pool.includes(v) && !slice.includes(v))];
 
     // Find a video for the hero player
     const heroEv = browseVideos[0] ? {name:browseVideos[0].title, video:`https://www.youtube.com/embed/${browseVideos[0].id}`} : null;
@@ -309,13 +333,24 @@ export default function StudioBrowse({ ctx }) {
 
             {/* Venue */}
             <FSection open={!!openSections["venue"]} onToggle={()=>toggleSection("venue")} id="venue" label="Venue" count={sectionCounts.venue}>
-                {(userVenueScope==="all"||isAdmin)&&<Pill on={venueGroup==="all"} onClick={()=>{setVenueGroup("all");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);}}>All</Pill>}
-                {(userVenueScope==="all"||userVenueScope==="inhouse"||isAdmin)&&<Pill on={venueGroup==="inhouse"} onClick={()=>{setVenueGroup("inhouse");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);}}>Inhouse</Pill>}
-                {(userVenueScope==="all"||userVenueScope==="outside"||isAdmin)&&<Pill on={venueGroup==="outside"} onClick={()=>{setVenueGroup("outside");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);}}>Outside</Pill>}
+                {/* Switching group also drops the venue search and both "see all" toggles — a query
+                    left over from Inhouse would silently hide most of the Outside list. */}
+                {(userVenueScope==="all"||isAdmin)&&<Pill on={venueGroup==="all"} onClick={()=>{setVenueGroup("all");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);setShowMoreInhouse(false);setVenueQ("");}}>All</Pill>}
+                {(userVenueScope==="all"||userVenueScope==="inhouse"||isAdmin)&&<Pill on={venueGroup==="inhouse"} onClick={()=>{setVenueGroup("inhouse");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);setShowMoreInhouse(false);setVenueQ("");}}>Inhouse</Pill>}
+                {(userVenueScope==="all"||userVenueScope==="outside"||isAdmin)&&<Pill on={venueGroup==="outside"} onClick={()=>{setVenueGroup("outside");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);setShowMoreInhouse(false);setVenueQ("");}}>Outside</Pill>}
               {/* Sub-venue pills for Inhouse — multi-select. Indented + ruled so it's obvious they
                   narrow the group above rather than being a seventh top-level filter. */}
+              {/* One search box serves both groups — it only appears once a group is chosen, since
+                  there is nothing to search through on "All". */}
+              {venueGroup!=="all"&&<div style={{gridColumn:"1/-1",paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
+                <FSearchBox value={venueQ} onChange={setVenueQ} placeholder="Search venues…" noun="venues"
+                  resultCount={venueGroup==="inhouse"?inhouseVenuesVisible.length:outsideVenuesVisible.length}
+                  totalCount={venueGroup==="inhouse"?allInhouseVenues.length:outdoorVenueList.length}/>
+              </div>}
               {venueGroup==="inhouse"&&<div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,marginTop:8,paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
-                {azSort(allInhouseVenues).map(v=>{const on=browseVenues.includes(v);return <Pill key={v} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)}>{v}</Pill>;})}
+                {withSelected(inhouseVenuesVisible.slice(0,maxInhousePills),allInhouseVenues).map(v=>{const on=browseVenues.includes(v);return <Pill key={v} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)}>{v}</Pill>;})}
+                {inhouseOverflow>0&&!showMoreInhouse&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(true)} title={`Show ${inhouseOverflow} more venues`} style={ghostPill}>See all {inhouseVenuesVisible.length}</div>}
+                {showMoreInhouse&&!venueQ.trim()&&inhouseVenuesVisible.length>9&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(false)} title="Show fewer venues" style={ghostPill}>Show fewer</div>}
                 {browseVenues.length>0&&<div className="sb-pill sb-ghost" onClick={()=>setBrowseVenues([])} title="Clear selected venues" style={ghostPill}>✕</div>}
               </div>}
               {/* Sub-group for Outside */}
@@ -326,8 +361,15 @@ export default function StudioBrowse({ ctx }) {
                   <Pill on={outsideSub==="other"} onClick={()=>{setOutsideSub("other");setBrowseVenues([]);setShowMoreOutside(false);}}>Other</Pill>
                 </div>
                 <div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,marginTop:6,paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
-                  {outsideVenuesVisible.slice(0,maxOutsidePills).map(v=>{const on=browseVenues.includes(v.name);return <Pill key={v.name} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v.name)} title={v.empanelled?"Empanelled venue":undefined}>{v.name}{v.empanelled?" ★":""}</Pill>;})}
-                  {overflowCount>0&&!showMoreOutside&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(true)} title={`Show ${overflowCount} more venues`} style={ghostPill}>+{overflowCount} more</div>}
+                  {(()=>{
+                    // Selected venues are pinned on even when the search or the cap drops them —
+                    // same rule as the Inhouse list above (see withSelected).
+                    const slice=outsideVenuesVisible.slice(0,maxOutsidePills);
+                    const pinned=outdoorVenueList.filter(v=>browseVenues.includes(v.name)&&!slice.some(s=>s.name===v.name));
+                    return [...slice,...pinned].map(v=>{const on=browseVenues.includes(v.name);return <Pill key={v.name} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v.name)} title={v.empanelled?"Empanelled venue":undefined}>{v.name}{v.empanelled?" ★":""}</Pill>;});
+                  })()}
+                  {overflowCount>0&&!showMoreOutside&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(true)} title={`Show ${overflowCount} more venues`} style={ghostPill}>See all {outsideVenuesVisible.length}</div>}
+                  {showMoreOutside&&!venueQ.trim()&&outsideVenuesVisible.length>10&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(false)} title="Show fewer venues" style={ghostPill}>Show fewer</div>}
                   {browseVenues.length>0&&<div className="sb-pill sb-ghost" onClick={()=>setBrowseVenues([])} title="Clear selected venues" style={ghostPill}>✕</div>}
                 </div>
               </Fragment>}
@@ -348,7 +390,7 @@ export default function StudioBrowse({ ctx }) {
             {/* Space */}
             <FSection open={!!openSections["space"]} onToggle={()=>toggleSection("space")} id="space" label="Venue type" count={sectionCounts.space}>
               <Pill on={filterSpace.length===0} onClick={()=>setFilterSpace([])}>All</Pill>
-              {azSort(taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"])).map(o=>{const on=filterSpace.includes(o);return <Pill key={o} on={on} onClick={()=>toggleFilter(filterSpace,setFilterSpace,o)}>{o}</Pill>;})}
+              {azSortBy(taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]),venueTypeLabel).map(o=>{const on=filterSpace.includes(o);return <Pill key={o} on={on} onClick={()=>toggleFilter(filterSpace,setFilterSpace,o)}>{venueTypeLabel(o)}</Pill>;})}
             </FSection>
 
             {/* Design Style */}
@@ -554,7 +596,7 @@ export default function StudioBrowse({ ctx }) {
                 </div>
                 <div style={{ marginBottom: 16 }}>
                   <div style={lbl}>Venue type</div>
-                  <div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(s => chip(s, tag.io === s, () => updTag({ io: tag.io === s ? undefined : s })))}</div>
+                  <div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(s => chip(venueTypeLabel(s), tag.io === s, () => updTag({ io: tag.io === s ? undefined : s })))}</div>
                 </div>
                 <div style={{ marginBottom: 16 }}>
                   <div style={lbl}>Design style</div>

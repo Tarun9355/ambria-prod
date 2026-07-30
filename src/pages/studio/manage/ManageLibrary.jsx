@@ -3,7 +3,7 @@ import LazyYT from "../../../components/studio/LazyYT";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
-import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../../lib/studio/taxonomy";
+import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
@@ -520,7 +520,7 @@ export default function ManageLibrary({ ctx }) {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
               {vals.map(v => {
                 const sel = (libFilters[k] || []).includes(v);
-                return <span key={v} onClick={() => toggleLibFilter(k, v)} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{v}</span>;
+                return <span key={v} onClick={() => toggleLibFilter(k, v)} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{k === "venueType" ? venueTypeLabel(v) : v}</span>;
               })}
             </div>
           </div>);
@@ -1969,7 +1969,7 @@ export default function ManageLibrary({ ctx }) {
             </select>
             <select value={ytFilterIO} onChange={e=>setYtFilterIO(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
               <option value="all">In/Out</option>
-              {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
+              {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{venueTypeLabel(v)}</option>)}
             </select>
             <select value={ytFilterStyle} onChange={e=>setYtFilterStyle(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
               <option value="all">All Styles</option>
@@ -2076,7 +2076,7 @@ export default function ManageLibrary({ ctx }) {
                     {tag.venue&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(14,165,233,0.9)",color:"#fff",fontWeight:700}}>{tag.venue}</span>}
                     {tag.fn&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(168,85,247,0.9)",color:"#fff",fontWeight:700}}>{typeof tag.fn==="string"?tag.fn:(tag.fn||[]).join(", ")}</span>}
                     {tag.tier&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:tag.tier==="Gold"?"rgba(245,158,11,0.9)":"rgba(148,163,184,0.9)",color:"#fff",fontWeight:700}}>{tag.tier}</span>}
-                    {tag.io&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.9)",color:"#fff",fontWeight:700}}>{tag.io}</span>}
+                    {tag.io&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.9)",color:"#fff",fontWeight:700}}>{venueTypeLabel(tag.io)}</span>}
                     {(tag.styles||[]).length>0&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(236,72,153,0.9)",color:"#fff",fontWeight:700}}>{tag.styles[0]}{tag.styles.length>1?` +${tag.styles.length-1}`:""}</span>}
                     {(tag.colors||[]).length>0&&<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:"rgba(249,115,22,0.9)",color:"#fff",fontWeight:700}}>{tag.colors[0]}{tag.colors.length>1?` +${tag.colors.length-1}`:""}</span>}
                   </div>
@@ -2159,7 +2159,7 @@ export default function ManageLibrary({ ctx }) {
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Indoor / Outdoor</div>
                       <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,io:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
-                        {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{v}</option>)}
+                        {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{venueTypeLabel(v)}</option>)}
                       </select>
                     </div>
                     <div>
@@ -2315,7 +2315,7 @@ export default function ManageLibrary({ ctx }) {
                 <div><div style={lbl}>Tier</div><div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
                 <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                 <div><div style={lbl}>Event type</div><div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div></div>
-                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(io, vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
+                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(venueTypeLabel(io), vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
                 <div><div style={lbl}>Colors</div><div style={chipRow}>{palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}</div></div>
                 <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
                 <div><div style={lbl}>Time / Setting</div><div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div></div>

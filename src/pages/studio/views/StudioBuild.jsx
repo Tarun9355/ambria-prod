@@ -5,7 +5,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
-  ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS,
+  ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, venueTypeLabel,
   maskingOptions, PLAT_OPTS, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames } from "../../../lib/studio/colours";
@@ -684,7 +684,7 @@ export default function StudioBuild({ ctx }) {
   const zpGold  = isDark ? "#D9BE86" : "#8A6A2F";
   // Panel / section / pill come from the shared module, so this panel is literally the same
   // component tree as the Browse filters — the two cannot drift apart.
-  const { Panel: FPanel, Section: FSection, Pill: FPill, SearchBox: FSearchBox, css: filterCSS } =
+  const { Panel: FPanel, Section: FSection, Pill: FPill, SearchBox: FSearchBox, ghostPill: fGhostPill, css: filterCSS } =
     makeFilterUI({ isDark, accent, textP, S });
   const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
   const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
@@ -715,6 +715,11 @@ export default function StudioBuild({ ctx }) {
   // Palette search in the photo-filter rail. Held here, not in the Section, so it survives the
   // panel re-rendering on every filter change.
   const [zpPaletteQ, setZpPaletteQ] = useState("");
+  // Venue runs to 40+ names, which buried every group under it. Show a first screenful, put the
+  // rest behind "See all", and give the group the same smart search the palette group has.
+  const [zpVenueQ, setZpVenueQ] = useState("");
+  const [zpVenueAll, setZpVenueAll] = useState(false);
+  const ZP_VENUE_CAP = 8;
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   const PH_PER_PAGE = railsOpen ? 4 : 8;      // photos, not more of them squeezed into a row
   const RAIL_W = 258;
@@ -1085,29 +1090,49 @@ export default function StudioBuild({ ctx }) {
           const sel=zpFilters[g.key]||[];
           // Groups with long values (palette, venue names) get fewer columns and left-aligned rows.
           const align = g.cols === 1 ? "start" : undefined;
-          // Only the palette group is long and awkwardly punctuated enough to need hunting through;
-          // the others are 3–8 short values where a search box is just another thing in the way.
-          const all = azSort(g.opts);
-          const searchable = g.key === "colorPalette";
+          // Palette and Venue are the two long, hunt-through lists, so both get a search box. The
+          // rest are 3–8 short values where one is just another thing in the way.
+          // venueType sorts and renders by its display label, so "Both" reads "Indoor + Outdoor"
+          // and sits between Indoor and Outdoor rather than ahead of them.
+          const optLabel = g.key === "venueType" ? venueTypeLabel : (v) => v;
+          const all = [...(g.opts || [])].sort((a, b) => String(optLabel(a)).localeCompare(String(optLabel(b))));
+          const isPalette = g.key === "colorPalette";
+          const isVenue = g.key === "venue";
+          const searchable = isPalette || isVenue;
+          const q = isVenue ? zpVenueQ : zpPaletteQ;
+          const setQ = isVenue ? setZpVenueQ : setZpPaletteQ;
           const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
-          const shown = searchable ? paletteSearch(all, zpPaletteQ, anchorsOf) : all;
-          // Never let the search hide something that is actively filtering the photos.
-          const selectedHidden = searchable ? sel.filter(v => all.includes(v) && !shown.includes(v)) : [];
-          const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{v}</FPill>;
+          // paletteSearch is a generic token matcher with ranking (exact → prefix → word → rest);
+          // only the anchor-colour lookup is palette-specific, so Venue reuses it without one.
+          const matched = searchable ? paletteSearch(all, q, isPalette ? anchorsOf : undefined) : all;
+          // Cap only while browsing — a search or an explicit "See all" shows every hit.
+          const capped = isVenue && !zpVenueAll && !q.trim() && matched.length > ZP_VENUE_CAP;
+          const shown = capped ? matched.slice(0, ZP_VENUE_CAP) : matched;
+          // Never let the search OR the cap hide something that is actively filtering the photos.
+          const selectedHidden = sel.filter(v => all.includes(v) && !shown.includes(v));
+          const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{optLabel(v)}</FPill>;
           return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
             cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
             {searchable&&<div style={{gridColumn:"1/-1"}}>
-              <FSearchBox value={zpPaletteQ} onChange={setZpPaletteQ} placeholder="Search palettes…" resultCount={shown.length} totalCount={all.length}/>
+              <FSearchBox value={q} onChange={setQ} placeholder={isVenue?"Search venues…":"Search palettes…"}
+                noun={isVenue?"venues":"palettes"} resultCount={matched.length} totalCount={all.length}/>
             </div>}
             <FPill on={sel.length===0} align={align} onClick={()=>setZpFilters(p=>({...p,[g.key]:[]}))}>All</FPill>
-            {/* Colour-only hits are separated out — see the same split in Browse. */}
-            {(searchable?shown.filter(v=>paletteMatches(v,zpPaletteQ)):shown).map(optPill)}
-            {(()=>{if(!searchable)return null;const byColour=shown.filter(v=>!paletteMatches(v,zpPaletteQ));return byColour.length===0?null:<>
+            {/* Colour-only hits are separated out — see the same split in Browse. Palette only:
+                venues have no anchor colours, so every hit is a name match. */}
+            {(isPalette?shown.filter(v=>paletteMatches(v,q)):shown).map(optPill)}
+            {(()=>{if(!isPalette)return null;const byColour=shown.filter(v=>!paletteMatches(v,q));return byColour.length===0?null:<>
               <div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>Contains this colour</div>
               {byColour.map(optPill)}
             </>;})()}
-            {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>Selected, outside this search</div>}
+            {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>{q.trim()?"Selected, outside this search":"Selected"}</div>}
             {selectedHidden.map(optPill)}
+            {/* See all / Show fewer. Hidden while searching — the search already decides what shows. */}
+            {isVenue&&!q.trim()&&(capped||zpVenueAll)&&matched.length>ZP_VENUE_CAP&&
+              <div onClick={()=>setZpVenueAll(v=>!v)} role="button"
+                style={{...fGhostPill,gridColumn:"1/-1",textAlign:"center"}}>
+                {capped?`See all ${matched.length} venues`:"Show fewer"}
+              </div>}
             {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:zpTextM}}>{g.empty}</span>}
           </FSection>;
         })}
@@ -1491,13 +1516,36 @@ undefined
       // Venue ranks instead of filtering — picking one floats its photos to the front of the strip
       // and keeps the rest behind them, because there is rarely enough tagged per venue to build a
       // zone from on its own. Stable partition, so relevance order survives inside each group.
+      // A photo earns the verified star only if someone confirmed it AND it actually carries
+      // elements. A verified-but-empty photo prices to nothing, so badging it sent salespeople to
+      // tiles that look trustworthy and then apply an empty zone. Same test drives the ordering
+      // below, so the badge and the sort can never disagree.
+      const phVerified = (ph) => {
+        const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
+        return !!li?._verified && (ph.elements || []).length > 0;
+      };
+      // Verified first, unverified after. Stable, so relevance order survives inside each half.
+      const verifiedFirst = (arr) => {
+        const yes = [], no = [];
+        for (const ph of arr) (phVerified(ph) ? yes : no).push(ph);
+        return [...yes, ...no];
+      };
+      // venuePrefCount feeds the caption below the strip header. Browse labels its venue split for a
+      // reason — an unlabelled list that still shows other venues reads as the filter being broken —
+      // and the strip needs the same explanation.
+      let venuePrefCount = 0;
       if ((zpFilters.venue || []).length) {
         const atVenue = [], elsewhere = [];
         for (const ph of matchedPhotos) {
           const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
           (zpVenueMatch(li) ? atVenue : elsewhere).push(ph);
         }
-        matchedPhotos = [...atVenue, ...elsewhere];
+        venuePrefCount = atVenue.length;
+        // Verified-first runs INSIDE each venue group, so the venue you picked still leads the strip
+        // and verification only decides the order within it. Sorting across both would undo it.
+        matchedPhotos = [...verifiedFirst(atVenue), ...verifiedFirst(elsewhere)];
+      } else {
+        matchedPhotos = verifiedFirst(matchedPhotos);
       }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
@@ -1559,6 +1607,12 @@ undefined
                   <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
                 </div>
               </div>
+              {/* Venue is a preference, not a filter — say so, or the other venues' photos further
+                  along the strip look like the venue pick silently failed. */}
+              {!!(zpFilters.venue||[]).length&&matchedPhotos.length>0&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                <span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venuePrefCount} at {zpFilters.venue.length===1?zpFilters.venue[0]:"selected venues"}</span>
+                <span>shown first{matchedPhotos.length>venuePrefCount?`, then ${matchedPhotos.length-venuePrefCount} from other venues`:""}</span>
+              </div>}
               {zpFilterOpen&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Event type</div>
@@ -1571,7 +1625,7 @@ undefined
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Venue type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                     <span onClick={()=>setZpFilters(p=>({...p,venueType:[]}))} style={zpPill(zpFilters.venueType.length===0)}>All</span>
-                    {azSort(taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"])).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={zpPill(zpFilters.venueType.includes(v))}>{v}</span>)}
+                    {[...taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"])].sort((a,b)=>String(venueTypeLabel(a)).localeCompare(String(venueTypeLabel(b)))).map(v=><span key={v} onClick={()=>zpToggleFilter("venueType",v)} style={zpPill(zpFilters.venueType.includes(v))}>{venueTypeLabel(v)}</span>)}
                   </div>
                 </div>
                 <div>
@@ -1642,8 +1696,9 @@ undefined
                     {(()=>{
                       // Verified only. An unverified photo shows nothing here, so the tick means
                       // something — same rule the Library grid uses, minus its AI/untagged states.
+                      // phVerified also requires elements: a photo with 0 has no pricing to vouch for.
                       const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-                      if (!li?._verified) return null;
+                      if (!phVerified(ph)) return null;
                       const by = li._verifiedBy || "unknown";
                       const on = li._verifiedAt ? new Date(li._verifiedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : null;
                       // A filled star, not a tick. Same disc treatment as before — solid fill, white

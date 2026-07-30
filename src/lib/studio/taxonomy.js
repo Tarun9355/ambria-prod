@@ -54,6 +54,11 @@ export const EL_KEYS=Object.keys(ZONE_LABELS);
 export const TIERS=["simple","enhanced","premium"];
 export const CATEGORIES=["Silver","Gold","Platinum"];
 export const SPACES=["Indoor","Outdoor","Semi-Outdoor","Both"];
+// The stored venue type "Both" means indoor + outdoor, but sitting next to the "All" pill (which
+// clears the filter) it read as a second way of saying "no preference". Display only — the value
+// saved on photos and videos is still "Both", so no tag migration and nothing to re-tag. Sort by
+// this label too, so the combination lands between Indoor and Outdoor instead of ahead of both.
+export const venueTypeLabel = (v) => (v === "Both" ? "Indoor + Outdoor" : v);
 
 // ═══ TIER → CATEGORY MAPPING ═══
 export const TIER_TO_CAT = { simple: "Silver", enhanced: "Gold", premium: "Platinum" };
