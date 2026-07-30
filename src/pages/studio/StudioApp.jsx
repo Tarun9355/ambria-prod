@@ -1085,6 +1085,15 @@ export default function StudioApp() {
   const [events, setEvents] = useState(DEFAULTS);
   const [loaded, setLoaded] = useState(true);
   const [toast, setToast] = useState(null);
+  const [confirmToast, setConfirmToast] = useState(null);
+  // Escape cancels the confirm dialog — bound only while one is open, so it never competes with the
+  // Escape handling on galleries and overlays.
+  useEffect(() => {
+    if (!confirmToast) return;
+    const onKey = e => { if (e.key === "Escape") setConfirmToast(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmToast]);
 
   // ═══ ADMIN STATE ═══
   const [editEv, setEditEv] = useState(null);
@@ -1576,7 +1585,10 @@ export default function StudioApp() {
   const [elNotes, setElNotes] = useState({});
   const [elCostOpen, setElCostOpen] = useState({});
   const [customZones, setCustomZones] = useState([]);
-  const [newCzName, setNewCzName] = useState("");
+  // Which seed zone type the "+ Add Zone" picker is on. A zone key means the zone it adds is a second
+  // Stage / Entry Passage / … and behaves exactly like the original — photo strip, elements, truss,
+  // platform, pricing — via customZones[].sourceType. "" is just the unpicked placeholder.
+  const [newCzSrc, setNewCzSrc] = useState("");
   const [elGallery, setElGallery] = useState(null);
   const [galleryIdx, setGalleryIdx] = useState(null);
   const [webPreview, setWebPreview] = useState(null);
@@ -1710,6 +1722,10 @@ export default function StudioApp() {
   const [saveError, setSaveError] = useState(null);
 
   const showMsg = (msg, color) => { setToast({ msg, color }); setTimeout(() => setToast(null), 2000); };
+  // In-app confirm, so destructive actions ask in the app's own voice instead of a browser alert()
+  // (which is unstyled, blocks the whole tab, and on some browsers offers "don't show again").
+  // Deliberately does NOT auto-dismiss — an unanswered question must wait for an answer.
+  const askConfirm = (msg, onYes, opts = {}) => setConfirmToast({ msg, onYes, yesLabel: opts.yesLabel || "Remove", note: opts.note });
   const doLogout = () => { logout(); };
   // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
   // reference Studio used "admin". Also honor the seeded u_admin id.
@@ -6441,7 +6457,7 @@ export default function StudioApp() {
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
     // app mode + steps
-    mode, setMode, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, loaded, setLoaded, saveError, setSaveError,
+    mode, setMode, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, loaded, setLoaded, saveError, setSaveError,
     // events
     events, setEvents, editEv, setEditEv, save, filteredEvents,
     // admin / library state
@@ -6484,7 +6500,7 @@ export default function StudioApp() {
     enabledEls, setEnabledEls, elTiers, setElTiers, customMode, setCustomMode, itemQty, setItemQty, itemGrades, setItemGrades,
     showInsp, setShowInsp, showAi, setShowAi, showPpt, setShowPpt, showCosts, setShowCosts,
     elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, elNotes, setElNotes, elCostOpen, setElCostOpen,
-    customZones, setCustomZones, newCzName, setNewCzName, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
+    customZones, setCustomZones, newCzSrc, setNewCzSrc, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
     zoneConfig, setZoneConfig, activeZones, setActiveZones,
     floralRatio, setFloralRatio, floralOverrides, setFloralOverrides,
     customTripRate, setCustomTripRate, venueCustom, setVenueCustom, customGensets, setCustomGensets,
@@ -6594,7 +6610,12 @@ export default function StudioApp() {
         /* Toast entrance — keeps the translateX(-50%) centring in both frames, so the resting
            inline transform matches the animation's end state and there's no snap on completion. */
         @keyframes studioToastIn { from { opacity: 0; transform: translate(-50%, -14px) } to { opacity: 1; transform: translate(-50%, 0) } }
-        @media (prefers-reduced-motion: reduce) { @keyframes studioToastIn { from { opacity: 0 } to { opacity: 1 } } }`}</style>
+        @keyframes studioDlgFade { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes studioDlgPop { from { opacity: 0; transform: scale(0.94) translateY(8px) } to { opacity: 1; transform: none } }
+        @media (prefers-reduced-motion: reduce) {
+          @keyframes studioToastIn { from { opacity: 0 } to { opacity: 1 } }
+          @keyframes studioDlgPop { from { opacity: 0 } to { opacity: 1 } }
+        }`}</style>
 
       {/* SAVE FAILURE BANNER */}
       {saveError && (
@@ -6609,6 +6630,23 @@ export default function StudioApp() {
           entrance reads as arriving from the top edge rather than just appearing. */}
       {toast && (
         <div role="status" aria-live="polite" style={{ position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 100000, padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#fff", boxShadow: "0 8px 24px rgba(0,0,0,0.28)", animation: "studioToastIn 0.22s ease-out", background: toast.color === "red" ? "#dc2626" : toast.color === "green" ? "#16a34a" : "#374151" }}>{toast.msg}</div>
+      )}
+
+      {/* CONFIRM DIALOG — centred on screen over a dimmed backdrop, so a destructive question stops
+          the eye instead of arriving as a pill that reads like a status message. Backdrop click and
+          Escape both cancel; only the red button commits. */}
+      {confirmToast && (
+        <div onClick={() => setConfirmToast(null)} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.44)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
+          <div role="alertdialog" aria-modal="true" aria-label={confirmToast.msg} onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: "#fff", borderRadius: 16, padding: "24px 24px 18px", boxShadow: "0 24px 60px rgba(15,15,26,0.30)", textAlign: "center", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
+            <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(220,38,38,0.10)", color: "#dc2626", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 21, fontWeight: 700, margin: "0 auto 14px" }}>!</div>
+            <div style={{ fontSize: 16.5, fontWeight: 700, color: "#111827", letterSpacing: -0.2, marginBottom: 6 }}>{confirmToast.msg}</div>
+            <div style={{ fontSize: 12.5, color: "#6B7280", lineHeight: 1.5, marginBottom: 20 }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={() => setConfirmToast(null)} style={{ flex: 1, background: "#F3F4F6", color: "#374151", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+              <button autoFocus onClick={() => { const fn = confirmToast.onYes; setConfirmToast(null); fn?.(); }} style={{ flex: 1, background: "#dc2626", color: "#fff", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{confirmToast.yesLabel}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* GLOBAL BULK-TAG PROGRESS PILL — visible on every Studio screen while tagging runs */}

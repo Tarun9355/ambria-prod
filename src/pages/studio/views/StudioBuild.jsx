@@ -481,7 +481,7 @@ export default function StudioBuild({ ctx }) {
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
     elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
     setElGallery, setGalleryIdx,
-    newCzName, setNewCzName,
+    newCzSrc, setNewCzSrc,
     // uploads / ai
     zoneUploading, handleZoneUpload,
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
@@ -510,7 +510,7 @@ export default function StudioBuild({ ctx }) {
     // video modal
     setVideoModal, setVideoPlaying,
     // misc
-    showMsg, saveLib, mergeLibItems, authUser, logVerificationEvent,
+    showMsg, askConfirm, saveLib, mergeLibItems, authUser, logVerificationEvent,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
   } = ctx;
@@ -1526,7 +1526,8 @@ undefined
               if(zoneConfig[k]?.plH) bits.push("platform");
               return <span style={{fontSize:11,color:textS,fontWeight:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bits.join(" · ")}</span>;
             })()}
-            {isDuplicate&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:"#C9A96E",fontWeight:600}}>Duplicate</span>}{isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details</span>}</div>
+            {/* No "Duplicate" chip — the name already says "Stage (2)", so the chip only repeated it. */}
+            {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {isOn&&showCosts&&!isCollapsed(k)&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(zoneTotal(k))}</div>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
@@ -1534,7 +1535,7 @@ undefined
             {/* The per-zone "Duplicate this zone" copy button is gone — it crowded the row and the
                 "+ Add Zone" box below covers the same need. Existing duplicates still render and
                 still carry their ✕ so saved sessions can be cleaned up. */}
-            {isDuplicate&&<span onClick={e=>{e.stopPropagation();if(confirm("Remove "+el.label+"?")){setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});}}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
+            {isDuplicate&&<span title={`Remove ${el.label}`} onClick={e=>{e.stopPropagation();askConfirm(`Remove ${el.label}?`,()=>{setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});showMsg(`✓ ${el.label} removed`,"green");});}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
             {isOn&&isCentrepieceZone&&<span onClick={e=>e.stopPropagation()} title="Scale the whole set — multiplies every element count below (e.g. 10 tables → 10× tables, chairs, centre pieces…). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
               <input type="number" min="1" step="1" value={zoneScaleVal(k)} onClick={e=>e.stopPropagation()} onChange={e=>setZoneScale(k, e.target.value)} onFocus={e=>e.target.select()} style={{width:40,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
@@ -2218,7 +2219,7 @@ undefined
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(czTotal)}</div>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();setEnabledEls(p=>({...p,[k]:!p[k]}));}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
-            <span onClick={e=>{e.stopPropagation();if(confirm("Remove "+cz.name+"?")){setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});}}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>
+            <span title={`Remove ${cz.name}`} onClick={e=>{e.stopPropagation();askConfirm(`Remove ${cz.name}?`,()=>{setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});showMsg(`✓ ${cz.name} removed`,"green");});}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>
           </div>
         </div>
         {isOn&&!isCollapsed(k)&&<div style={{padding:"0 18px 16px"}}>
@@ -2512,11 +2513,31 @@ undefined
       </div>);
     })}
 
-    {/* ═══ + ADD CUSTOM ZONE ═══ */}
-    <div style={{borderRadius:14,border:`2px dashed ${border}`,padding:"14px 18px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
-      <input value={newCzName} onChange={e=>setNewCzName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&newCzName.trim()){const id="cz_"+Date.now();setCustomZones(p=>[...p,{id,name:newCzName.trim(),icon:""}]);setEnabledEls(p=>({...p,[id]:true}));setNewCzName("");}}} placeholder="e.g. Banquet Carpet, Artist Stage, Gajra Counter..." style={{...S.input,flex:1,marginBottom:0,fontSize:13}}/>
-      <button onClick={()=>{if(newCzName.trim()){const id="cz_"+Date.now();setCustomZones(p=>[...p,{id,name:newCzName.trim(),icon:""}]);setEnabledEls(p=>({...p,[id]:true}));setNewCzName("");}}} style={{...S.btn(!!newCzName.trim()),padding:"10px 20px",fontSize:12,opacity:newCzName.trim()?1:0.5}}>+ Add Zone</button>
-    </div>
+    {/* ═══ + ADD CUSTOM ZONE ═══ Pick a type to get a second Stage / Entry Passage / … that behaves
+        like the original — photo strip, elements, truss, platform, pricing — which is what sourceType
+        buys. Naming is automatic ("Stage (2)"), so the row is just the picker and the button; the old
+        free-text name box read as a second, competing way to add a zone and only caused confusion. ═══ */}
+    {(()=>{
+      const srcLabel = newCzSrc ? (zoneLabelsD[newCzSrc]?.label || newCzSrc) : "";
+      // Second copy is "(2)" — the seed zone itself is the implicit (1).
+      const autoName = newCzSrc ? `${srcLabel} (${customZones.filter(cz=>cz.sourceType===newCzSrc).length+2})` : "";
+      const addZone = () => {
+        if (!newCzSrc) return;
+        const id = "cz_"+Date.now();
+        setCustomZones(p=>[...p,{id,name:autoName,sourceType:newCzSrc,icon:zoneLabelsD[newCzSrc]?.icon||""}]);
+        setEnabledEls(p=>({...p,[id]:true}));
+        setNewCzSrc("");
+        showMsg(`✓ ${autoName} added`,"green");
+        setTimeout(()=>document.getElementById(`zone-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80);
+      };
+      return <div style={{borderRadius:12,border:`2px dashed ${border}`,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+        <select value={newCzSrc} onChange={e=>setNewCzSrc(e.target.value)} style={{width:190,padding:"8px 10px",borderRadius:9,border:`1px solid ${border}`,background:"#fff",color:"#111827",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
+          <option value="" style={{color:"#111827",background:"#fff"}}>Choose a zone…</option>
+          {zoneKeys.map(zk=><option key={zk} value={zk} style={{color:"#111827",background:"#fff"}}>{zoneLabelsD[zk]?.label||zk}</option>)}
+        </select>
+        <button onClick={addZone} title={newCzSrc?`Adds "${autoName}" — same photos, elements and pricing as ${srcLabel}`:"Choose a zone first"} style={{...S.btn(!!newCzSrc),padding:"8px 16px",fontSize:11.5,opacity:newCzSrc?1:0.5,whiteSpace:"nowrap"}}>{newCzSrc?`+ Add ${autoName}`:"+ Add Zone"}</button>
+      </div>;
+    })()}
 
     {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ */}
     {showCosts&&venue&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
