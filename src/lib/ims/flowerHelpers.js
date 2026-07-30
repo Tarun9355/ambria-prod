@@ -125,6 +125,40 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   return { realRate, artRate, extra: Number(sizeData.extraCost) || 0 };
 };
 
+// A kit's PLAIN components ({itemId,qty} — not patternId add-ons) can themselves be floral items
+// whose own sub-category carries a flower recipe. priceForInvItem counts only their FLAT RENTAL, so
+// the recipe money has to be added on top of the kit's price. This returns exactly that top-up.
+//
+// Shared deliberately: KitComponentsEditor's footer and getElPriceFromInventory (the price actually
+// charged) each used to compute this independently, and only the footer had it — so a kit header
+// billed roughly half of what its own breakdown showed. One implementation, one number.
+//
+// The flat rental cancels out algebraically and is NOT looked up here: the editor's per-unit figure
+// is `blend + extra + flatRental` and the delta is that minus `flatRental`, leaving just the recipe
+// part. Don't "fix" this by adding a rental lookup — that double-counts.
+export const kitFloralCompDelta = ({ comps, inventory, flowerPatterns, mandiCatalogue, floralSettings, rcFloralModeByKey, floralRatio, elSize }) => {
+  if (!Array.isArray(comps) || comps.length === 0) return 0;
+  const modes = rcFloralModeByKey || {};
+  const globalReal = Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
+  return comps.reduce((sum, c) => {
+    if (!c || c.patternId) return sum;   // recipe add-ons are priced separately, on top
+    const cItem = (inventory || []).find((i) => i.id === c.itemId);
+    if (!cItem) return sum;
+    const pat = matchFlowerPattern(cItem, flowerPatterns || []);
+    if (!pat) return sum;                // not a floral component — the overwhelming majority
+    // A component may pin its own size; with none it inherits the element's, and a missing size
+    // means "big" — the same fallback every other kit-pricing call site uses.
+    const rates = floralPatternUnitRates(pat, sizeClassToPatternKey(c.size || elSize || "B"), mandiCatalogue || [], floralSettings || {}, inventory);
+    if (!rates) return sum;
+    const sk = String(cItem.subCat || cItem.subcategory || pat.sub || "").trim().toLowerCase();
+    const subMode = sk ? modes[sk] : undefined;
+    const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : globalReal;
+    const realPct = (typeof c.realPct === "number" && c.realPct >= 0 && c.realPct <= 100) ? c.realPct : modeDefault;
+    const recipeMoney = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+    return sum + recipeMoney * (Number(c.qty) || 0);
+  }, 0);
+};
+
 const RC_UNIT_LABELS = {
   sqft: "/sqft", truss_sqft: "/truss sqft", rft: "/RFT", pc: "/pc", setup: "/setup",
   trip: "/trip", event: "/event", string: "/string", included: "Included", multiplier: "× mult",

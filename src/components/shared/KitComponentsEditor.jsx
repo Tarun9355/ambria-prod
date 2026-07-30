@@ -1,7 +1,7 @@
 import { useState, Fragment } from "react";
 import { IconBox } from "../icons.jsx";
 import { isHiddenSubcat } from "../../lib/rateCard";
-import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates } from "../../lib/ims/flowerHelpers";
+import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 import ItemHoverThumb from "./ItemHoverThumb";
 
@@ -99,13 +99,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Delta between the blended price and the flat rental kitTotalFromInventory already counted for
   // any floral-matched plain component — folded into `flowerTotal` (below) rather than double-
   // counting, and a true no-op for the vast majority of components that aren't floral.
-  const floralCompDelta = comps.reduce((s, c) => {
-    if (c.patternId) return s;
-    const cItem = (imsInventory || []).find(i => i.id === c.itemId);
-    const info = cItem ? compFloralInfo(cItem, c) : null;
-    if (!info) return s;
-    return s + (info.blendedUnit - info.flatRental) * (Number(c.qty) || 0);
-  }, 0);
+  // Now from the shared helper, which getElPriceFromInventory also uses — this footer and the price
+  // actually charged had drifted apart precisely because each computed it on its own.
+  const floralCompDelta = kitFloralCompDelta({
+    comps, inventory: imsInventory, flowerPatterns, mandiCatalogue,
+    floralSettings: _floralSettings, rcFloralModeByKey, floralRatio, elSize,
+  });
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
   const rentalMarked = priceForInvItem(item, _factorMap, imsInventory, isEdited ? comps : undefined);
   const kitBaseMarked = Math.round(kitBase * kitFactor);        // the console's OWN charge (base × its factor)
@@ -343,7 +342,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         })()}
       </div>
       <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
-        <span style={{ color: textS }}>Kit total = items ₹{itemsMarked.toLocaleString("en-IN")}{kitBaseMarked > 0 ? ` + console ₹${kitBaseMarked.toLocaleString("en-IN")}` : ""}{flowerTotal > 0 ? ` + recipe ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
+        <span style={{ color: textS }}>Kit total = addon ₹{itemsMarked.toLocaleString("en-IN")}{kitBaseMarked > 0 ? ` + main ₹${kitBaseMarked.toLocaleString("en-IN")}` : ""}{flowerTotal > 0 ? ` + recipe ₹${flowerTotal.toLocaleString("en-IN")}` : ""} = ₹{partsTotal.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
         <span style={{ color: indigo, fontWeight: 700 }}>{fmt ? fmt(partsTotal * qtyMultiplier) : `₹${(partsTotal * qtyMultiplier).toLocaleString("en-IN")}`}</span>
       </div>
     </div>

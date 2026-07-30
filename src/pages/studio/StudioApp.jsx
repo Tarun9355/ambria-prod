@@ -65,7 +65,7 @@ import {
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, priceForInvItem } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
@@ -2726,8 +2726,20 @@ export default function StudioApp() {
         .filter((si) => si.patternId)
         .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty, si }))
         .filter((x) => x.pattern);
-      if (subCatPattern || attachedPatterns.length) {
-        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0);
+      // (3) a plain component that is ITSELF a floral item — its own sub-category's recipe. Only its
+      //     flat rental reaches priceForInvItem, so the recipe money is topped up here. This was
+      //     missing: the kit's own breakdown (KitComponentsEditor's footer) counted it while the
+      //     charged price did not, so a console kit billed ₹3,746 against a ₹7,715 breakdown. Same
+      //     shared helper both sides now call, so they cannot disagree again.
+      const compDelta = kitFloralCompDelta({
+        comps: effectiveSubItems, inventory: imsInventory, flowerPatterns: floralSrc.flowerPatterns || [],
+        mandiCatalogue: floralSrc.mandiCatalogue || [], floralSettings: floralSrc,
+        rcFloralModeByKey, floralRatio, elSize: el.size,
+      });
+      // compDelta alone is enough to take this branch — a kit can have floral components without
+      // carrying a sub-category recipe or any add-on of its own.
+      if (subCatPattern || attachedPatterns.length || compDelta > 0) {
+        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
         return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
