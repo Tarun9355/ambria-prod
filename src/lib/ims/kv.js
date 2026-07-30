@@ -19,6 +19,24 @@ export const kvGet = async (key) => {
   }
 };
 
+// Same read, but it tells you WHY there is no value: `ok:false` means the read itself failed,
+// `ok:true, missing:true` means the row genuinely isn't there yet.
+//
+// kvGet collapses both cases to null. That is fine for load-time defaults, but it is unsafe for
+// read-modify-write on a shared blob: a failed read looks identical to an empty store, so merging
+// your change onto "nothing" and saving destroys everything that was already in there. That is
+// exactly how a day of video tagging (249 verifications) was lost on 30 Jul 2026. Any caller doing
+// read-merge-write on shared data should use this and abort when `ok` is false.
+export const kvTryGet = async (key) => {
+  try {
+    const { data, error } = await supabase.from("settings").select("value").eq("key", key).maybeSingle();
+    if (error) return { ok: false, error: error.message || "Read failed" };
+    return { ok: true, missing: !data, value: data ? (data.value ?? null) : null };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Network error" };
+  }
+};
+
 export const kvSet = async (key, value) => {
   try {
     const { error } = await supabase.from("settings").upsert({ key, value }, { onConflict: "key" });

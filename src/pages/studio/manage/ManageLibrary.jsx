@@ -2231,7 +2231,8 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                   {/* Quick actions */}
                   <div style={{display:"flex",gap:6,justifyContent:"flex-end",flexWrap:"wrap"}}>
-                    <button onClick={(e)=>{e.stopPropagation();const nh={...hiddenVideos};if(nh[v.id])delete nh[v.id];else nh[v.id]=true;saveHiddenVideos(nh);showMsg(nh[v.id]?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
+                    {/* Patch, not the whole map — see saveHiddenVideos. */}
+                    <button onClick={(e)=>{e.stopPropagation();const nowHidden=!hiddenVideos[v.id];saveHiddenVideos({[v.id]:nowHidden?true:null});showMsg(nowHidden?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
                       {hiddenVideos[v.id]?"👁 Unhide":"👁‍🗨 Hide"}
                     </button>
                     {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();if(!confirm("Delete this video from app?"))return;saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]);saveYtTags({[v.id]:null});setYtTagEdit(null);}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
@@ -2267,7 +2268,7 @@ export default function ManageLibrary({ ctx }) {
                 <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>changes save instantly</div>
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
-              <button onClick={() => { const nh = { ...hiddenVideos }; if (nh[bigTagVid]) delete nh[bigTagVid]; else nh[bigTagVid] = true; saveHiddenVideos(nh); showMsg(nh[bigTagVid] ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
+              <button onClick={() => { const nowHidden = !hiddenVideos[bigTagVid]; saveHiddenVideos({ [bigTagVid]: nowHidden ? true : null }); showMsg(nowHidden ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
               <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; saveYtTags({ [bigTagVid]: { ...vTag, _verified: true, ...stamp } }); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>

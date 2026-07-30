@@ -19,11 +19,21 @@ export const MANUAL_VID_SK = "ambria-manual-videos-v1";
 export const HIDDEN_VID_SK = "ambria-hidden-videos-v1";
 export const PIN_SK = "ambria-pin-cache-v1";
 
+// ═══ RETIRED KEYS ═══
+// These five blobs were migrated to real tables and the blobs deleted from `settings` on
+// 30 Jul 2026 (verified unread first — no kvGet/reliableSave/realtime path referenced them):
+//   ambria-clients-v1     → client_ledger table
+//   ambria-eventorders-v1 → event_orders table
+//   ambria-ims-blocks-v1  → blocks table
+//   ambria-library-v2     → library table
+//   ambria-ratecard-v4    → rate_card table
+// The constants are gone deliberately: leaving them would name keys that no longer exist, so any
+// future kvGet on one returns null and reads as "no data" — the same silent-empty trap that cost
+// 249 video verifications the same day. Use the tables.
+
 // ═══ ACTIVITY / NOTIFICATIONS / CLIENTS ═══
 export const NOTIF_SK = "ambria-notifications-v1";
-export const CLI_SK = "ambria-clients-v1";
 export const DT_SK = "ambria-datetypes-v1";
-export const EO_SK = "ambria-eventorders-v1";
 
 // ═══ PREFLIGHT AVAILABILITY ═══
 export const PIMAP_SK = "ambria-photo-imsmap-v1";
@@ -31,7 +41,6 @@ export const SCAN_HIST_SK = "ambria-scan-history-v1";
 
 // IMS read-only keys — on-demand fetch, NEVER in SHARED_KEYS (Studio only reads, never writes)
 export const IMS_INV_SK = "ambria-ims-inventory-v1";
-export const IMS_BLOCKS_SK = "ambria-ims-blocks-v1";
 export const IMS_MANDI_SK = "ambria-ims-mandi-v1";
 export const IMS_FLOWER_PATTERNS_SK = "ambria-ims-flower-patterns-v1";
 export const IMS_SETTINGS_SK = "ambria-ims-settings-v1";
@@ -53,13 +62,12 @@ export const MAX_NOTIFS = 200;
 export const FILTER_PRIORITY_SK = "ambria-filter-priority-v1";
 
 // ══ RATE CARD / TEMPLATES / ZONES / LIBRARY / TAXONOMY ══
-export const RC_SK = "ambria-ratecard-v4";
+// RC_SK_CATS and RC_SK_TR are still live blobs; the bare RC_SK item blob is retired (see above).
 export const RC_SK_CATS = "ambria-rccats-v1";
 export const RC_SK_TR = "ambria-transport-v3";
 export const TPL_SK = "ambria-templates-v4";
 export const ZONE_DEF_SK = "ambria-zonedefs-v3";
 export const TEAM_SK = "ambria-team-v1";
-export const LIB_SK = "ambria-library-v2";
 export const TAX_SK = "ambria-taxonomy-v2";
 export const TAX_BOTH_MIG_SK = "ambria-tax-venuetype-both-migrated-v1"; // one-time flag: injected the "Both" venue type into the shared taxonomy (so a later deliberate removal isn't auto-restored)
 export const TAG_KB_SK = "ambria-tag-knowledgebase-v1"; // AI-tagging knowledge base distilled from VERIFIED photos (per-area profiles + few-shot exemplars); rebuilt when stale

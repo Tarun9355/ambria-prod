@@ -25,6 +25,27 @@
 
 import { readFileSync, existsSync } from "fs";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OBSOLETE — do not run. This script reads and writes the `ambria-library-v2`
+// settings blob, which was verified unread and DELETED on 30 Jul 2026. The Library
+// has lived in the `library` TABLE since 29 Jun; the blob it targets was a month-stale
+// copy, so even before deletion this script's work never reached the real Library.
+//
+// Use Manage → Library → "🔄 Rebuild Library" instead (handleRebuildLibrary in
+// ManageLibrary.jsx) — same Cloudinary scan, writing to the table.
+//
+// Kept rather than deleted because the Cloudinary folder-walk below is still the
+// reference implementation. To revive it, repoint the read at line ~134 and the write
+// at ~149 from `settings?key=eq.<LIB_SK>` to the `library` table, then remove this guard.
+if (!process.env.I_KNOW_THIS_TARGETS_A_DELETED_BLOB) {
+  console.error(
+    "rebuild-library.js is obsolete: it targets the deleted 'ambria-library-v2' blob.\n" +
+    "Use Manage -> Library -> 'Rebuild Library' in the app instead.\n" +
+    "See the comment at the top of this file."
+  );
+  process.exit(1);
+}
+
 // ── Load .env / .env.local ─────────────────────────────────────────────────
 function loadDotEnv() {
   const merged = { ...process.env };

@@ -26,8 +26,9 @@ import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
-const BLOCKS_SK = "ambria-ims-blocks-v1"; // blocks document blob (faithful to reference Redis key)
-const RC_SK = "ambria-ratecard-v4"; // Studio Rate Card blob — the live source the Studio app writes
+// BLOCKS_SK / RC_SK removed 30 Jul 2026: both were unused here (declaration + comments only) and
+// their blobs are gone — blocks live in the `blocks` table and rate-card items in `rate_card`.
+// The comments below still name them when explaining that history, which is fine.
 const RC_SK_CATS = "ambria-rccats-v1"; // Rate Card *categories* — edited here in IMS as of Phase 3 (Studio's RateCard.jsx is now read-only)
 
 // blocks `blocks` TABLE rows (row-per-item) → in-memory { [itemId]: [reservations] } shape.

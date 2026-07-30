@@ -22,7 +22,7 @@ import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
-import { kvGet, kvSet, reliableSave } from "../../lib/ims/kv";
+import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
 import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
@@ -78,11 +78,11 @@ import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
   YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK,
-  NOTIF_SK, CLI_SK, DT_SK, EO_SK, PIMAP_SK, SCAN_HIST_SK,
+  NOTIF_SK, DT_SK, PIMAP_SK, SCAN_HIST_SK,
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
-  RC_SK, RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, LIB_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
+  RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
@@ -2188,6 +2188,10 @@ export default function StudioApp() {
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
           else if (key === YT_TAG_SK) { const yv = pj(await kvGet(YT_TAG_SK)); if (yv && typeof yv === "object") setYtVideoTags(yv); }
+          // Hidden videos belongs here for the same reason tags do: without it a tab's copy of who
+          // hid what goes stale for as long as it stays open, and the folder counts silently disagree
+          // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
+          else if (key === HIDDEN_VID_SK) { const hv = pj(await kvGet(HIDDEN_VID_SK)); if (hv && typeof hv === "object") setHiddenVideos(hv); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
       })
@@ -2532,19 +2536,39 @@ export default function StudioApp() {
   // below (so a tab's snapshot of OTHER people's edits can be stale for as long as the tab's open).
   // Callers pass a PATCH — just the id(s) they changed, mapped to the new tag object (or null to
   // delete that id) — never the whole ytVideoTags object.
+  //
+  // The read is not optional: whatever we write REPLACES everyone's tags. Read failures used to be
+  // swallowed and fall back to an empty map, so one failed request while tagging a single video wiped
+  // every other video's — that is how 249 verifications were lost on 30 Jul 2026. A failed or
+  // unparseable read now aborts and says so, making the worst case "your edit didn't save" rather
+  // than "everyone's work is gone". Returns {ok}; existing callers ignore it safely.
   const saveYtTags = useCallback(async (patch) => {
+    const res = await kvTryGet(YT_TAG_SK);
+    if (!res.ok) {
+      setSaveError({ label: "Video tags", error: `Couldn't read the current tags (${res.error}). Nothing was saved — no existing tags were touched. Check your connection and try again.` });
+      return { ok: false, error: res.error };
+    }
     let fresh = {};
-    try {
-      const raw = await kvGet(YT_TAG_SK);
-      const p = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
-      if (p && typeof p === "object") fresh = p;
-    } catch {}
+    if (res.value != null) {
+      try {
+        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
+        fresh = p;
+      } catch (e) {
+        // The row exists but we cannot understand it. Overwriting would replace real data with just
+        // this patch, so refuse — a stuck save is recoverable, a wipe is not.
+        setSaveError({ label: "Video tags", error: `The saved tags could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
+        return { ok: false, error: "unreadable" };
+      }
+    }
     const merged = { ...fresh };
     Object.entries(patch || {}).forEach(([id, val]) => {
       if (val === null || val === undefined) delete merged[id]; else merged[id] = val;
     });
     setYtVideoTags(merged);
-    await reliableSave(YT_TAG_SK, JSON.stringify(merged), "Video tags");
+    const saved = await reliableSave(YT_TAG_SK, JSON.stringify(merged), "Video tags");
+    if (!saved?.ok) setSaveError({ label: "Video tags", error: saved?.error || "Save failed" });
+    return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
   // AREAS ↔ ZONES SYNC (bidirectional additive) — VERBATIM
@@ -3902,9 +3926,36 @@ export default function StudioApp() {
     await reliableSave(MANUAL_VID_SK, JSON.stringify(nv), "Video");
   }, []);
 
-  const saveHiddenVideos = useCallback(async (nh) => {
-    setHiddenVideos(nh);
-    await reliableSave(HIDDEN_VID_SK, JSON.stringify(nh), "Hidden videos");
+  // Same contract and the same reasoning as saveYtTags above: callers pass a PATCH — `{id: true}` to
+  // hide, `{id: null}` to unhide — never the whole hiddenVideos map.
+  //
+  // Passing the whole map was the more dangerous shape here than it was for tags, because it didn't
+  // even need a failed request to lose data: `hiddenVideos` starts {} and is filled in by an async
+  // load, so hiding one video before that load landed wrote a ONE-entry map and erased every other
+  // hide. That same load window is what made the video count read 428 and then drop to 328.
+  const saveHiddenVideos = useCallback(async (patch) => {
+    const res = await kvTryGet(HIDDEN_VID_SK);
+    if (!res.ok) {
+      setSaveError({ label: "Hidden videos", error: `Couldn't read the current hidden list (${res.error}). Nothing was saved — no other video's hidden state was touched. Check your connection and try again.` });
+      return { ok: false, error: res.error };
+    }
+    let fresh = {};
+    if (res.value != null) {
+      try {
+        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
+        fresh = p;
+      } catch (e) {
+        setSaveError({ label: "Hidden videos", error: `The saved hidden list could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
+        return { ok: false, error: "unreadable" };
+      }
+    }
+    const merged = { ...fresh };
+    Object.entries(patch || {}).forEach(([id, val]) => { if (!val) delete merged[id]; else merged[id] = val; });
+    setHiddenVideos(merged);
+    const saved = await reliableSave(HIDDEN_VID_SK, JSON.stringify(merged), "Hidden videos");
+    if (!saved?.ok) setSaveError({ label: "Hidden videos", error: saved?.error || "Save failed" });
+    return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
   // ═══ CLOUDINARY VIDEO BROWSER (reference ~4415) — rewired /api/cloudinary → cldAdmin ═══
