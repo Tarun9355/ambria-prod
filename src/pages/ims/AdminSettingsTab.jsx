@@ -1328,12 +1328,57 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 const extra = Number(sizeData.extraCost) || 0;
                 const studioRate = Math.round(cost * markup) + extra;
                 const unitLbl = studioUnitLabel(pat?.unit ?? studioItem.unit);
+                // ── Where each rupee comes from ────────────────────────────────────────────────
+                // Recipes are colour-agnostic by design (Tier 2.1): a row points at the PARENT
+                // flower, and the parent's price is pinned by the Mandi panel to its CHEAPEST
+                // variant. The salesperson picks the actual colour later in Deal Check → 🎨, which
+                // overrides this base. That is all correct, but nothing here ever said so — so
+                // editing a variant that isn't the cheapest left this number still and read as a
+                // broken mandi→recipe sync. Spell out the basis instead of changing the maths.
+                const basis = (sizeData.flowers || []).map((fl, bi) => {
+                  if (fl?.invItemId) {
+                    const item = (inventory || []).find((i) => i.id === fl.invItemId);
+                    return { key: `i${bi}`, name: item?.name || "Inventory item", qty: Number(fl.qty) || 0,
+                      price: item ? (Number(item.price ?? item.rentalCost) || 0) : 0, unit: item?.unit || "", variants: [] };
+                  }
+                  const res = resolveMandiFlower(fl?.flowerId, settings.mandiCatalogue);
+                  const p = res?.parent;
+                  return { key: `f${bi}`, name: p?.name || "— not in mandi —", qty: Number(fl.qty) || 0,
+                    price: res ? res.price : 0, unit: p?.unit || "",
+                    variants: (p?.colorVariants || []).filter((v) => (Number(v.currentPrice) || 0) > 0) };
+                });
+                const anyMultiVariant = basis.some((b) => b.variants.length > 1);
                 return (
                   <div className="mt-2 border-t pt-2 space-y-0.5">
-                    <div className="flex items-center justify-between text-[10px]"><span className="text-gray-500">💰 Mandi cost</span><span className="font-semibold text-gray-800">₹{cost.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
+                    <div className="flex items-center justify-between text-[10px]"><span className="text-gray-500" title="Σ(qty × mandi price) for this size. For a flower with colour variants this is the base = cheapest variant.">💰 Mandi cost{anyMultiVariant ? " (base)" : ""}</span><span className="font-semibold text-gray-800">₹{cost.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
+                    {/* Per-ingredient basis — which price was used, and for a multi-variant flower,
+                        that it is the cheapest of N (tooltip lists every variant's price). */}
+                    {basis.length > 0 && (
+                      <div className="pl-1 space-y-0.5">
+                        {basis.map((b) => (
+                          <div key={b.key} className="flex items-start justify-between gap-1 text-[9px] text-gray-400 leading-tight">
+                            <span className="truncate" title={b.name}>{b.name}</span>
+                            <span className="whitespace-nowrap">
+                              ×{b.qty % 1 === 0 ? b.qty : b.qty.toFixed(2)} @ ₹{b.price.toLocaleString("en-IN")}
+                              {b.variants.length > 1 && (
+                                <span className="text-amber-600 ml-1"
+                                  title={`Base = cheapest of ${b.variants.length} variants:\n${b.variants.map((v) => `${v.name || "—"} ₹${Number(v.currentPrice) || 0}`).join("\n")}\n\nThe salesperson picks the colour in Studio Deal Check → 🎨, and that variant's price replaces this base.`}>
+                                  ↓{b.variants.length}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {extra > 0 && <div className="flex items-center justify-between text-[10px]"><span className="text-amber-700">➕ Extra (pot/base)</span><span className="font-semibold text-amber-700">₹{extra.toLocaleString("en-IN")}</span></div>}
                     <div className="flex items-center justify-between text-[10px]"><span className="text-emerald-700">→ Studio rate</span><span className="font-bold text-emerald-700">₹{studioRate.toLocaleString("en-IN")}<span className="text-[9px] text-emerald-600 font-normal ml-0.5">{unitLbl}</span></span></div>
                     <div className="text-[9px] text-gray-400 text-right italic">{markup}× markup{extra > 0 ? " + ₹" + extra : ""}</div>
+                    {anyMultiVariant && (
+                      <div className="mt-1 pt-1 border-t border-dashed text-[9px] text-amber-700 leading-snug">
+                        ↓N = base is that flower's <strong>cheapest</strong> variant. Raising a costlier variant won't move this — the salesperson picks the colour in Deal Check → 🎨 and that sets the real rate.
+                      </div>
+                    )}
                   </div>
                 );
               })()}
