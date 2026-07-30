@@ -85,6 +85,7 @@ import {
   RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
+import { rowToVideoTag, videoTagToRow, rowsToVideoTagMap } from "../../lib/studio/videoTags.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
 import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/tagFeedback.js";
 import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/photoCorrections.js";
@@ -2037,8 +2038,17 @@ export default function StudioApp() {
       try { const v = await kvGet(PREMIA_CFG_SK); if (v != null) { const pc = parse(v); if (pc && typeof pc === "object" && !Array.isArray(pc) && !cancelled) setPremiaConfig({ ...PREMIA_DEFAULTS, ...pc }); } } catch {}
       // Notifications
       try { const v = await kvGet(NOTIF_SK); if (v != null) { const np = parse(v); if (Array.isArray(np) && !cancelled) setNotifications(np); } } catch {}
-      // Video tags
-      try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
+      // Video tags — the `video_tags` TABLE is the source of truth (migration 023). The legacy
+      // YT_TAG_SK blob is still written as a mirror for one release, and is read here only as a
+      // fallback, so this deploy is safe whether or not the migration has been applied yet.
+      // Empty table also falls through to the blob: a fresh environment has rows only after backfill.
+      try {
+        const rows = await fetchAll("video_tags");
+        if (Array.isArray(rows) && rows.length && !cancelled) setYtVideoTags(rowsToVideoTagMap(rows));
+        else if (!cancelled) throw new Error("video_tags empty");
+      } catch {
+        try { const v = await kvGet(YT_TAG_SK); if (v != null) { const tp = parse(v); if (tp && typeof tp === "object" && !cancelled) setYtVideoTags(tp); } } catch {}
+      }
       // Client ledger — now row-per-client in the `client_ledger` TABLE (off the settings blob).
       // Seed the dirty-check baseline with what the DB actually holds, so the first save of the
       // session uploads only what genuinely changed instead of the entire ledger.
@@ -2187,7 +2197,10 @@ export default function StudioApp() {
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
-          else if (key === YT_TAG_SK) { const yv = pj(await kvGet(YT_TAG_SK)); if (yv && typeof yv === "object") setYtVideoTags(yv); }
+          // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
+          // subscription on the `video_tags` table now, and the blob is a write-only mirror during the
+          // transition. Rebuilding the whole map from that mirror could push a stale blob (the mirror
+          // write is best-effort) over fresh row updates that arrived on the other channel.
           // Hidden videos belongs here for the same reason tags do: without it a tab's copy of who
           // hid what goes stale for as long as it stays open, and the folder counts silently disagree
           // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
@@ -2233,6 +2246,23 @@ export default function StudioApp() {
         } else if (payload.new) {
           const it = rowToRcItem(payload.new); if (!it?.id) return;
           setRcItems((prev) => { const i = prev.findIndex((x) => x.id === it.id); const next = i >= 0 ? prev.map((x) => (x.id === it.id ? it : x)) : [...prev, it]; rcItemsRef.current = next; return next; });
+        }
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // ── Realtime: video tags, row-level. Replaces watching the whole YT_TAG_SK blob — one person
+  // verifying a video now patches one entry in every open tab instead of re-reading all 428. ──
+  useEffect(() => {
+    const ch = subscribeTable("video_tags", (payload) => {
+      try {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.video_id; if (!id) return;
+          setYtVideoTags((prev) => { if (!(id in prev)) return prev; const next = { ...prev }; delete next[id]; return next; });
+        } else if (payload.new?.video_id) {
+          const id = payload.new.video_id;
+          const tag = rowToVideoTag(payload.new);
+          setYtVideoTags((prev) => ({ ...prev, [id]: tag }));
         }
       } catch { /* ignore */ }
     });
@@ -2537,38 +2567,53 @@ export default function StudioApp() {
   // Callers pass a PATCH — just the id(s) they changed, mapped to the new tag object (or null to
   // delete that id) — never the whole ytVideoTags object.
   //
-  // The read is not optional: whatever we write REPLACES everyone's tags. Read failures used to be
-  // swallowed and fall back to an empty map, so one failed request while tagging a single video wiped
-  // every other video's — that is how 249 verifications were lost on 30 Jul 2026. A failed or
-  // unparseable read now aborts and says so, making the worst case "your edit didn't save" rather
-  // than "everyone's work is gone". Returns {ok}; existing callers ignore it safely.
+  // Now ROW-LEVEL against the `video_tags` table (migration 023), which is what CLAUDE.md rule 1
+  // asks for and what the blob made impossible: one video's edit touches one row, so a failed write
+  // costs that video and nothing else. The read-merge-whole-map dance is gone with it — that only
+  // ever existed to stop one tab's snapshot clobbering everyone else's tags, and rows can't.
   const saveYtTags = useCallback(async (patch) => {
-    const res = await kvTryGet(YT_TAG_SK);
-    if (!res.ok) {
-      setSaveError({ label: "Video tags", error: `Couldn't read the current tags (${res.error}). Nothing was saved — no existing tags were touched. Check your connection and try again.` });
-      return { ok: false, error: res.error };
-    }
-    let fresh = {};
-    if (res.value != null) {
-      try {
-        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
-        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
-        fresh = p;
-      } catch (e) {
-        // The row exists but we cannot understand it. Overwriting would replace real data with just
-        // this patch, so refuse — a stuck save is recoverable, a wipe is not.
-        setSaveError({ label: "Video tags", error: `The saved tags could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
-        return { ok: false, error: "unreadable" };
+    const entries = Object.entries(patch || {});
+    if (!entries.length) return { ok: true };
+    const toUpsert = [], toDelete = [];
+    for (const [id, val] of entries) (val === null || val === undefined ? toDelete : toUpsert).push([id, val]);
+    try {
+      if (toUpsert.length) {
+        const { error } = await supabase.from("video_tags")
+          .upsert(toUpsert.map(([id, val]) => videoTagToRow(id, val)), { onConflict: "video_id" });
+        if (error) throw new Error(error.message);
       }
+      for (const [id] of toDelete) {
+        const { error } = await supabase.from("video_tags").delete().eq("video_id", id);
+        if (error) throw new Error(error.message);
+      }
+    } catch (e) {
+      setSaveError({ label: "Video tags", error: `Save failed (${e.message}). Only the video${entries.length === 1 ? "" : "s"} you just edited ${entries.length === 1 ? "is" : "are"} affected — every other video's tags are untouched.` });
+      return { ok: false, error: e.message };
     }
-    const merged = { ...fresh };
-    Object.entries(patch || {}).forEach(([id, val]) => {
-      if (val === null || val === undefined) delete merged[id]; else merged[id] = val;
+    // Functional update: two concurrent saves can no longer overwrite each other's local state.
+    setYtVideoTags((prev) => {
+      const next = { ...prev };
+      for (const [id, val] of entries) { if (val === null || val === undefined) delete next[id]; else next[id] = val; }
+      return next;
     });
-    setYtVideoTags(merged);
-    const saved = await reliableSave(YT_TAG_SK, JSON.stringify(merged), "Video tags");
-    if (!saved?.ok) setSaveError({ label: "Video tags", error: saved?.error || "Save failed" });
-    return { ok: !!saved?.ok, error: saved?.error || null };
+    // Transitional mirror — keeps the legacy blob in step for one release so a rollback, or a tab
+    // still running the pre-migration bundle, sees current data. Best-effort by design: the table is
+    // the source of truth, so a mirror failure is swallowed rather than shown. kvTryGet means a
+    // failed read SKIPS the mirror write instead of replacing the blob with just this patch.
+    try {
+      const res = await kvTryGet(YT_TAG_SK);
+      if (res.ok) {
+        let fresh = {};
+        if (res.value != null) {
+          const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+          if (p && typeof p === "object") fresh = p;
+        }
+        const merged = { ...fresh };
+        for (const [id, val] of entries) { if (val === null || val === undefined) delete merged[id]; else merged[id] = val; }
+        await reliableSave(YT_TAG_SK, JSON.stringify(merged), "Video tags (legacy mirror)");
+      }
+    } catch { /* mirror only — the table already has the truth */ }
+    return { ok: true };
   }, []);
 
   // AREAS ↔ ZONES SYNC (bidirectional additive) — VERBATIM
