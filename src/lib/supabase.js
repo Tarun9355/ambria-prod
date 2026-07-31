@@ -55,9 +55,17 @@ export const deleteRow = async (table, id) => {
 };
 
 /** Subscribe to real-time changes on a table */
+// One channel PER CALLER, not per table. supabase.channel(name) returns the EXISTING channel when
+// the name matches, and postgres_changes callbacks cannot be added to a channel that has already
+// subscribed — so a second component watching the same table used to throw
+// "cannot add `postgres_changes` callbacks for realtime:realtime:<table> after `subscribe()`"
+// and take the whole screen down. Two components legitimately watch `library` (StudioApp's row
+// cache and Manage's chip counts), so the name has to be unique. Callers already removeChannel on
+// cleanup, so these do not accumulate.
+let channelSeq = 0;
 export const subscribeTable = (table, callback) => {
   return supabase
-    .channel(`realtime:${table}`)
+    .channel(`realtime:${table}:${++channelSeq}`)
     .on("postgres_changes", { event: "*", schema: "public", table }, callback)
     .subscribe();
 };
