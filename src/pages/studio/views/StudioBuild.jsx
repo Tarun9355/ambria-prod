@@ -510,7 +510,7 @@ export default function StudioBuild({ ctx }) {
     // video modal
     setVideoModal, setVideoPlaying,
     // misc
-    showMsg, askConfirm, saveLib, mergeLibItems, authUser, logVerificationEvent,
+    showMsg, askConfirm, saveLib, authUser, logVerificationEvent,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
   } = ctx;
@@ -2677,7 +2677,9 @@ undefined
           // This photo wasn't a Library photo yet (fresh upload / event photo) — create one now.
           const newId="LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
           const created={id:newId,url:correctPhoto.draftSrc,name:correctPhoto.name||"Untitled",tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,addedAt:Date.now(),source:"build",_verified:true,...stamp,_correctedOn:"build"};
-          mergeLibItems([created]);
+          // No mergeLibItems first — it writes libItemsRef, which saveLib diffs against to work out
+          // what changed, so pre-merging made it compare `created` to itself and skip the write.
+          // saveLib does the merge itself. Same bug as the Build photo upload in StudioApp.
           await saveLib([created]);
           // Point this zone's selection at the new Library entry going forward (same src, now backed by a real row).
           setElSelectedPhoto(p=>({...p,[zk]:{...p[zk],isLibrary:true,eventId:newId}}));

@@ -2389,6 +2389,14 @@ export default function StudioApp() {
   // the rows that actually changed vs. what was cached, DELETE only ids explicitly passed in
   // `deletedIds`, and MERGE `nl` into the existing cache (never replace it wholesale) — so saving
   // one edited photo can't wipe out everything else a screen has already loaded.
+  // Callers pass the rows they want written. `changed` diffs them against the CACHE so that the
+  // bulk form — saveLib(libItems.map(...)) — upserts one edited row instead of all ~5000.
+  //
+  // That makes one thing a trap: never mergeLibItems() a row into the cache before saving it. The
+  // row then equals its own "previous" value, `changed` comes out empty, and the write is skipped
+  // with no error. Two call sites did exactly that, and every Build-uploaded photo since was lost
+  // on refresh. saveLib already merges into libItemsRef and state below, so pre-merging is
+  // redundant as well as harmful.
   const saveLib = useCallback(async (nl, deletedIds) => {
     const prev = libItemsRef.current || [];
     const prevById = {}; prev.forEach((it) => { if (it && it.id) prevById[it.id] = it; });
@@ -6596,7 +6604,11 @@ export default function StudioApp() {
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
-    mergeLibItems([libImg]); saveLib([libImg]);
+    // NOT mergeLibItems first: that writes libItemsRef, which is exactly what saveLib diffs against
+    // to decide what changed. Pre-merging made saveLib compare the new photo to itself, find no
+    // difference, and skip the upsert entirely — so every Build upload since this was written lived
+    // in local state only and vanished on refresh. saveLib already merges into the ref and state.
+    saveLib([libImg]);
     logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
     selectElPhoto(r.elKey, photo);
