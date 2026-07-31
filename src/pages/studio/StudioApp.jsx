@@ -4432,11 +4432,30 @@ export default function StudioApp() {
     // allInhouseVenueOrParentNames also covers a video stored at the ambiguous PROPERTY level
     // (e.g. "Restro" itself, when a description named the property but not one of its rooms) —
     // plain allInhouseVenues (rooms only) would otherwise misfile such a video as "outside".
-    if (venueGroup === "inhouse") out = out.filter(v => v.venue && allInhouseVenueOrParentNames.includes(v.venue));
-    else if (venueGroup === "outside") {
-      out = out.filter(v => v.venue && !allInhouseVenueOrParentNames.includes(v.venue));
-      if (outsideSub === "empanelled") out = out.filter(v => allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
-      else if (outsideSub === "other") out = out.filter(v => !allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
+    // A video with NO venue tag belongs to neither group — 191 of 428 are in that state, which is
+    // why a group pill hides so much.
+    const groupOf = (v) => (!v.venue ? "none" : allInhouseVenueOrParentNames.includes(v.venue) ? "inhouse" : "outside");
+
+    // ── Permission scope: the ONLY hard boundary here ──────────────────────────────────────────
+    // A user restricted to inhouse must never be shown outside venues, whatever they click. This
+    // used to be conflated with the venueGroup pill, which meant the pill could not be relaxed
+    // without also breaking the restriction.
+    const scope = isAdmin ? "all" : (userVenueScope || "all");
+    if (scope === "inhouse" || scope === "outside") out = out.filter(v => groupOf(v) === scope);
+
+    // ── The Inhouse/Outside pill: a filter only until you pick a venue ─────────────────────────
+    // Once a specific venue is chosen, the venue IS the preference and the pill was merely how you
+    // navigated to it — so the references BELOW that venue's own videos should be every other
+    // reference available, not just ones from the same group. Picking Aura used to cap the page at
+    // the 130 inhouse videos and hide the other ~300. With no venue chosen the pill still filters,
+    // so browsing "just show me Outside" behaves as before.
+    if (browseVenues.length === 0) {
+      if (venueGroup === "inhouse") out = out.filter(v => groupOf(v) === "inhouse");
+      else if (venueGroup === "outside") {
+        out = out.filter(v => groupOf(v) === "outside");
+        if (outsideSub === "empanelled") out = out.filter(v => allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
+        else if (outsideSub === "other") out = out.filter(v => !allOutdoorDB.find(x => x.name === v.venue && x.empanelled));
+      }
     }
     // Venue is a PREFERENCE, not a filter. Too little is tagged per venue for an exact match to
     // leave a salesperson enough to show a client, so picking a venue no longer hides everything
@@ -4461,13 +4480,24 @@ export default function StudioApp() {
     // Applied last, so the chosen venue floats to the top of whatever the other filters left. A
     // stable partition, not a sort — order within each group is untouched. `_venueMatch` lets
     // Browse draw the divider; without one this reads as the venue filter having stopped working.
+    //
+    // Three tiers, because the pill above no longer filters once a venue is picked: the venue's own
+    // videos, then the rest of the group you were browsing, then everything else. Without the middle
+    // tier the references after Aura would be inhouse and outside shuffled together, which is worse
+    // than what it replaced even though it shows more.
     if (preferredVenues) {
-      const preferred = [], others = [];
-      for (const v of out) (preferredVenues.has(v.venue) ? preferred : others).push({ ...v, _venueMatch: preferredVenues.has(v.venue) });
-      out = [...preferred, ...others];
+      const atVenue = [], sameGroup = [], rest = [];
+      for (const v of out) {
+        const match = preferredVenues.has(v.venue);
+        const rec = { ...v, _venueMatch: match };
+        if (match) atVenue.push(rec);
+        else if (venueGroup !== "all" && groupOf(v) === venueGroup) sameGroup.push(rec);
+        else rest.push(rec);
+      }
+      out = [...atVenue, ...sameGroup, ...rest];
     }
     return out;
-  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
+  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
 
   // ── Active client + meeting number — VERBATIM ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);

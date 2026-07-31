@@ -490,8 +490,12 @@ export default function StudioBrowse({ ctx }) {
             </div>
           </div>
           <div style={{display:"flex",alignItems:"baseline",gap:9,marginBottom:12,flexWrap:"wrap"}}>
+            {/* The headline number is always what is ON SCREEN. It used to read "130 videos at
+                Aura", which was false — 130 was the whole Inhouse group while only 12 are tagged
+                Aura. No venue clause here any more: the section headings below carry the per-venue
+                counts, and repeating them next to the total is what made the two look contradictory. */}
             <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideos.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideos.length}</span>}</div>
-            <div style={{fontSize:12,color:textM}}>{browseVenues.length>0?`at ${browseVenues.join(", ")}`:venueGroup!=="all"?`(${venueGroup})`:""}</div>
+            <div style={{fontSize:12,color:textM}}>{browseVenues.length===0&&venueGroup!=="all"?`(${venueGroup})`:""}</div>
             {activeTotal>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:11,color:textM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
               <div className="sb-pill sb-ghost" onClick={clearAllFilters} style={ghostPill}>Clear all</div>
@@ -502,20 +506,33 @@ export default function StudioBrowse({ ctx }) {
               unlabelled, a list that still shows other venues just looks like a broken filter. */}
           {(()=>{
             const preferred = shownVideos.filter(v=>v._venueMatch);
-            const others = shownVideos.filter(v=>!v._venueMatch);
+            // Three groups, not two. The tail used to be labelled "from other venues", but ~191 of
+            // the library has no venue tag at all, so that heading was describing them wrongly. They
+            // are worth showing AND worth naming: an untagged video is a usable reference and a
+            // to-do at the same time, and lumping it in with real venues hides both facts.
+            const otherVenues = shownVideos.filter(v=>!v._venueMatch && v.venue);
+            const noVenue = shownVideos.filter(v=>!v._venueMatch && !v.venue);
             const grid = {display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14};
             const heading = (text,sub)=><div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 10px"}}>
               <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textM}}>{text}</span>
               {sub&&<span style={{fontSize:10.5,color:textM,fontWeight:400}}>{sub}</span>}
             </div>;
+            const rule = <div style={{height:1,background:border,margin:"22px 0 14px"}}/>;
             // No venue picked (or nothing matched it) — one plain grid, exactly as before.
-            if (!preferred.length || !others.length) return <div style={grid}>{shownVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
+            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div style={grid}>{shownVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
             return <>
               {heading(browseVenues.length===1?browseVenues[0]:"Selected venues",`${preferred.length} tagged here`)}
               <div style={grid}>{preferred.map(v=><VideoCard key={v.id} v={v}/>)}</div>
-              <div style={{height:1,background:border,margin:"22px 0 14px"}}/>
-              {heading("More references","from other venues")}
-              <div style={grid}>{others.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+              {otherVenues.length>0&&<>
+                {rule}
+                {heading("More references",`${otherVenues.length} from other venues`)}
+                <div style={grid}>{otherVenues.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+              </>}
+              {noVenue.length>0&&<>
+                {rule}
+                {heading("Not tagged to a venue",`${noVenue.length} — still usable, but nobody has said where they were shot`)}
+                <div style={grid}>{noVenue.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+              </>}
             </>;
           })()}
           {shownVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textM,background:cardBg,borderRadius:14,border:`1px dashed ${border}`}}>
