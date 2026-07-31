@@ -709,6 +709,9 @@ export default function StudioBuild({ ctx }) {
   const [correctPhoto, setCorrectPhoto] = useState(null);
   const [corrVenueGrp, setCorrVenueGrp] = useState(""); // build correction modal: inhouse|outside venue group
   const [gridZones, setGridZones] = useState({}); // per-zone: show the photo picker as a wrapping grid vs horizontal strip
+  // Name for the "Other" entry in the Add Zone picker. Local, not in ctx: it is transient text that
+  // only this panel reads, and it is cleared the moment the zone is added or the picker changes.
+  const [newCzOtherName, setNewCzOtherName] = useState("");
   const [phPage, setPhPage] = useState({});   // per-zone page index for the photo picker
   // Both side rails fold away together, from the one control in the Photo filters header.
   const [railsOpen, setRailsOpen] = useState(true);
@@ -2568,29 +2571,47 @@ undefined
       </div>);
     })}
 
-    {/* ═══ + ADD CUSTOM ZONE ═══ Pick a type to get a second Stage / Entry Passage / … that behaves
-        like the original — photo strip, elements, truss, platform, pricing — which is what sourceType
-        buys. Naming is automatic ("Stage (2)"), so the row is just the picker and the button; the old
-        free-text name box read as a second, competing way to add a zone and only caused confusion. ═══ */}
+    {/* ═══ + ADD CUSTOM ZONE ═══ Two things through one picker:
+        - A zone TYPE gives you a second Stage / Entry Passage / … that behaves exactly like the
+          original (photo strip, elements, truss, platform, pricing) — that is what sourceType buys.
+          Naming is automatic, "Stage (2)".
+        - "Other" is for a zone the list does not cover (Gajra Counter, Artist Stage). It has no
+          source type, so it gets no seeded photo strip — just a named zone you fill in yourself.
+        The name box only appears for Other. Showing it always was the earlier design and it read as
+        a second, competing way to add a zone. ═══ */}
     {(()=>{
-      const srcLabel = newCzSrc ? (zoneLabelsD[newCzSrc]?.label || newCzSrc) : "";
+      const OTHER = "__other__";
+      const isOther = newCzSrc === OTHER;
+      const srcLabel = (newCzSrc && !isOther) ? (zoneLabelsD[newCzSrc]?.label || newCzSrc) : "";
       // Second copy is "(2)" — the seed zone itself is the implicit (1).
-      const autoName = newCzSrc ? `${srcLabel} (${customZones.filter(cz=>cz.sourceType===newCzSrc).length+2})` : "";
+      const autoName = srcLabel ? `${srcLabel} (${customZones.filter(cz=>cz.sourceType===newCzSrc).length+2})` : "";
+      const otherName = newCzOtherName.trim();
+      const canAdd = isOther ? !!otherName : !!newCzSrc;
       const addZone = () => {
-        if (!newCzSrc) return;
+        if (!canAdd) return;
         const id = "cz_"+Date.now();
-        setCustomZones(p=>[...p,{id,name:autoName,sourceType:newCzSrc,icon:zoneLabelsD[newCzSrc]?.icon||""}]);
+        const name = isOther ? otherName : autoName;
+        // Other → no sourceType, so it renders in the plain custom-zone section rather than the
+        // main list, and carries no inherited photos or pricing.
+        setCustomZones(p=>[...p, isOther ? {id,name,icon:""} : {id,name,sourceType:newCzSrc,icon:zoneLabelsD[newCzSrc]?.icon||""}]);
         setEnabledEls(p=>({...p,[id]:true}));
-        setNewCzSrc("");
-        showMsg(`✓ ${autoName} added`,"green");
+        setNewCzSrc(""); setNewCzOtherName("");
+        showMsg(`✓ ${name} added`,"green");
         setTimeout(()=>document.getElementById(`zone-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80);
       };
       return <div style={{borderRadius:12,border:`2px dashed ${border}`,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
-        <select value={newCzSrc} onChange={e=>setNewCzSrc(e.target.value)} style={{width:190,padding:"8px 10px",borderRadius:9,border:`1px solid ${border}`,background:"#fff",color:"#111827",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
+        <select value={newCzSrc} onChange={e=>{setNewCzSrc(e.target.value); if(e.target.value!==OTHER) setNewCzOtherName("");}} style={{width:190,padding:"8px 10px",borderRadius:9,border:`1px solid ${border}`,background:"#fff",color:"#111827",fontSize:12.5,fontWeight:600,cursor:"pointer",flexShrink:0}}>
           <option value="" style={{color:"#111827",background:"#fff"}}>Choose a zone…</option>
           {zoneKeys.map(zk=><option key={zk} value={zk} style={{color:"#111827",background:"#fff"}}>{zoneLabelsD[zk]?.label||zk}</option>)}
+          <option value={OTHER} style={{color:"#111827",background:"#fff"}}>Other — type a name…</option>
         </select>
-        <button onClick={addZone} title={newCzSrc?`Adds "${autoName}" — same photos, elements and pricing as ${srcLabel}`:"Choose a zone first"} style={{...S.btn(!!newCzSrc),padding:"8px 16px",fontSize:11.5,opacity:newCzSrc?1:0.5,whiteSpace:"nowrap"}}>{newCzSrc?`+ Add ${autoName}`:"+ Add Zone"}</button>
+        {isOther&&<input autoFocus value={newCzOtherName} onChange={e=>setNewCzOtherName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addZone();}}
+          placeholder="e.g. Gajra Counter, Artist Stage" style={{...S.input,flex:1,marginBottom:0,fontSize:12.5,minWidth:0}}/>}
+        <button onClick={addZone}
+          title={isOther?(otherName?`Adds "${otherName}" — a named zone with no photos or pricing of its own`:"Type a name first"):(newCzSrc?`Adds "${autoName}" — same photos, elements and pricing as ${srcLabel}`:"Choose a zone first")}
+          style={{...S.btn(canAdd),padding:"8px 16px",fontSize:11.5,opacity:canAdd?1:0.5,whiteSpace:"nowrap",flexShrink:0}}>
+          {isOther?(otherName?`+ Add ${otherName}`:"+ Add Zone"):(newCzSrc?`+ Add ${autoName}`:"+ Add Zone")}
+        </button>
       </div>;
     })()}
 
