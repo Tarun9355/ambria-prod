@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useState, useRef, useEffect } from "react";
 import LazyYT from "../../../components/studio/LazyYT";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
+import { logVideoOpen, logPhotoOpen, logBulk } from "../../../lib/studio/userActions";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
@@ -459,9 +460,11 @@ export default function ManageLibrary({ ctx }) {
     try {
       await saveLib([], ids);
       ids.forEach((id) => libPage.removeItem(id));
+      logBulk(authUser, "photo.delete-orphans", ids.length, { ok: true }, { ids: ids.slice(0, 50) });
       showMsg(`✓ Deleted ${ids.length} orphaned row(s).`, "green");
       setOrphanScan({ running: false, msg: "", result: null });
     } catch (e) {
+      logBulk(authUser, "photo.delete-orphans", ids.length, { ok: false, error: e.message });
       showMsg("Delete failed: " + (e.message || "Unknown error"), "red");
     }
     setOrphanDeleting(false);
@@ -608,7 +611,7 @@ export default function ManageLibrary({ ctx }) {
           {libVisible.map(img => {
             const isSel = libSelected.has(img.id);
             return (
-            <div key={img.id} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : setLibEditImg(img)} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
+            <div key={img.id} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
               <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
@@ -1893,7 +1896,9 @@ export default function ManageLibrary({ ctx }) {
                       if (!window.confirm(`Clear tags on ${ids.length} "Needs review" video${ids.length === 1 ? "" : "s"} and move ${ids.length === 1 ? "it" : "them"} back to Untagged?\n\nThis wipes their existing venue/event/tier/style/color tags entirely, so you can re-tag them fresh (e.g. with "Tag all untagged" afterward). Cannot be undone.`)) return;
                       const patch = {};
                       ids.forEach(id => { patch[id] = null; });
-                      saveYtTags(patch);
+                      // Logged as a bulk action as well as per-video: one click, N videos wiped, and
+                      // the count is what you want when working out where tags went.
+                      saveYtTags(patch).then((res) => logBulk(authUser, "video.reset-tags", ids.length, res, { ids: ids.slice(0, 50) }));
                       showMsg(`Cleared tags on ${ids.length} video${ids.length === 1 ? "" : "s"} — moved to Untagged`, "green");
                     }} style={{ ...S.btn(false), fontSize: 10, padding: "6px 14px", color: "#E11D48", border: "1px solid #E11D48" }}>🗑 Reset Needs-review → Untagged ({cnt("review")})</button>
                   )}
@@ -2057,6 +2062,7 @@ export default function ManageLibrary({ ctx }) {
                       setYtPicker(null);
                     }
                   } else {
+                    logVideoOpen(authUser, v);
                     setBigTagVid(v.id); // open the full-screen editor (play + tag + hide)
                   }
                 }}>
@@ -2093,7 +2099,7 @@ export default function ManageLibrary({ ctx }) {
                       {rank<1e9&&<span title={editingVid===v.id?"Open in the tag editor — held at the top of the grid":`Tagged this session — ${rank===0?"the latest one":`${rank} video${rank===1?"":"s"} ago`}. Kept near the top so you can go back to it.`} style={{fontSize:9,color:accent,fontWeight:700,whiteSpace:"nowrap"}}>{editingVid===v.id?"★ Tagging":rank===0?"★ Just tagged":`★ #${rank+1}`}</span>}
                       {!hasTag&&<span style={{fontSize:9,color:"#F59E0B",fontWeight:600}}>Untagged</span>}
                       {hiddenVideos[v.id]&&<span style={{fontSize:9,color:textS,fontWeight:600}}>🙈 Hidden</span>}
-                      <button onClick={(e)=>{e.stopPropagation();setBigTagVid(v.id);}} title="Open the full-screen editor — play, tag, pick zone photos, hide" style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${accent}`,background:`${accent}12`,color:accent,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖥 Open editor</button>
+                      <button onClick={(e)=>{e.stopPropagation();logVideoOpen(authUser, v);setBigTagVid(v.id);}} title="Open the full-screen editor — play, tag, pick zone photos, hide" style={{padding:"2px 8px",borderRadius:6,border:`1px solid ${accent}`,background:`${accent}12`,color:accent,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🖥 Open editor</button>
                     </div>
                   </div>
                 </div>

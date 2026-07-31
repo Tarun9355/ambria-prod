@@ -86,6 +86,7 @@ import {
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 import { rowToVideoTag, videoTagToRow, rowsToVideoTagMap } from "../../lib/studio/videoTags.js";
+import { logWrite, installActionLogFlush } from "../../lib/studio/userActions.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
 import { fetchRecentCorrections, renderCorrectionsText } from "../../lib/studio/tagFeedback.js";
 import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/photoCorrections.js";
@@ -1836,8 +1837,15 @@ export default function StudioApp() {
   // snapshot and dropped the edits before it (tap Maroon then Navy Blue quickly and only Navy Blue
   // survived). saveYtTags writes the composed value here the instant it computes it, so the next
   // click resolves against it whether or not React has re-rendered yet.
+  // Read by saveYtTags at call time for the action log. Refs, not deps: saveYtTags is a stable
+  // useCallback([]) and must stay that way, and `allVideos` is defined further down the file.
+  const authUserRef = useRef(null);
+  const allVideosRef = useRef([]);
   const ytVideoTagsRef = useRef(ytVideoTags);
   useEffect(() => { ytVideoTagsRef.current = ytVideoTags; }, [ytVideoTags]);
+  useEffect(() => { authUserRef.current = authUser; }, [authUser]);
+  // Queued click rows are sent on tab hide/close so a browsing session isn't lost on navigate-away.
+  useEffect(() => installActionLogFlush(), []);
   // Serialises the video_tags writes so they reach the table in click order — see saveYtTags.
   const ytSaveChainRef = useRef(Promise.resolve());
   // Video tags reference library photos by id for their per-zone "default photo" (zonePhotos).
@@ -2637,6 +2645,21 @@ export default function StudioApp() {
     const mine = ytSaveChainRef.current.then(write, write);
     ytSaveChainRef.current = mine.catch(() => {});
     const res = await mine;
+    // Action log — every tag save, from anywhere, lands here rather than at the ~20 call sites, so
+    // it cannot be forgotten when a new one is added. Deliberately BEFORE the early return below:
+    // a failed save is the row that matters most, because it leaves no trace in the database at all
+    // and this is the only record that someone tried.
+    try {
+      const vids = allVideosRef.current || [];
+      for (const [id, val] of resolved) {
+        const cleared = val === null || val === undefined;
+        logWrite(authUserRef.current, cleared ? "video.tag.clear" : "video.tag", {
+          targetType: "video", targetId: id, targetName: vids.find((v) => v.id === id)?.title,
+          ok: res.ok, error: res.error,
+          detail: cleared ? null : { verified: !!val._verified, fields: Object.keys(val).filter((k) => k[0] !== "_") },
+        });
+      }
+    } catch { /* logging must never break the save it is logging */ }
     if (!res.ok) return res;
     // Transitional mirror — keeps the legacy blob in step for one release so a rollback, or a tab
     // still running the pre-migration bundle, sees current data. Best-effort by design: the table is
@@ -3789,6 +3812,9 @@ export default function StudioApp() {
     merged.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
     return merged;
   }, [ytVideos, manualVideos]);
+
+  // Lets saveYtTags name the video in the action log without taking allVideos as a dependency.
+  useEffect(() => { allVideosRef.current = allVideos; }, [allVideos]);
 
   const untaggedVideoCount = useMemo(() => allVideos.filter((v) => !hiddenVideos[v.id] && !ytVideoTags[v.id]).length, [allVideos, hiddenVideos, ytVideoTags]);
 
