@@ -148,14 +148,24 @@ function applyKeyset(q, sortCol, cursor) {
   return q.order(sortCol, { ascending: false, nullsFirst: false }).order("id", { ascending: false });
 }
 
+// A Build-uploaded photo belongs in the Build Added queue and nowhere else, so it is subtracted
+// from the other unverified buckets. Written as an `or` rather than a plain `neq` because
+// `tag_source <> 'build'` is NULL — not true — for the ~2800 rows where tag_source is null, so a
+// bare neq would silently drop every one of them from Needs Review.
+const NOT_BUILD = `tag_source.is.null,tag_source.neq.${TAG_SOURCE.BUILD}`;
+
 /**
  * Fetch one page of the library browse grid.
  * `status` — 'verified' | 'review' | 'untagged' (ignored when tagSource is given).
- * `tagSource` — 'manual' | 'build' — Manual/Build Added are informational subsets of Needs Review
- * (the "how did it get tagged" breakdown), so they exclude verified photos — once a human verifies
- * a photo it belongs to Verified only, not its original tag source.
- * Verified/Needs-Review/Untagged (the `status` values) are mutually exclusive and cover the
- * whole library; Manual/Build Tagged cut across Needs Review rather than sitting outside it.
+ * `tagSource` — 'manual' | 'build'.
+ *
+ * Both tagSource buckets exclude verified photos: once a human verifies a photo it belongs to
+ * Verified only, not to its original tag source. They differ in how they relate to the status
+ * buckets:
+ *   - Manual is still an informational SUBSET of Needs Review (the "how did it get tagged" cut).
+ *   - Build Added is EXCLUSIVE — a photo uploaded from Build is removed from Needs Review and
+ *     Untagged, because it is its own review queue and needs cross-checking against the build it
+ *     came from, not to be lost among ~1850 AI-tagged photos.
  */
 export async function fetchLibraryPage({
   status, tagSource, filters = {}, venueGroup, venueNames = [], inhouseVenueNames = [],
@@ -163,7 +173,11 @@ export async function fetchLibraryPage({
 } = {}) {
   let q = supabase.from("library").select(LIST_COLUMNS);
   if (tagSource) q = q.eq("tag_source", tagSource).neq("status", LIB_STATUS.VERIFIED);
-  else if (status) q = q.eq("status", status);
+  else if (status) {
+    q = q.eq("status", status);
+    // Verified is untouched — a verified photo has left the Build queue by definition.
+    if (status !== LIB_STATUS.VERIFIED) q = q.or(NOT_BUILD);
+  }
   q = applyCommonFilters(q, { filters, venueGroup, venueNames, inhouseVenueNames, search });
   const sortCol = status === LIB_STATUS.UNTAGGED && !tagSource ? "created_at" : "tagged_at";
   q = applyKeyset(q, sortCol, cursor);
@@ -183,10 +197,12 @@ export async function fetchLibraryCounts({ filters = {}, venueGroup, venueNames 
     supabase.from("library").select("id", { count: "exact", head: true }),
     { filters, venueGroup, venueNames, inhouseVenueNames, search }
   );
+  // Review/Untagged subtract the Build queue so the chip counts match the grids they open —
+  // see NOT_BUILD above for why this is an `or` and not a `neq`.
   const [verified, review, untagged, manual, build] = await Promise.all([
     base().eq("status", LIB_STATUS.VERIFIED),
-    base().eq("status", LIB_STATUS.REVIEW),
-    base().eq("status", LIB_STATUS.UNTAGGED),
+    base().eq("status", LIB_STATUS.REVIEW).or(NOT_BUILD),
+    base().eq("status", LIB_STATUS.UNTAGGED).or(NOT_BUILD),
     base().eq("tag_source", TAG_SOURCE.MANUAL).neq("status", LIB_STATUS.VERIFIED),
     base().eq("tag_source", TAG_SOURCE.BUILD).neq("status", LIB_STATUS.VERIFIED),
   ]);
