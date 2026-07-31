@@ -1830,6 +1830,16 @@ export default function StudioApp() {
   const [ytPicker, setYtPicker] = useState(null);
   const [ytLastFetch, setYtLastFetch] = useState(0);
   const [ytVideoTags, setYtVideoTags] = useState({});
+  // Synchronous mirror of ytVideoTags, so a burst of edits each builds on the previous one.
+  // React state only reaches an editor on the next render, and saveYtTags used to update it AFTER
+  // its network round-trip — so every chip clicked inside that window read the same pre-burst
+  // snapshot and dropped the edits before it (tap Maroon then Navy Blue quickly and only Navy Blue
+  // survived). saveYtTags writes the composed value here the instant it computes it, so the next
+  // click resolves against it whether or not React has re-rendered yet.
+  const ytVideoTagsRef = useRef(ytVideoTags);
+  useEffect(() => { ytVideoTagsRef.current = ytVideoTags; }, [ytVideoTags]);
+  // Serialises the video_tags writes so they reach the table in click order — see saveYtTags.
+  const ytSaveChainRef = useRef(Promise.resolve());
   // Video tags reference library photos by id for their per-zone "default photo" (zonePhotos).
   // Those ids came from a possibly-past session and aren't necessarily in the lazy library cache
   // yet (Build/cost-calc do a plain `libItems.find(id)`), so prefetch all of them once whenever
@@ -2571,31 +2581,63 @@ export default function StudioApp() {
   // asks for and what the blob made impossible: one video's edit touches one row, so a failed write
   // costs that video and nothing else. The read-merge-whole-map dance is gone with it — that only
   // ever existed to stop one tab's snapshot clobbering everyone else's tags, and rows can't.
+  //
+  // A patch value may be a FUNCTION `(prevTag) => newTag`. Prefer that form for any edit derived
+  // from the current tag (toggling one chip in an array, flipping one field): the function runs
+  // against the freshest tag we have — including edits still in flight — instead of against
+  // whatever the caller's render closed over. Plain-object values are still accepted for callers
+  // that genuinely mean "replace this video's tag wholesale" (AI tag save, Clear Tags).
   const saveYtTags = useCallback(async (patch) => {
     const entries = Object.entries(patch || {});
     if (!entries.length) return { ok: true };
+    const base = ytVideoTagsRef.current || {};
+    const resolved = entries.map(([id, val]) => [id, typeof val === "function" ? val(base[id] || {}) : val]);
+    // Snapshot only the ids we touch, so a failed save can put those back without disturbing others.
+    const before = new Map(resolved.map(([id]) => [id, base[id]]));
+    const applyLocal = (pairs) => {
+      const nextRef = { ...(ytVideoTagsRef.current || {}) };
+      for (const [id, val] of pairs) { if (val === null || val === undefined) delete nextRef[id]; else nextRef[id] = val; }
+      ytVideoTagsRef.current = nextRef;
+      // Functional update: two concurrent saves can no longer overwrite each other's local state.
+      setYtVideoTags((prev) => {
+        const next = { ...prev };
+        for (const [id, val] of pairs) { if (val === null || val === undefined) delete next[id]; else next[id] = val; }
+        return next;
+      });
+    };
+    // Optimistic — the chip lights up on the click that caused it, and the NEXT click composes on
+    // top of this value rather than on the last server round-trip. Rolled back below if the write
+    // fails, which is the only case where the UI would otherwise be showing an unsaved tag.
+    applyLocal(resolved);
     const toUpsert = [], toDelete = [];
-    for (const [id, val] of entries) (val === null || val === undefined ? toDelete : toUpsert).push([id, val]);
-    try {
-      if (toUpsert.length) {
-        const { error } = await supabase.from("video_tags")
-          .upsert(toUpsert.map(([id, val]) => videoTagToRow(id, val)), { onConflict: "video_id" });
-        if (error) throw new Error(error.message);
+    for (const [id, val] of resolved) (val === null || val === undefined ? toDelete : toUpsert).push([id, val]);
+    // Writes go out one at a time, in the order they were made. Each upsert carries the WHOLE tag
+    // and the table is last-write-wins, so two in flight at once can land out of order and leave the
+    // row on the older value — the edit looks applied until the next reload drops it. Chaining costs
+    // nothing here (tag edits are occasional and the UI already updated optimistically above).
+    const write = async () => {
+      try {
+        if (toUpsert.length) {
+          const { error } = await supabase.from("video_tags")
+            .upsert(toUpsert.map(([id, val]) => videoTagToRow(id, val)), { onConflict: "video_id" });
+          if (error) throw new Error(error.message);
+        }
+        for (const [id] of toDelete) {
+          const { error } = await supabase.from("video_tags").delete().eq("video_id", id);
+          if (error) throw new Error(error.message);
+        }
+      } catch (e) {
+        applyLocal([...before.entries()].map(([id, val]) => [id, val === undefined ? null : val]));
+        setSaveError({ label: "Video tags", error: `Save failed (${e.message}). Only the video${entries.length === 1 ? "" : "s"} you just edited ${entries.length === 1 ? "is" : "are"} affected — every other video's tags are untouched.` });
+        return { ok: false, error: e.message };
       }
-      for (const [id] of toDelete) {
-        const { error } = await supabase.from("video_tags").delete().eq("video_id", id);
-        if (error) throw new Error(error.message);
-      }
-    } catch (e) {
-      setSaveError({ label: "Video tags", error: `Save failed (${e.message}). Only the video${entries.length === 1 ? "" : "s"} you just edited ${entries.length === 1 ? "is" : "are"} affected — every other video's tags are untouched.` });
-      return { ok: false, error: e.message };
-    }
-    // Functional update: two concurrent saves can no longer overwrite each other's local state.
-    setYtVideoTags((prev) => {
-      const next = { ...prev };
-      for (const [id, val] of entries) { if (val === null || val === undefined) delete next[id]; else next[id] = val; }
-      return next;
-    });
+      return { ok: true };
+    };
+    // `.then(write, write)` rather than `.then(write)`: one rejected link must not stall the queue.
+    const mine = ytSaveChainRef.current.then(write, write);
+    ytSaveChainRef.current = mine.catch(() => {});
+    const res = await mine;
+    if (!res.ok) return res;
     // Transitional mirror — keeps the legacy blob in step for one release so a rollback, or a tab
     // still running the pre-migration bundle, sees current data. Best-effort by design: the table is
     // the source of truth, so a mirror failure is swallowed rather than shown. kvTryGet means a
@@ -2609,7 +2651,7 @@ export default function StudioApp() {
           if (p && typeof p === "object") fresh = p;
         }
         const merged = { ...fresh };
-        for (const [id, val] of entries) { if (val === null || val === undefined) delete merged[id]; else merged[id] = val; }
+        for (const [id, val] of resolved) { if (val === null || val === undefined) delete merged[id]; else merged[id] = val; }
         await reliableSave(YT_TAG_SK, JSON.stringify(merged), "Video tags (legacy mirror)");
       }
     } catch { /* mirror only — the table already has the truth */ }

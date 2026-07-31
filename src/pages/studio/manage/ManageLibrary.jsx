@@ -2053,7 +2053,7 @@ export default function ManageLibrary({ ctx }) {
                     const idx=events.findIndex(e=>e.id===ytPicker);
                     if(idx>=0){
                       const upd=[...events];upd[idx]={...upd[idx],video:`https://www.youtube.com/embed/${v.id}`};save(upd);
-                      saveYtTags({[v.id]:{...tag,linkedEvents:[...new Set([...(tag.linkedEvents||[]),ytPicker])]}});
+                      saveYtTags({[v.id]:t=>({...t,linkedEvents:[...new Set([...(t.linkedEvents||[]),ytPicker])]})});
                       setYtPicker(null);
                     }
                   } else {
@@ -2120,7 +2120,8 @@ export default function ManageLibrary({ ctx }) {
                       // Auto-sync group when venue is already set
                       const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
                       const setVidVenue = (val) => {
-                        if (hasDraft) { setAiVideoDraft(p => ({ ...p, tags: { ...p.tags, venue: val || undefined, venueCustom: undefined } })); } else { saveYtTags({ [v.id]: { ...tag, venue: val || undefined, venueCustom: undefined } }); }
+                        const setVenue = (t) => ({ ...t, venue: val || undefined, venueCustom: undefined });
+                        if (hasDraft) { setAiVideoDraft(p => ({ ...p, tags: setVenue(p.tags || {}) })); } else { saveYtTags({ [v.id]: setVenue }); }
                       };
                       const outsideFiltered = customOutdoor.filter(o => tagOutsideSub === "empanelled" ? o.empanelled : tagOutsideSub === "other" ? !o.empanelled : true);
                       return <>
@@ -2150,21 +2151,21 @@ export default function ManageLibrary({ ctx }) {
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Tier</div>
-                      <select value={tag.tier||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,tier:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,tier:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.tier||""} onChange={e=>{const val=e.target.value||undefined;const set=t=>({...t,tier:val});if(hasDraft){setAiVideoDraft(p=>({...p,tags:set(p.tags||{})}));}else{saveYtTags({[v.id]:set});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.tier, CATEGORIES).map(c=><option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Indoor / Outdoor</div>
-                      <select value={tag.io||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,io:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,io:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.io||""} onChange={e=>{const val=e.target.value||undefined;const set=t=>({...t,io:val});if(hasDraft){setAiVideoDraft(p=>({...p,tags:set(p.tags||{})}));}else{saveYtTags({[v.id]:set});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{venueTypeLabel(v)}</option>)}
                       </select>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>Time / Setting</div>
-                      <select value={tag.timeSetting||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,timeSetting:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,timeSetting:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.timeSetting||""} onChange={e=>{const val=e.target.value||undefined;const set=t=>({...t,timeSetting:val});if(hasDraft){setAiVideoDraft(p=>({...p,tags:set(p.tags||{})}));}else{saveYtTags({[v.id]:set});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
@@ -2172,7 +2173,7 @@ export default function ManageLibrary({ ctx }) {
                     {/* §23 Phase 2.9c — palette per video (drives Build screen paint picker grouping) */}
                     <div>
                       <div style={{fontSize:9,color:textS,marginBottom:3,fontWeight:600}}>🎨 Palette</div>
-                      <select value={tag.palette||""} onChange={e=>{if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,palette:e.target.value||undefined}}));}else{saveYtTags({[v.id]:{...tag,palette:e.target.value||undefined}});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
+                      <select value={tag.palette||""} onChange={e=>{const val=e.target.value||undefined;const set=t=>({...t,palette:val});if(hasDraft){setAiVideoDraft(p=>({...p,tags:set(p.tags||{})}));}else{saveYtTags({[v.id]:set});}}} style={{...S.select,fontSize:10,width:"100%",padding:"5px 6px",marginBottom:0}}>
                         <option value="">—</option>
                         {(imsPaletteCatalogue.length>0?imsPaletteCatalogue:[{name:"Custom"}]).map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
                       </select>
@@ -2184,10 +2185,16 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                       {taxOr(taxonomy.eventType, FUNCTIONS).map(f=>{
                         const sel=(tag.fn||[]).includes?.(f)||(typeof tag.fn==="string"&&tag.fn===f);
-                        return <span key={f} onClick={()=>{
-                          const cur=Array.isArray(tag.fn)?tag.fn:(tag.fn?[tag.fn]:[]);
+                        // Toggle off the LATEST tag, never this render's `tag` — a save is a network
+                        // round-trip, so consecutive quick taps would otherwise all rebuild the array
+                        // from the same pre-burst snapshot and keep only the last one.
+                        const toggleFn=(t)=>{
+                          const cur=Array.isArray(t.fn)?t.fn:(t.fn?[t.fn]:[]);
                           const next=cur.includes(f)?cur.filter(x=>x!==f):[...cur,f];
-                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,fn:next.length?next:undefined}}));}else{saveYtTags({[v.id]:{...tag,fn:next.length?next:undefined}});}
+                          return {...t,fn:next.length?next:undefined};
+                        };
+                        return <span key={f} onClick={()=>{
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:toggleFn(p.tags||{})}));}else{saveYtTags({[v.id]:toggleFn});}
                         }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
                           background:sel?"rgba(168,85,247,0.2)":"transparent",
                           border:`1px solid ${sel?"rgba(168,85,247,0.5)":border}`,
@@ -2201,10 +2208,13 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                       {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(s=>{
                         const sel=(tag.styles||[]).includes(s);
-                        return <span key={s} onClick={()=>{
-                          const cur=tag.styles||[];
+                        const toggleStyle=(t)=>{
+                          const cur=t.styles||[];
                           const next=cur.includes(s)?cur.filter(x=>x!==s):[...cur,s];
-                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,styles:next.length?next:undefined}}));}else{saveYtTags({[v.id]:{...tag,styles:next.length?next:undefined}});}
+                          return {...t,styles:next.length?next:undefined};
+                        };
+                        return <span key={s} onClick={()=>{
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:toggleStyle(p.tags||{})}));}else{saveYtTags({[v.id]:toggleStyle});}
                         }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
                           background:sel?"rgba(236,72,153,0.2)":"transparent",
                           border:`1px solid ${sel?"rgba(236,72,153,0.5)":border}`,
@@ -2218,10 +2228,13 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                       {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(c=>{
                         const sel=(tag.colors||[]).includes(c);
-                        return <span key={c} onClick={()=>{
-                          const cur=tag.colors||[];
+                        const toggleColor=(t)=>{
+                          const cur=t.colors||[];
                           const next=cur.includes(c)?cur.filter(x=>x!==c):[...cur,c];
-                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:{...p.tags,colors:next.length?next:undefined}}));}else{saveYtTags({[v.id]:{...tag,colors:next.length?next:undefined}});}
+                          return {...t,colors:next.length?next:undefined};
+                        };
+                        return <span key={c} onClick={()=>{
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:toggleColor(p.tags||{})}));}else{saveYtTags({[v.id]:toggleColor});}
                         }} style={{fontSize:9,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontWeight:600,
                           background:sel?"rgba(249,115,22,0.2)":"transparent",
                           border:`1px solid ${sel?"rgba(249,115,22,0.5)":border}`,
@@ -2239,7 +2252,7 @@ export default function ManageLibrary({ ctx }) {
                     {hasTag&&<button onClick={()=>saveYtTags({[v.id]:null})} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}
-                    <button onClick={()=>{const cur=ytVideoTags[v.id]||{};const wasVerified=!!cur._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};saveYtTags({[v.id]:{...cur,_verified:true,...stamp}});if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
+                    <button onClick={()=>{const wasVerified=!!(ytVideoTags[v.id]||{})._verified;const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};saveYtTags({[v.id]:t=>({...t,_verified:true,...stamp})});if(!wasVerified)logVerificationEvent?.({photoId:v.id,photoName:v.title,source:"video",kind:"video"});showMsg("✅ Video tags verified","green");}} style={{...S.btn(true),fontSize:9,padding:"4px 10px",background:"#059669"}}>{savedTag._verified?"✅ Verified":"✅ Verify tags"}</button>
                     <button onClick={()=>aiTagVideo(v.id)} disabled={aiTaggingVideo===v.id} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:accent,opacity:aiTaggingVideo===v.id?0.5:1}}>{aiTaggingVideo===v.id?"⏳ Tagging...":"📋 Tag from description"}</button>
                     <button onClick={()=>{setYtTagEdit(null);setCldOpen(null);}} style={{...S.btn(true),fontSize:9,padding:"4px 10px"}}>Done</button>
                   </div>
@@ -2253,8 +2266,16 @@ export default function ManageLibrary({ ctx }) {
       {bigTagVid && (() => {
         const v = allVideos.find(x => x.id === bigTagVid) || {};
         const vTag = ytVideoTags[bigTagVid] || {};
-        const updTag = (patch) => saveYtTags({ [bigTagVid]: { ...vTag, ...patch } });
-        const toggleArr = (field, val) => { const cur = Array.isArray(vTag[field]) ? vTag[field] : []; const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val]; updTag({ [field]: next.length ? next : undefined }); };
+        // Both go through saveYtTags' FUNCTION form. `vTag` is this render's snapshot, and a save
+        // takes a network round-trip, so anything derived from `vTag` at click time is stale for
+        // every further click in that window — clicking three colours quickly kept only the last,
+        // because each one spread a `colors` array that still predated its neighbours.
+        const updTag = (patch) => saveYtTags({ [bigTagVid]: (prev) => ({ ...prev, ...patch }) });
+        const toggleArr = (field, val) => saveYtTags({ [bigTagVid]: (prev) => {
+          const cur = Array.isArray(prev[field]) ? prev[field] : [];
+          const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val];
+          return { ...prev, [field]: next.length ? next : undefined };
+        } });
         const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
         const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
         const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 5 };
@@ -2269,7 +2290,7 @@ export default function ManageLibrary({ ctx }) {
               </div>
               <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
               <button onClick={() => { const nowHidden = !hiddenVideos[bigTagVid]; saveHiddenVideos({ [bigTagVid]: nowHidden ? true : null }); showMsg(nowHidden ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
-              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; saveYtTags({ [bigTagVid]: { ...vTag, _verified: true, ...stamp } }); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
+              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; saveYtTags({ [bigTagVid]: (prev) => ({ ...prev, _verified: true, ...stamp }) }); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
               <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
             </div>
             <div style={{ padding: "16px 22px" }}>
