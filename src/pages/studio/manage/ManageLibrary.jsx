@@ -9,6 +9,7 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
+import { supabase, subscribeTable } from "../../../lib/supabase";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
@@ -63,6 +64,21 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey, venueGroup, venueKey, debouncedSearch]);
   useEffect(() => { refreshCounts(); }, [refreshCounts, retryTick]);
+
+  // Keep the chips honest. They used to refresh only on mount, on a filter change, or while a bulk
+  // tag ran — so verifying one photo left its old bucket's number stale until you reloaded, and the
+  // chip could disagree with the grid it opens ("Showing 0 of 1"). Any write to `library`, by anyone,
+  // now re-counts.
+  //
+  // Debounced because a bulk tag or a folder import fires hundreds of row events: without it each one
+  // would trigger five COUNT queries. 1.5s is long enough to collapse a burst and short enough that a
+  // single verify feels immediate.
+  useEffect(() => {
+    let timer = null;
+    const bump = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { timer = null; refreshCounts(); }, 1500); };
+    const ch = subscribeTable("library", bump);
+    return () => { if (timer) clearTimeout(timer); try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, [refreshCounts]);
 
   const loadMore = useCallback(() => {
     if (loading || !hasMore || !cursor) return;
