@@ -97,8 +97,12 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   });
 
   // Selected pills carry a tick, so "which of these is on" survives a glance.
+  // `data-on` exposes selection to CSS. Selection is an inline style, so without it the stylesheet
+  // cannot tell a selected pill from an unselected one and `.sb-pill:hover` washed the gold fill
+  // off the selected ones — hovering something you had picked made it look like it was already
+  // being switched off.
   const Pill = ({ on, onClick, children, title, align }) => (
-    <div className="sb-pill" onClick={onClick} title={title} style={pill(on, align)}>
+    <div className="sb-pill" data-on={on ? "1" : "0"} onClick={onClick} title={title} style={pill(on, align)}>
       {on && <IconCheck size={9} />}{children}
     </div>
   );
@@ -112,7 +116,7 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
     <div style={{ marginTop: 9 }}>
       <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
         <span style={{ position: "absolute", left: 8, display: "flex", color: textM, pointerEvents: "none" }}><IconSearch size={11} /></span>
-        <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder}
+        <input className="sb-search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder}
           style={{ width: "100%", boxSizing: "border-box", padding: "5px 24px 5px 25px", borderRadius: 8, fontSize: 11,
             border: `1px solid ${value ? accent : hairline}`, background: isDark ? "rgba(255,255,255,0.04)" : "#fff", color: textP, outline: "none" }} />
         {value && <span onClick={() => onChange("")} title="Clear search" role="button"
@@ -139,13 +143,19 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // `cols` — 3 suits short values (Wedding, Gold, Indoor). Groups with long labels, notably
   // Palette ("Ivory & Rani Pink / Magenta") plus its swatch dots, pass 1 so each value gets a
   // full-width row instead of wrapping onto three cramped lines.
+  // Row spacing is tighter than it was: the header tile now carries its own 9px of vertical
+  // padding, so the previous 11 + 11 on top of that left the rows floating far apart.
   const Section = ({ id, label, count, last, open, onToggle, cols = 3, children }) => (
-    <div style={{ paddingBottom: last ? 0 : 11, marginBottom: last ? 0 : 11,
+    <div style={{ paddingBottom: last ? 0 : 5, marginBottom: last ? 0 : 5,
       borderBottom: last ? "none" : `1px solid ${hairline}` }}>
+      {/* The negative margin matches the panel body's 16px padding less a 4px inset, so the hover
+          fill reads as a full-width tile for the whole row rather than a band floating short of the
+          card edge; the taller padding gives it a tile's height. `width:auto` because those negative
+          margins already stretch it — width:100% would add 24px on top and overflow the panel. */}
       <button type="button" className="sb-head" onClick={onToggle}
         aria-expanded={open} aria-controls={`sb-sec-${id}`}
-        style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"5px 6px",margin:"0 -6px",
-          border:"none",background:"transparent",borderRadius:8,cursor:"pointer",textAlign:"left"}}>
+        style={{width:"auto",display:"flex",alignItems:"center",gap:7,padding:"9px 12px",margin:"0 -12px",
+          border:"none",background:"transparent",borderRadius:10,cursor:"pointer",textAlign:"left"}}>
         <span style={{width:4,height:4,borderRadius:"50%",flexShrink:0,
           background: count ? accent : (isDark ? "rgba(255,255,255,0.18)" : "rgba(26,26,46,0.16)")}}/>
         <span style={{fontSize:10,fontWeight:700,color:count?gold:textM,textTransform:"uppercase",letterSpacing:0.9,flexShrink:0}}>{label}</span>
@@ -195,12 +205,22 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // Hover/motion layer. Inline styles can't express :hover, so it lives here and is injected by
   // whichever page mounts the panel.
   const css = `
-.sb-pill{transition:background .15s ease,border-color .15s ease,color .15s ease,transform .12s ease}
+.sb-pill{transition:background .15s ease,border-color .15s ease,color .15s ease,transform .12s ease,box-shadow .15s ease}
 .sb-pill:hover{transform:translateY(-1px);border-color:${accent} !important;
   background:${isDark?"rgba(201,169,110,0.12)":"#FFF9EC"} !important;color:${gold} !important}
-.sb-ghost:hover{border-color:${accent} !important;color:${gold} !important}
+/* A SELECTED pill deepens instead of fading to the unselected hover tint — clicking it removes the
+   filter, so it should look like a solid thing you are about to switch off, not one going pale. */
+.sb-pill[data-on="1"]:hover{background:${isDark?"rgba(201,169,110,0.3)":"#EFD9A8"} !important;
+  box-shadow:0 1px 6px ${isDark?"rgba(0,0,0,0.45)":"rgba(201,169,110,0.4)"}}
+.sb-pill:active{transform:translateY(0) scale(.98)}
+.sb-ghost:hover{border-color:${accent} !important;color:${gold} !important;
+  background:${isDark?"rgba(201,169,110,0.08)":"#FFFBF2"} !important}
 .sb-head{transition:background .15s ease}
 .sb-head:hover{background:${isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.035)"} !important}
+/* The search inputs had no hover at all — nothing said they were interactive until focused. */
+.sb-search{transition:border-color .15s ease,background .15s ease}
+.sb-search:hover{border-color:${isDark?"rgba(201,169,110,0.55)":"rgba(201,169,110,0.7)"}}
+.sb-search:focus{border-color:${accent}}
 .sb-head:focus-visible{outline:2px solid ${accent};outline-offset:1px}
 .sb-panel{transition:box-shadow .24s ease}
 .sb-panel:hover{box-shadow:${isDark

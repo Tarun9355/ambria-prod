@@ -18,6 +18,9 @@ export default function StudioBrowse({ ctx }) {
   // ctx twin for the Outside list.
   const [venueQ, setVenueQ] = useState("");
   const [showMoreInhouse, setShowMoreInhouse] = useState(false);
+  // Palette runs to 33 entries at one per row, so it's capped until asked for — same treatment the
+  // inhouse venue list gets.
+  const [showMorePalette, setShowMorePalette] = useState(false);
   // Video id currently open in the "Fix taxonomy" modal (salesperson-facing correction,
   // separate from Manage's full tag editor) — null when closed.
   const [taxFixVid, setTaxFixVid] = useState(null);
@@ -282,7 +285,7 @@ export default function StudioBrowse({ ctx }) {
 .sb-cta:active,.sb-alt:active{transform:translateY(0) scale(0.98)}
 @media (prefers-reduced-motion: reduce){
   .sb-pill,.sb-head,.sb-card,.sb-thumb,.sb-play,.sb-title,.sb-cta,.sb-alt,.sb-gate{transition:none}
-  .sb-pill:hover,.sb-card:hover,.sb-cta:hover,.sb-alt:hover{transform:none}
+  .sb-pill:hover,.sb-card:hover,.sb-cta:hover,.sb-alt:hover,.sb-pill:active{transform:none}
   .sb-card:hover .sb-thumb,.sb-card:hover .sb-play{transform:none}
   .sb-head span[style*="rotate"]{transition:none}}
 `;
@@ -338,6 +341,8 @@ export default function StudioBrowse({ ctx }) {
                 {(userVenueScope==="all"||isAdmin)&&<Pill on={venueGroup==="all"} onClick={()=>{setVenueGroup("all");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);setShowMoreInhouse(false);setVenueQ("");}}>All</Pill>}
                 {(userVenueScope==="all"||userVenueScope==="inhouse"||isAdmin)&&<Pill on={venueGroup==="inhouse"} onClick={()=>{setVenueGroup("inhouse");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);setShowMoreInhouse(false);setVenueQ("");}}>Inhouse</Pill>}
                 {(userVenueScope==="all"||userVenueScope==="outside"||isAdmin)&&<Pill on={venueGroup==="outside"} onClick={()=>{setVenueGroup("outside");setBrowseVenues([]);setOutsideSub("all");setShowMoreOutside(false);setShowMoreInhouse(false);setVenueQ("");}}>Outside</Pill>}
+              {/* No per-section clear chip — the panel header's "Clear all" covers it, and tapping a
+                  selected venue pill deselects it. */}
               {/* Sub-venue pills for Inhouse — multi-select. Indented + ruled so it's obvious they
                   narrow the group above rather than being a seventh top-level filter. */}
               {/* One search box serves both groups — it only appears once a group is chosen, since
@@ -351,7 +356,6 @@ export default function StudioBrowse({ ctx }) {
                 {withSelected(inhouseVenuesVisible.slice(0,maxInhousePills),allInhouseVenues).map(v=>{const on=browseVenues.includes(v);return <Pill key={v} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)}>{v}</Pill>;})}
                 {inhouseOverflow>0&&!showMoreInhouse&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(true)} title={`Show ${inhouseOverflow} more venues`} style={ghostPill}>See all {inhouseVenuesVisible.length}</div>}
                 {showMoreInhouse&&!venueQ.trim()&&inhouseVenuesVisible.length>9&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(false)} title="Show fewer venues" style={ghostPill}>Show fewer</div>}
-                {browseVenues.length>0&&<div className="sb-pill sb-ghost" onClick={()=>setBrowseVenues([])} title="Clear selected venues" style={ghostPill}>✕</div>}
               </div>}
               {/* Sub-group for Outside */}
               {venueGroup==="outside"&&<Fragment>
@@ -370,8 +374,7 @@ export default function StudioBrowse({ ctx }) {
                   })()}
                   {overflowCount>0&&!showMoreOutside&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(true)} title={`Show ${overflowCount} more venues`} style={ghostPill}>See all {outsideVenuesVisible.length}</div>}
                   {showMoreOutside&&!venueQ.trim()&&outsideVenuesVisible.length>10&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(false)} title="Show fewer venues" style={ghostPill}>Show fewer</div>}
-                  {browseVenues.length>0&&<div className="sb-pill sb-ghost" onClick={()=>setBrowseVenues([])} title="Clear selected venues" style={ghostPill}>✕</div>}
-                </div>
+                  </div>
               </Fragment>}
             </FSection>
 
@@ -400,7 +403,10 @@ export default function StudioBrowse({ ctx }) {
             </FSection>
 
             {/* Palette */}
-            <FSection open={!!openSections["palette"]} onToggle={()=>toggleSection("palette")} id="palette" label="Palette" count={sectionCounts.palette} cols={1} last>
+            {/* Three columns, matching Venue and the other sections. Long names ("Ivory & Rani Pink
+                / Magenta") wrap inside their cell rather than widening it — the pill sets
+                whiteSpace:normal and the grid stretches every cell in a row to the same height. */}
+            <FSection open={!!openSections["palette"]} onToggle={()=>toggleSection("palette")} id="palette" label="Palette" count={sectionCounts.palette} cols={3} last>
               {(()=>{
                 const all = azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
                 const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
@@ -409,7 +415,10 @@ export default function StudioBrowse({ ctx }) {
                 // An active filter must never be hidden by the search — you'd be filtering on a
                 // palette with nothing on screen saying so, and no way to switch it off.
                 const selectedHidden = filterPalette.filter(c => all.includes(c) && !shown.includes(c));
-                const pill = (c) => {const on=filterPalette.includes(c);return <Pill key={c} on={on} align="start" onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;};
+                // Centred, not align="start" — that variant exists for full-width rows, where a long
+                // label centred away from its swatch reads as misaligned. In a 3-up grid the other
+                // sections all centre, so this matches them.
+                const pill = (c) => {const on=filterPalette.includes(c);return <Pill key={c} on={on} onClick={()=>toggleFilter(filterPalette,setFilterPalette,c)}>{c}</Pill>;};
                 return <>
                   <div style={{gridColumn:"1/-1"}}>
                     <FSearchBox value={paletteQ} onChange={setPaletteQ} placeholder="Search palettes…" resultCount={shown.length} totalCount={all.length}/>
@@ -418,7 +427,22 @@ export default function StudioBrowse({ ctx }) {
                   {/* Split name hits from colour-only hits — searching "gold" legitimately turns up
                       "Ivory & Peach" if gold is one of its anchour colours, but unlabelled that
                       reads as a broken search rather than a useful one. */}
-                  {shown.filter(c=>paletteMatches(c,paletteQ)).map(pill)}
+                  {(()=>{
+                    const nameHits = shown.filter(c=>paletteMatches(c,paletteQ));
+                    // Capped until "See all" — but never while searching (you asked for those
+                    // results) and never below what is already selected, which must stay visible.
+                    const capped = !showMorePalette && !paletteQ.trim();
+                    const LIMIT = 12;   // 4 rows at three columns
+                    const visible = capped ? nameHits.slice(0, LIMIT) : nameHits;
+                    const hiddenCount = nameHits.length - visible.length;
+                    const missedSelection = capped ? filterPalette.filter(c=>nameHits.includes(c) && !visible.includes(c)) : [];
+                    return <>
+                      {visible.map(pill)}
+                      {missedSelection.map(pill)}
+                      {hiddenCount>0&&<div className="sb-pill sb-ghost" onClick={()=>setShowMorePalette(true)} title={`Show ${hiddenCount} more palettes`} style={{...ghostPill,justifySelf:"start"}}>See all {nameHits.length}</div>}
+                      {showMorePalette&&!paletteQ.trim()&&nameHits.length>LIMIT&&<div className="sb-pill sb-ghost" onClick={()=>setShowMorePalette(false)} title="Show fewer palettes" style={{...ghostPill,justifySelf:"start"}}>Show fewer</div>}
+                    </>;
+                  })()}
                   {(()=>{const byColour=shown.filter(c=>!paletteMatches(c,paletteQ));return byColour.length===0?null:<>
                     <div style={{gridColumn:"1/-1",fontSize:9,color:textM,marginTop:2}}>Contains this colour</div>
                     {byColour.map(pill)}
