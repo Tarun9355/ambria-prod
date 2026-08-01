@@ -1,5 +1,5 @@
-import { Fragment, useState } from "react";
-import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
+import { Fragment, useState, useRef } from "react";
+import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconSparkle, IconCrown, IconSave, IconAlert, IconPlay,
   IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
@@ -58,6 +58,11 @@ export default function StudioBrowse({ ctx }) {
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   } = ctx;
+  // The sticky offset clears the header, plus the function tab strip when there is more than one
+  // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
+  const railTop = extraFunctions.length > 0 ? 120 : 70;
+  const railRef = useRef(null);
+  const railMaxH = useRailMaxHeight(railRef, railTop);
   // Search narrows what the filters already produced, so the two compose instead of competing.
   // Token-AND over the fields a card actually shows, so word order does not matter.
   const shownVideos = (() => {
@@ -216,7 +221,7 @@ export default function StudioBrowse({ ctx }) {
     // ═══ FILTER PANEL PRESENTATION ═══
     // Now sourced from components/studio/filterUI.jsx so Browse and Build share one panel
     // implementation and cannot drift apart. Emits identical markup to the previous inline copy.
-    const { hairline, gold, textM, ghostPill, Pill, Section: FSection, SearchBox: FSearchBox, css: filterCSS } = makeFilterUI({ isDark, accent, textP, S });
+    const { hairline, gold, textM, ghostPill, seeMorePill, Pill, Section: FSection, SearchBox: FSearchBox, css: filterCSS } = makeFilterUI({ isDark, accent, textP, S });
 
     // How many filters each section is applying — surfaced as a count chip on the section header
     // so you can tell at a glance which groups are narrowing the results.
@@ -318,8 +323,8 @@ export default function StudioBrowse({ ctx }) {
             `overscrollBehavior:contain` keeps that scroll from chaining back to the page at the
             ends. The earlier version of this capped the panel and added a fade cue that covered the
             last rows of pills — there is deliberately no overlay here, just a slim scrollbar. */}
-        <div style={{width:248,flexShrink:0,position:"sticky",top:extraFunctions.length>0?120:70,alignSelf:"flex-start",
-          maxHeight:`calc(100vh - ${(extraFunctions.length>0?120:70)+16}px)`,display:"flex"}}>
+        <div ref={railRef} style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
+          maxHeight:railMaxH,display:"flex"}}>
           <div style={{...S.card,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}}>
             {/* Panel header — total active count + one-click reset. Outside the scrollport, so it
                 stays visible while the sections below scroll. */}
@@ -354,8 +359,8 @@ export default function StudioBrowse({ ctx }) {
               </div>}
               {venueGroup==="inhouse"&&<div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,marginTop:8,paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
                 {withSelected(inhouseVenuesVisible.slice(0,maxInhousePills),allInhouseVenues).map(v=>{const on=browseVenues.includes(v);return <Pill key={v} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v)}>{v}</Pill>;})}
-                {inhouseOverflow>0&&!showMoreInhouse&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(true)} title={`Show ${inhouseOverflow} more venues`} style={ghostPill}>See all {inhouseVenuesVisible.length}</div>}
-                {showMoreInhouse&&!venueQ.trim()&&inhouseVenuesVisible.length>9&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(false)} title="Show fewer venues" style={ghostPill}>Show fewer</div>}
+                {inhouseOverflow>0&&!showMoreInhouse&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(true)} title={`Show ${inhouseOverflow} more venues`} style={seeMorePill}>See all {inhouseVenuesVisible.length} venues</div>}
+                {showMoreInhouse&&!venueQ.trim()&&inhouseVenuesVisible.length>9&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreInhouse(false)} title="Show fewer venues" style={seeMorePill}>Show fewer</div>}
               </div>}
               {/* Sub-group for Outside */}
               {venueGroup==="outside"&&<Fragment>
@@ -372,8 +377,8 @@ export default function StudioBrowse({ ctx }) {
                     const pinned=outdoorVenueList.filter(v=>browseVenues.includes(v.name)&&!slice.some(s=>s.name===v.name));
                     return [...slice,...pinned].map(v=>{const on=browseVenues.includes(v.name);return <Pill key={v.name} on={on} onClick={()=>toggleFilter(browseVenues,setBrowseVenues,v.name)} title={v.empanelled?"Empanelled venue":undefined}>{v.name}{v.empanelled?" ★":""}</Pill>;});
                   })()}
-                  {overflowCount>0&&!showMoreOutside&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(true)} title={`Show ${overflowCount} more venues`} style={ghostPill}>See all {outsideVenuesVisible.length}</div>}
-                  {showMoreOutside&&!venueQ.trim()&&outsideVenuesVisible.length>10&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(false)} title="Show fewer venues" style={ghostPill}>Show fewer</div>}
+                  {overflowCount>0&&!showMoreOutside&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(true)} title={`Show ${overflowCount} more venues`} style={seeMorePill}>See all {outsideVenuesVisible.length} venues</div>}
+                  {showMoreOutside&&!venueQ.trim()&&outsideVenuesVisible.length>10&&<div className="sb-pill sb-ghost" onClick={()=>setShowMoreOutside(false)} title="Show fewer venues" style={seeMorePill}>Show fewer</div>}
                   </div>
               </Fragment>}
             </FSection>
@@ -439,8 +444,8 @@ export default function StudioBrowse({ ctx }) {
                     return <>
                       {visible.map(pill)}
                       {missedSelection.map(pill)}
-                      {hiddenCount>0&&<div className="sb-pill sb-ghost" onClick={()=>setShowMorePalette(true)} title={`Show ${hiddenCount} more palettes`} style={{...ghostPill,justifySelf:"start"}}>See all {nameHits.length}</div>}
-                      {showMorePalette&&!paletteQ.trim()&&nameHits.length>LIMIT&&<div className="sb-pill sb-ghost" onClick={()=>setShowMorePalette(false)} title="Show fewer palettes" style={{...ghostPill,justifySelf:"start"}}>Show fewer</div>}
+                      {hiddenCount>0&&<div className="sb-pill sb-ghost" onClick={()=>setShowMorePalette(true)} title={`Show ${hiddenCount} more palettes`} style={seeMorePill}>See all {nameHits.length} palettes</div>}
+                      {showMorePalette&&!paletteQ.trim()&&nameHits.length>LIMIT&&<div className="sb-pill sb-ghost" onClick={()=>setShowMorePalette(false)} title="Show fewer palettes" style={seeMorePill}>Show fewer</div>}
                     </>;
                   })()}
                   {(()=>{const byColour=shown.filter(c=>!paletteMatches(c,paletteQ));return byColour.length===0?null:<>

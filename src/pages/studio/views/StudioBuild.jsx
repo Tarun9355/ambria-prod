@@ -1,5 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo } from "react";
-import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
+import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
@@ -684,7 +684,7 @@ export default function StudioBuild({ ctx }) {
   const zpGold  = isDark ? "#D9BE86" : "#8A6A2F";
   // Panel / section / pill come from the shared module, so this panel is literally the same
   // component tree as the Browse filters — the two cannot drift apart.
-  const { Panel: FPanel, Section: FSection, Pill: FPill, SearchBox: FSearchBox, ghostPill: fGhostPill, css: filterCSS } =
+  const { Panel: FPanel, Section: FSection, Pill: FPill, SearchBox: FSearchBox, seeMorePill: fSeeMorePill, css: filterCSS } =
     makeFilterUI({ isDark, accent, textP, S });
   const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
   const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
@@ -723,9 +723,16 @@ export default function StudioBuild({ ctx }) {
   const [zpVenueQ, setZpVenueQ] = useState("");
   const [zpVenueAll, setZpVenueAll] = useState(false);
   const ZP_VENUE_CAP = 8;
+  // Palette gets the same cap for the same reason — 33 entries pushed every group below it off the
+  // rail. 12 is four rows at three columns, matching Browse.
+  const [zpPaletteAll, setZpPaletteAll] = useState(false);
+  const ZP_PALETTE_CAP = 12;
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   const PH_PER_PAGE = railsOpen ? 4 : 8;      // photos, not more of them squeezed into a row
   const RAIL_W = 258;
+  const RAIL_TOP = 70;                        // the rails' sticky offset — clears the page header
+  const railRef = useRef(null);
+  const railMaxH = useRailMaxHeight(railRef, RAIL_TOP);
   // A filter change re-orders the whole matched set, so "page 3" of the old list is meaningless.
   useEffect(() => { setPhPage({}); }, [zpFilters]);
   const phDot = (on) => ({ minWidth: 27, height: 27, padding: "0 7px", borderRadius: 8, cursor: "pointer",
@@ -1077,13 +1084,13 @@ export default function StudioBuild({ ctx }) {
         { key:"eventType",    label:"Event type",    opts: taxOr(taxonomy.eventType, FUNCTIONS) },
         { key:"venueType",    label:"Venue type",    opts: taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]) },
         { key:"designStyle",  label:"Design style",  opts: taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]) },
-        { key:"colorPalette", label:"Color palette", cols:1, opts: paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]) },
+        { key:"colorPalette", label:"Color palette", cols:3, opts: paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]) },
         { key:"timeSetting",  label:"Day / Night",   opts: taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]) },
       ];
       const total = Object.values(zpFilters).flat().length;
       const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
       return <FPanel title="Photo filters" total={total} onClear={clearAll} note="Applies to every zone"
-        scroll="calc(100vh - 86px)"
+        scroll={railMaxH}
         action={<span className="rail-btn" onClick={()=>setRailsOpen(false)} title="Fold both side panels away and widen the build"
           style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.4,
             textTransform:"uppercase",color:textS,padding:"3px 7px",borderRadius:7,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>
@@ -1108,9 +1115,12 @@ export default function StudioBuild({ ctx }) {
           // paletteSearch is a generic token matcher with ranking (exact → prefix → word → rest);
           // only the anchor-colour lookup is palette-specific, so Venue reuses it without one.
           const matched = searchable ? paletteSearch(all, q, isPalette ? anchorsOf : undefined) : all;
-          // Cap only while browsing — a search or an explicit "See all" shows every hit.
-          const capped = isVenue && !zpVenueAll && !q.trim() && matched.length > ZP_VENUE_CAP;
-          const shown = capped ? matched.slice(0, ZP_VENUE_CAP) : matched;
+          // Cap only while browsing — a search or an explicit "See all" shows every hit. Both long
+          // lists cap; the short groups (3–8 values) have nothing to hide.
+          const cap = isVenue ? ZP_VENUE_CAP : isPalette ? ZP_PALETTE_CAP : 0;
+          const seeAll = isVenue ? zpVenueAll : zpPaletteAll;
+          const capped = !!cap && !seeAll && !q.trim() && matched.length > cap;
+          const shown = capped ? matched.slice(0, cap) : matched;
           // Never let the search OR the cap hide something that is actively filtering the photos.
           const selectedHidden = sel.filter(v => all.includes(v) && !shown.includes(v));
           const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{optLabel(v)}</FPill>;
@@ -1131,10 +1141,11 @@ export default function StudioBuild({ ctx }) {
             {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>{q.trim()?"Selected, outside this search":"Selected"}</div>}
             {selectedHidden.map(optPill)}
             {/* See all / Show fewer. Hidden while searching — the search already decides what shows. */}
-            {isVenue&&!q.trim()&&(capped||zpVenueAll)&&matched.length>ZP_VENUE_CAP&&
-              <div onClick={()=>setZpVenueAll(v=>!v)} role="button"
-                style={{...fGhostPill,gridColumn:"1/-1",textAlign:"center"}}>
-                {capped?`See all ${matched.length} venues`:"Show fewer"}
+            {searchable&&!q.trim()&&(capped||seeAll)&&matched.length>cap&&
+              <div className="sb-pill sb-ghost" onClick={()=>(isVenue?setZpVenueAll:setZpPaletteAll)(v=>!v)} role="button"
+                title={capped?`Show ${matched.length-cap} more`:`Show only the first ${cap}`}
+                style={fSeeMorePill}>
+                {capped?`See all ${matched.length} ${isVenue?"venues":"palettes"}`:"Show fewer"}
               </div>}
             {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:zpTextM}}>{g.empty}</span>}
           </FSection>;
@@ -1349,7 +1360,7 @@ undefined
   /* the spine still appears, it just does not grow into place */
   .el-row:hover::before{transform:scaleY(1)}
 }
-` + `@media (prefers-reduced-motion: reduce){.sb-pill,.sb-head{transition:none}.sb-pill:hover{transform:none}}`}</style>
+` + `@media (prefers-reduced-motion: reduce){.sb-pill,.sb-head,.sb-search{transition:none}.sb-pill:hover,.sb-pill:active{transform:none}}`}</style>
     {customPicker && (
       <InventoryItemPickerModal
         title={customPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
@@ -1393,7 +1404,7 @@ undefined
         as on Browse — always visible, no toggle. ═══ */}
     <div style={{display:"flex",gap:railsOpen?22:12,alignItems:"flex-start"}}>
       {railsOpen
-        ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start"}}>{ZP_PANEL}</div>
+        ? <div ref={railRef} style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{ZP_PANEL}</div>
         : railTab("left","Photo filters",<IconSliders size={14}/>)}
       <div style={{flex:1,minWidth:0}}>
 
@@ -2857,7 +2868,7 @@ undefined
     })()}
       </div>{/* /right column */}
       {PRICING_TILE&&(railsOpen
-        ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
+        ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
         : railTab("right","Live estimate",<IconBolt size={14}/>))}
     </div>{/* /two-column shell */}
   </div>

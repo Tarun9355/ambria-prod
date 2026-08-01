@@ -1,4 +1,46 @@
+import { useState, useLayoutEffect } from "react";
 import { IconCheck, IconChevron, IconSearch } from "../icons.jsx";
+
+// ═══ RAIL HEIGHT ═══ The filter rail is position:sticky with `top: stickyTop`, so it only sits
+// that far below the viewport top ONCE the page has scrolled enough to stick it. Until then it
+// starts wherever the layout put it — well below the header — and a height of
+// `calc(100vh - stickyTop)` runs off the bottom of the screen by however far down it began.
+//
+// That overflow is unreachable, not merely ugly. The body sets overscroll-behavior:contain (so a
+// wheel over the filters can't yank the page around), which means the wheel stops dead at the
+// panel's internal end and never chains out to scroll the page and stick the rail. With Palette
+// expanded the sections after it — Day / Night is last — sat in that dead zone with no way to
+// reach them.
+//
+// So measure the real top rather than assuming it. Recomputed on scroll and resize; once the rail
+// sticks the number stops changing on its own.
+export function useRailMaxHeight(ref, stickyTop, gap = 16) {
+  const [h, setH] = useState(`calc(100vh - ${stickyTop + gap}px)`);
+  useLayoutEffect(() => {
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const el = ref.current;
+      if (!el) return;
+      // Floor of 240px: on a very short window a rail collapsed to nothing is worse than one that
+      // overflows a little.
+      const next = Math.max(240, Math.round(window.innerHeight - el.getBoundingClientRect().top - gap)) + "px";
+      // Only commit real changes. The rail's height can feed back into page height when it is the
+      // tallest column, and re-setting the same value every scroll frame would spin.
+      setH((prev) => (prev === next ? prev : next));
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    measure();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [ref, stickyTop, gap]);
+  return h;
+}
 
 // ═══ PALETTE SEARCH ═══ Palette names are compound and inconsistently punctuated — "Ivory & Rani
 // Pink / Magenta", "white & black", "MIX PASTELS" — so a plain substring test makes you type the
@@ -133,6 +175,9 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
     padding: "5px 9px", borderRadius: 999, fontSize: 10, fontWeight: 600, cursor: "pointer",
     color: textM, border: `1px dashed ${hairline}`, background: "transparent", lineHeight: 1.35,
   };
+  // "See all / Show fewer" acts on the whole list rather than being one more value in it, so it
+  // spans every column and centres instead of sitting in a cell pretending to be an option.
+  const seeMorePill = { ...ghostPill, gridColumn: "1/-1", textAlign: "center", padding: "6px 9px" };
 
   // Collapsible section. Header is a real <button> with aria-expanded so keyboard and
   // screen-reader users get disclosure semantics, not just a clickable div.
@@ -238,7 +283,7 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   // @media block covering its own classes too, and a second one would just duplicate it.
   // Callers must include `.sb-pill` and `.sb-head` in their own reduced-motion rule.
 
-  const api = { hairline, gold, textM, pill, ghostPill, Pill, Section, Panel, SearchBox, css };
+  const api = { hairline, gold, textM, pill, ghostPill, seeMorePill, Pill, Section, Panel, SearchBox, css };
   _uiCache.set(cacheKey, { api, sRef });
   return api;
 }
