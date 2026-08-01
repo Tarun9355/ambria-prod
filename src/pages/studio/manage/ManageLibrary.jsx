@@ -2125,7 +2125,7 @@ export default function ManageLibrary({ ctx }) {
                   <div onClick={e=>e.stopPropagation()} style={{marginBottom:10,borderRadius:8,overflow:"hidden",background:"#000",aspectRatio:"16/9"}}>
                     {v.source==="cloudinary"&&v.videoUrl
                       ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
-                      : <LazyYT src={`https://www.youtube.com/embed/${v.id}`} poster={v.thumb}/>}
+                      : <LazyYT src={`https://www.youtube.com/embed/${v.id}`} poster={v.thumb} title={v.title}/>}
                   </div>
                   {/* AI Draft banner */}
                   {hasDraft&&<div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 12px",marginBottom:10,borderRadius:8,background:"rgba(201,169,110,0.12)",border:`1px solid ${accent}40`}}>
@@ -2320,7 +2320,7 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ marginBottom: 16, borderRadius: 12, overflow: "hidden", background: "#000", maxWidth: 760, aspectRatio: "16/9" }}>
                 {v.source === "cloudinary" && v.videoUrl
                   ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
-                  : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} />}
+                  : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} title={v.title} />}
               </div>
               {/* Venue (2-level chip picker — same pattern/shared toggle state as the inline grid
                   editor's own Venue row above); this full-screen editor previously had no way to

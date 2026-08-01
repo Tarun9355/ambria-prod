@@ -1417,7 +1417,7 @@ undefined
     {sourceEvent&&<div style={{...S.card,marginBottom:14,overflow:"hidden"}}>
       <div style={{display:"flex",gap:0}}>
         <div style={{width:168,minHeight:108,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
-          <LazyYT src={sourceEvent.video} gradient={sourceEvent.gradient} poster={sourceEvent.img||sourceEvent.photos?.[0]} style={{position:"absolute",inset:0}}/>
+          <LazyYT src={sourceEvent.video} gradient={sourceEvent.gradient} poster={sourceEvent.img||sourceEvent.photos?.[0]} title={sourceEvent.name} style={{position:"absolute",inset:0}}/>
         </div>
         <div style={{flex:1,padding:"10px 14px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>

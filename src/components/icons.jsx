@@ -374,3 +374,12 @@ export function IconLock({ size = 15 }) {
     </svg>
   );
 }
+
+// Four corners pushing outward — expand a thumbnail into the full-screen player.
+export function IconExpand({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5" />
+    </svg>
+  );
+}
