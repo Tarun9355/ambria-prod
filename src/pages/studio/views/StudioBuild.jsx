@@ -728,7 +728,10 @@ export default function StudioBuild({ ctx }) {
   const [zpPaletteAll, setZpPaletteAll] = useState(false);
   const ZP_PALETTE_CAP = 12;
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
-  const PH_PER_PAGE = railsOpen ? 4 : 8;      // photos, not more of them squeezed into a row
+  // One row, rails open or folded. Folding them used to add a second row of four, which is the
+  // opposite of the point — the extra width is meant to make the same four photos bigger, not to
+  // fit twice as many and push the zone's own controls off the bottom of the screen.
+  const PH_PER_PAGE = 4;
   const RAIL_W = 258;
   const RAIL_TOP = 70;                        // the rails' sticky offset — clears the page header
   const railRef = useRef(null);
@@ -1208,6 +1211,26 @@ export default function StudioBuild({ ctx }) {
       </div>
     );
   })();
+  // ═══ REFERENCE-BANNER UPLOAD ═══ Upload used to sit per zone, in the photo-strip header. It now
+  // lives once, on the reference banner. handleZoneUpload and applyZoneUpload still key everything
+  // off a zone, so a page-level control needs a target: default to the first switched-on zone, and
+  // the review modal offers a picker to change it before applying. With no zone on there is nothing
+  // to apply to, so the control says that instead of silently doing nothing.
+  const uploadTargetZone = [...zoneKeys, ...customZones.map(cz => cz.id)].find(k => enabledEls[k]) || null;
+  const uploadTargetLabel = uploadTargetZone
+    ? (customZones.find(cz => cz.id === uploadTargetZone)?.name || zoneLabelsD[uploadTargetZone]?.label || uploadTargetZone)
+    : "";
+  const BANNER_UPLOAD = (
+    <label className="zone-upload" data-busy={(zoneUploading || !uploadTargetZone) ? "1" : "0"}
+      title={uploadTargetZone
+        ? `Upload a client photo — goes to ${uploadTargetLabel}, changeable in the review step`
+        : "Switch on a zone first — an upload has to land somewhere"}
+      style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading?accent+"20":"transparent",color:accent,fontSize:10,fontWeight:600,opacity:uploadTargetZone?1:0.45,cursor:!uploadTargetZone?"not-allowed":zoneUploading?"wait":"pointer",display:"inline-flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
+      {zoneUploading?"Uploading…":<><IconCamera size={11}/>Upload</>}
+      <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading||!uploadTargetZone}
+        onChange={e=>{const f=e.target.files?.[0];if(f&&uploadTargetZone)handleZoneUpload(uploadTargetZone,f);e.target.value="";}}/>
+    </label>
+  );
   // Wider than S.main's 1200px cap, which left ~350px of dead gutter either side on a desktop
   // monitor and pushed the filter rail far off the left edge. Matches the Browse page.
   return (
@@ -1349,10 +1372,20 @@ export default function StudioBuild({ ctx }) {
 @media (prefers-reduced-motion: reduce){.pt-card,.pt-row{transition:none}}
 /* clickable inline-styled divs (wall chips, pickers) — same ring so nothing is left dead */
 .zone-row div[style*="cursor:pointer"]:not([style*="padding:14px"]):hover{box-shadow:0 0 0 2px ${accent}55 !important;border-radius:7px}
+/* ═══ ZONE UPLOAD ═══ It sits on its own strip now, outside .zone-row, so none of the rules above
+   reach it — on its own against the page background it read as a static label. Fills in on hover
+   and presses on click. Skipped mid-upload: the control is inert then, so it must not invite a
+   second click. */
+.zone-upload{transition:background .15s ease,border-color .15s ease,transform .12s ease,box-shadow .15s ease}
+.zone-upload[data-busy="0"]:hover{background:${accent}1F !important;border-color:${accent} !important;
+  transform:translateY(-1px);box-shadow:0 2px 8px ${isDark?"rgba(0,0,0,0.45)":"rgba(201,169,110,0.35)"}}
+.zone-upload[data-busy="0"]:active{transform:translateY(0) scale(.98);box-shadow:none}
+.zone-upload:focus-within{outline:2px solid ${accent};outline-offset:2px}
 undefined
 @media (prefers-reduced-motion: reduce){
-  .zone-row button,.zone-row select,.zone-row input,.zone-row span[title],.zone-row img{transition:none}
+  .zone-row button,.zone-row select,.zone-row input,.zone-row span[title],.zone-row img,.zone-upload{transition:none}
   .zone-row button:not(:disabled):hover,.zone-row button:not(:disabled):active{transform:none}
+  .zone-upload:hover,.zone-upload:active{transform:none}
 }
 @media (prefers-reduced-motion: reduce){
   .el-row,.el-row::before{transition:none}
@@ -1437,11 +1470,13 @@ undefined
               <div style={{fontSize:14.5,fontWeight:700}}>{sourceEvent.name}</div>
               <div style={{fontSize:11,color:textS,marginTop:2}}>{sourceEvent.venue} · {sourceEvent.fn} · {sourceEvent.space}</div>
             </div>
-            {showCosts&&<div style={{textAlign:"right"}}>
-              <div style={{fontSize:16,fontWeight:700,color:textP}}>{fmt(grandTotal)}</div>
-              <div style={{fontSize:9,color:textS}}>{fmt(totalCost())} decor + {fmt(transportCalc.total)} transport</div>
-              <span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
-            </div>}
+            {/* The running total lives in the Live Estimate rail, which is on screen the whole
+                time — repeating it here just gave the same number two homes. Only the tier chip
+                stays, since the rail states it once and this is where the reference is judged. */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+              {showCosts&&<span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>}
+              {BANNER_UPLOAD}
+            </div>
           </div>
           <div style={{fontSize:11,color:textS,lineHeight:1.45,marginBottom:6,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{sourceEvent.desc}</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
@@ -1592,6 +1627,11 @@ undefined
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {isOn&&showCosts&&!isCollapsed(k)&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(zoneTotal(k))}</div>}
+            {/* Photo-strip controls. They live up here rather than in the strip's own header so the
+                zone's whole control set sits in one row. stopPropagation because an OFF zone's
+                header toggles the zone — but these only render when it is already on. */}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>({...g,[k]:!g[k]}));}} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(!zpFilterOpen);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
             {/* The per-zone "Duplicate this zone" copy button is gone — it crowded the row and the
@@ -1609,18 +1649,9 @@ undefined
         {isOn&&<div style={{padding:"0 18px 16px"}}>
           {/* ═══ DYNAMIC PHOTO GALLERY — select a photo to load its pricing ═══ */}
           <div style={{marginBottom:12}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS,display:"flex",alignItems:"center",gap:6}}><IconCamera size={12}/>{el.label} — tap to apply pricing</div>
-                <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  {elSelectedPhoto[k]&&<div style={{fontSize:10,color:"#059669",fontWeight:600}}>✓ {elSelectedPhoto[k].eventName}</div>}
-                  <label style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading===k?accent+"20":"transparent",color:zoneUploading===k?accent:accent,fontSize:10,fontWeight:600,cursor:zoneUploading?"wait":"pointer",display:"flex",alignItems:"center",gap:3}}>
-                    {zoneUploading===k?"Uploading…":<><IconCamera size={11}/>Upload</>}
-                    <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
-                  </label>
-                  <button onClick={()=>setGridZones(g=>({...g,[k]:!g[k]}))} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>
-                  <button onClick={()=>setZpFilterOpen(!zpFilterOpen)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>
-                </div>
-              </div>
+              {/* The strip's own header row is gone. It repeated the zone name already in the card
+                  header, and its controls have moved up there; the selected photo is marked on the
+                  tile itself, so the ✓ id was a second copy of that too. */}
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
                   along the strip look like the venue pick silently failed. */}
               {!!(zpFilters.venue||[]).length&&matchedPhotos.length>0&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
@@ -2190,26 +2221,10 @@ undefined
             const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
             const fd=zc.floorDims||{};
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",minWidth:0}}>
-                  <span style={{fontSize:12.5,fontWeight:700,color:textP,display:"inline-flex",alignItems:"center",gap:7}}><IconRuler size={13}/>Zone Structure</span>
-                  {/* What adds up to the total on the right. Only the parts that cost something —
-                      listing the zeros was what made the old chip row noise. calcStructCost returns
-                      each of these separately and sums them into st.total, so the sum shown here is
-                      the sum being charged, not a re-derivation. */}
-                  {showCosts&&(()=>{
-                    const parts=[["Truss",st.truss],["Masking",st.masking],["Platform",st.platform],["Carpet",st.carpet],
-                      ["Arches",st.arches],["Pillars",st.pillars],["Glass",st.glass]].filter(([,v])=>(v||0)>0);
-                    if(!parts.length) return null;
-                    return <span style={{fontSize:10.5,color:textS,fontWeight:400}}>
-                      {parts.map(([l,v])=>`${l} ${fmt(v)}`).join("  +  ")}
-                    </span>;
-                  })()}
-                </div>
-                {showCosts&&<div style={{fontSize:13,fontWeight:700,color:textP,flexShrink:0}}>{fmt(st.total)}</div>}
-              </div>
-              {/* The "Includes" summary chip row was removed — it restated the per-section costs the
-                  cards below already show, and the panel header's own total covers the roll-up. */}
+              {/* The "Zone Structure" header row is gone. Its label named a panel you had already
+                  opened, and its Truss + Platform + Carpet breakdown and roll-up restated what the
+                  truss and floor cards below print on their own headers. Same reason the "Includes"
+                  chip row went earlier. */}
               {/* ── TRUSS (with masking nested inside it) → then the floor card ── */}
               
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}

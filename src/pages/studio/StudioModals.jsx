@@ -29,6 +29,8 @@ export default function StudioModals({ ctx }) {
     showMsg, pickAndLoad, fmt, getFullCost,
     // zoneUploadReview
     zoneUploadReview, setZoneUploadReview, zoneLabelsD, accent, cardBg, S,
+    // Zone list for the review modal's target picker — the upload starts page-level now.
+    zoneKeys, enabledEls, customZones,
     // Full taxonomy tag set for the upload-review modal — same fields the Manage → Library editor
     // offers, so a photo uploaded from Build is tagged once here instead of being corrected later.
     taxonomy, TAX_LABELS, leafInhouseVenues, allInhouseVenues, allOutdoorDB, accentText,
@@ -156,7 +158,19 @@ export default function StudioModals({ ctx }) {
       {zoneUploadReview&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setZoneUploadReview(null)}>
         <div style={{background:cardBg,borderRadius:16,maxWidth:700,width:"100%",maxHeight:"90vh",overflow:"hidden",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
           <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:accent+"08"}}>
-            <div style={{fontSize:16,fontWeight:700,color:accent}}>📷 Review Upload → {zoneLabelsD[zoneUploadReview.elKey]?.label||zoneUploadReview.elKey}</div>
+            <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+              <div style={{fontSize:16,fontWeight:700,color:accent,whiteSpace:"nowrap"}}>📷 Review Upload →</div>
+              {/* The upload now starts from the reference banner, which has no zone of its own, so it
+                  arrives pointed at the first switched-on zone. Retarget it here rather than making
+                  people cancel and re-upload from somewhere else. */}
+              <select value={zoneUploadReview.elKey||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,elKey:e.target.value})}
+                title="Which zone this photo applies to"
+                style={{...S.select,width:"auto",fontSize:13,fontWeight:700,padding:"4px 8px",color:accent}}>
+                {[...(zoneKeys||[]), ...((customZones||[]).map(cz=>cz.id))]
+                  .filter(k=>enabledEls?.[k]||k===zoneUploadReview.elKey)
+                  .map(k=><option key={k} value={k}>{(customZones||[]).find(cz=>cz.id===k)?.name||zoneLabelsD[k]?.label||k}</option>)}
+              </select>
+            </div>
             <button onClick={()=>setZoneUploadReview(null)} style={{background:"transparent",border:"none",color:textS,fontSize:18,cursor:"pointer",fontWeight:700}}>✕</button>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
@@ -807,7 +821,7 @@ export default function StudioModals({ ctx }) {
           </div>
           <div style={{padding:"14px 20px",borderTop:`1px solid ${border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
             <button onClick={()=>setZoneUploadReview(null)} style={S.btn(false)}>Cancel</button>
-            <button onClick={applyZoneUpload} style={{...S.btn(true),padding:"10px 24px",fontSize:13}}>✓ Apply to {zoneLabelsD[zoneUploadReview.elKey]?.label||"Zone"}</button>
+            <button onClick={applyZoneUpload} style={{...S.btn(true),padding:"10px 24px",fontSize:13}}>✓ Apply to {(customZones||[]).find(cz=>cz.id===zoneUploadReview.elKey)?.name||zoneLabelsD[zoneUploadReview.elKey]?.label||"Zone"}</button>
           </div>
         </div>
       </div>}
