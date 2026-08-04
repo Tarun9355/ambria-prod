@@ -30,15 +30,41 @@ export const TAG_SOURCE = { MANUAL: "manual", BUILD: "build" };
 // else (inventory/prop/texture assets, production reference shots, etc.) is excluded from the
 // Studio Library UI and from anything the AI tagger targets, even though the
 // rows stay in the table untouched (non-destructive, query-time filter only).
-const ALLOWED_SOURCE_FOLDERS = ["ambria", "client-uploads", "inhouse venues", "Outside Venues"];
+// Both spellings on purpose. Rows written before the Supabase Storage migration carry the
+// Cloudinary folder names ("inhouse venues", "Outside Venues"); anything written since carries
+// the sanitised Storage key ("inhouse-venues", "outside-venues"), because the migration
+// lowercased folders and turned spaces into dashes. Listing only one set would make a row
+// disappear from Manage the moment it was re-saved — the filter is `IN`, so an unlisted value
+// hides the row from every list and count query at once.
+const ALLOWED_SOURCE_FOLDERS = [
+  "ambria", "client-uploads", "inhouse venues", "Outside Venues",
+  "inhouse-venues", "outside-venues", "ambria-ref", "production-ref", "mandi",
+];
 
-// Cloudinary secure_url is ".../upload/v<version>/<public_id>.<ext>" — the public_id's first
-// path segment is the top-level folder the image lives in.
+// The top-level folder an image lives in, taken from its URL. Two shapes to handle since the
+// move to Supabase Storage:
+//
+//   Supabase   .../object/public/<bucket>/<folder>/<file>
+//   Cloudinary .../upload/v<version>/<folder>/<file>
+//
+// Getting this wrong is silent and total: every list and count query filters on
+// `source_folder IN ALLOWED_SOURCE_FOLDERS`, so an unrecognised value hides the row from Manage
+// entirely. The Cloudinary-only version returned "https:" for Supabase URLs (no "/upload/" to
+// split on, so it fell through to the protocol), which is exactly how the first Build uploads
+// after the migration vanished from the Build Added queue.
 function deriveSourceFolder(url) {
   if (!url) return null;
-  const afterUpload = String(url).replace(/^.*\/upload\/(v\d+\/)?/, "");
-  const first = afterUpload.split("/")[0] || "";
-  if (!first) return null;
+  const s = String(url);
+  let rest;
+  const sb = s.match(/\/object\/(?:public|sign)\/[^/]+\/(.+)$/);   // Supabase Storage
+  if (sb) rest = sb[1];
+  else {
+    const cld = s.match(/\/upload\/(?:v\d+\/)?(.+)$/);              // Cloudinary
+    if (!cld) return null;                                          // neither — better null than "https:"
+    rest = cld[1];
+  }
+  const first = rest.split("/")[0] || "";
+  if (!first || !rest.includes("/")) return null;                   // a bare filename has no folder
   try { return decodeURIComponent(first); } catch { return first; }
 }
 
