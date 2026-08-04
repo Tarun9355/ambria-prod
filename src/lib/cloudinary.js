@@ -1,24 +1,15 @@
-// ─── Cloudinary (unsigned upload — safe client-side, no secret) ───────────────
-// Matches the reference IMS app's Cloudinary config exactly.
+// ─── Cloudinary — READ-ONLY from here on ──────────────────────────────────────
+// Uploads moved to Supabase Storage on 2026-08-04 (see src/lib/storage.js). The unsigned
+// upload preset, the upload URLs and uploadAudioToCloudinary were deleted rather than left
+// in place: a dormant export is the easiest thing in the world to import by accident, and
+// one new call site would silently start scattering media across two hosts again.
+//
+// What remains is cldAdmin — the Admin-API proxy that still powers Manage → Library's
+// Cloudinary browser and its Rebuild/Find-Orphaned tools, which read the legacy account.
 export const IMS_CLD_CLOUD = "dy9wfqhry";
-export const IMS_CLD_PRESET = "z3nlj6cx";
-export const IMS_CLD_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${IMS_CLD_CLOUD}/image/upload`;
-// `auto` resource type — auto-detects audio/video (used for on-site voice notes).
-export const IMS_CLD_AUTO_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${IMS_CLD_CLOUD}/auto/upload`;
 
-// Upload a recorded audio blob (voice note) via the unsigned preset → returns the hosted URL.
-export async function uploadAudioToCloudinary(blob) {
-  const fd = new FormData();
-  fd.append("file", blob);
-  fd.append("upload_preset", IMS_CLD_PRESET);
-  const r = await fetch(IMS_CLD_AUTO_UPLOAD_URL, { method: "POST", body: fd });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.secure_url) throw new Error(data?.error?.message || data?.error || `Upload failed (${r.status})`);
-  return data.secure_url;
-}
-
-// Downscale/compress large images client-side before upload (prevents huge payloads).
-// Faithful copy of reference `compressImageForCloudinary`.
+// Kept here (not in storage.js) because it long pre-dates the migration and several callers
+// still import it by this name; storage.js re-exports the same logic as compressImageForUpload.
 export function compressImageForCloudinary(file, maxW = 2000, quality = 0.8) {
   return new Promise((resolve) => {
     if (!file || !file.type?.startsWith("image/") || file.size < 200000) { resolve(file); return; }

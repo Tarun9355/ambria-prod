@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { fetchAll } from "../../lib/supabase";
+import { uploadToStorage, STORAGE_FOLDERS } from "../../lib/storage";
 
 // ═══ superset-schema field accessors (copied VERBATIM from reference module scope) ═══
 // IMS items post-02-May migration carry BOTH legacy (cat/qty/price/img/size) and new
@@ -49,13 +50,8 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
     const file = e.target.files?.[0]; if (!file) return;
     setCPhotoUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("upload_preset", "z3nlj6cx");
-      fd.append("folder", "production-ref");
-      const res = await fetch("https://api.cloudinary.com/v1_1/dy9wfqhry/image/upload", { method: "POST", body: fd });
-      const data = await res.json();
-      if (data.secure_url) setCForm(f => ({ ...f, photo: data.secure_url }));
+      const url = await uploadToStorage(file, STORAGE_FOLDERS.PRODUCTION);
+      setCForm(f => ({ ...f, photo: url }));
     } catch (err) { console.warn("[custom-item] photo upload failed:", err); }
     finally { setCPhotoUploading(false); }
   };

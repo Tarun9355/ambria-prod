@@ -4,7 +4,7 @@ import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER, PAINT_TOKENS } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS } from "../../lib/ims/constants";
-import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary } from "../../lib/cloudinary";
+import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
@@ -331,17 +331,10 @@ Rules:
 
   async function addItem() {
     let img = form.img || "";
-    // Upload base64 to Cloudinary instead of storing raw (prevents 413 payload-too-large)
+    // Upload base64 to Storage instead of storing raw (prevents 413 payload-too-large)
     if (img && img.startsWith("data:")) {
       try {
-        const fd = new FormData();
-        fd.append("file", img);
-        fd.append("upload_preset", IMS_CLD_PRESET);
-        fd.append("folder", "inventory");
-        const res = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
-        const data = await res.json();
-        if (data.secure_url) { img = data.secure_url; }
-        else { console.warn("[addItem] Cloudinary upload failed, stripping photo"); img = ""; }
+        img = await uploadToStorage(img, STORAGE_FOLDERS.INVENTORY);
       } catch (err) { console.warn("[addItem] photo upload error:", err); img = ""; }
     }
     const dims_LxWxH = (form.dimL || form.dimW || form.dimH) ? { l: form.dimL || "", w: form.dimW || "", h: form.dimH || "", unit: form.dimUnit || "Feet" } : null;
@@ -457,16 +450,9 @@ Rules:
     const file = e.target.files?.[0]; if (!file) return;
     setEditPhotoUploading(true);
     try {
-      const compressed = await compressImageForCloudinary(file);
-      const fd = new FormData();
-      fd.append("file", compressed);
-      fd.append("upload_preset", IMS_CLD_PRESET);
-      fd.append("folder", "inventory");
-      const res = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || "Cloudinary upload failed");
-      if (!data.secure_url) throw new Error("No URL returned");
-      setEditForm((f) => ({ ...f, img: data.secure_url }));
+      const compressed = await compressImageForUpload(file);
+      const url = await uploadToStorage(compressed, STORAGE_FOLDERS.INVENTORY);
+      setEditForm((f) => ({ ...f, img: url }));
     } catch (err) {
       alert("Photo upload failed: " + (err.message || "unknown error"));
     } finally {

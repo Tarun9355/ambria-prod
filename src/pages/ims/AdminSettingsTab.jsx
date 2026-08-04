@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Tabs, AddInlineItem, FlowerPicker, Btn } from "../../components/ui";
 import { canvaAuthUrl, canvaConnectionStatus } from "../../lib/canva";
-import { compressImageForCloudinary, IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL } from "../../lib/cloudinary";
+import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
@@ -899,12 +899,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               const file = e.target.files?.[0]; if (!file) return;
                               setSMandiUploading((prev) => ({ ...prev, [parentUploadKey]: true }));
                               try {
-                                const compressed = await compressImageForCloudinary(file);
-                                const fd = new FormData(); fd.append("file", compressed); fd.append("upload_preset", IMS_CLD_PRESET);
-                                const res = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
-                                const data = await res.json();
-                                if (data.error) throw new Error(data.error.message || "Cloudinary upload failed");
-                                const url = data.secure_url;
+                                const compressed = await compressImageForUpload(file);
+                                const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
                                 setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, photoUrl: url } : x) }));
                               } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
                               finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[parentUploadKey]; return np; }); e.target.value = ""; }
@@ -1047,12 +1043,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                                         const file = e.target.files?.[0]; if (!file) return;
                                         setSMandiUploading((prev) => ({ ...prev, [uploadKey]: true }));
                                         try {
-                                          const compressed = await compressImageForCloudinary(file);
-                                          const fd = new FormData(); fd.append("file", compressed); fd.append("upload_preset", IMS_CLD_PRESET);
-                                          const res = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
-                                          const data = await res.json();
-                                          if (data.error) throw new Error(data.error.message || "Cloudinary upload failed");
-                                          const url = data.secure_url;
+                                          const compressed = await compressImageForUpload(file);
+                                          const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
                                           setSettings((s) => ({ ...s, mandiCatalogue: s.mandiCatalogue.map((x) => x.id === p.id ? { ...x, colorVariants: (x.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv) } : x) }));
                                         } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
                                         finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[uploadKey]; return np; }); e.target.value = ""; }

@@ -26,7 +26,8 @@ import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
 import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
-import { IMS_CLD_PRESET, IMS_CLD_UPLOAD_URL, compressImageForCloudinary, cldAdmin } from "../../lib/cloudinary";
+import { cldAdmin } from "../../lib/cloudinary";
+import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
@@ -3974,17 +3975,11 @@ export default function StudioApp() {
         }
         try {
           // Compress
-          const compressed = await compressImageForCloudinary(file);
+          const compressed = await compressImageForUpload(file);
           progress[idx].status = "uploading";
           setCldUploadProgress([...progress]);
-          const fd = new FormData();
-          fd.append("file", compressed);
-          fd.append("upload_preset", IMS_CLD_PRESET);
-          fd.append("folder", targetFolder);
-          const res = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
-          const data = await res.json();
-          if (data.error) throw new Error(data.error.message);
-          progress[idx] = { ...progress[idx], status: "done", url: data.secure_url };
+          const url = await uploadToStorage(compressed, targetFolder);
+          progress[idx] = { ...progress[idx], status: "done", url };
           doneCount++;
         } catch (e) {
           progress[idx] = { ...progress[idx], status: "error" };
@@ -5804,17 +5799,17 @@ export default function StudioApp() {
     setZoneUploading(elKey);
     showMsg("📷 Uploading to Cloudinary...", "blue");
     try {
-      // Migration: the reference signed uploads via /api/cloudinary. This SPA has no server,
-      // so we use Cloudinary's unsigned upload preset (client-side, safe) — same as IMS.
-      const compressed = await compressImageForCloudinary(file);
-      const fd = new FormData();
-      fd.append("file", compressed);
-      fd.append("upload_preset", IMS_CLD_PRESET);
-      fd.append("folder", "client-uploads");
-      const upRes = await fetch(IMS_CLD_UPLOAD_URL, { method: "POST", body: fd });
-      const upData = await upRes.json();
-      if (upData.error) { showMsg("Upload failed: " + (upData.error.message || upData.error), "red"); setZoneUploading(null); return; }
-      const cldUrl = upData.secure_url || upData.url;
+      // Goes to Supabase Storage via the /functions/v1/upload Edge Function, which holds the
+      // secret server-side. Storage has no unsigned-upload equivalent to Cloudinary's preset,
+      // and the anon key is public in this bundle, so a direct client write would leave the
+      // bucket open to anyone reading the JS.
+      const compressed = await compressImageForUpload(file);
+      let cldUrl;
+      try {
+        cldUrl = await uploadToStorage(compressed, STORAGE_FOLDERS.CLIENT);
+      } catch (e) {
+        showMsg("Upload failed: " + e.message, "red"); setZoneUploading(null); return;
+      }
       showMsg("✓ Uploaded! Running AI analysis...", "green");
       let aiResult = null;
       try { aiResult = await Promise.race([aiTagImage(cldUrl), new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 25000))]); } catch (e) { showMsg("AI tagging skipped — edit manually", "red"); }

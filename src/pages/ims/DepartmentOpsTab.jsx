@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost } from "../../lib/ims/helpers";
-import { uploadAudioToCloudinary } from "../../lib/cloudinary";
+import { uploadAudioToStorage } from "../../lib/storage";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 
 // Small in-browser voice-note recorder → uploads to Cloudinary, hands the URL back via onSave.
@@ -25,7 +25,7 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
         (streamRef.current?.getTracks() || []).forEach(t => t.stop());
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
         setBusy(true);
-        try { const url = await uploadAudioToCloudinary(blob); onSave(url); } catch { setErr("upload failed"); }
+        try { const url = await uploadAudioToStorage(blob); onSave(url); } catch { setErr("upload failed"); }
         setBusy(false);
       };
       mr.start(); mrRef.current = mr; setRec(true);
