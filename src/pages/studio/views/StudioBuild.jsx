@@ -1553,7 +1553,6 @@ undefined
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
-      const isCentrepieceZone=/centre\s*piece|center\s*piece|centrepiece/i.test(el?.label||k||"");
       const isOn=enabledEls[k];const isCust=customMode[k];
       let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
@@ -1638,7 +1637,11 @@ undefined
                 "+ Add Zone" box below covers the same need. Existing duplicates still render and
                 still carry their ✕ so saved sessions can be cleaned up. */}
             {isDuplicate&&<span title={`Remove ${el.label}`} onClick={e=>{e.stopPropagation();askConfirm(`Remove ${el.label}?`,()=>{setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});showMsg(`✓ ${el.label} removed`,"green");});}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
-            {isOn&&isCentrepieceZone&&<span onClick={e=>e.stopPropagation()} title="Scale the whole set — multiplies every element count below (e.g. 10 tables → 10× tables, chairs, centre pieces…). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
+            {/* Scale is available on every zone, not just centrepieces. The mechanism was never
+                centrepiece-specific: it rewrites each element's qty from baseQty × scale, so
+                pricing, Deal Check and manpower follow on their own. Ten identical entry arches
+                or five matching lounges need it exactly as much as ten guest tables did. */}
+            {isOn&&<span onClick={e=>e.stopPropagation()} title="Scale the whole zone — multiplies every element count below (e.g. set 10 and each element's quantity becomes 10×). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
               <input type="number" min="1" step="1" value={zoneScaleVal(k)} onClick={e=>e.stopPropagation()} onChange={e=>setZoneScale(k, e.target.value)} onFocus={e=>e.target.select()} style={{width:40,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
             </span>}
