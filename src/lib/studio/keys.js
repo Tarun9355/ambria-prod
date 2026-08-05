@@ -81,3 +81,17 @@ export const DEFAULT_FILTER_PRIORITY = [
   { id: "fn", label: "Function type", icon: "📋" },
   { id: "io", label: "Indoor / Outdoor", icon: "🏠" },
 ];
+
+// ═══ TRANSPORT ═══
+// Lifted out of StudioApp so the IMS copy of the Transport & Power panel shares one definition
+// rather than a second list that drifts. Studio still owns the editor; IMS mounts the same one.
+export const TC_UNITS = [{ id: "pc", l: "pcs" }, { id: "sqft", l: "sqft" }, { id: "rft", l: "RFT" }, { id: "kg", l: "kg" }, { id: "bundle", l: "bundles" }];
+export const TR_TIERS = [
+  { id: "inhouse", label: "Tier 1 — In-house Venues", icon: "🏠", desc: "Fixed cost per trip — always same" },
+  { id: "empanelled", label: "Tier 2 — Empanelled Venues", icon: "🤝", desc: "Fixed cost per trip for partner venues" },
+  { id: "repeat", label: "Tier 3 — Repeat Venues", icon: "🔄", desc: "Auto-pulled rates from past event data" },
+  { id: "new", label: "Tier 4 — New Venues", icon: "🆕", desc: "Manual entry for first-time venues" },
+];
+// The Studio-owned settings rows the IMS panel has to read directly: IMS strips every "ambria-"
+// key out of its own settings object on purpose, so these two are fetched by the panel itself.
+export const VENUES_SK = STORAGE_KEY + "-venues";

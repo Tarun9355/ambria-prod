@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { SPACES, TAX_LABELS, DEFAULT_TAX_KEYS, taxOr, ZONE_META } from "../../../lib/studio/taxonomy";
 import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
-import { INV_CATS } from "../../../lib/inventory/constants";
-import { fetchCachedContracts, fetchSeason } from "../../../lib/ims/lms";
-import TransportEditor from "../TransportEditor.jsx";
+import { supabase } from "../../../lib/supabase";
+import { findZoneForArea } from "../../../lib/studio/pricing";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
 const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -18,7 +17,7 @@ export default function ManageSettings({ ctx }) {
     S, isDark, accent, border, textS, textP, accentText, cardBg, fmt,
     // taxonomy
     taxonomy, saveTax, taxEditCat, setTaxEditCat, taxNewTag, setTaxNewTag, taxNewCat, setTaxNewCat,
-    addTagWithAreaZoneSync, showMsg,
+    addTagWithAreaZoneSync, showMsg, askConfirm,
     // settings routing
     settingsView, setSettingsView,
     // auth
@@ -28,16 +27,12 @@ export default function ManageSettings({ ctx }) {
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, allVenueData,
     // clients
-    clientLedger, ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
+    clientLedger, saveClientLedger, ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
     ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
     clientSearch, setClientSearch,
-    // calendar
-    calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate,
-    calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
-    // palettes
+    // calendar    // palettes
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
     // department income mapping
-    catDeptMap, saveCatDeptMap, rcCats,
     // zones
     zoneDefs, setZoneDefs, saveZD, zoneLabelsD, addZoneWithAreaSync,
     // photo priority — saveFilterPriority is the reference handler; fall back to
@@ -51,85 +46,7 @@ export default function ManageSettings({ ctx }) {
 
   const saveFilterPriority = ctxSaveFilterPriority || setFilterPriority;
 
-  // ═══ §26 CALENDAR DEMAND OVERLAY — source LMS contracts + season from Supabase ═══
-  // Faithful behavior: booked contracts (lms_contracts cache) + season categories.
-  // Re-fetches every time calendar tab opens; auto-refreshes every 2 min.
-  useEffect(() => {
-    if (settingsView !== "calendar" || !authUser) return;
-    let alive = true;
-    const fetchCalData = () => {
-      fetchCachedContracts().then(({ contracts }) => {
-        if (!alive) return;
-        const byDate = {};
-        for (const c of (contracts || [])) {
-          const source = c.dept === "venue" ? "venueContract" : "decorContract";
-          for (const fn of (c.functions || [])) {
-            const date = String(fn.functionDate || "").slice(0, 10);
-            if (!date) continue;
-            (byDate[date] = byDate[date] || []).push({
-              guestName: c.guestName || "—",
-              source,
-              fnLabel: fn.functionType || "",
-              venueLabel: fn.internalVenueName || fn.venueName || fn.externalVenue || "",
-              shift: fn.session || "",
-              priority: c.priority || "",
-              status: c.lmsStatus || "",
-              entryNo: c.entryNo,
-              phone: c.contactNo || "",
-            });
-          }
-        }
-        setCalLmsData({ byDate, complete: true });
-      }).catch(() => {});
-      fetchSeason().then(d => { if (alive && d?.dates) setCalSeasonData(d); }).catch(() => {});
-    };
-    fetchCalData();
-    const interval = setInterval(fetchCalData, 2 * 60 * 1000);
-    return () => { alive = false; clearInterval(interval); };
-  }, [settingsView, authUser]);
-  // ═══ end §26 calendar demand fetch ═══
 
-  // ═══ §26 DEMAND-BASED AUTO-ADJUSTMENT — promotes/demotes season categories by function count ═══
-  // adjustedSeasonMap is a component-scope useMemo in the reference (App_latest.jsx:3370).
-  const adjustedSeasonMap = useMemo(() => {
-    const seasonDates = calSeasonData?.dates || {};
-    const seasonDefault = calSeasonData?.default_category || "Filler";
-    const yr = new Date().getFullYear();
-    // Start with raw season categories expanded to YYYY-MM-DD
-    const base = {};
-    Object.entries(seasonDates).forEach(([mmdd, cat]) => {
-      base[`${yr}-${mmdd}`] = cat;
-      base[`${yr + 1}-${mmdd}`] = cat;
-    });
-    // Count ALL functions per date (leads + contracts) for demand signal
-    const fnCount = {};
-    if (calLmsData?.byDate) {
-      Object.entries(calLmsData.byDate).forEach(([d, arr]) => { fnCount[d] = (arr || []).length; });
-    }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const oneMonth = new Date(today); oneMonth.setMonth(today.getMonth() + 1);
-    const twoMonths = new Date(today); twoMonths.setMonth(today.getMonth() + 2);
-    // Collect all dates to evaluate (season dates + dates with LMS data)
-    const allDates = new Set([...Object.keys(base), ...Object.keys(fnCount)]);
-    const result = {};
-    allDates.forEach(date => {
-      const count = fnCount[date] || 0;
-      const current = base[date] || seasonDefault;
-      const d = new Date(date + "T00:00:00");
-      if (d < today) { if (current !== seasonDefault) result[date] = current; return; } // past = keep original
-      // Rule 1: ≥6 functions → King's (highest priority)
-      if (count >= 6) { result[date] = "King's"; return; }
-      // Rule 3: within 1 month + <5 functions → Normal (stricter time wins over Rule 2)
-      if (d <= oneMonth && count < 5) { result[date] = "Normal"; return; }
-      // Rule 2: King's + within 2 months + <5 functions → Perfect
-      if (current === "King's" && d <= twoMonths && count < 5) { result[date] = "Perfect"; return; }
-      // No adjustment — keep original (only store non-default)
-      if (current !== seasonDefault) result[date] = current;
-    });
-    return result;
-  }, [calSeasonData, calLmsData]);
-  // ═══ end §26 auto-adjustment ═══
 
   const movePriority = (idx, dir) => {
     const np = [...filterPriority];
@@ -415,11 +332,82 @@ export default function ManageSettings({ ctx }) {
     );
   };
 
+  // ═══ TAG RENAME (the "U" in CRUD) ═══
+  // A tag is stored as a bare string inside every library row's tags JSONB, so renaming it in the
+  // taxonomy alone would strand every photo carrying the old value — "Wedding" by itself sits on
+  // 1,000+ rows. Rename therefore migrates the library too, and states the row count up front.
+  const [taxRen, setTaxRen] = useState(null);   // { cat, from, value } | null
+  const [taxBusy, setTaxBusy] = useState(false);
+
+  const tagFilter = (cat, val) => [`tags->${cat}`, "cs", JSON.stringify([val])];
+
+  // Rewrite the value in place, a page at a time. Each pass removes its own rows from the match
+  // set, so the loop drains; the iteration cap is a backstop against a silently failing update.
+  const migrateLibraryTag = async (cat, from, to) => {
+    const PAGE = 500; let done = 0;
+    for (let guard = 0; guard < 200; guard++) {
+      const { data, error } = await supabase.from("library").select("id,tags").filter(...tagFilter(cat, from)).limit(PAGE);
+      if (error) throw new Error(error.message);
+      if (!data?.length) return done;
+      const results = await Promise.all(data.map((r) => {
+        const arr = Array.isArray(r.tags?.[cat]) ? r.tags[cat] : [];
+        // Swap then dedupe — a row already carrying both names must not end up with the new one twice.
+        const next = [...new Set(arr.map((x) => (x === from ? to : x)))];
+        return supabase.from("library").update({ tags: { ...r.tags, [cat]: next } }).eq("id", r.id);
+      }));
+      const failed = results.find((r) => r.error);
+      if (failed) throw new Error(failed.error.message);
+      done += data.length;
+      if (data.length < PAGE) return done;
+    }
+    throw new Error("migration did not converge");
+  };
+
+  const commitTagRename = async () => {
+    if (!taxRen || taxBusy) return;
+    const { cat, from } = taxRen;
+    const to = (taxRen.value || "").trim();
+    if (!to || to === from) { setTaxRen(null); return; }
+    if ((taxonomy[cat] || []).some((x) => x !== from && x.toLowerCase() === to.toLowerCase())) {
+      showMsg("That tag already exists in this category", "red"); return;
+    }
+    const { count, error } = await supabase.from("library").select("id", { count: "exact", head: true }).filter(...tagFilter(cat, from));
+    if (error) { showMsg("Could not count tagged photos: " + error.message, "red"); return; }
+    const n = count || 0;
+    askConfirm(
+      `Rename "${from}" → "${to}"?`,
+      async () => {
+        setTaxBusy(true);
+        try {
+          if (n) await migrateLibraryTag(cat, from, to);
+          await saveTax({ ...taxonomy, [cat]: (taxonomy[cat] || []).map((x) => (x === from ? to : x)) });
+          // An area tag is bound to its zone by name (findZoneForArea matches on id or label), so a
+          // rename that skipped the zone would quietly break that link. Relabel, keep the id — deals
+          // reference the id.
+          if (cat === "areasElements") {
+            const zid = findZoneForArea(from, zoneDefs?.meta);
+            if (zid) await saveZD({ ...zoneDefs, meta: { ...zoneDefs.meta, [zid]: { ...zoneDefs.meta[zid], label: to } } });
+          }
+          setTaxRen(null);
+          showMsg(n ? `Renamed — ${n} photo${n === 1 ? "" : "s"} updated` : "Renamed", "green");
+        } catch (e) {
+          showMsg("Rename failed: " + e.message, "red");
+        } finally { setTaxBusy(false); }
+      },
+      {
+        yesLabel: "Rename",
+        note: n
+          ? `${n} photo${n === 1 ? "" : "s"} carrying this tag will be re-tagged. Renaming back reverses it.`
+          : "No photos currently use this tag, so only the tag list changes.",
+      },
+    );
+  };
+
   // ═══ ADMIN TAGS (settingsView "tags") — App_latest.jsx:11598 ═══
   const AdminTags = () => (
     <div style={{ maxWidth: 600 }}>
       <div style={{ fontSize: 14, fontWeight: 600, color: textP, marginBottom: 4 }}>Tag taxonomy manager</div>
-      <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Add, rename, or remove tag options. Changes apply to all new and existing images.</div>
+      <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Add, rename, or remove tag options. Renaming re-tags every photo that already uses the tag.</div>
 
       {/* ═══ TAG CATEGORIES (existing taxonomy) ═══ */}
       {Object.keys(taxonomy).filter(k => k !== "categoryTier" && Array.isArray(taxonomy[k])).map(k => (
@@ -429,23 +417,35 @@ export default function ManageSettings({ ctx }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ fontSize: 11, color: textS }}>{taxonomy[k].length} tags</div>
               {!DEFAULT_TAX_KEYS.has(k) && <span onClick={() => {
-                if (confirm(`Delete category "${getTaxLabel(k)}" and all its tags?`)) {
-                  const next = { ...taxonomy };
-                  delete next[k];
-                  saveTax(next);
-                }
+                askConfirm(`Delete category "${getTaxLabel(k)}" and all ${taxonomy[k].length} of its tags?`, () => {
+                    const next = { ...taxonomy };
+                    delete next[k];
+                    saveTax(next);
+                  }, { yesLabel: "Delete" });
               }} style={{ cursor: "pointer", color: "#E11D48", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, border: "1px solid rgba(225,29,72,0.3)" }}>{"🗑"} Delete</span>}
             </div>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
             {taxonomy[k].map(v => (
-              <span key={v} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 8, border: `1px solid ${border}`, color: textS, display: "flex", alignItems: "center", gap: 4 }}>
-                {v}
-                <span onClick={() => {
-                  const next = { ...taxonomy, [k]: taxonomy[k].filter(x => x !== v) };
-                  saveTax(next);
-                }} style={{ cursor: "pointer", color: "#E11D48", fontSize: 10, fontWeight: 700 }}>×</span>
-              </span>
+              taxRen && taxRen.cat === k && taxRen.from === v ? (
+                <span key={v} style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                  <input value={taxRen.value} disabled={taxBusy} autoFocus
+                    onChange={e => setTaxRen({ ...taxRen, value: e.target.value })}
+                    onKeyDown={e => { if (e.key === "Enter") commitTagRename(); if (e.key === "Escape") setTaxRen(null); }}
+                    style={{ ...S.input, fontSize: 10, padding: "3px 6px", width: 110, marginBottom: 0 }} />
+                  <span onClick={commitTagRename} style={{ cursor: taxBusy ? "wait" : "pointer", fontSize: 12, color: accent }}>{taxBusy ? "…" : "✓"}</span>
+                  <span onClick={() => !taxBusy && setTaxRen(null)} style={{ cursor: "pointer", fontSize: 12, color: textS }}>{"×"}</span>
+                </span>
+              ) : (
+                <span key={v} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 8, border: `1px solid ${border}`, color: textS, display: "flex", alignItems: "center", gap: 4 }}>
+                  <span onClick={() => setTaxRen({ cat: k, from: v, value: v })} title="Click to rename" style={{ cursor: "text" }}>{v}</span>
+                  <span onClick={() => {
+                    askConfirm(`Remove "${v}" from ${getTaxLabel(k)}?`, () => {
+                      saveTax({ ...taxonomy, [k]: taxonomy[k].filter(x => x !== v) });
+                    }, { yesLabel: "Remove", note: "It stops being offered as an option. Photos already tagged with it keep the tag — rename instead if you want those updated." });
+                  }} style={{ cursor: "pointer", color: "#E11D48", fontSize: 10, fontWeight: 700 }}>{"×"}</span>
+                </span>
+              )
             ))}
             {taxEditCat === k ? (
               <span style={{ display: "flex", gap: 3, alignItems: "center" }}>
@@ -505,7 +505,7 @@ export default function ManageSettings({ ctx }) {
   useEffect(() => {
     if (!studioSettingsAllowed) return;
     if (studioSettingsAllowed(settingsView)) return;
-    const first = ["clients", "calendar", "venues", "zones", "tags", "priority"].find((v) => studioSettingsAllowed(v));
+    const first = ["clients", "venues", "zones", "tags", "priority"].find((v) => studioSettingsAllowed(v));
     if (first && first !== settingsView) setSettingsView(first);
   }, [settingsView, studioSettingsAllowed, setSettingsView]);
 
@@ -514,7 +514,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["clients", "📋 Clients"], ["calendar", "📅 Calendar"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"], ["departments", "🏦 Departments"], ["transport", "🚛 Transport & Power"]];
+          const VIEWS = [["clients", "📋 Clients"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
@@ -536,7 +536,6 @@ export default function ManageSettings({ ctx }) {
           </>)}
         </div>
       )}
-      {settingsView === "transport" && <TransportEditor ctx={ctx} />}
       {settingsView === "zones" && <div style={{maxWidth:800}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div><div style={{fontSize:16,fontWeight:700,color:accent}}>📐 Zone Types</div><div style={{fontSize:11,color:textS,marginTop:2}}>Define zone types used across Build, Templates, and Library. Use the ↑ ↓ arrows to set the order zones appear on the Build page. Changes sync to all devices via Redis.</div></div>
@@ -589,7 +588,30 @@ export default function ManageSettings({ ctx }) {
         <button onClick={()=>saveZD(zoneDefs)} style={{...S.btn(true),padding:"10px 24px",fontSize:12,marginTop:8}}>💾 Save Zones to Redis</button>
       </div>}
       {/* ═══ CLIENT TRACKER ═══ */}
+      {/* A dead lead is not a lost row — it keeps its history and can be reopened. Marking dead drops it
+          out of the "ongoing" demand count for its date (StudioBuild counts status === "ongoing"
+          explicitly), which is the point: chasing a dead lead should not make a date look busy. */}
       {settingsView === "clients" && (() => {
+        const setClientStatus = (c, next) => {
+          if (!c || c.status === next) return;
+          const dead = next === "dead";
+          askConfirm(
+            `Mark "${c.name}" as ${dead ? "Dead" : "Ongoing"}?`,
+            () => {
+              const patch = dead
+                ? { status: "dead", deadAt: Date.now(), deadBy: authUser?.name || "—" }
+                : { status: "ongoing", deadAt: null, deadBy: null };
+              saveClientLedger(clientLedger.map(x => (x.id === c.id ? { ...x, ...patch } : x)));
+              showMsg(`${c.name} marked ${dead ? "dead" : "ongoing"}`, "green");
+            },
+            {
+              yesLabel: dead ? "Mark dead" : "Reopen",
+              note: dead
+                ? "Its sessions and history are kept, and it stops counting towards demand for that date. You can reopen it later."
+                : "It counts towards demand for that date again.",
+            },
+          );
+        };
         const allSalespeople = [...new Set(clientLedger.map(c => c.createdBy || "—").filter(Boolean))];
         const canSeeAll = isAdmin || hasPerm("canManageTeam");
         const searchLc = clientSearch.toLowerCase().trim();
@@ -608,18 +630,22 @@ export default function ManageSettings({ ctx }) {
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
             <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 Search name or phone" style={{...S.select,fontSize:11,padding:"6px 10px",width:180}}/>
             {canSeeAll&&<select value={ctFilterSp} onChange={e=>{setCtFilterSp(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}}><option value="">All salespeople</option>{allSalespeople.map(s=><option key={s} value={s}>{s}</option>)}</select>}
-            <select value={ctFilterStatus} onChange={e=>{setCtFilterStatus(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}}><option value="all">All status</option><option value="ongoing">🟡 Ongoing</option><option value="booked">🟢 Booked</option></select>
+            <select value={ctFilterStatus} onChange={e=>{setCtFilterStatus(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}}><option value="all">All status</option><option value="ongoing">🟡 Ongoing</option><option value="booked">🟢 Booked</option><option value="dead">🔴 Dead</option></select>
             <input type="date" value={ctFilterFrom} onChange={e=>{setCtFilterFrom(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}} placeholder="From"/>
             <input type="date" value={ctFilterTo} onChange={e=>{setCtFilterTo(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}} placeholder="To"/>
             {(ctFilterSp||ctFilterStatus!=="all"||ctFilterFrom||ctFilterTo||clientSearch)&&<button onClick={()=>{setCtFilterSp("");setCtFilterStatus("all");setCtFilterFrom("");setCtFilterTo("");setClientSearch("");}} style={{fontSize:10,color:accent,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear</button>}
           </div>
           {filtered.length===0?<div style={{padding:24,textAlign:"center",color:textS,fontSize:13}}>No clients found</div>
           :<div style={{borderRadius:12,overflow:"hidden",border:`1px solid ${border}`}}>
-            <div style={{display:"grid",gridTemplateColumns:"1.8fr 1.1fr 0.9fr 1.1fr 0.9fr 0.7fr 1.1fr 0.7fr 1fr",gap:0,padding:"10px 14px",background:isDark?"rgba(201,169,110,0.08)":"#FAF9F6",fontSize:10,fontWeight:600,color:textS,textTransform:"uppercase",letterSpacing:0.5}}>
-              <div>Client</div><div>Phone</div><div>Date</div><div>Venue</div><div>Function</div><div>Shift</div><div>Salesperson</div><div>Status</div><div>Created</div>
+            <div style={{display:"grid",gridTemplateColumns:"1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr",gap:0,padding:"10px 14px",background:isDark?"rgba(201,169,110,0.08)":"#FAF9F6",fontSize:10,fontWeight:600,color:textS,textTransform:"uppercase",letterSpacing:0.5}}>
+              <div>Client</div><div>Phone</div><div>Date</div><div>Venue</div><div>Function</div><div>Shift</div><div>Salesperson</div><div>Status</div><div>Created</div><div>Actions</div>
             </div>
-            {filtered.map(c=><div key={c.id}>
-              <div onClick={()=>{setCtExpandedId(ctExpandedId===c.id?null:c.id);}} style={{display:"grid",gridTemplateColumns:"1.8fr 1.1fr 0.9fr 1.1fr 0.9fr 0.7fr 1.1fr 0.7fr 1fr",gap:0,padding:"10px 14px",borderTop:`1px solid ${border}`,cursor:"pointer",background:ctExpandedId===c.id?(isDark?"rgba(201,169,110,0.05)":"#FFFDF7"):"transparent",transition:"background 0.15s"}}>
+            {filtered.map(c=>{
+              const ST = c.status==="booked" ? {bg:"rgba(16,185,129,0.15)",fg:"#10B981",t:"🟢 Booked"}
+                       : c.status==="dead"   ? {bg:"rgba(239,68,68,0.14)", fg:"#EF4444",t:"🔴 Dead"}
+                       :                       {bg:"rgba(245,158,11,0.15)",fg:"#F59E0B",t:"🟡 Ongoing"};
+              return <div key={c.id}>
+              <div onClick={()=>{setCtExpandedId(ctExpandedId===c.id?null:c.id);}} style={{display:"grid",gridTemplateColumns:"1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr",gap:0,padding:"10px 14px",borderTop:`1px solid ${border}`,cursor:"pointer",background:ctExpandedId===c.id?(isDark?"rgba(201,169,110,0.05)":"#FFFDF7"):"transparent",transition:"background 0.15s"}}>
                 <div style={{fontSize:13,fontWeight:600,color:textP}}>{c.name}{c.brideGroom&&<div style={{fontSize:10,color:textS}}>💑 {c.brideGroom}</div>}</div>
                 <div style={{fontSize:12,color:textS}}>{c.phone||"—"}</div>
                 <div style={{fontSize:11,color:textP}}>{c.eventDate?new Date(c.eventDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
@@ -627,12 +653,27 @@ export default function ManageSettings({ ctx }) {
                 <div style={{fontSize:11,color:textP}}>{c.fn||"—"}</div>
                 <div style={{fontSize:11,color:textS}}>{c.shift||"—"}</div>
                 <div style={{fontSize:11,color:textS}}>{c.createdBy||"—"}</div>
-                <div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,fontWeight:600,background:c.status==="booked"?"rgba(16,185,129,0.15)":"rgba(245,158,11,0.15)",color:c.status==="booked"?"#10B981":"#F59E0B"}}>{c.status==="booked"?"🟢 Booked":"🟡 Ongoing"}</span></div>
+                <div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,fontWeight:600,background:ST.bg,color:ST.fg,whiteSpace:"nowrap"}}>{ST.t}</span></div>
                 <div style={{fontSize:10,color:textS}}>{c.createdAt?new Date(c.createdAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
+                <div onClick={e=>e.stopPropagation()} style={{display:"flex",gap:4,alignItems:"center"}}>
+                  {c.status==="booked"
+                    ? <span title="Booked deals are changed from the deal itself, not here." style={{fontSize:10,color:textS}}>—</span>
+                    : ["ongoing","dead"].map(st=>{
+                        const on = c.status===st;
+                        return <button key={st} onClick={()=>setClientStatus(c,st)} disabled={on}
+                          title={on?`Already ${st}`:`Mark as ${st}`}
+                          style={{fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:6,cursor:on?"default":"pointer",whiteSpace:"nowrap",
+                            border:`1px solid ${on?"transparent":border}`,
+                            background:on?(st==="dead"?"rgba(239,68,68,0.14)":"rgba(245,158,11,0.15)"):"transparent",
+                            color:on?(st==="dead"?"#EF4444":"#F59E0B"):textS,
+                            opacity:on?1:0.85}}>{st==="dead"?"Dead":"Ongoing"}</button>;
+                      })}
+                </div>
               </div>
               {ctExpandedId===c.id&&<div style={{padding:"8px 14px 14px",borderTop:`1px dashed ${border}`,background:isDark?"rgba(0,0,0,0.2)":"#FAFAF7"}}>
                 <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,color:textS,marginBottom:8}}>
                   <span>Created: {new Date(c.createdAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+                  {c.deadAt&&<span style={{color:"#EF4444"}}>Marked dead: {new Date(c.deadAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}{c.deadBy?` by ${c.deadBy}`:""}</span>}
                   {c.bookedAt&&<span style={{color:"#10B981"}}>Booked: {new Date(c.bookedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})} by {c.bookedBy}</span>}
                   {c.pax&&<span>👥 {c.pax} pax</span>}
                 </div>
@@ -644,154 +685,9 @@ export default function ManageSettings({ ctx }) {
                   </div>)}
                 </div>}
               </div>}
-            </div>)}
-          </div>}
-        </div>;
-      })()}
-      {/* ═══ CALENDAR ═══ */}
-      {settingsView === "calendar" && (() => {
-        const now = new Date();
-        const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-        const firstDay = new Date(calYear, calMonth, 1).getDay();
-        const monthName = new Date(calYear, calMonth).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-        const allByDate = calLmsData?.byDate || {};
-        // Richer color palette — inspired by professional scheduling UIs
-        const srcColor = (src) => src === "decorContract"
-          ? { bg: isDark?"rgba(16,185,129,0.14)":"#ECFDF5", text: isDark?"#34D399":"#047857", bar: "#10B981", label: "Booked" }
-          : src === "venueContract"
-          ? { bg: isDark?"rgba(251,146,60,0.14)":"#FFF7ED", text: isDark?"#FB923C":"#C2410C", bar: "#F97316", label: "Venue" }
-          : { bg: isDark?"rgba(129,140,248,0.14)":"#EEF2FF", text: isDark?"#A5B4FC":"#4338CA", bar: "#6366F1", label: "Lead" };
-        // Season calendar — uses demand-adjusted categories (not raw API data)
-        const getSeason = (dateStr) => adjustedSeasonMap[dateStr] || calSeasonData?.default_category || "Filler";
-        const seasonStyle = (cat) => cat === "King's" ? { bg: isDark?"rgba(234,179,8,0.12)":"rgba(254,243,199,0.7)", text: "#B45309", label: "👑", border: "rgba(234,179,8,0.35)" }
-          : cat === "Perfect" ? { bg: isDark?"rgba(16,185,129,0.08)":"rgba(209,250,229,0.5)", text: "#047857", label: "✦", border: "rgba(16,185,129,0.3)" }
-          : cat === "Normal" ? { bg: "transparent", text: "#6B7280", label: "○", border: "transparent" }
-          : null;
-        const filterFn = calView === "booked" ? (e) => e.source === "decorContract" || e.source === "venueContract" : (e) => e.source === "lead";
-        const lmsByDate = {};
-        for (const [date, entries] of Object.entries(allByDate)) { const f = entries.filter(filterFn); if (f.length > 0) lmsByDate[date] = f; }
-        const MAX_BARS = 4;
-        const navMonth = (dir) => { let nm = calMonth + dir, ny = calYear; if (nm < 0) { nm = 11; ny--; } if (nm > 11) { nm = 0; ny++; } setCalMonth(nm); setCalYear(ny); setCalSelDate(null); };
-        const cells = [];
-        for (let i = 0; i < firstDay; i++) cells.push(<div key={"e" + i} style={{background:isDark?"rgba(255,255,255,0.01)":"#FAFAFA",borderRight:`1px solid ${border}`,borderBottom:`1px solid ${border}`}} />);
-        for (let d = 1; d <= daysInMonth; d++) {
-          const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-          const entries = lmsByDate[dateStr] || [];
-          const isToday = dateStr === now.toISOString().slice(0, 10);
-          const isSel = calSelDate === dateStr;
-          const season = getSeason(dateStr);
-          const ss = seasonStyle(season);
-          const shown = entries.slice(0, MAX_BARS);
-          const overflow = entries.length - MAX_BARS;
-          const isPast = dateStr < now.toISOString().slice(0, 10);
-          cells.push(<div key={d} onClick={() => setCalSelDate(isSel ? null : dateStr)} style={{ padding:"5px 4px",cursor:"pointer",minHeight:115,background:isSel?(isDark?"rgba(201,169,110,0.15)":"#FEF9EE"):(isDark?"transparent":"#fff"),borderRight:`1px solid ${border}`,borderBottom:`1px solid ${border}`,transition:"all 0.15s",position:"relative",opacity:isPast?0.6:1 }}>
-            {/* Date number + season + count */}
-            <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
-              <span style={{fontSize:14,fontWeight:isToday?800:600,color:isToday?"#fff":textP,width:isToday?26:20,height:isToday?26:"auto",textAlign:"center",lineHeight:isToday?"26px":"normal",borderRadius:isToday?"50%":"none",background:isToday?accent:"none"}}>{d}</span>
-              {ss&&<span style={{fontSize:9,color:ss.text,fontWeight:600,opacity:0.8}}>{ss.label}</span>}
-              {entries.length>0&&<span style={{fontSize:9,fontWeight:700,color:calView==="booked"?"#10B981":"#6366F1",marginLeft:"auto",background:calView==="booked"?"rgba(16,185,129,0.12)":"rgba(99,102,241,0.12)",borderRadius:8,padding:"1px 6px"}}>{entries.length}</span>}
-            </div>
-            {/* Guest name bars — larger, more colorful */}
-            {shown.map((e, i) => {
-              const sc = srcColor(e.source);
-              return <div key={i} title={`${e.guestName}\n${sc.label} · ${e.fnLabel||"—"} · ${e.venueLabel||"—"} · ${e.shift||"—"}`} style={{fontSize:10,lineHeight:"18px",padding:"1px 5px",marginBottom:2,borderRadius:4,background:sc.bg,color:sc.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",borderLeft:`3px solid ${sc.bar}`,cursor:"pointer"}}>{e.guestName}</div>;
-            })}
-            {overflow>0&&<div style={{fontSize:9,color:textS,padding:"0 4px",fontWeight:500}}>+{overflow} more</div>}
-          </div>);
-        }
-        const totalCells = firstDay + daysInMonth;
-        const trailingEmpty = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
-        for (let i = 0; i < trailingEmpty; i++) cells.push(<div key={"t" + i} style={{background:isDark?"rgba(255,255,255,0.01)":"#FAFAFA",borderRight:`1px solid ${border}`,borderBottom:`1px solid ${border}`}} />);
-
-        const selEntries = calSelDate ? (lmsByDate[calSelDate] || []) : [];
-        // Monthly stats — always from allByDate (unfiltered) so both counts show
-        const monthPrefix = `${calYear}-${String(calMonth+1).padStart(2,"0")}`;
-        const monthAll = Object.entries(allByDate).filter(([d])=>d.startsWith(monthPrefix));
-        const monthLeadCount = monthAll.reduce((s,[,arr])=>s+arr.filter(e=>e.source==="lead").length,0);
-        const monthContractCount = monthAll.reduce((s,[,arr])=>s+arr.filter(e=>e.source!=="lead").length,0);
-        const monthViewCount = Object.entries(lmsByDate).filter(([d])=>d.startsWith(monthPrefix)).reduce((s,[,arr])=>s+arr.length,0);
-        const datesWithEntries = Object.keys(lmsByDate).filter(d=>d.startsWith(monthPrefix)).length;
-        // Season stats for the month — from adjusted categories
-        let monthKings = 0, monthPerfect = 0, monthNormal = 0;
-        for (let d = 1; d <= daysInMonth; d++) {
-          const ds = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-          const cat = getSeason(ds);
-          if (cat === "King's") monthKings++;
-          else if (cat === "Perfect") monthPerfect++;
-          else if (cat === "Normal") monthNormal++;
-        }
-
-        return <div style={{width:"100%"}}>
-          {/* Header + Toggle */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div>
-              <div style={{fontSize:18,fontWeight:800,color:accent,letterSpacing:-0.3}}>📅 Demand Calendar</div>
-              <div style={{fontSize:11,color:textS,marginTop:3}}>{calView==="booked"?"Confirmed bookings from LMS":"Decor lead pipeline from LMS"}{calLmsData && !calLmsData.complete && <span style={{color:"#D97706"}}> · cache loading…</span>}</div>
-            </div>
-            {isAdmin&&<button onClick={()=>{setCalLmsData(null);setCalSeasonData(null);fetchCachedContracts().then(({contracts})=>{const byDate={};for(const c of (contracts||[])){const source=c.dept==="venue"?"venueContract":"decorContract";for(const fn of (c.functions||[])){const date=String(fn.functionDate||"").slice(0,10);if(!date)continue;(byDate[date]=byDate[date]||[]).push({guestName:c.guestName||"—",source,fnLabel:fn.functionType||"",venueLabel:fn.internalVenueName||fn.venueName||fn.externalVenue||"",shift:fn.session||"",priority:c.priority||"",status:c.lmsStatus||"",entryNo:c.entryNo,phone:c.contactNo||""});}}setCalLmsData({byDate,complete:true});}).catch(()=>{});fetchSeason().then(d=>{if(d?.dates)setCalSeasonData(d);}).catch(()=>{});showMsg("🔄 Refreshing…","blue");}} style={{...S.btn(false),fontSize:11,padding:"6px 14px"}}>🔄 Refresh</button>}
-          </div>
-          {/* Toggle pills */}
-          <div style={{display:"flex",gap:0,marginBottom:16,borderRadius:12,overflow:"hidden",border:`1.5px solid ${border}`,width:"fit-content"}}>
-            <button onClick={()=>{setCalView("booked");setCalSelDate(null);}} style={{padding:"9px 24px",fontSize:13,fontWeight:700,border:"none",cursor:"pointer",background:calView==="booked"?(isDark?"rgba(16,185,129,0.2)":"#ECFDF5"):"transparent",color:calView==="booked"?"#10B981":textS,transition:"all 0.15s",letterSpacing:0.2}}>🟢 Booked ({monthContractCount})</button>
-            <button onClick={()=>{setCalView("leads");setCalSelDate(null);}} style={{padding:"9px 24px",fontSize:13,fontWeight:700,border:"none",borderLeft:`1.5px solid ${border}`,cursor:"pointer",background:calView==="leads"?(isDark?"rgba(99,102,241,0.2)":"#EEF2FF"):"transparent",color:calView==="leads"?"#6366F1":textS,transition:"all 0.15s",letterSpacing:0.2}}>🔵 Leads ({monthLeadCount})</button>
-          </div>
-          {/* Stats strip */}
-          <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:16,padding:"10px 16px",borderRadius:12,background:isDark?"rgba(201,169,110,0.05)":"#FAFAF7",border:`1px solid ${border}`}}>
-            <div style={{fontSize:12,color:textS}}>{calView==="booked"?"🟢":"🔵"} <strong style={{color:calView==="booked"?"#10B981":"#6366F1"}}>{monthViewCount}</strong> {calView==="booked"?"bookings":"leads"}</div>
-            <div style={{fontSize:12,color:textS}}>📅 <strong style={{color:textP}}>{datesWithEntries}</strong> active dates</div>
-            {monthKings>0&&<div style={{fontSize:12,color:textS}}>👑 <strong style={{color:"#B45309"}}>{monthKings}</strong> King's</div>}
-            {monthPerfect>0&&<div style={{fontSize:12,color:textS}}>✦ <strong style={{color:"#047857"}}>{monthPerfect}</strong> Perfect</div>}
-            {monthNormal>0&&<div style={{fontSize:12,color:textS}}>○ <strong style={{color:"#6B7280"}}>{monthNormal}</strong> Normal</div>}
-          </div>
-          {/* Month nav */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <button onClick={()=>navMonth(-1)} style={{...S.btn(false),fontSize:14,padding:"8px 18px",fontWeight:600}}>← Prev</button>
-            <div style={{fontSize:18,fontWeight:800,color:textP,letterSpacing:-0.3}}>{monthName}</div>
-            <button onClick={()=>navMonth(1)} style={{...S.btn(false),fontSize:14,padding:"8px 18px",fontWeight:600}}>Next →</button>
-          </div>
-          {/* Day headers */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderTop:`1.5px solid ${border}`,borderLeft:`1.5px solid ${border}`}}>
-            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(dd=><div key={dd} style={{textAlign:"center",fontSize:11,fontWeight:700,color:textS,padding:"8px 0",borderRight:`1px solid ${border}`,borderBottom:`1.5px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F8F8FA",textTransform:"uppercase",letterSpacing:0.8}}>{dd}</div>)}
-          </div>
-          {/* Calendar grid */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderLeft:`1.5px solid ${border}`}}>{cells}</div>
-          {/* Date detail panel — click a date to see full info */}
-          {calSelDate&&<div style={{marginTop:16,...S.card,padding:"14px 18px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:14,fontWeight:700,color:textP}}>📅 {new Date(calSelDate+"T00:00:00").toLocaleDateString("en-IN",{weekday:"short",day:"2-digit",month:"long",year:"numeric"})}</span>
-                {(()=>{ const s=getSeason(calSelDate); const ss2=seasonStyle(s); return ss2?<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,fontWeight:600,background:ss2.bg,color:ss2.text,border:`1px solid ${ss2.border}`}}>{ss2.label} {s}</span>:null; })()}
-              </div>
-              <span style={{fontSize:11,fontWeight:600,color:calView==="booked"?"#10B981":"#6366F1"}}>{selEntries.length} {calView==="booked"?"booking":"lead"}{selEntries.length!==1?"s":""}</span>
-            </div>
-            {selEntries.length===0&&<div style={{fontSize:12,color:textS}}>No {calView==="booked"?"bookings":"leads"} on this date</div>}
-            {selEntries.map((e,i)=>{
-              const sc=srcColor(e.source);
-              const prC=e.priority==="Gold"?{bg:"rgba(234,179,8,0.15)",color:"#CA8A04"}:e.priority==="Silver"?{bg:"rgba(148,163,184,0.15)",color:"#64748B"}:e.priority==="Platinum"?{bg:"rgba(168,85,247,0.15)",color:"#9333EA"}:null;
-              return <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",marginBottom:2,borderRadius:6,background:sc.bg,borderLeft:`3px solid ${sc.bar}`,fontSize:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{fontWeight:600,color:sc.text}}>{e.guestName}</span>
-                  {e.source==="venueContract"&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:"rgba(245,158,11,0.15)",color:"#D97706",fontWeight:600}}>Venue</span>}
-                  {prC&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,fontWeight:600,...prC}}>{e.priority}</span>}
-                  {e.status&&calView==="leads"&&<span style={{fontSize:9,color:textS}}>({e.status})</span>}
-                </div>
-                <span style={{color:textS,fontSize:11}}>{e.fnLabel||"—"} · {e.venueLabel||"—"} · {e.shift||"—"}</span>
-              </div>;
+            </div>;
             })}
           </div>}
-          {/* Legend */}
-          <div style={{display:"flex",gap:14,marginTop:14,fontSize:10,color:textS,alignItems:"center",flexWrap:"wrap"}}>
-            {calView==="booked"?<>
-              <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:10,height:10,borderRadius:2,background:"rgba(16,185,129,0.3)",display:"inline-block"}}></span> Decor booked</span>
-              <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:10,height:10,borderRadius:2,background:"rgba(245,158,11,0.3)",display:"inline-block"}}></span> Venue booked</span>
-            </>:<>
-              <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:10,height:10,borderRadius:2,background:"rgba(99,102,241,0.3)",display:"inline-block"}}></span> Decor lead</span>
-            </>}
-            <span style={{color:border}}>|</span>
-            <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:10,height:10,borderRadius:2,background:"rgba(234,179,8,0.25)",display:"inline-block"}}></span> 👑 King's</span>
-            <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:10,height:10,borderRadius:2,background:"rgba(16,185,129,0.2)",display:"inline-block"}}></span> ✦ Perfect</span>
-            <span>Filler = no tint</span>
-          </div>
         </div>;
       })()}
       {settingsView === "venues" && AdminVenues()}
@@ -812,35 +708,6 @@ export default function ManageSettings({ ctx }) {
         </div>
         <button onClick={()=>saveFilterPriority(DEFAULT_FILTER_PRIORITY)} style={{...S.btn(false),fontSize:11,marginTop:12}}>Reset to default</button>
       </div>}
-      {settingsView === "departments" && (() => {
-        const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
-        const map = catDeptMap || {};
-        // Keyword fallback (mirrors Deal Check) — shown as the default when a category isn't set.
-        const kw = (cat) => { const s = String(cat || "").toLowerCase(); if (s.includes("floral") || s.includes("flower")) return "Floral"; if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting"; if (s.includes("truss")) return "Tenting"; if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric"; if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting"; if (s.includes("transport") || s.includes("truck")) return "Transport"; if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture"; return "Structure"; };
-        // Categories to map: studio rate-card categories + IMS inventory categories (deduped by name).
-        const cats = [];
-        const seen = new Set();
-        [...(rcCats || []).map(c => c?.l).filter(Boolean), ...INV_CATS].forEach(name => { const k = String(name).toLowerCase().trim(); if (k && !seen.has(k)) { seen.add(k); cats.push(name); } });
-        const setCat = (name, dep) => { const k = String(name).toLowerCase().trim(); const next = { ...map }; if (dep) next[k] = dep; else delete next[k]; saveCatDeptMap(next); };
-        return <div style={{ maxWidth: 620 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: textP, marginBottom: 4 }}>🏦 Department Income mapping</div>
-          <div style={{ fontSize: 12, color: textS, marginBottom: 16 }}>Set which department earns each category's income (used by Deal Check → Dept Income). "Auto" uses smart keyword matching. Manpower types & truss/fabric follow fixed rules.</div>
-          <div style={{ borderRadius: 10, border: `1px solid ${border}`, overflow: "hidden" }}>
-            {cats.map((name, i) => {
-              const k = String(name).toLowerCase().trim();
-              const val = map[k] || "";
-              return <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < cats.length - 1 ? `1px solid ${border}` : "none", background: cardBg }}>
-                <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: textP }}>{name}</div>
-                <select value={val} onChange={e => setCat(name, e.target.value)} style={{ ...S.select, width: 180, marginBottom: 0, fontSize: 12 }}>
-                  <option value="">Auto ({kw(name)})</option>
-                  {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>;
-            })}
-          </div>
-          <div style={{ fontSize: 10, color: textS, marginTop: 10, lineHeight: 1.5 }}>Tip: a sub-category inherits its category's department. Truss steel → Tenting · masking/drape fabric → Fabric · genset → Lighting · transport → Transport · manpower by worker type — all handled automatically.</div>
-        </div>;
-      })()}
     </div>
   );
 }

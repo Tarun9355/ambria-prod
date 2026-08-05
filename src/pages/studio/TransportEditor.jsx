@@ -1,4 +1,5 @@
-// Studio → Pricing → Transport & Power tab. Faithful dark-theme transcription of
+// IMS → Admin → Settings → 🗂️ Master Data → 🚛 Transport & Power. Mounted by ImsTransportPanel,
+// which adapts IMS state to the ctx shape below. Faithful transcription of
 // the reference AdminRates transport tab (App_latest.jsx ~7645), driven off ctx.
 // Edits the transport blob (RC_SK_TR) via ctx.saveTR (per-slice persistence).
 import { useState } from "react";
@@ -126,7 +127,9 @@ export default function TransportEditor({ ctx }) {
 
     {/* Truck capacities */}
     <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: accent, marginBottom: 4 }}>🚚 Truck Capacity Rules</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: accent, marginBottom: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        🚚 Truck Capacity Rules
+      </div>
       <div style={{ fontSize: 11, color: textS, marginBottom: 12 }}>How many of each <b>sub-category</b> fit in one truck. Trucks = ⌈Σ(qty ÷ capacity)⌉ + buffer. 0 = skip. No separate flower truck — florals count via their sub-category. <b>Tap a category to expand.</b></div>
       {subsByCat.map(({ cat, subs }) => {
         const open = !!openCats[cat.id];
@@ -143,7 +146,7 @@ export default function TransportEditor({ ctx }) {
                   <div key={sub} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontSize: 12, color: textP, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub}>{sub}</span>
                     <input type="number" value={pt || ""} placeholder="0" onChange={(e) => upsertSubCap(sub, "perTruck", e.target.value)} style={{ ...numInput, width: 52, padding: "3px 6px", fontSize: 13, color: (pt || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000") }} />
-                    <select value={un} onChange={(e) => upsertSubCap(sub, "unit", e.target.value)} style={{ padding: "3px 4px", borderRadius: 6, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 10, fontWeight: 600, outline: "none", fontFamily: "inherit", cursor: "pointer" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }, { id: "sqft", l: "sqft" }]).map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select>
+                    <select value={un} onChange={(e) => upsertSubCap(sub, "unit", e.target.value)} style={{ padding: "3px 4px", borderRadius: 6, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: accent, fontSize: 10, fontWeight: 600, outline: "none", fontFamily: "inherit" }}>{(TC_UNITS || [{ id: "pc", l: "pc" }, { id: "sqft", l: "sqft" }]).map((u) => <option key={u.id} value={u.id}>{u.l}</option>)}</select>
                   </div>
                 ); })}
               </div>
@@ -153,17 +156,10 @@ export default function TransportEditor({ ctx }) {
       })}
     </div>
 
-    {/* Florals truck rule */}
-    <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: "#EC4899", marginBottom: 4 }}>🌸 Florals Truck Rule</div>
-      <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Florals are small items — truck count estimated by total floral budget, not per piece.</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: isDark ? "#0F0F1A" : "#F9FAFB", borderRadius: 10, border: `1px solid ${border}`, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 13, color: textP, fontWeight: 600 }}>Every</span>
-        <span style={{ color: textS }}>₹</span>
-        <input type="number" value={floralPerTruck} onChange={(e) => saveTR(null, null, Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} />
-        <span style={{ fontSize: 13, color: textP, fontWeight: 600 }}>of floral cost = 1 truck</span>
-      </div>
-    </div>
+    {/* The Florals Truck Rule editor was removed from this screen. The rule itself is untouched —
+        transport still derives floral trucks from `floralPerTruck` in the RC_SK_TR blob; it simply
+        is not editable here any more. Restoring the control means putting this card back, not
+        re-adding the setting. */}
 
     {/* Buffer tiers */}
     <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>

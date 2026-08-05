@@ -521,6 +521,7 @@ export default function StudioEventInfo({ ctx }) {
                       {c.name}
                       {c.phone && <span style={{color:textM,fontWeight:400,marginLeft:8}}>· {c.phone}</span>}
                       {c.status === "booked" && <span style={{marginLeft:8,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:C.emerald}}>BOOKED</span>}
+                      {c.status === "dead" && <span style={{marginLeft:8,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(239,68,68,0.14)",color:"#EF4444"}}>DEAD</span>}
                       {c.lmsLeadId && <span style={{marginLeft:8,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(34,197,94,0.15)",color:C.green}}>📥 LMS #{c.lmsLeadId}</span>}
                     </div>
                     <div style={{fontSize:10,color:textM,marginTop:2}}>

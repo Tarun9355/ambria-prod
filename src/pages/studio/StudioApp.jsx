@@ -83,7 +83,7 @@ import {
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
-  RC_SK_CATS, RC_SK_TR, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
+  RC_SK_CATS, RC_SK_TR, TR_TIERS, TC_UNITS, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
 } from "../../lib/studio/keys.js";
 import { rowToVideoTag, videoTagToRow, rowsToVideoTagMap } from "../../lib/studio/videoTags.js";
@@ -126,15 +126,10 @@ const PREMIA_DEFAULTS = {
 const TAX_LABELS = { eventType: "Event type", venueType: "Venue type", areasElements: "Areas & elements", colorPalette: "Color palette", tier: "Tier", categoryTier: "Category tier (legacy)", designStyle: "Design style", timeSetting: "Time / setting" };
 
 const RC_UNITS = [{ id: "sqft", l: "/sqft" }, { id: "truss_sqft", l: "/truss sqft" }, { id: "rft", l: "/RFT" }, { id: "pc", l: "/pc" }, { id: "setup", l: "/setup" }, { id: "trip", l: "/trip" }, { id: "event", l: "/event" }, { id: "string", l: "/string" }, { id: "included", l: "Included" }, { id: "multiplier", l: "× mult" }];
-const TC_UNITS = [{ id: "pc", l: "pcs" }, { id: "sqft", l: "sqft" }, { id: "rft", l: "RFT" }, { id: "kg", l: "kg" }, { id: "bundle", l: "bundles" }];
+// TC_UNITS and TR_TIERS moved to lib/studio/keys.js — IMS mounts this same Transport editor now,
+// so both apps read one definition instead of keeping a second copy that drifts.
 
 // ═══ TRANSPORT DEFAULTS (4-tier venue pricing + truck capacity + buffer) ═══
-const TR_TIERS = [
-  { id: "inhouse", label: "Tier 1 — In-house Venues", icon: "\u{1F3E0}", desc: "Fixed cost per trip — always same" },
-  { id: "empanelled", label: "Tier 2 — Empanelled Venues", icon: "\u{1F91D}", desc: "Fixed cost per trip for partner venues" },
-  { id: "repeat", label: "Tier 3 — Repeat Venues", icon: "\u{1F504}", desc: "Auto-pulled rates from past event data" },
-  { id: "new", label: "Tier 4 — New Venues", icon: "\u{1F195}", desc: "Manual entry for first-time venues" },
-];
 const TR_DV = [
   { id: "V01", tier: "inhouse", name: "Emerald Green", rate: 3000, gensets: 1 },
   { id: "V02", tier: "inhouse", name: "Aura", rate: 3000, gensets: 1 },
@@ -2122,8 +2117,6 @@ export default function StudioApp() {
       try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {}
       // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
       try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
-      // IMS-owned truck capacity. Only takes over when it has entries, so until ops fills the panel
-      // in, the legacy Studio-side list stays in force and no quote moves. No data migration.
       try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
       try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {}
       // Deal Check boot loaders
@@ -3461,7 +3454,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, dcCustomItems, structRates, activeFnIdx]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, dcCustomItems, structRates, activeFnIdx]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -3781,7 +3774,7 @@ export default function StudioApp() {
         gensets, venueGensets, gensetCost, gensetRate, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
 
   const cat = getCat(grandTotal);
 
@@ -3802,6 +3795,7 @@ export default function StudioApp() {
 
   // ── Transport save (used by autoPersistCustomVenue) — VERBATIM (kv shim) ──
   const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62) => {
+    // Writes the legacy blob, so it persists the LOCAL list — never IMS's, which lives in its own key.
     const sv = nv || trVenues; const st = ntc || truckCap; const sf = nfpt !== undefined ? nfpt : floralPerTruck; const sb = nbt || bufferTiers; const sgr = ngr !== undefined ? ngr : gensetRate; const sgr62 = ngr62 !== undefined ? ngr62 : gensetRate62;
     if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr); if (ngr62 !== undefined) setGensetRate62(ngr62);
     const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr, gensetRate62: sgr62 };
@@ -5079,21 +5073,29 @@ export default function StudioApp() {
   }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession]);
 
   // ── Resume saved session (per-pill) — VERBATIM ──
-  const resumeSavedSession = useCallback((session) => {
+  // `targetFnIdx` says WHICH pill to restore into. Without it the caller could only ever resume
+  // into whatever pill happened to be active, and a session with no snapshot for that pill would
+  // restoreBuildState(null) — silently blanking the pill instead of loading anything. Browse passes
+  // the index the session actually holds data for, so resuming from Fn2 a session saved on Fn1
+  // switches to Fn1 and loads it rather than wiping Fn2.
+  const resumeSavedSession = useCallback((session, targetFnIdx) => {
     if (!session) return;
+    const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
-      const activeSnap = session.fnSnapshots[activeFnIdx] || session.fnSnapshots[String(activeFnIdx)] || null;
+      const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
+      if (idx !== activeFnIdx) setActiveFnIdx(idx);
       restoreBuildState(activeSnap);
       const otherBuilds = {};
       Object.entries(session.fnSnapshots).forEach(([k, v]) => {
-        const idx = parseInt(k);
-        if (!isNaN(idx) && idx !== activeFnIdx && v) otherBuilds[idx] = v;
+        const i = parseInt(k);
+        if (!isNaN(i) && i !== idx && v) otherBuilds[i] = v;
       });
       setFnBuilds(otherBuilds);
       setStep(2);
-      showMsg("Resumed Fn" + (activeFnIdx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
+      showMsg("Resumed Fn" + (idx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
       return;
     }
+    if (idx !== 0) setActiveFnIdx(0);   // legacy sessions are flat — their data belongs to Fn1
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
     setZoneConfig(session.zoneConfig || {});
@@ -5120,7 +5122,7 @@ export default function StudioApp() {
     }
     setStep(2);
     showMsg("Resumed session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
-  }, [events, allVideos, ytVideoTags, activeFnIdx]);
+  }, [events, allVideos, ytVideoTags, activeFnIdx, setActiveFnIdx]);
 
   // ── AI tag an image (Claude vision) — routes via callClaudeStreaming (Supabase Edge Fn) ──
   const aiTagImage = async (url) => {

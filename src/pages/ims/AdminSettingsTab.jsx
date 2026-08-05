@@ -4,6 +4,8 @@ import { canvaAuthUrl, canvaConnectionStatus } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
+import ImsTransportPanel from "./ImsTransportPanel.jsx";
+import { INV_CATS } from "../../lib/inventory/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
@@ -196,7 +198,29 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
-  const activePanel = forcedMode ? mode : panel;
+
+  // The catalogues and rate tables that everything else prices against. Grouped behind one tab
+  // because the flat strip had grown to thirteen and wrapped onto two rows — the rate panels were
+  // the hardest to find precisely because they sat between unrelated operational settings.
+  // Named for both carpet and platform: the platform rate hiding under a tab called "Carpet
+  // Materials" is exactly why nobody could find where it was set.
+  const MASTER_DATA = [
+    { id: "subcats", label: "📂 Sub-Categories" },
+    { id: "printmaterials", label: "🖨️ Print Materials" },
+    { id: "carpetmaterials", label: "🟫 Carpet & Platform" },
+    { id: "structurerates", label: "🏗️ Truss & Masking" },
+    // The full Studio Transport & Power editor, which already owns truck capacity alongside venue
+    // tiers, genset rates and buffer tiers — a separate Truck Capacity tab would have been a
+    // second editor for one slice of the same blob.
+    { id: "transport", label: "🚛 Transport & Power" },
+    { id: "departments", label: "🏦 Departments" },
+  ];
+  const [masterPanel, setMasterPanel] = useState(MASTER_DATA[0].id);
+
+  // `forcedMode` still addresses a panel by its own id (FlowersTab mounts this component with
+  // mode="recipes"), so grouping must not change how those are reached — hence the group resolves
+  // to its selected child rather than becoming a panel id of its own.
+  const activePanel = forcedMode ? mode : (panel === "masterdata" ? masterPanel : panel);
 
   const panels = forcedMode ? [] : [
     { id: "labourtiers", label: "👷 Workforce" },
@@ -204,13 +228,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "venuedumping", label: "🚛 Venue Dumping" },
     { id: "dihari", label: "💰 Dihari Timings" },
     { id: "supervisors", label: "👷 Supervisors" },
-    { id: "subcats", label: "📂 Sub-Categories" },
     { id: "synonyms", label: "🔤 AI Synonyms" },
-    { id: "printmaterials", label: "🖨️ Print Materials" },
-    // Named for both, not just carpet — the platform rate living under a tab called "Carpet
-    // Materials" is precisely why nobody could find where it was set.
-    { id: "carpetmaterials", label: "🟫 Carpet & Platform" },
-    { id: "structurerates", label: "🏗️ Truss & Masking" },
+    { id: "masterdata", label: "🗂️ Master Data" },
     { id: "canva", label: "🎨 Canva" },
   ];
 
@@ -299,6 +318,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   return (
     <div className="space-y-4">
       {!forcedMode && <Tabs tabs={panels} active={panel} onChange={setPanel} />}
+      {!forcedMode && panel === "masterdata" && (
+        <div className="pl-1">
+          <Tabs tabs={MASTER_DATA} active={masterPanel} onChange={setMasterPanel} />
+        </div>
+      )}
 
       {activePanel === "labourtiers" && (
         <div className="space-y-4">
@@ -2370,6 +2394,66 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           <p className="text-xs text-gray-400">Connecting redirects to Canva to authorize, then back here automatically. Reconnecting is safe any time — it just re-authorizes the same shared account.</p>
         </div>
       )}
+      {/* ═══ TRUCK CAPACITY ═══ How many of each sub-category fit in one truck. Studio's transport
+          maths has always read this, but the only editor lived in Studio → Manage → Transport, so
+          ops could not change a figure that is entirely an ops fact. IMS owns it now; Studio reads
+          it live and shows the same table read-only, the way it already does for the rate card.
+          Grouped by the rate-card category exactly as the Studio view groups it, off the same
+          rcItems/rcCats this tab already receives. */}
+      {/* Studio's own Transport & Power editor, mounted here via a data/theme adapter rather than
+          rebuilt — one editor, so the two apps can never disagree about a rate. */}
+      {activePanel === "transport" && <ImsTransportPanel rcItems={rcItems} rcCats={rcCats} />}
+
+      {/* Moved here from Studio → Manage → Settings, which no longer carries a Departments tab. */}
+      {activePanel === "departments" && (() => {
+        const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
+        // Studio writes this key as a JSON string, IMS writes it back as an object. Studio's loader
+        // takes either (typeof v === "string" ? JSON.parse(v) : v), so neither side needs changing.
+        const raw = settings.categoryDepartments;
+        let map = {};
+        if (raw && typeof raw === "object") map = raw;
+        else if (typeof raw === "string") { try { map = JSON.parse(raw) || {}; } catch { map = {}; } }
+        // Keyword fallback (mirrors Deal Check) — shown as the default when a category isn't set.
+        const kw = (cat) => { const t = String(cat || "").toLowerCase(); if (t.includes("floral") || t.includes("flower")) return "Floral"; if (t.includes("light") || t.includes("chandel") || t.includes("led")) return "Lighting"; if (t.includes("truss")) return "Tenting"; if (t.includes("mask") || t.includes("fabric") || t.includes("drap") || t.includes("ceiling") || t.includes("liza") || t.includes("curtain")) return "Fabric"; if (t.includes("platform") || t.includes("carpet") || t.includes("tent")) return "Tenting"; if (t.includes("transport") || t.includes("truck")) return "Transport"; if (t.includes("furnitur") || t.includes("sofa") || t.includes("chair") || t.includes("couch")) return "Furniture"; return "Structure"; };
+        // Studio rate-card categories + IMS inventory categories, deduped by name.
+        const cats = [];
+        const seen = new Set();
+        [...(rcCats || []).map((c) => c?.l).filter(Boolean), ...INV_CATS].forEach((name) => {
+          const k = String(name).toLowerCase().trim();
+          if (k && !seen.has(k)) { seen.add(k); cats.push(name); }
+        });
+        const setCat = (name, dep) => {
+          const k = String(name).toLowerCase().trim();
+          const next = { ...map };
+          if (dep) next[k] = dep; else delete next[k];
+          setSettings((st) => ({ ...st, categoryDepartments: next }));
+        };
+        return (
+          <div className="space-y-4 max-w-2xl">
+            <div>
+              <p className="font-bold text-gray-900 mb-1">🏦 Department Income mapping</p>
+              <p className="text-xs text-gray-500">Set which department earns each category&rsquo;s income (used by Deal Check → Dept Income). &ldquo;Auto&rdquo; uses smart keyword matching. Manpower types &amp; truss/fabric follow fixed rules.</p>
+            </div>
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              {cats.map((name, i) => {
+                const k = String(name).toLowerCase().trim();
+                return (
+                  <div key={k} className={`flex items-center gap-3 px-4 py-2.5 bg-white ${i < cats.length - 1 ? "border-b border-gray-100" : ""}`}>
+                    <span className="flex-1 text-sm font-semibold text-gray-900">{name}</span>
+                    <select value={map[k] || ""} onChange={(e) => setCat(name, e.target.value)}
+                      className="w-44 text-xs border border-gray-200 rounded-md px-2 py-1.5 bg-white">
+                      <option value="">Auto ({kw(name)})</option>
+                      {DEPTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">Tip: a sub-category inherits its category&rsquo;s department. Truss steel → Tenting · masking/drape fabric → Fabric · genset → Lighting · transport → Transport · manpower by worker type — all handled automatically.</p>
+          </div>
+        );
+      })()}
+
       {activePanel === "structurerates" && (() => {
         const trussRatesList = (settings.trussRates && settings.trussRates.length) ? settings.trussRates : DEFAULT_TRUSS_RATES;
         const maskingRatesList = (settings.maskingRates && settings.maskingRates.length) ? settings.maskingRates : DEFAULT_MASKING_RATES;
