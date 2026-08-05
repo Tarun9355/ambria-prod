@@ -8,7 +8,7 @@ import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
-import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
+import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 import { swatchHexFor } from "../../lib/studio/colours";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
@@ -76,6 +76,25 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     if (!name) return;
     setSettings((s) => ({ ...s, carpetMaterials: [...(s.carpetMaterials || []), { id: "CM" + Date.now(), name, ratePerSqft: 0 }] }));
     setCarpetMatNew("");
+  };
+  // ── Platform heights (same panel as carpet — both price off the zone's floor area) ──
+  // Settings may not hold the key yet, in which case the seeded rows are what's on screen and
+  // the first edit writes the whole list. Resolving it once here keeps every handler below
+  // working off the same array instead of each re-deriving the fallback.
+  const platformRateRows = (Array.isArray(settings.platformRates) && settings.platformRates.length)
+    ? settings.platformRates
+    : DEFAULT_PLATFORM_RATES.map((d) => ({ ...d }));
+  const [platRateNew, setPlatRateNew] = useState("");
+  const addPlatformRate = () => {
+    const name = platRateNew.trim();
+    if (!name) return;
+    // A generated key, never a guessable one: "4in" is special-cased in the platform geometry
+    // (fatta sits flush, no stands), so a new height must not accidentally claim that meaning.
+    setSettings((s) => ({
+      ...s,
+      platformRates: [...platformRateRows, { key: "PL" + Date.now().toString(36), name, ratePerSqft: 0 }],
+    }));
+    setPlatRateNew("");
   };
   // One-time migration: a zone's carpet (`cpT`) used to be picked from Print Materials by
   // "carpet" in the name — a real print-job material list, wrong master for a floor covering.
@@ -186,7 +205,9 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "subcats", label: "📂 Sub-Categories" },
     { id: "synonyms", label: "🔤 AI Synonyms" },
     { id: "printmaterials", label: "🖨️ Print Materials" },
-    { id: "carpetmaterials", label: "🟫 Carpet Materials" },
+    // Named for both, not just carpet — the platform rate living under a tab called "Carpet
+    // Materials" is precisely why nobody could find where it was set.
+    { id: "carpetmaterials", label: "🟫 Carpet & Platform" },
     { id: "structurerates", label: "🏗️ Truss & Masking" },
     { id: "canva", label: "🎨 Canva" },
   ];
@@ -2257,6 +2278,65 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               </div>
             ))}
             {(settings.carpetMaterials || []).length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No carpet materials yet — add one above (e.g. Carpet Old, Carpet New).</p>}
+          </div>
+
+          {/* ── Platform, same panel ──────────────────────────────────────────────────────
+              Platform and carpet are the two halves of one thing in Studio: both are charged
+              on the zone's floor area and both live in the Platform card. Splitting them
+              across two settings tabs is what made the platform rate hard to find at all.
+              The list differs though — carpet is a free-form catalogue you add to, while the
+              two platform heights are structural (computePlatformComponents derives fatta and
+              stand counts from them), so those rows can only have their rate changed. */}
+          <div className="pt-4 mt-2 border-t">
+            <p className="font-bold text-gray-900 mb-1">🪵 Platform Rates</p>
+            <p className="text-xs text-gray-500 mb-3">
+              ₹/sqft per platform height, charged on the same floor area as the carpet above.
+              Rename, re-rate, add or remove heights freely — a height already used on a saved quote
+              keeps pricing at its old rate even after you delete it, so nothing re-prices behind you.
+            </p>
+            <div className="flex gap-2 items-end mb-3">
+              <div className="flex-1">
+                <label className="text-xs text-gray-500">Height name</label>
+                <input value={platRateNew} onChange={(e) => setPlatRateNew(e.target.value)} placeholder="e.g. 2ft riser"
+                  className="w-full border rounded-lg px-3 py-2 text-sm" onKeyDown={(e) => { if (e.key === "Enter") addPlatformRate(); }} />
+              </div>
+              <button onClick={addPlatformRate} className="bg-violet-600 hover:bg-violet-700 text-white text-sm px-4 py-2 rounded-lg font-medium whitespace-nowrap">+ Add Height</button>
+            </div>
+            <div className="space-y-2">
+              {platformRateRows.map((row) => {
+                const def = DEFAULT_PLATFORM_RATES.find((d) => d.key === row.key);
+                // `key` is never edited — computePlatformComponents zeroes the stand count for
+                // "4in" specifically, and zoneConfig.plH on every saved quote holds these keys.
+                // Only the label and the rate change.
+                const patch = (fields) => setSettings((s) => ({
+                  ...s,
+                  platformRates: platformRateRows.map((r) => (r.key === row.key ? { ...r, ...fields } : r)),
+                }));
+                return (
+                  <div key={row.key} className="flex items-center gap-3 bg-white border rounded-lg px-3 py-2">
+                    <input value={row.name} onChange={(e) => patch({ name: e.target.value })}
+                      className="flex-1 border rounded-lg px-2 py-1 text-sm font-medium" />
+                    {def && row.ratePerSqft !== def.ratePerSqft && (
+                      <span className="text-[10px] text-gray-400 whitespace-nowrap">was ₹{def.ratePerSqft}</span>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-400">₹</span>
+                      <input type="number" min="0" value={row.ratePerSqft ?? 0}
+                        onChange={(e) => patch({ ratePerSqft: parseFloat(e.target.value) || 0 })}
+                        className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
+                      <span className="text-xs text-gray-400">/sqft</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!window.confirm(`Delete "${row.name}"?\n\nZones already saved with this height keep their current price — it just stops being offered.`)) return;
+                        setSettings((s) => ({ ...s, platformRates: platformRateRows.filter((r) => r.key !== row.key) }));
+                      }}
+                      className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
+                  </div>
+                );
+              })}
+              {platformRateRows.length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No platform heights — add one above, or Studio falls back to the seeded 4 inch / 1ft–3ft rates.</p>}
+            </div>
           </div>
         </div>
       )}

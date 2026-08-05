@@ -76,7 +76,40 @@ export const ZONE_META = {
 export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:100,flex:45,vinyl:90},platform:{"4in":30,"1ft":45},arch:{"2d":60,"3d":100},pillar:2000,glass:{"2d":120,"3d":180}};
 // MASK_OPTS removed — it was a second, frozen copy of the masking list (with 2024 seed rates baked
 // into `r`) that drifted from whatever the admin had actually set. Use maskingOptions(imsMaskingRates).
+// Platform heights. The set is FIXED (the two values are baked into computePlatformComponents'
+// fatta/stand geometry), so rows can't be added or removed — only their rate edited, exactly like
+// truss and masking. Editable live from IMS Admin → Settings → 🪵 Platform Rates.
+//
+// PLAT_OPTS stays as the fallback shape and the source of the labels. Do NOT read `.r` from it for
+// pricing or display — use platformOptions()/platformRateFor() so an admin's edit is honoured.
+// Leaving a second hardcoded copy readable is how MASK_OPTS drifted from the admin's real rates.
 export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}];
+export const DEFAULT_PLATFORM_RATES = PLAT_OPTS.map((o) => ({ key: o.id, name: o.l, ratePerSqft: o.r }));
+
+/** ₹/sqft for a platform height, from the admin's saved list, falling back to the seed rates. */
+export function platformRateFor(key, platformRates) {
+  const list = (Array.isArray(platformRates) && platformRates.length) ? platformRates : DEFAULT_PLATFORM_RATES;
+  const row = list.find((r) => r.key === key) || DEFAULT_PLATFORM_RATES.find((r) => r.key === key);
+  return Number(row?.ratePerSqft) || 0;
+}
+
+/**
+ * The heights a salesperson can pick, in PLAT_OPTS shape ({id,l,r}) so call sites are unchanged.
+ * Derived from the admin's saved list, so added/renamed/removed heights show up in Studio.
+ *
+ * Only the `4in` KEY carries behaviour — computePlatformComponents zeroes the stand count for it
+ * (a 4-inch fatta sits flush). Any other key, including a custom one, computes stands normally,
+ * which is the right default for anything raised. That is why the panel lets the label be renamed
+ * but never the key: rename "4 inch" to "Low riser" and the geometry still holds.
+ *
+ * A deleted height stays resolvable in platformRateFor above on purpose — a zone saved against it
+ * keeps pricing at the seeded rate instead of silently dropping to ₹0. Deleting removes it from
+ * the menu going forward; it does not rewrite priced history.
+ */
+export function platformOptions(platformRates) {
+  const list = (Array.isArray(platformRates) && platformRates.length) ? platformRates : DEFAULT_PLATFORM_RATES;
+  return list.map((r) => ({ id: r.key, l: r.name, r: Number(r.ratePerSqft) || 0 }));
+}
 export const ARCH_OPTS=[{id:"2d",l:"2D (Flat)",r:60},{id:"3d",l:"3D (Built-out)",r:100}];
 export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out)",r:180}];
 

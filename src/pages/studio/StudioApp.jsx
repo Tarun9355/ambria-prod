@@ -53,7 +53,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
 } from "../../lib/studio/taxonomy";
 
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -301,7 +301,9 @@ function trussRowCost(row, rates) {
 function platformRowCost(row, rates) {
   const fd = row.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
-  const platform = row.plH ? a * (BASE_RATES.platform[row.plH] || 45) : 0;
+  // platformRateFor, not BASE_RATES.platform — the rate is admin-editable now, and this is the
+  // line that actually charges for it. The BASE_RATES entry survives only as its fallback.
+  const platform = row.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0;
   const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, rates?.carpetMaterials).rate;
   return { platform, carpet };
 }
@@ -1424,6 +1426,9 @@ export default function StudioApp() {
   // to DEFAULT_TRUSS_RATES/DEFAULT_MASKING_RATES via trussRateFor/maskingRateFor until customized.
   const [imsTrussRates, setImsTrussRates] = useState([]);
   const [imsMaskingRates, setImsMaskingRates] = useState([]);
+  // IMS Admin → Settings → 🪵 Platform Rates (settings.platformRates) — falls back to
+  // DEFAULT_PLATFORM_RATES via platformRateFor until an admin edits one.
+  const [imsPlatformRates, setImsPlatformRates] = useState([]);
   // Bundled live rate settings passed to calcStructCost everywhere — one object instead of a
   // growing list of positional args as more of these settings-driven rates get added.
   // Save colour + palette catalogues to Studio-owned PALETTE_SK
@@ -2112,7 +2117,10 @@ export default function StudioApp() {
       try { const cmv = await kvGet("carpetMaterials"); if (cmv != null) { const cm = parse(cmv); if (Array.isArray(cm) && !cancelled) setImsCarpetMaterials(cm); } } catch {}
       // Truss & Masking Rates (IMS Admin → Settings → 🏗️) — same per-field kv row pattern.
       try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
+      // IMS-owned truck capacity. Only takes over when it has entries, so until ops fills the panel
+      // in, the legacy Studio-side list stays in force and no quote moves. No data migration.
       try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
+      try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {}
       // Deal Check boot loaders
       try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
       // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
@@ -2216,6 +2224,7 @@ export default function StudioApp() {
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
           else if (key === "trussRates") { const tr = pj(await kvGet("trussRates")); if (Array.isArray(tr)) setImsTrussRates(tr); }
           else if (key === "maskingRates") { const mr = pj(await kvGet("maskingRates")); if (Array.isArray(mr)) setImsMaskingRates(mr); }
+          else if (key === "platformRates") { const pr = pj(await kvGet("platformRates")); if (Array.isArray(pr)) setImsPlatformRates(pr); }
           // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
           // subscription on the `video_tags` table now, and the blob is a write-only mirror during the
           // transition. Rebuilding the whole map from that mirror could push a stale blob (the mirror
@@ -2741,7 +2750,7 @@ export default function StudioApp() {
   // Bundled settings-driven rates passed to calcStructCost everywhere — imsInventory/rcFactorByKey
   // ride along so trussRowCost can price a "custom ceiling/masking" inventory item (rental × its
   // sub-category's scaling factor) the same way any other IMS-sourced element prices.
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsInventory, rcFactorByKey]);
+  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, platformRates: imsPlatformRates, imsInventory, rcFactorByKey }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsPlatformRates, imsInventory, rcFactorByKey]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -6732,7 +6741,7 @@ export default function StudioApp() {
     imsPrintMaterials, imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + the bundled object
     // passed to calcStructCost everywhere
-    imsTrussRates, imsMaskingRates, structRates,
+    imsTrussRates, imsMaskingRates, imsPlatformRates, structRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern,
