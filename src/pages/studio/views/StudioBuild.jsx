@@ -732,6 +732,19 @@ export default function StudioBuild({ ctx }) {
   // rail. 12 is four rows at three columns, matching Browse.
   const [zpPaletteAll, setZpPaletteAll] = useState(false);
   const ZP_PALETTE_CAP = 12;
+  // The in-zone panel repeats these same two lists and capped neither: palette ran seven rows deep
+  // and venue sat in a 110px nested scrollbox, so the filter dwarfed the photos it filters. Same
+  // caps as the rail, but its own expand state — it is a separate surface you open per zone.
+  const [zpInlinePaletteAll, setZpInlinePaletteAll] = useState(false);
+  const [zpInlineVenueAll, setZpInlineVenueAll] = useState(false);
+  // Cap a list but never hide an active selection: a filter you cannot see is a filter you cannot
+  // clear, and the photo count would look wrong with nothing on screen to explain it.
+  const zpCap = (all, sel, cap, seeAll) => {
+    if (seeAll || all.length <= cap) return { shown: all, hidden: 0 };
+    const head = all.slice(0, cap);
+    return { shown: [...head, ...sel.filter((v) => all.includes(v) && !head.includes(v))], hidden: all.length - cap };
+  };
+  const zpMorePill = () => ({ ...zpPill(false), borderStyle: "dashed", fontWeight: 700, color: accent });
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   // One row, rails open or folded. Folding them used to add a second row of four, which is the
   // opposite of the point — the extra width is meant to make the same four photos bigger, not to
@@ -1690,10 +1703,15 @@ undefined
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Color palette</div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
-                    {azSort(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
-                  </div>
+                  {(()=>{
+                    const all=azSort(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
+                    const {shown,hidden}=zpCap(all,zpFilters.colorPalette||[],ZP_PALETTE_CAP,zpInlinePaletteAll);
+                    return <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
+                      {shown.map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
+                      {(hidden>0||zpInlinePaletteAll)&&all.length>ZP_PALETTE_CAP&&<span onClick={()=>setZpInlinePaletteAll(v=>!v)} style={zpMorePill()}>{hidden>0?`+${hidden} more`:"Show fewer"}</span>}
+                    </div>;
+                  })()}
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Day / Night</div>
@@ -1706,11 +1724,16 @@ undefined
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>
                     Venue{zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}
                   </div>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap",maxHeight:110,overflowY:"auto"}}>
-                    <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
-                    {azSort(zpVenueChoices).map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
-                    {zpVenueChoices.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
-                  </div>
+                  {(()=>{
+                    const all=azSort(zpVenueChoices);
+                    const {shown,hidden}=zpCap(all,zpFilters.venue||[],ZP_VENUE_CAP,zpInlineVenueAll);
+                    return <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
+                      {shown.map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
+                      {(hidden>0||zpInlineVenueAll)&&all.length>ZP_VENUE_CAP&&<span onClick={()=>setZpInlineVenueAll(v=>!v)} style={zpMorePill()}>{hidden>0?`+${hidden} more`:"Show fewer"}</span>}
+                      {all.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
+                    </div>;
+                  })()}
                 </div>
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
