@@ -105,6 +105,68 @@ export function Modal({ open, onClose, title, children, wide = false }) {
   );
 }
 
+// ─── Confirmation dialog ──────────────────────────────────────────────────────
+// Replaces window.confirm, which renders the browser's own "localhost:5173 says" chrome —
+// unstyled, un-brandable, and it says the site's hostname rather than anything the user
+// recognises. It also blocks the main thread, so nothing can animate behind it.
+//
+// Kept promise-shaped on purpose, so a call site is a one-word change:
+//     if (!window.confirm("Delete?")) return;        →   if (!(await confirm({ ... }))) return;
+//
+// Usage:
+//     const [confirm, confirmDialog] = useConfirm();
+//     ...
+//     return (<> ...  {confirmDialog} </>);
+export function useConfirm() {
+  const [state, setState] = useState(null); // { title, body, confirmLabel, danger, resolve }
+
+  const confirm = (opts = {}) => new Promise((resolve) => {
+    setState({ confirmLabel: "Delete", danger: true, ...opts, resolve });
+  });
+
+  const settle = (answer) => {
+    setState((s) => { s?.resolve(answer); return null; });
+  };
+
+  // Enter confirms, Escape cancels — window.confirm gave us both for free and losing them
+  // would make this a downgrade for anyone working quickly through a list.
+  useEffect(() => {
+    if (!state) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); settle(false); }
+      if (e.key === "Enter") { e.preventDefault(); settle(true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dialog = !state ? null : (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}
+      onClick={() => settle(false)}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4">
+          <h3 className="text-base font-bold text-gray-900">{state.title}</h3>
+          {state.body && <p className="text-sm text-gray-500 mt-2 leading-relaxed whitespace-pre-line">{state.body}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-6 pb-5 rounded-b-2xl">
+          <button onClick={() => settle(false)}
+            className="px-4 py-2 text-sm rounded-lg font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition">
+            Cancel
+          </button>
+          <button autoFocus onClick={() => settle(true)}
+            className={"px-4 py-2 text-sm rounded-lg font-medium text-white transition "
+              + (state.danger ? "bg-red-600 hover:bg-red-700" : "bg-indigo-600 hover:bg-indigo-700")}>
+            {state.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return [confirm, dialog];
+}
+
 export function Tabs({ tabs, active, onChange }) {
   return (
     <div className="flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">

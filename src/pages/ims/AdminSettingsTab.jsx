@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Tabs, AddInlineItem, FlowerPicker, Btn } from "../../components/ui";
+import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../components/ui";
 import { canvaAuthUrl, canvaConnectionStatus } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
@@ -85,6 +85,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     ? settings.platformRates
     : DEFAULT_PLATFORM_RATES.map((d) => ({ ...d }));
   const [platRateNew, setPlatRateNew] = useState("");
+  // In-app confirmation instead of window.confirm — see useConfirm in components/ui.
+  const [confirm, confirmDialog] = useConfirm();
   const addPlatformRate = () => {
     const name = platRateNew.trim();
     if (!name) return;
@@ -2234,7 +2236,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                   <span className="text-xs text-gray-400">/sqft</span>
                 </div>
-                <button onClick={() => { if (!window.confirm(`Delete "${m.name}"?`)) return; setSettings((s) => ({ ...s, printMaterials: s.printMaterials.filter((x) => x.id !== m.id) })); }}
+                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Removes it from the Print Materials list. Anything already priced with it keeps its price." }))) return; setSettings((s) => ({ ...s, printMaterials: s.printMaterials.filter((x) => x.id !== m.id) })); }}
                   className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             ))}
@@ -2273,7 +2275,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                   <span className="text-xs text-gray-400">/sqft</span>
                 </div>
-                <button onClick={() => { if (!window.confirm(`Delete "${m.name}"?`)) return; setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.filter((x) => x.id !== m.id) })); }}
+                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Zones already using this carpet keep their current price — it just stops being offered." }))) return; setSettings((s) => ({ ...s, carpetMaterials: s.carpetMaterials.filter((x) => x.id !== m.id) })); }}
                   className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             ))}
@@ -2327,8 +2329,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                       <span className="text-xs text-gray-400">/sqft</span>
                     </div>
                     <button
-                      onClick={() => {
-                        if (!window.confirm(`Delete "${row.name}"?\n\nZones already saved with this height keep their current price — it just stops being offered.`)) return;
+                      onClick={async () => {
+                        if (!(await confirm({
+                          title: `Delete "${row.name}"?`,
+                          body: "Zones already saved with this height keep their current price — it just stops being offered.",
+                        }))) return;
                         setSettings((s) => ({ ...s, platformRates: platformRateRows.filter((r) => r.key !== row.key) }));
                       }}
                       className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
@@ -2461,6 +2466,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           </div>
         );
       })()}
+      {confirmDialog}
     </div>
   );
 }
