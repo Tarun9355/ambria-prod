@@ -1616,7 +1616,12 @@ export default function StudioApp() {
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
   const [floralPerTruck, setFloralPerTruck] = useState(50000);
-  const [gensetRate, setGensetRate] = useState(28000);
+  // Two genset sizes are hired, and an event can need BOTH — a big unit plus a smaller one — so
+  // each size carries its own count. 125 KVA keeps the original `gensetRate` key and the existing
+  // customGensets count, and 62 KVA starts at zero, so no saved quote re-prices.
+  const [gensetRate, setGensetRate] = useState(28000);      // 125 KVA
+  const [gensetRate62, setGensetRate62] = useState(18000);  // 62 KVA
+  const [genset62, setGenset62] = useState(0);              // count of the smaller unit, per deal
   const [bufferTiers, setBufferTiers] = useState(TR_DBT);
   const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
   const [newTC, setNewTC] = useState({ item: "", perTruck: 0, unit: "pc" });
@@ -2011,7 +2016,7 @@ export default function StudioApp() {
       // Transport
       try {
         const v = await kvGet(RC_SK_TR);
-        if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
+        if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } }
       } catch {}
       // Templates
       try { const v = await kvGet(TPL_SK); if (v != null) { const tp = parse(v); if (Array.isArray(tp) && tp.length && !cancelled) setTemplates(tp); } } catch {}
@@ -2218,7 +2223,7 @@ export default function StudioApp() {
         if (!key) return;
         try {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
-          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); } }
+          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
@@ -3259,9 +3264,9 @@ export default function StudioApp() {
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
     const truckTotal = allTrucks * tripRate * 2;
     const gensets = match ? (match.gensets || 1) : 1;
-    const gensetCost = gensets * gensetRate;
+    const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
     return decorCost + truckTotal + gensetCost;
-  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, structRates]);
+  }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, structRates]);
 
   const fullCostMap = useMemo(() => {
     const m = {};
@@ -3326,7 +3331,7 @@ export default function StudioApp() {
     // calcFunctionCost/calcFunctionBreakdown, which already skip transport entirely when a
     // function's decor total is 0 — this was the one place still charging it unconditionally
     // as soon as a venue was picked, even with every zone toggled off.
-    if (decor <= 0) return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: match ? (match.gensets || 1) : 1, gensetCost: 0, gensetRate, truckTotal: 0 };
+    if (decor <= 0) return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: match ? (match.gensets || 1) : 1, gensetCost: 0, gensetRate, gensetRate62, genset62: Number(genset62) || 0, truckTotal: 0 };
     const breakdown = [];
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
     itemBd.forEach(b => breakdown.push(b));
@@ -3337,11 +3342,11 @@ export default function StudioApp() {
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
     const venueGensets = match ? (match.gensets || 1) : 1;
     const gensets = customGensets !== null ? customGensets : venueGensets;
-    const gensetCost = gensets * gensetRate;
+    const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
     const truckTotal = allTrucks * tripRate * 2;
     const total = truckTotal + gensetCost;
-    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets, venueGensets, gensetCost, gensetRate, truckTotal };
-  }, [venue, customTripRate, customGensets, gensetRate, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig]);
+    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets, venueGensets, gensetCost, gensetRate, gensetRate62, genset62: Number(genset62) || 0, truckTotal };
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig]);
 
   const grandTotal = useMemo(() => totalCost() + transportCalc.total, [totalCost, transportCalc]);
 
@@ -3354,7 +3359,7 @@ export default function StudioApp() {
         : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom" }; })();
       const isActive = idx === activeFnIdx;
       const snap = isActive
-        ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides }
+        ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides }
         : (fnBuilds[idx] || {});
       all.push({
         fnIdx: idx,
@@ -3375,6 +3380,7 @@ export default function StudioApp() {
         elTiers: snap.elTiers || {},
         floralRatio: typeof snap.floralRatio === "number" ? snap.floralRatio : floralRatio,
         customGensets: typeof snap.customGensets === "number" ? snap.customGensets : null,
+        genset62: typeof snap.genset62 === "number" ? snap.genset62 : 0,
         customTripRate: typeof snap.customTripRate === "number" ? snap.customTripRate : 0,
         elNotes: snap.elNotes || {},
         floralOverrides: snap.floralOverrides && typeof snap.floralOverrides === "object"
@@ -3451,7 +3457,7 @@ export default function StudioApp() {
       const truckTotal = allTrucks * tripRate * 2;
       const venueGensets = match ? (match.gensets || 1) : 1;
       const gensets = fCustomGensets !== null ? fCustomGensets : venueGensets;
-      const gensetCost = gensets * gensetRate;
+      const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
@@ -3767,7 +3773,7 @@ export default function StudioApp() {
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
       const venueGensets = match ? (match.gensets || 1) : 1;
       const gensets = fCustomGensets !== null ? fCustomGensets : venueGensets;
-      const gensetCost = gensets * gensetRate;
+      const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
       const truckTotal = allTrucks * tripRate * 2;
       transportTotal = truckTotal + gensetCost;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
@@ -3795,12 +3801,12 @@ export default function StudioApp() {
   }, [authUser, notifications]);
 
   // ── Transport save (used by autoPersistCustomVenue) — VERBATIM (kv shim) ──
-  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr) => {
-    const sv = nv || trVenues; const st = ntc || truckCap; const sf = nfpt !== undefined ? nfpt : floralPerTruck; const sb = nbt || bufferTiers; const sgr = ngr !== undefined ? ngr : gensetRate;
-    if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr);
-    const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr };
+  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62) => {
+    const sv = nv || trVenues; const st = ntc || truckCap; const sf = nfpt !== undefined ? nfpt : floralPerTruck; const sb = nbt || bufferTiers; const sgr = ngr !== undefined ? ngr : gensetRate; const sgr62 = ngr62 !== undefined ? ngr62 : gensetRate62;
+    if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr); if (ngr62 !== undefined) setGensetRate62(ngr62);
+    const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr, gensetRate62: sgr62 };
     await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
-  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate]);
+  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62]);
 
   // ── Library photos for a zone ──
   // Async: fetches the zone-tagged candidate pool from the server (`tags->areasElements` overlap)
@@ -6725,7 +6731,7 @@ export default function StudioApp() {
     customZones, setCustomZones, newCzSrc, setNewCzSrc, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
     zoneConfig, setZoneConfig, activeZones, setActiveZones,
     floralRatio, setFloralRatio, floralOverrides, setFloralOverrides,
-    customTripRate, setCustomTripRate, venueCustom, setVenueCustom, customGensets, setCustomGensets,
+    customTripRate, setCustomTripRate, venueCustom, setVenueCustom, customGensets, setCustomGensets, genset62, setGenset62, gensetRate62,
     sourceEvent, setSourceEvent, sourceVideo, setSourceVideo,
     // inspiration / AI / PPT
     inspQ, setInspQ, inspResults, setInspResults, inspLoading, setInspLoading, aiPrompt, setAiPrompt, aiResult, setAiResult, aiLoading, setAiLoading,

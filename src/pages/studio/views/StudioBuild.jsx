@@ -499,6 +499,9 @@ export default function StudioBuild({ ctx }) {
     imsTrussRates, imsMaskingRates, structRates,
     // Platform rates (IMS Admin → Settings → 🪵 Platform Rates)
     imsPlatformRates,
+    // Genset count override — null means "follow the venue's own figure". Stepped from the
+    // Build total's Genset row; persisted with the rest of the session snapshot.
+    customGensets, setCustomGensets, setGenset62,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items in the "+Add element" search
     recipeOnlyPatterns,
@@ -2652,10 +2655,52 @@ undefined
         <span style={{fontSize:12,color:"#a5b4fc"}}><IconPlatform size={12}/> Decor (all zones)</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(totalCost())}</span>
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,paddingBottom:10,borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
-        <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} trucks + genset)</span>
-        <span style={{fontSize:14,fontWeight:600}}>{fmt(transportCalc.total)}</span>
+      {/* Trucks and genset are two different things bought from two different rates —
+          transportCalc has always kept truckTotal and gensetCost apart, they were merely being
+          summed here. Showing one figure meant a venue's genset charge was invisible. */}
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+        <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} truck{transportCalc.trucks===1?"":"s"})</span>
+        <span style={{fontSize:14,fontWeight:600}}>{fmt(transportCalc.truckTotal)}</span>
       </div>
+      {/* Genset count is adjustable here rather than only in Event Info's custom-venue block,
+          which is where the override lived and where nobody looks once a build is underway.
+          The venue supplies a default; stepping it writes customGensets, which the session
+          snapshot already persists. Setting it back to the venue's own number clears the
+          override, so the row stops being pinned and follows the venue again. */}
+      {/* One row per genset size, each with its own count — an event often needs a big unit AND a
+          smaller one, so a single "which size" toggle could never express that. 125 KVA keeps the
+          venue's own default; 62 KVA starts at 0, so nothing re-prices until someone adds one. */}
+      {[
+        { kva: "125", count: transportCalc.gensets, rate: transportCalc.gensetRate,
+          set: (n) => setCustomGensets(n === transportCalc.venueGensets ? null : n),
+          note: customGensets !== null ? `venue default ${transportCalc.venueGensets}` : "" },
+        { kva: "62", count: transportCalc.genset62, rate: transportCalc.gensetRate62,
+          set: (n) => setGenset62(n), note: "" },
+      ].map((g, gi) => (
+        <div key={g.kva} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,
+          ...(gi===1?{paddingBottom:10,borderBottom:"1px solid rgba(255,255,255,0.1)"}:null)}}>
+          <span style={{fontSize:12,color:"#a5b4fc",display:"inline-flex",alignItems:"center",gap:8}}>
+            Genset {g.kva} KVA
+            <span style={{display:"inline-flex",alignItems:"center",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:8,padding:2}}>
+              {[["−",-1],["+",1]].map(([sym,d],i)=>(
+                <Fragment key={sym}>
+                  {i===1&&<span style={{minWidth:16,textAlign:"center",fontSize:12,fontWeight:700,color:"#fff"}}>{g.count}</span>}
+                  <button
+                    onClick={()=>g.set(Math.max(0,(Number(g.count)||0)+d))}
+                    disabled={d<0&&(Number(g.count)||0)<=0}
+                    title={d<0?`One fewer ${g.kva} KVA genset`:`One more ${g.kva} KVA genset`}
+                    style={{width:18,height:18,lineHeight:1,borderRadius:5,border:"none",cursor:"pointer",
+                      background:"rgba(255,255,255,0.12)",color:"#fff",fontSize:12,fontWeight:700,
+                      opacity:(d<0&&(Number(g.count)||0)<=0)?0.35:1}}>{sym}</button>
+                </Fragment>
+              ))}
+            </span>
+            {g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate)}</span>}
+            {g.note&&<span style={{fontSize:10,opacity:0.7}}>· {g.note}</span>}
+          </span>
+          <span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate)}</span>
+        </div>
+      ))}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Grand Total</span>
         <div style={{textAlign:"right"}}>

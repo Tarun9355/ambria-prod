@@ -7,7 +7,7 @@ export default function TransportEditor({ ctx }) {
   const [openCats, setOpenCats] = useState({}); // collapsible truck-capacity category groups
   const {
     S, isDark, accent, border, textP, textS, showMsg,
-    trVenues, truckCap, floralPerTruck, gensetRate, bufferTiers, saveTR,
+    trVenues, truckCap, floralPerTruck, gensetRate, gensetRate62, bufferTiers, saveTR,
     newVenue, setNewVenue, newTC, setNewTC, TR_TIERS, TC_UNITS,
     rcItems, rcCats, allInhouseVenues, allOutdoorDB,
   } = ctx;
@@ -100,8 +100,27 @@ export default function TransportEditor({ ctx }) {
     {/* Genset rate */}
     <div style={{ ...S.card, padding: "18px 20px", marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <div><div style={{ fontSize: 16, fontWeight: 700, color: "#F59E0B", marginBottom: 4 }}>⚡ Genset Rate</div><div style={{ fontSize: 11, color: textS }}>Cost per genset (125 KVA) per event — multiplied by venue genset count</div></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 13, color: textS }}>₹</span><input type="number" value={gensetRate} onChange={(e) => saveTR(null, null, undefined, null, Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} /><span style={{ fontSize: 11, color: textS }}>/event</span></div>
+        <div><div style={{ fontSize: 16, fontWeight: 700, color: "#F59E0B", marginBottom: 4 }}>⚡ Genset Rate</div><div style={{ fontSize: 11, color: textS }}>Cost per genset per event — multiplied by the genset count. The size is picked per deal on Build.</div></div>
+      </div>
+      {/* Two sizes. 125 KVA keeps the original `gensetRate` key so every saved blob and quote reads
+          back unchanged; 62 KVA is stored alongside it and only applies to deals that pick it. */}
+      <div style={{ marginTop: 12 }}>
+        {[
+          { label: "125 KVA", hint: "Default — used unless a deal picks otherwise", value: gensetRate, save: (v) => saveTR(null, null, undefined, null, v) },
+          { label: "62 KVA", hint: "Smaller unit", value: gensetRate62, save: (v) => saveTR(null, null, undefined, null, undefined, v) },
+        ].map((g) => (
+          <div key={g.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 0", borderTop: `1px solid ${border}`, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: textP }}>{g.label}</div>
+              <div style={{ fontSize: 10.5, color: textS }}>{g.hint}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13, color: textS }}>₹</span>
+              <input type="number" min="0" value={g.value} onChange={(e) => g.save(Number(e.target.value) || 0)} style={{ ...numInput, width: 100, fontSize: 18 }} />
+              <span style={{ fontSize: 11, color: textS }}>/event</span>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
 
