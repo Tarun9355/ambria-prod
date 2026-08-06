@@ -4409,7 +4409,11 @@ export default function StudioApp() {
 
   // ── Browse videos (tagged-video inspiration catalog) — VERBATIM ──
   const browseVideos = useMemo(() => {
-    const list = Object.entries(ytVideoTags).map(([vidId, tag]) => {
+    // Hiding a video in Manage → Library promises it "won't show in the app", but Browse was built
+    // straight off ytVideoTags and never consulted hiddenVideos — so hidden references still filled
+    // the grid and were counted in the "N videos" headline. Drop them at the source, before any
+    // filtering or counting, so every downstream number agrees.
+    const list = Object.entries(ytVideoTags).filter(([vidId]) => !hiddenVideos[vidId]).map(([vidId, tag]) => {
       const vid = allVideos.find(v => v.id === vidId);
       const fnArr = Array.isArray(tag.fn) ? tag.fn : (tag.fn ? [tag.fn] : []);
       const hasZonePhotos = tag.zonePhotos && Object.keys(tag.zonePhotos).length > 0;
@@ -4504,7 +4508,7 @@ export default function StudioApp() {
       out = [...atVenue, ...sameGroup, ...rest];
     }
     return out;
-  }, [ytVideoTags, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
+  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
 
   // ── Active client + meeting number — VERBATIM ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
