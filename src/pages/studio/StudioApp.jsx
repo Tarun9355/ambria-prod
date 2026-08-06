@@ -1517,7 +1517,10 @@ export default function StudioApp() {
   // ═══ ZONE PHOTO FILTERS (Build canvas) — seeded from a reference video's own taxonomy when
   // customizing off it (see pickAndLoad), otherwise starts at "All"; always user-adjustable from
   // here via the 🔍 filter, never auto-reapplied afterwards. ═══
-  const [zpFilterOpen, setZpFilterOpen] = useState(false);
+  // Holds the KEY of the zone whose photo-filter panel is open, or null. It used to be a plain
+  // boolean, which every zone read -- so opening the filter on one zone opened it on all of them
+  // at once. Keying it also makes "only one open at a time" fall out for free.
+  const [zpFilterOpen, setZpFilterOpen] = useState(null);
   const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
   const zpToggleFilter = useCallback((cat, val) => {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));

@@ -1655,7 +1655,7 @@ undefined
                 zone's whole control set sits in one row. stopPropagation because an OFF zone's
                 header toggles the zone — but these only render when it is already on. */}
             {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>({...g,[k]:!g[k]}));}} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
-            {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(!zpFilterOpen);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen||zpHasFilters?accent:border}`,background:zpFilterOpen||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(o=>o===k?null:k);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen===k||zpHasFilters?accent:border}`,background:zpFilterOpen===k||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen===k||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
             {/* The per-zone "Duplicate this zone" copy button is gone — it crowded the row and the
@@ -1686,7 +1686,7 @@ undefined
                 <span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venuePrefCount} at {zpFilters.venue.length===1?zpFilters.venue[0]:"selected venues"}</span>
                 <span>shown first{matchedPhotos.length>venuePrefCount?`, then ${matchedPhotos.length-venuePrefCount} from other venues`:""}</span>
               </div>}
-              {zpFilterOpen&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
+              {zpFilterOpen===k&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
                 <div>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Event type</div>
                   <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
