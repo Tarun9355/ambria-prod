@@ -233,10 +233,14 @@ export async function syncLmsContracts(eventOrders, onProgress) {
 // server-side paginating proxy, we search the already-synced `lms_contracts` cache
 // (filled by triggerLmsSync) by guest name / phone — instant, no LMS round-trip.
 // Returns leads in the shape Studio's loadLmsLead expects.
-function lmsContractToLead(c) {
+function lmsContractToLead(c, source = "venue") {
   if (!c) return null;
   return {
-    id: c.id,
+    id: `${source}-${c.entryNo || c.id}`,
+    source,
+    // A contract is a booked job; a decor lead is an enquiry that may never convert. Decor rows can
+    // arrive from either table, so the badge cannot be derived from dept alone.
+    booked: source !== "decor-lead",
     guestName: c.guestName || "",
     phone: c.contactNo || "",
     address: c.address || c.city || "",
@@ -245,7 +249,10 @@ function lmsContractToLead(c) {
     dept: c.dept,
     entryNo: c.entryNo,
     priority: c.priority || "",
-    status: c.status || "",
+    // Venue contracts store nothing here (the sync writes no status for them) and decor leads store
+    // `status`; lmsStatus is what the fuller normaliser below calls it. Read all three so this stops
+    // depending on which producer wrote the row.
+    status: c.status || c.lmsStatus || "",
     functions: (c.functions || [])
       .map((f) => ({
         fnDate: String(f.functionDate || "").slice(0, 10),
@@ -253,32 +260,64 @@ function lmsContractToLead(c) {
         fnType: f.functionTypeId || "",
         venueLabel: f.internalVenueName || f.venueName || f.externalVenue || "",
         shift: f.session || "",
+        // Was dropped here entirely, so the guest count LMS already holds never reached the form.
+        pax: f.pax || 0,
       }))
       .sort((a, b) => (a.fnDate || "").localeCompare(b.fnDate || "")),
   };
 }
 
-// Venue results come from synced venue CONTRACTS (unchanged — that list is complete for venue).
-// Decor results come from synced decor LEADS (lms_decor_leads), not decor contracts — a decor
-// guest is a "lead" for a long time (sometimes forever) before ever becoming a contract, so
-// searching contracts alone misses fresh/unconverted decor enquiries entirely.
+// Three sources, because no two of them cover the same ground:
+//   lms_contracts dept=venue  — booked venue jobs
+//   lms_contracts dept=decor  — booked decor jobs
+//   lms_decor_leads           — decor enquiries that have not converted (and may never)
+// Decor contracts used to be left out on the reasoning that a decor guest is a "lead" long before
+// becoming a contract. True, but it hid the converted ones: 325 of 339 decor contracts share no
+// guest name with any row in the leads table, so those clients could not be found at all.
 export async function searchLmsLeads(query /*, signal */) {
   const q = (query || "").trim();
   if (q.length < 2) return { ok: true, leads: [], complete: true };
   try {
-    const like = `%${q}%`;
-    const [venueRes, decorLeadRes] = await Promise.all([
-      supabase.from("lms_contracts").select("data").eq("dept", "venue")
-        .or(`guest_name.ilike.${like},data->>contactNo.ilike.${like}`).limit(50),
-      supabase.from("lms_decor_leads").select("data")
-        .or(`guest_name.ilike.${like},data->>contactNo.ilike.${like}`).limit(50),
+    // Match each WORD separately instead of the whole query as one contiguous substring. Names in
+    // LMS are typed by hand -- "Mr.Suresh Rana Ji", "Dr. Shalini" -- so a single LIKE fails on the
+    // missing space after a dot, and on any word order but the stored one. Searching "mr suresh"
+    // used to return nothing at all; per-word AND finds it.
+    // Commas and parens are PostgREST filter syntax and % is a wildcard, so they are stripped
+    // rather than passed through into the filter string.
+    const tokens = q.split(/\s+/).map((t) => t.replace(/[,()%*"\\]/g, "").trim()).filter(Boolean);
+    const match = (b) => {
+      for (const t of (tokens.length ? tokens : [q])) {
+        b = b.or(`guest_name.ilike.%${t}%,data->>contactNo.ilike.%${t}%`);
+      }
+      return b.limit(50);
+    };
+    const [venueRes, decorContractRes, decorLeadRes] = await Promise.all([
+      match(supabase.from("lms_contracts").select("data").eq("dept", "venue")),
+      match(supabase.from("lms_contracts").select("data").eq("dept", "decor")),
+      match(supabase.from("lms_decor_leads").select("data")),
     ]);
     if (venueRes.error) throw venueRes.error;
+    if (decorContractRes.error) throw decorContractRes.error;
     if (decorLeadRes.error) throw decorLeadRes.error;
-    const leads = [
-      ...(venueRes.data || []).map((r) => lmsContractToLead(r.data)),
-      ...(decorLeadRes.data || []).map((r) => lmsContractToLead(r.data)),
+
+    // Contracts first: they are booked work, and when the same guest exists in both tables the
+    // contract is the fuller record, so it is the one that survives the dedupe below.
+    const booked = [
+      ...(venueRes.data || []).map((r) => lmsContractToLead(r.data, "venue")),
+      ...(decorContractRes.data || []).map((r) => lmsContractToLead(r.data, "decor-contract")),
     ].filter(Boolean);
+    const enquiries = (decorLeadRes.data || []).map((r) => lmsContractToLead(r.data, "decor-lead")).filter(Boolean);
+
+    // Dedupe a decor enquiry only against DECOR contracts -- that pair is the same job at two stages
+    // of one pipeline. Matching against venue contracts too would be wrong: the same person often
+    // has a venue booking AND a separate decor enquiry, and collapsing those hides a real job.
+    const digits = (v) => String(v || "").replace(/D/g, "");
+    const key = (l) => `${(l.guestName || "").trim().toLowerCase()}|${digits(l.phone)}`;
+    const seen = new Set(booked.filter((l) => l.source === "decor-contract").map(key));
+    const leads = [
+      ...booked,
+      ...enquiries.filter((l) => !seen.has(key(l))),
+    ];
     return { ok: true, leads, complete: true, cached: true };
   } catch (e) {
     return { ok: false, leads: [], error: e.message || "LMS unreachable" };

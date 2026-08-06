@@ -448,12 +448,13 @@ export default function StudioEventInfo({ ctx }) {
                   const deptBadgeStyle = lead.dept === "decor"
                     ? {background:"rgba(168,85,247,0.15)",color:C.purple}
                     : {background:"rgba(59,130,246,0.15)",color:C.blue};
-                  return <div key={`${lead.dept}-${lead.entryNo}`} className="ei-row" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
+                  return <div key={lead.id || `${lead.source}-${lead.entryNo}`} className="ei-row" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:12,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         <span>{lead.guestName || "(no name)"}</span>
                         {lead.phone && <span style={{color:textM,fontWeight:400}}>· {lead.phone}</span>}
                         <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,...deptBadgeStyle}}>{lead.dept === "venue" ? "VENUE" : "DECOR"} #{lead.entryNo}</span>
+                        {lead.booked && <span title="Booked — this is a signed contract, not an open enquiry" style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:C.emerald}}>BOOKED</span>}
                         {lead.priority && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(245,158,11,0.15)",color:C.amber}}>{lead.priority.toUpperCase()}</span>}
                         {Array.isArray(lead.functions) && lead.functions.length > 1 && (
                           <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(168,85,247,0.15)",color:C.purple}}>{lead.functions.length} FUNCTIONS</span>

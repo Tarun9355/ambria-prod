@@ -4986,8 +4986,6 @@ export default function StudioApp() {
     if (!lead) return;
     setClientName(lead.guestName || "");
     setClientPhone(lead.phone || "");
-    setClientBrideGroom("");
-    setClientPax("");
     setClientPalette("Custom");
     setExpandedFnIdx(0);
     setActiveFnIdx(0);
@@ -5012,6 +5010,10 @@ export default function StudioApp() {
     setVenue(f1Venue.venue);
     setClientVenueOther(f1Venue.custom);
     setClientShift(f1.shift || "");
+    // LMS holds these for most leads; they used to be blanked at the top of this function and never
+    // filled, so the salesperson retyped what the lead already knew.
+    setClientBrideGroom([lead.brideName, lead.groomName].filter(Boolean).join(" & "));
+    setClientPax(Number(f1.pax) > 0 ? String(f1.pax) : "");
     const extras = fns.slice(1).map(f => {
       const v = resolveVenue(f.venueLabel || lead.address);
       return {
@@ -5020,7 +5022,7 @@ export default function StudioApp() {
         venue: v.venue,
         venueOther: v.custom,
         shift: f.shift || "",
-        pax: "",
+        pax: Number(f.pax) > 0 ? String(f.pax) : "",
         palette: "Custom",
       };
     });
