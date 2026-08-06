@@ -1799,7 +1799,7 @@ undefined
                   </div>
                   {/* The whole strip under the photo selects, not just the two lines of text —
                       flex:1 claims the leftover height and the padding widens the target. */}
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone"} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);phGoTo(k,0,page);phScrollTop(k);}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone"} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);setGridZones(g=>g[k]?{...g,[k]:false}:g);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}>
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
                     <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
