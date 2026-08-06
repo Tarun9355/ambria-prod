@@ -3,6 +3,7 @@ import { SPACES, TAX_LABELS, DEFAULT_TAX_KEYS, taxOr, ZONE_META } from "../../..
 import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
 import { supabase } from "../../../lib/supabase";
 import { findZoneForArea } from "../../../lib/studio/pricing";
+import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
 const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -27,7 +28,8 @@ export default function ManageSettings({ ctx }) {
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, allVenueData,
     // clients
-    clientLedger, saveClientLedger, ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, eventOrders,
+    ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
     ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
     clientSearch, setClientSearch,
     // calendar    // palettes
@@ -592,6 +594,11 @@ export default function ManageSettings({ ctx }) {
           out of the "ongoing" demand count for its date (StudioBuild counts status === "ongoing"
           explicitly), which is the point: chasing a dead lead should not make a date look busy. */}
       {settingsView === "clients" && (() => {
+        // Admin only — everyone else gets Ongoing/Dead, which is reversible. Shared with the
+        // Summary footer so the two entry points cannot drift apart.
+        const deleteClient = makeDeleteClient({
+          clientLedger, saveClientLedger, eventOrders, activeClientId, setActiveClientId, askConfirm, showMsg,
+        });
         const setClientStatus = (c, next) => {
           if (!c || c.status === next) return;
           const dead = next === "dead";
@@ -668,6 +675,9 @@ export default function ManageSettings({ ctx }) {
                             color:on?(st==="dead"?"#EF4444":"#F59E0B"):textS,
                             opacity:on?1:0.85}}>{st==="dead"?"Dead":"Ongoing"}</button>;
                       })}
+                  {/* Admin only. Everyone else marks a lead Dead, which is reversible; this is not. */}
+                  {isAdmin && <span onClick={()=>deleteClient(c)} title={`Delete ${c.name} permanently`}
+                    style={{cursor:"pointer",color:"#E11D48",fontSize:11,padding:"2px 4px",lineHeight:1}}>{"🗑"}</span>}
                 </div>
               </div>
               {ctExpandedId===c.id&&<div style={{padding:"8px 14px 14px",borderTop:`1px dashed ${border}`,background:isDark?"rgba(0,0,0,0.2)":"#FAFAF7"}}>

@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef } from "react";
 import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
+import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
@@ -83,6 +84,8 @@ export default function StudioSummary({ ctx }) {
     S, isDark, accent, border, textS, textP, accentBg, accentText, fmt,
     // client / venue meta
     venue, clientName, fn, clientDate, allVenueData, activeClient, meetingNumber,
+    // admin-only client delete (same helper the Client Tracker uses)
+    isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
     eventGrandTotal, collectAllFunctionData, calcFunctionBreakdown,
     buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg,
@@ -111,6 +114,13 @@ export default function StudioSummary({ ctx }) {
     setClientShift, setClientPax, setClientVenueOther, setExtraFunctions,
     setExpandedFnIdx, setActiveFnIdx, setFnBuilds, setFloralOverrides, setClientPalette,
   } = ctx;
+  // Full reset back to a blank deal. Named so both "Start New" and the admin delete can use it —
+  // after deleting the client you are viewing, its summary has to go with it.
+  const startNew = () => {setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setNewCzName("");setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");};
+  const deleteClient = makeDeleteClient({
+    clientLedger, saveClientLedger, eventOrders, activeClientId, setActiveClientId, askConfirm, showMsg,
+    onDeleted: () => startNew(),
+  });
 
   const exportPDF = (combined) => {
     if (!combined) combined = buildCombinedCostSheetData();
@@ -1009,7 +1019,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       })()}
       <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}>
         <button className="sh-nav" onClick={()=>setStep(2)} style={S.btn(false)}>{"←"} Adjust</button>
-        <button onClick={()=>{setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setNewCzName("");setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");}} className="sh-nav" style={S.btn(false)}>Start New</button>
+        {/* Admin only, and deliberately a quiet text link rather than a third button: it sits a
+            few pixels from "Start New" and must not read as an equal peer of it. Deletes the client
+            whose summary this is, then resets to a blank deal — the confirm spells out the damage. */}
+        {isAdmin && activeClient?.id && (
+          <button onClick={()=>deleteClient(activeClient)} title={`Delete ${activeClient.name} and all its sessions`}
+            style={{alignSelf:"center",background:"none",border:"none",cursor:"pointer",color:"#E11D48",
+              fontSize:11,fontWeight:600,textDecoration:"underline",textUnderlineOffset:3,padding:"4px 8px"}}>
+            {"🗑"} Delete this client
+          </button>
+        )}
+        <button onClick={startNew} className="sh-nav" style={S.btn(false)}>Start New</button>
       </div>
     </div>
 
