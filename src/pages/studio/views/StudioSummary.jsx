@@ -1147,16 +1147,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                       {z.note&&<div style={{padding:"0 18px 12px"}}><div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFDF7",borderRadius:8,padding:"8px 12px",fontSize:11,color:accentText}}>{"📝"} {z.note}</div></div>}
                     </div>
                   ))}
-                  {/* Per-function transport (read-only) */}
+                  {/* Per-function transport (read-only). One line, total only — the truck-by-truck
+                      breakdown is internal working, and it read badly here anyway ("Carpet —
+                      0.0426666666666 trucks"). The full split still lives in Build and Deal Check. */}
                   {fnObj.transport&&(
                     <div style={{borderTop:`1px solid ${border}`}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 18px",background:isDark?"rgba(99,102,241,0.04)":"#F0F4FF"}}>
                         <div style={{fontSize:14,fontWeight:700}}>{"🚛"} Transport & Power</div>
                         <div style={{fontSize:16,fontWeight:700,color:"#4F46E5"}}>{fmt(fnObj.transport.total)}</div>
-                      </div>
-                      <div style={{padding:"8px 18px 12px"}}>
-                        {(fnObj.transport.breakdown||[]).map((bd,bi)=><div key={bi} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>{bd.label} — {bd.trucks} truck{bd.trucks!==1?"s":""}</span><span style={{fontWeight:600}}>{fmt(bd.trucks*fnObj.transport.tripRate*2)}</span></div>)}
-                        <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12,borderTop:`1px solid ${border}`,marginTop:4,paddingTop:6}}><span style={{color:textS}}>Genset ({fnObj.transport.gensets} × {fmt(fnObj.transport.gensetRate)})</span><span style={{fontWeight:600}}>{fmt(fnObj.transport.gensetCost)}</span></div>
                       </div>
                     </div>
                   )}
