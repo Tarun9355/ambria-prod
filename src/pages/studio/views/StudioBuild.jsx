@@ -95,7 +95,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
     border: `1px solid ${sel ? accent : border}`,
   });
   // Uppercase micro-caption, replacing "Truss Material:" sentence case with a colon.
-  const rowCap = { fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS, minWidth: 62, flexShrink: 0 };
+  const rowCap = { fontSize: 9.5, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: textP, flexShrink: 0, marginRight: 2 };
   return (
               /* Every truss is drawn the same — same border, same fill — so a second structure reads
                  as an equal of the first rather than a lesser sub-item. They stay visually separate
@@ -221,32 +221,43 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   </div>
                 </div>;
               })()}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                  <span style={rowCap}>Material</span>
-                  {TRUSS_MATERIALS.map(m=>{
-                    const sel=(zc.trussMaterial|| "iron")===m.key;
-                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
-                  })}
-                </div>
-              )}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-                  <span style={rowCap}>Drape</span>
-                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
-                    const sel=(zc.drapeDensity||"moderate")===o.v;
-                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
-                  })}
-                  {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
-                      inventory item, so its cost comes out of the drape portion of the rate
-                      (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
-                  {zc.trT==="box" && customCeilingField(k, zc, false, rowIdx)}
-                </div>
-              )}
+              {/* Material and Drape share a row: three short pills each left a long empty tail on
+                  its own line, and stacking them pushed Masking and the truss dims further down.
+                  Each group keeps its own wrap, so on a narrow card Drape drops below Material
+                  intact rather than the pills interleaving. */}
+              <div style={{display:"flex",alignItems:"center",gap:26,marginBottom:10,flexWrap:"wrap",rowGap:8}}>
+                  {zc.trT && <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span style={rowCap}>Material</span>
+                    {TRUSS_MATERIALS.map(m=>{
+                      const sel=(zc.trussMaterial|| "iron")===m.key;
+                      return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{m.label}</span>;
+                    })}
+                  </div>}
+                  {zc.trT && <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span style={rowCap}>Drape</span>
+                    {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
+                      const sel=(zc.drapeDensity||"moderate")===o.v;
+                      return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={optPill(sel)}>{sel&&<IconCheck size={9}/>}{o.l}</span>;
+                    })}
+                    {/* Sits with Drape, not Material: it swaps the fabric ceiling drape for an
+                        inventory item, so its cost comes out of the drape portion of the rate
+                        (ceilingRatePerSqft), and it has nothing to do with the truss metal. */}
+                    {zc.trT==="box" && <span style={{display:"inline-flex",marginLeft:6}}>{customCeilingField(k, zc, false, rowIdx)}</span>}
+                  </div>}
+                  {/* Off is the common state, and it was costing a whole line for one switch. Only
+                      the toggle comes up here; the wall and material options below need real width,
+                      so they stay in the nested block and appear when masking is actually on. */}
+                  <div style={{display:"flex",alignItems:"center",gap:8}} title="Masking panels attach to this truss">
+                    <span style={rowCap}>Masking</span>
+                    <span style={{display:"inline-flex",alignItems:"center",color:textS}}><IconWall size={12}/></span>
+                    <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:(zc.mkWalls||{})})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer",flexShrink:0}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
+                    {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(st.masking)}</span>}
+                  </div>
+              </div>
                 {/* ═══ MASKING ═══ Nested inside Truss: masking panels attach to the truss, which is why
                     the original code grouped them. Sits after the truss's own controls so the card reads
                     "configure the truss → then what's masked onto it". */}
-                <div style={{marginTop:10,marginLeft:12,paddingLeft:11,paddingBottom:2,borderLeft:`3px solid ${accent}33`}}>
+                {zc.mkOn && <div style={{marginTop:10,marginLeft:"auto",width:"fit-content",maxWidth:"100%",paddingLeft:11,paddingBottom:2,borderLeft:`3px solid ${accent}33`}}>
                   <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginBottom:5}}>Masking <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· on the truss</span></div>
                 {(()=>{
                   const dL=zc.dims?.L||zc.dims?.S||0,dW=zc.dims?.W||zc.dims?.S||0,dH=zc.dims?.H||0;
@@ -308,12 +319,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     {id:"back",label:"Back",dim:`${_spanL}×${dH}`,sqft:_spanL*dH}
                   ];
                   return <div style={{padding:"4px 0",borderBottom:`1px solid ${border}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconWall size={12}/>Masking</span>
-                      <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
-                    </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(st.masking)}</span>}
-                  </div>
-                  {zc.mkOn&&<div style={{marginTop:4,paddingLeft:20}}>
+                  {/* The toggle and its cost moved up to the Material / Drape row. */}
+                  {zc.mkOn&&<div style={{paddingLeft:0}}>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
                       {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                       {customMaskingField(k, zc, false, rowIdx)}
@@ -323,7 +330,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     </div>
                   </div>}
                 </div>;})()}
-                </div>{/* /masking (nested in truss) */}
+                </div>}{/* /masking (nested in truss) */}
 
               </div>
   );
