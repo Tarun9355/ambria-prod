@@ -67,6 +67,14 @@ async function lmsCall(endpoint: string, body: unknown) {
   return r.json();
 }
 
+// Identity of a function: when, what, which sitting, where. The API paginates by function row and
+// can return the same row on more than one page, so pushing blindly duplicates it -- decor #00313
+// carried Haldi 2026-12-02 Lunch twice, byte-identical.
+function fnIdentity(f: any) {
+  return [f?.functionDate, f?.functionType, f?.functionTypeId, f?.session, f?.functionTime,
+    f?.internalVenueName || f?.venueName || f?.externalVenue].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
+}
+
 function normalizeRow(raw: any, dept: string) {
   const isVenue = dept === "venue";
   const entryNo = isVenue ? (raw.fisc_entryno || "") : (raw.dhc_entry_no || "");
@@ -158,7 +166,10 @@ async function fetchDecorLeads() {
         if (!header.entryNo) continue;
         const key = header.entryNo;
         if (!map.has(key)) map.set(key, { id: key, ...header, functions: [], matchedEoId: null, matchType: null });
-        if (fnDetail.functionDate || fnDetail.functionType) map.get(key).functions.push(fnDetail);
+        if (fnDetail.functionDate || fnDetail.functionType) {
+          const bucket = map.get(key).functions;
+          if (!bucket.some((f: any) => fnIdentity(f) === fnIdentity(fnDetail))) bucket.push(fnDetail);
+        }
       }
       if (rows.length < PAGE_SIZE) hitEnd = true;
     }
@@ -184,7 +195,10 @@ async function fetchDept(dept: string) {
         if (header.cancelled || !header.entryNo) continue;
         const key = `${dept}-${header.entryNo}`;
         if (!map.has(key)) map.set(key, { id: key, ...header, functions: [], matchedEoId: null, matchType: null });
-        if (fnDetail.functionDate || fnDetail.functionType) map.get(key).functions.push(fnDetail);
+        if (fnDetail.functionDate || fnDetail.functionType) {
+          const bucket = map.get(key).functions;
+          if (!bucket.some((f: any) => fnIdentity(f) === fnIdentity(fnDetail))) bucket.push(fnDetail);
+        }
       }
       if (rows.length < PAGE_SIZE) hitEnd = true;
     }

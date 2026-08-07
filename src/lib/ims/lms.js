@@ -148,7 +148,11 @@ export function groupLmsRows(rows) {
     if (!map.has(key)) {
       map.set(key, { id: key, ...header, functions: [], matchedEoId: null, matchType: null, syncedAt: Date.now() });
     }
-    if (fnDetail.functionDate || fnDetail.functionType) map.get(key).functions.push(fnDetail);
+    // Same guard as the read path: a repeated API row must not become a repeated function.
+    if (fnDetail.functionDate || fnDetail.functionType) {
+      const bucket = map.get(key).functions;
+      if (!bucket.some((f) => fnIdentity(f) === fnIdentity(fnDetail))) bucket.push(fnDetail);
+    }
   }
   return Array.from(map.values());
 }
@@ -233,6 +237,22 @@ export async function syncLmsContracts(eventOrders, onProgress) {
 // server-side paginating proxy, we search the already-synced `lms_contracts` cache
 // (filled by triggerLmsSync) by guest name / phone — instant, no LMS round-trip.
 // Returns leads in the shape Studio's loadLmsLead expects.
+// Identity of a function: when it is, what it is, which sitting, and where. Two entries agreeing on
+// all of those are one function listed twice, not two functions.
+export function fnIdentity(f) {
+  return [f?.functionDate, f?.functionType, f?.functionTypeId, f?.session, f?.functionTime,
+    f?.internalVenueName || f?.venueName || f?.externalVenue].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
+}
+export function dedupeFns(fns) {
+  const seen = new Set();
+  return (Array.isArray(fns) ? fns : []).filter((f) => {
+    const k = fnIdentity(f);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 function lmsContractToLead(c, source = "venue") {
   if (!c) return null;
   return {
@@ -253,7 +273,11 @@ function lmsContractToLead(c, source = "venue") {
     // `status`; lmsStatus is what the fuller normaliser below calls it. Read all three so this stops
     // depending on which producer wrote the row.
     status: c.status || c.lmsStatus || "",
-    functions: (c.functions || [])
+    // Dedupe before mapping. The sync pushes a function row per API row and pages can repeat a row,
+    // so a contract ends up carrying the same function twice — decor #00313 has Haldi 2026-12-02
+    // Lunch listed twice, byte-identical. Two functions genuinely differing in nothing but their
+    // position in the list are the same function, so key on the fields that define one.
+    functions: dedupeFns(c.functions)
       .map((f) => ({
         fnDate: String(f.functionDate || "").slice(0, 10),
         fnLabel: f.functionType || "",
