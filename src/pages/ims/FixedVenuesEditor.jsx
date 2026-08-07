@@ -31,6 +31,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const fixedVenues = settings.fixedVenues || [];
   const save = (next) => setSettings((s) => ({ ...s, fixedVenues: next }));
   const [activeId, setActiveId] = useState(null);
+  // Raw text of whichever number field is mid-edit, keyed "<venueId>:<invId>:<field>".
+  // The inputs used to normalise on every keystroke — `parseInt(v) || 1` meant backspacing to empty
+  // snapped straight back to 1, and clamping to `avail` on each character made a number wider than
+  // the stock impossible to type at all. Normalising happens on blur now, so typing is untouched.
+  const [numDraft, setNumDraft] = useState({});
+  const draftKey = (vid, invId, field) => `${vid}:${invId}:${field}`;
 
   // Venue names must match what Studio uses for a function's venue. Source the dropdown
   // from the Studio venue catalogue (synced as venueParents — sub-venues + parents) plus
@@ -77,6 +83,16 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const stock = Number(inv?.qty ?? inv?.qtyOwned) || 0;
     const otherStanding = fixedVenues.filter((x) => x.id !== vid).reduce((s, x) => s + (Number((x.items || []).find((it) => it.invId === invId)?.qty) || 0), 0);
     return Math.max(0, stock - otherStanding);
+  };
+  // Which OTHER fixed venues already hold this item standing. The cap on its own just refuses the
+  // keystroke; naming who holds the rest turns "why won't it save 10?" into something actionable.
+  const standingElsewhere = (invId, vid) => fixedVenues
+    .filter((x) => x.id !== vid)
+    .map((x) => ({ name: x.name || x.id, qty: Number((x.items || []).find((it) => it.invId === invId)?.qty) || 0 }))
+    .filter((r) => r.qty > 0);
+  const stockOf = (invId) => {
+    const inv = inventory.find((i) => i.id === invId);
+    return Number(inv?.qty ?? inv?.qtyOwned) || 0;
   };
   // Pieces of a truss size available to assign HERE = stock (Planning) minus what other
   // fixed venues already hold standing.
@@ -193,6 +209,14 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 else if (dimsRaw && typeof dimsRaw === "object") dims = [dimsRaw.l, dimsRaw.w, dimsRaw.h].filter((x) => x != null && x !== "").join("×");
                 if (!dims) dims = (typeof inv?.size === "string" ? inv.size : "") || "";
                 const avail = invAvail(it.invId, v.id);
+                // The cap is stock minus what the other venues hold, so it can be well under the
+                // stock figure printed next to the name. Explain that rather than silently clamping.
+                const elsewhere = standingElsewhere(it.invId, v.id);
+                const stock = stockOf(it.invId);
+                const typedQty = parseInt(numDraft[draftKey(v.id, it.invId, "qty")] ?? it.qty, 10);
+                const overCap = Number.isFinite(typedQty) && typedQty > avail;
+                const atCap = !overCap && avail > 0 && (Number(it.qty) || 0) >= avail && elsewhere.length > 0;
+                const heldBy = elsewhere.map((r) => `${r.qty} at ${r.name}`).join(", ");
                 return (
                 <div key={it.invId} className="flex items-center gap-2 bg-white border rounded-lg px-2.5 py-1.5 flex-wrap">
                   {img
@@ -203,12 +227,61 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     <div className="text-[10px] text-gray-400">{dims ? `📐 ${dims}` : "no dimensions"}{inv?.qty != null ? ` · stock ${inv.qty}` : ""}</div>
                   </div>
                   <span className="text-xs text-gray-400">qty</span>
-                  <input type="number" min="1" max={avail || undefined} value={it.qty} onChange={(e) => { const raw = parseInt(e.target.value) || 1; updItem(v.id, it.invId, { qty: avail > 0 ? Math.min(raw, avail) : raw }); }} className={"w-16 border rounded px-2 py-1 text-sm text-center font-bold " + (it.qty >= avail && avail > 0 ? "border-amber-400" : "")} />
+                  <input type="number" min="1" max={avail || undefined}
+                    value={numDraft[draftKey(v.id, it.invId, "qty")] ?? it.qty}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, "qty")]: raw }));
+                      // Commit only a usable number as you type; empty or partial input just sits in
+                      // the draft, so the field never fights the cursor.
+                      const n = parseInt(raw, 10);
+                      if (Number.isFinite(n) && n > 0) updItem(v.id, it.invId, { qty: n });
+                    }}
+                    onBlur={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      const safe = Number.isFinite(n) && n > 0 ? (avail > 0 ? Math.min(n, avail) : n) : 1;
+                      updItem(v.id, it.invId, { qty: safe });
+                      setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, "qty")]; return next; });
+                    }}
+                    className={"w-16 border rounded px-2 py-1 text-sm text-center font-bold " + (it.qty >= avail && avail > 0 ? "border-amber-400" : "")} />
                   <span className="text-[10px] text-gray-400">/{avail}</span>
                   <span className="text-xs text-gray-400">rent @</span>
-                  <input type="number" min="0" max="100" value={it.discountPct ?? v.discountPct ?? 70} onChange={(e) => updItem(v.id, it.invId, { discountPct: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" />
+                  <input type="number" min="0" max="100"
+                    value={numDraft[draftKey(v.id, it.invId, "disc")] ?? (it.discountPct ?? v.discountPct ?? 70)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, "disc")]: raw }));
+                      const n = parseInt(raw, 10);
+                      if (Number.isFinite(n)) updItem(v.id, it.invId, { discountPct: n });
+                    }}
+                    onBlur={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      const safe = Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
+                      updItem(v.id, it.invId, { discountPct: safe });
+                      setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, "disc")]; return next; });
+                    }}
+                    className="w-14 border rounded px-2 py-1 text-sm text-center" />
                   <span className="text-xs text-gray-400">% off</span>
                   <button onClick={() => delItem(v.id, it.invId)} className="text-red-400 hover:text-red-600 text-xs ml-auto">×</button>
+                  {/* basis-full so it drops to its own line inside the wrapping row. Amber while you
+                      are typing past the cap; muted once you are simply sitting at it. */}
+                  {/* Two different reasons you can hit the cap, and they need different advice:
+                      either another venue is holding pieces (go free them), or you simply own no
+                      more (go buy/raise stock). Saying "free it there" when there is no "there"
+                      just reads as broken. */}
+                  {overCap && (
+                    <div className="basis-full text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1">
+                      Max <strong>{avail}</strong> here — {heldBy
+                        ? <>you own {stock}, and {heldBy} {elsewhere.length === 1 && elsewhere[0].qty === 1 ? "is" : "are"} already installed elsewhere. Free {elsewhere.length === 1 && elsewhere[0].qty === 1 ? "it" : "them"} there, or raise the stock in Inventory.</>
+                        : <>that is your whole stock. Raise it in Inventory to install more.</>}
+                      {" "}Anything higher snaps back to {avail}.
+                    </div>
+                  )}
+                  {atCap && (
+                    <div className="basis-full text-[11px] text-gray-500 mt-0.5">
+                      At the limit — all {stock} in stock are assigned ({heldBy}).
+                    </div>
+                  )}
                 </div>
                 );
               })}
