@@ -729,7 +729,10 @@ export default function StudioBuild({ ctx }) {
   // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
   // running total off screen — the one thing you want kept while you widen it.
   const [leftRailOpen, setLeftRailOpen] = useState(true);
-  const [rightRailOpen, setRightRailOpen] = useState(true);
+  // Live Estimate starts folded — the build opens with every zone off and the total at ₹0, so on
+  // arrival the rail is a column of zeroes taking width from the zones. Its tab on the right edge
+  // brings it back the moment there is a number worth watching.
+  const [rightRailOpen, setRightRailOpen] = useState(false);
   // Element cards widen as each rail folds: 4 with both open, 6 with neither. A kit row spans
   // about half the grid, so it is derived rather than hardcoded against a fixed column count.
   const elCols = 4 + (leftRailOpen ? 0 : 1) + (rightRailOpen ? 0 : 1);
@@ -1484,6 +1487,21 @@ undefined
       </span>}
       {dateDemand?.isHigh&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(239,68,68,0.1)",color:"#DC2626",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#EF4444",marginRight:6}}/>High demand</span>}
       {dateDemand?.isMod&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(245,158,11,0.1)",color:"#B45309",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6}}/>Moderate</span>}
+      {/* Day-type and demand counts sit on this line now, beside the date they describe. They used
+          to be a full-width banner below, which spent a whole row and 16px of margin on what is at
+          most a handful of words — and put them a long way from the date. */}
+      {(() => {
+        if (!clientDate || !dateDemand) return null;
+        const { dt, booked, ongoing } = dateDemand;
+        const dtLabel = dt === "saya" ? "Saya Day" : dt === "competition" ? "Competition Day" : "";
+        if (!dtLabel && !booked && !ongoing) return null;
+        const dot = (c) => ({ display:"inline-block", width:6, height:6, borderRadius:"50%", background:c, marginRight:5 });
+        return <>
+          {dtLabel && <span style={{fontSize:11,fontWeight:600,color:dt==="saya"?"#DC2626":textS}}>{dtLabel}</span>}
+          {booked > 0 && <span style={{fontSize:11,color:"#047857",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={dot("#10B981")}/>{booked} booked</span>}
+          {ongoing > 0 && <span style={{fontSize:11,color:"#B45309",display:"inline-flex",alignItems:"center"}}><span style={dot("#F59E0B")}/>{ongoing} ongoing</span>}
+        </>;
+      })()}
       {extraFunctions.length > 0 && <span style={{padding:"2px 10px",borderRadius:8,fontSize:10,fontWeight:600,background:`${accent}20`,color:accent,letterSpacing:0.3}}>Function {activeFnIdx + 1} of {extraFunctions.length + 1}</span>}
     </div>
     {/* ═══ TWO-COLUMN SHELL ═══ Photo filters live permanently in a sticky left rail, exactly
@@ -1577,17 +1595,7 @@ undefined
         video's tag via clientPalette / extraFunctions[].palette — there is simply no override
         control on Build any more. */}
 
-    {/* ═══ DATE DEMAND BANNER ═══ */}
-    {clientDate&&dateDemand&&(()=>{
-      const { dt, booked, ongoing, isHigh } = dateDemand;   // one source, shared with the chip above
-      const dtInfo=dt==='saya'?{bg:"rgba(239,68,68,0.08)",border:"rgba(239,68,68,0.2)",label:"Saya Day"}:dt==='competition'?{bg:"rgba(100,100,100,0.08)",border:"rgba(100,100,100,0.2)",label:"Competition Day"}:null;
-      if (!dtInfo && !booked && !ongoing) return null;   // nothing to report once the date moved up
-      return <div style={{padding:"8px 14px",borderRadius:10,marginBottom:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",fontSize:12,background:isHigh?"rgba(239,68,68,0.08)":(dtInfo?dtInfo.bg:(isDark?"rgba(201,169,110,0.05)":"#FFFDF7")),border:`1px solid ${isHigh?"rgba(239,68,68,0.2)":(dtInfo?dtInfo.border:border)}`}}>
-        {dtInfo&&<span style={{padding:"2px 8px",borderRadius:6,fontSize:10,fontWeight:600,background:dtInfo.bg,color:dt==="saya"?"#EF4444":"#888"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dt==="saya"?"#EF4444":"#666",marginRight:6,verticalAlign:"middle"}}/>{dtInfo.label}</span>}
-        {booked>0&&<span style={{color:"#047857",fontWeight:600}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#10B981",marginRight:6,verticalAlign:"middle"}}/>{booked} booked</span>}
-        {ongoing>0&&<span style={{color:"#B45309"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6,verticalAlign:"middle"}}/>{ongoing} ongoing</span>}
-      </div>;
-    })()}
+    {/* The date-demand banner that stood here has moved up beside the date itself. */}
 
 
     {savedInsps.length>0&&<div style={{background:"#FFF1F2",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{display:"flex",gap:4}}>{savedInsps.slice(0,5).map((s,i)=><div key={i} style={{width:32,height:32,borderRadius:6,background:s.gradient||"#EDE9FE"}}/>)}</div><div style={{fontSize:12,fontWeight:600,color:"#BE123C"}}>{savedInsps.length} inspirations</div></div></div>}
