@@ -1688,7 +1688,9 @@ undefined
             {/* No "Duplicate" chip — the name already says "Stage (2)", so the chip only repeated it. */}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&!isCollapsed(k)&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(zoneTotal(k))}</div>}
+            {/* Zone total removed from the header. The Live Estimate rail already breaks the deal
+                down BY ZONE and is on screen the whole time, so this was the same figure in two
+                places — and it sat in the row of controls, where a number reads as another button. */}
             {/* Photo-strip controls. They live up here rather than in the strip's own header so the
                 zone's whole control set sits in one row. stopPropagation because an OFF zone's
                 header toggles the zone — but these only render when it is already on. */}
