@@ -22,6 +22,9 @@ export function RemoveFunctionDialog({ snap, onCancel, onConfirm, S, sheet, hair
           <div id="ei-rm-title" style={{fontSize:16,fontWeight:700,color:textP,letterSpacing:-0.3,lineHeight:1.25}}>Remove Function {snap.idx + 1}?</div>
           <div id="ei-rm-body" style={{fontSize:12.5,color:textM,marginTop:7,lineHeight:1.55}}>
             Its details will be cleared and can’t be recovered.
+            {/* Removing Function 1 promotes the next one into its slot, so the numbering shifts.
+                Say so — otherwise it looks like the wrong function was deleted. */}
+            {snap.idx === 0 && " The next function becomes Function 1, and any build attached to it moves with it."}
           </div>
           {hasDetail && (
             <div style={{marginTop:15,padding:"11px 13px",borderRadius:11,border:`1px solid ${hairline}`,background:isDark?"rgba(255,255,255,0.025)":"#FAFAFB",fontSize:11,color:textM,display:"flex",gap:11,flexWrap:"wrap",alignItems:"center"}}>
@@ -79,7 +82,7 @@ export default function StudioEventInfo({ ctx }) {
     venue, setVenue, fn, setFn,
     clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
-    clientVenueOther, setClientVenueOther,
+    clientVenueOther, setClientVenueOther, setClientPalette, setFnBuilds,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
@@ -177,7 +180,37 @@ export default function StudioEventInfo({ ctx }) {
   // Hoisted out of the render map so the confirm dialog can invoke it. Reindexing logic is
   // verbatim from the previous inline `doDelete`.
   const removeFunction = (idx) => {
-    setExtraFunctions(prev => prev.filter((_, i) => i !== idx - 1));
+    if (idx === 0) {
+      // Function 1 is not an array entry — it lives in the top-level client fields. Removing it
+      // therefore means PROMOTING the next function into that slot, not splicing. Guarded by
+      // canDelete so it can never run when there is nothing to promote: an event with zero
+      // functions has no date, no venue and nothing to price.
+      const next = extraFunctions[0];
+      if (!next) return;
+      setFn(next.type || "");
+      setClientDate(next.date || "");
+      setVenue(next.venue || "");
+      setClientVenueOther(next.venueOther || "");
+      setClientShift(next.shift || "");
+      setClientPax(next.pax || "");
+      setClientPalette(next.palette || "Custom");
+      setExtraFunctions(prev => prev.slice(1));
+    } else {
+      setExtraFunctions(prev => prev.filter((_, i) => i !== idx - 1));
+    }
+    // fnBuilds is keyed by function INDEX, so every build above the removed one now belongs to the
+    // wrong function. Drop the removed function's build and shift the rest down. Without this,
+    // deleting function 2 silently moved function 3's zones onto function 2 — and deleting
+    // function 1 would have shifted every build in the deal.
+    setFnBuilds(prev => {
+      const next = {};
+      Object.entries(prev || {}).forEach(([k, v]) => {
+        const i = Number(k);
+        if (i === idx) return;                 // the removed function's own build goes with it
+        next[i > idx ? i - 1 : i] = v;
+      });
+      return next;
+    });
     if (expandedFnIdx >= idx) setExpandedFnIdx(Math.max(0, expandedFnIdx - 1));
     if (activeFnIdx >= idx) setActiveFnIdx(Math.max(0, activeFnIdx - 1)); // Commit 3 — keep pill on same semantic function after reindex
   };
@@ -557,7 +590,8 @@ export default function StudioEventInfo({ ctx }) {
               : (extraFunctions[idx - 1] || {});
             const isExpanded = expandedFnIdx === idx;
             const isComplete = !!(f.type && f.date);
-            const canDelete = idx > 0;
+            // Function 1 can go too, but only when there is another to promote into its slot.
+            const canDelete = idx > 0 || extraFunctions.length > 0;
             const updateType = (v) => idx === 0 ? setFn(v) : setExtraFunctions(prev => { const n = [...prev]; n[idx-1] = {...n[idx-1], type: v}; return n; });
             const updateDate = (v) => idx === 0 ? setClientDate(v) : setExtraFunctions(prev => { const n = [...prev]; n[idx-1] = {...n[idx-1], date: v}; return n; });
             const updateVenue = (v) => idx === 0 ? setVenue(v) : setExtraFunctions(prev => { const n = [...prev]; n[idx-1] = {...n[idx-1], venue: v}; return n; });
