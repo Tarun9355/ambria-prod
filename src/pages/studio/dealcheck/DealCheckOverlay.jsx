@@ -29,7 +29,7 @@ export default function DealCheckOverlay({ ctx }) {
     // client + auth
     clientLedger, activeClientId, clientName, clientDate, authUser,
     // deal check state
-    dcRunCounter, dcActiveTab, setDcActiveTab, dcCache, setDcCache, dcGenerating, dcGenStatus,
+    dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
     dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSearch, setDcCarpetSearch,
     dcKitEdits, setDcKitEdits, dcManualItems, setDcManualItems, dcManualSearch, setDcManualSearch,
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
@@ -48,7 +48,7 @@ export default function DealCheckOverlay({ ctx }) {
     // deal check inventory-tab module helpers
     isZoneDirty, parseCardKey, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
     // orchestration + persistence
-    openDealCheck, runDealCheckGenerate, getStudioAvailable, getActiveSoftHold, reliableSave, DC_CACHE_SK,
+    getStudioAvailable, getActiveSoftHold,
     // misc
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
@@ -104,10 +104,9 @@ export default function DealCheckOverlay({ ctx }) {
   return (() => {
         const cli = clientLedger.find(c => c.id === activeClientId);
         const isSold = cli?.status === "booked";
-        const counter = dcRunCounter[activeClientId] || { preSold: 0, postSold: 0, isSold: false };
-        const usedNow = isSold ? counter.postSold : counter.preSold;
-        const counterLabel = isSold ? `Post-SOLD runs: ${usedNow}/2` : `Pre-SOLD runs: ${usedNow}/2`;
-        const counterColor = usedNow >= 2 ? "#EF4444" : usedNow >= 1 ? "#F59E0B" : "#10B981";
+        // The 2-run counter came out with the Generate button — nothing starts a run from this
+        // screen any more, so there is no allowance left to display. dcRunCounter is still written
+        // by runDealCheckGenerate in StudioApp; only this read of it is gone.
         // Tab definitions — only Inventory/Florals/Transport are functional in Deploy 1
         const TABS = [
           { id: "inventory", label: "Inventory",        icon: "📦", live: true  },
@@ -795,51 +794,11 @@ export default function DealCheckOverlay({ ctx }) {
                 </div>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
-                {/* Tier 2.2 (25 May 2026) — cache indicator + regenerate button. */}
-                {/* Shows "💾 Cached <relative-time>" subtle pill when current view is from cache. */}
-                {/* Regenerate wipes dcCache[clientId] and reruns openDealCheck + runDealCheckGenerate. */}
-                {activeClientId && dcCache[activeClientId]?.cachedAt && !dcGenerating && (() => {
-                  const cachedAt = new Date(dcCache[activeClientId].cachedAt);
-                  const minsAgo = Math.round((Date.now() - cachedAt.getTime()) / 60000);
-                  const relTime = minsAgo < 1 ? "just now" : minsAgo < 60 ? `${minsAgo} min ago` : minsAgo < 1440 ? `${Math.round(minsAgo/60)}h ago` : `${Math.round(minsAgo/1440)}d ago`;
-                  return (
-                    <div title={`Last AI run: ${cachedAt.toLocaleString("en-IN")}`} style={{padding:"5px 10px",borderRadius:6,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.30)",fontSize:10,color:"#10B981",fontWeight:600,letterSpacing:0.4}}>
-                      💾 Cached · {relTime}
-                    </div>
-                  );
-                })()}
-                {activeClientId && (
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm("Regenerate Deal Check?\n\nThis will:\n• Wipe cached AI photo matches for this client\n• Run AI again (may cost ~₹5–20 in API calls)\n• Overwrite any manual sales tweaks (skips, overrides, manual items)\n\nContinue?")) return;
-                      // Wipe this client's cache slot
-                      setDcCache(prev => {
-                        const next = { ...prev };
-                        delete next[activeClientId];
-                        reliableSave(DC_CACHE_SK, JSON.stringify(next), "Deal Check cache (wipe)").catch(() => {});
-                        return next;
-                      });
-                      // Reset all DC state shapes so openDealCheck starts cleanly
-                      setDcResolved({});
-                      setDcCards({});
-                      setDcZoneState({});
-                      setDcPhotoOverrides({});
-                      setDcSkipped({});
-                      setDcManualItems([]);
-                      setDcDedupOverrides({});
-                      setDcProductionAccepted({});
-                      // Re-fetch IMS + rerun AI matching loop fresh
-                      await openDealCheck();
-                      // Also rerun Generate (subcat-scoped matcher) for the active function
-                      try { await runDealCheckGenerate(); } catch {}
-                    }}
-                    disabled={dcGenerating}
-                    title="Wipe cache & rerun AI photo matching. Costs API credits."
-                    style={{padding:"5px 11px",borderRadius:6,border:`1px solid ${dcGenerating?border:"rgba(251,191,36,0.50)"}`,background:dcGenerating?"transparent":"rgba(251,191,36,0.10)",color:dcGenerating?textS:"#FBBF24",fontSize:10,cursor:dcGenerating?"not-allowed":"pointer",fontWeight:600,letterSpacing:0.4,whiteSpace:"nowrap"}}>
-                    ↻ Regenerate
-                  </button>
-                )}
-                <div style={{padding:"5px 10px",borderRadius:6,background:"rgba(255,255,255,0.04)",fontSize:10,color:counterColor,fontWeight:600,letterSpacing:0.4}}>{counterLabel}</div>
+                {/* The "Cached · <time>", "↻ Regenerate" and run-counter badges are gone from this
+                    header. Generate below is the one control that matters, and it already states
+                    what it will do ("4 zones changed…" / "no changes — uses cache") plus the run
+                    count on its own line — this row was restating that in three more chips.
+                    The live progress text stays: it is the only thing here that is not a repeat. */}
                 {dcGenerating && <div style={{fontSize:10,color:accent,fontWeight:600}}>{dcGenStatus || "Working…"}</div>}
               </div>
             </div>
@@ -1010,31 +969,13 @@ export default function DealCheckOverlay({ ctx }) {
                       if (isZoneDirty(dcZoneState, dcCards, fi, zk)) dirtyCount += 1;
                     }
                   });
-                  const cliCounter = dcRunCounter[activeClientId] || { preSold: 0, postSold: 0, isSold: false };
-                  const cli = clientLedger.find(c => c.id === activeClientId);
-                  const isSold = cli?.status === "booked";
-                  const usedNow = isSold ? cliCounter.postSold : cliCounter.preSold;
-                  const atLimit = false;  // TESTING — revert to `usedNow >= 2` after testing
-                  const btnDisabled = atLimit || dcGenerating;
-                  const fnCount = fns.length;
-                  const btnLabel = dcGenerating
-                    ? "Generating…"
-                    : atLimit
-                    ? (isSold ? "Post-SOLD limit reached (2/2)" : "Limit reached — mark SOLD to unlock")
-                    : dirtyCount > 0
-                    ? `🔄 Generate Deal Check (${dirtyCount} zone${dirtyCount===1?"":"s"} changed${fnCount>1?` across ${fnCount} fns`:""})`
-                    : `🔄 Generate Deal Check (no changes — uses cache)`;
-                  const onGenerate = () => {
-                    if (btnDisabled) return;
-                    runDealCheckGenerate();  // event-wide — processes ALL functions in one click (counter +1)
-                  };
+                  // The Generate button is gone, and the run counter with it — a count of runs you
+                  // can no longer start says nothing. What remains is the function-context header,
+                  // which is the only part of this bar that was not about the button.
                   const genBar = (
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:9,background:"rgba(201,169,110,0.06)",border:`1px solid ${border}`,marginBottom:14,gap:10,flexWrap:"wrap"}}>
-                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                        <div style={{fontSize:10,color:textS,letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Function {fnIdx+1}{activeFn?.fnType?` · ${activeFn.fnType}`:""}{activeFn?.fnDate?` · ${activeFn.fnDate}`:""}</div>
-                        <div style={{fontSize:10,color:atLimit?"#EF4444":textS}}>{isSold?"Post-SOLD":"Pre-SOLD"} runs: {usedNow}/2 used{atLimit?(isSold?" · admin can unlock":" · mark SOLD to unlock 2 more"):""}</div>
-                      </div>
-                      <button onClick={onGenerate} disabled={btnDisabled} style={{padding:"10px 16px",borderRadius:9,border:"none",background:btnDisabled?"rgba(255,255,255,0.05)":`linear-gradient(135deg,${accent},#8B7355)`,color:btnDisabled?textS:"#0F0F1A",fontSize:12,fontWeight:700,cursor:btnDisabled?"default":"pointer",letterSpacing:0.3,whiteSpace:"nowrap"}}>{btnLabel}</button>
+                      <div style={{fontSize:10,color:textS,letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Function {fnIdx+1}{activeFn?.fnType?` · ${activeFn.fnType}`:""}{activeFn?.fnDate?` · ${activeFn.fnDate}`:""}</div>
+                      {dcGenerating && <div style={{fontSize:10,color:accent,fontWeight:600}}>Generating…</div>}
                     </div>
                   );
                   if (totalCards === 0) {
@@ -1044,7 +985,9 @@ export default function DealCheckOverlay({ ctx }) {
                         <div style={{padding:"40px 30px",textAlign:"center",color:textS}}>
                           <div style={{fontSize:38,marginBottom:14}}>📦</div>
                           <div style={{fontSize:14,fontWeight:600,color:"#fff",marginBottom:6}}>No inventory matched yet</div>
-                          <div style={{fontSize:11}}>Click <strong>Generate</strong> above to match Rate Card elements to IMS inventory.</div>
+                          {/* Was "Click Generate above" — that button no longer exists, so pointing
+                              at it would send people looking for a control that is not there. */}
+                          <div style={{fontSize:11}}>Nothing has been matched to IMS inventory for this function yet.</div>
                         </div>
                       </div>
                     );
@@ -2156,7 +2099,17 @@ export default function DealCheckOverlay({ ctx }) {
               const florals = hasActuals ? effFlorals : dcCostRollup.florals;       // show actual mandi once logged
               const grandWithOverheads = hasActuals ? grandActual : grandProj;
               const stripProfitColor = stripProfitPct >= 20 ? "#10B981" : stripProfitPct >= 10 ? "#F59E0B" : "#EF4444";
-              const fmt = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "—";
+              // Until Generate has run there are no matched cards, so every rollup figure is 0 and a
+              // department that genuinely costs nothing looked identical to one that was never
+              // calculated — both rendered "—". Split the two: "—" means not calculated yet, "₹0"
+              // means calculated and empty. Same source of truth the Inventory tab's empty state
+              // uses (dcCards), but across ALL functions, since this strip sums all of them.
+              const hasGenerated = Object.values(dcCards || {}).some(
+                (fnCards) => fnCards && Object.keys(fnCards).length > 0
+              );
+              const fmt = (n) => n > 0
+                ? "₹" + Math.round(n).toLocaleString("en-IN")
+                : hasGenerated ? "₹0" : "—";
               const onSaveDraft = async () => {
                 if (dcSavingDraft) return;
                 setDcSavingDraft(true);
