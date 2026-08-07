@@ -1,6 +1,6 @@
 import { Fragment, useState, useRef } from "react";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
-import { IconCheck, IconChevron, IconSparkle, IconCrown, IconSave, IconAlert, IconPlay,
+import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
   IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
 import { venueTypeLabel } from "../../../lib/studio/taxonomy";
@@ -34,7 +34,7 @@ export default function StudioBrowse({ ctx }) {
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
-    accentBg, accentText, textP, cardBg,
+    accentText, textP, cardBg,
     // auth / scope
     isAdmin, userVenueScope, authUser,
     // step
@@ -56,7 +56,8 @@ export default function StudioBrowse({ ctx }) {
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
-    pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
+    pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES,
+    clientLedger, loadClientSession,
   } = ctx;
   // The sticky offset clears the header, plus the function tab strip when there is more than one
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
@@ -116,7 +117,15 @@ export default function StudioBrowse({ ctx }) {
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {v.tierCat&&<div style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3}}>{v.tierCat}</div>}
-            {v.aiTagged&&<div title={v.savedBy?`Tagged by AI · saved by ${v.savedBy}`:"Tagged by AI"} style={{position:"absolute",top:10,left:10,background:"rgba(124,58,237,0.9)",color:"#fff",padding:"3px 8px",borderRadius:10,fontSize:9,fontWeight:700,zIndex:3,display:"inline-flex",alignItems:"center",gap:4}}><IconSparkle size={10}/>AI</div>}
+            {/* Fix tags takes the corner the AI badge used to hold. Below the fold it had a row to
+                itself holding one small control, which was mostly empty space; up here it costs
+                nothing. Dark translucent pill so it stays legible over any thumbnail, and it stops
+                propagation so it never opens the video. */}
+            <button className="sb-fix" onClick={(e)=>{e.stopPropagation();setTaxVenueGroup("");setTaxOutsideSub("all");setTaxFixVid(v.id);}}
+              title="This video is tagged wrong? Fix its taxonomy"
+              style={{position:"absolute",top:10,left:10,zIndex:3,padding:"3px 9px",borderRadius:10,
+                border:"1px solid rgba(255,255,255,0.35)",background:"rgba(0,0,0,0.55)",backdropFilter:"blur(4px)",
+                color:"#fff",fontSize:9.5,fontWeight:600,cursor:"pointer",lineHeight:1.5}}>Fix tags</button>
             <div style={{position:"absolute",bottom:10,left:10,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:600,zIndex:3}}>
               {priceTBD ? "Price TBD" : fmt(v.price)}
             </div>
@@ -124,11 +133,11 @@ export default function StudioBrowse({ ctx }) {
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
             <div className="sb-title" style={{fontSize:14,fontWeight:600,marginBottom:3,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
             <div style={{fontSize:11,color:textS,marginBottom:6}}>{[v.venue, v.fn, v.space].filter(Boolean).join(" · ") || "Untagged"}</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,marginBottom:10}}>
-            <div style={{display:"flex",flexWrap:"wrap",gap:3}}>{[...v.styles, ...v.colors].slice(0,3).map((t,i)=><span key={i} style={{fontSize:9,padding:"2px 7px",borderRadius:8,background:accentBg,color:accentText}}>{t}</span>)}</div>
-              <button onClick={(e)=>{e.stopPropagation();setTaxVenueGroup("");setTaxOutsideSub("all");setTaxFixVid(v.id);}} title="This video is tagged wrong? Fix its taxonomy" style={{flexShrink:0,padding:"2px 7px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,cursor:"pointer"}}>Fix tags</button>
-            </div>
-            {priceTBD&&<div style={{fontSize:10,color:"#D97706",marginBottom:8,padding:"4px 8px",background:"rgba(217,119,6,0.1)",borderRadius:6,border:"1px dashed rgba(217,119,6,0.3)",display:"flex",alignItems:"center",gap:5}}><IconAlert size={11}/>Needs zone photos — customize to build</div>}
+            {/* The style/palette chips and the "needs zone photos" strip both came off the card —
+                three stacked rows of metadata between the title and the buttons made the grid read
+                as dense text rather than as pictures. The tags are still on the video (and still
+                filterable from the rail); the unpriced state still shows as the "Price TBD" badge
+                on the thumbnail, and Fix tags moved up onto the thumbnail with it. */}
             <div style={{marginTop:"auto",display:"flex",gap:6}}>
               {isPlatinum?(
                 <div onClick={(e)=>{e.stopPropagation();setPremiaGate({ev:{id:v.id,name:v.title,video:`https://www.youtube.com/embed/${v.id}`}});}} className="sb-gate" style={{width:"100%",padding:"8px 12px",borderRadius:8,background:"linear-gradient(135deg,#EDE9FE,#F5F3FF)",textAlign:"center",fontSize:11,color:"#7C3AED",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCrown size={13}/>Sr. Designer Only</div>
@@ -186,20 +195,32 @@ export default function StudioBrowse({ ctx }) {
     // won't show a misleading "Resume" button that loads Fn1's data. Sessions with fnSnapshots:
     // include if fnSnapshots[activeFnIdx] has real build data. Legacy sessions (no fnSnapshots):
     // only attach to Fn0. Dedup by session.id; show up to 3 most recent.
+    // Sessions are listed on EVERY pill, tagged with the function they actually hold. They used to
+    // be filtered to the active pill only — which sounds right, but in practice every session ever
+    // saved has fnSnapshots {"0"} and nothing else, so switching to Fn2 made the whole banner
+    // vanish and there was no way to reach the saved build at all. Now the row stays and says
+    // "Fn1", and Resume jumps to that function instead of blanking the pill you're standing on.
     const bannerSaved = (() => {
       if (!activeClient) return [];
-      const allSessions = (activeClient.sessions || []).filter(s => {
-        if (s.fnSnapshots && typeof s.fnSnapshots === "object" && Object.keys(s.fnSnapshots).length > 0) {
-          const snap = s.fnSnapshots[activeFnIdx] || s.fnSnapshots[String(activeFnIdx)] || null;
-          return fnSnapHasData(snap);
+      const withFn = [];
+      for (const s of (activeClient.sessions || [])) {
+        const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
+        let fnIdx = null;
+        if (snaps && Object.keys(snaps).length > 0) {
+          // Prefer the pill you're on; otherwise the lowest-numbered one that has real data.
+          if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) fnIdx = activeFnIdx;
+          else {
+            const idxs = Object.keys(snaps).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+            for (const i of idxs) { if (fnSnapHasData(snaps[i] || snaps[String(i)] || null)) { fnIdx = i; break; } }
+          }
+        } else if (fnSnapHasData(s)) {
+          fnIdx = 0;   // legacy session — flat fields, they belong to Fn1
         }
-        // Legacy session — no per-fn snapshots; the flat fields belong to Fn0 only.
-        if (activeFnIdx !== 0) return false;
-        return fnSnapHasData(s);
-      });
+        if (fnIdx !== null) withFn.push({ ...s, _fnIdx: fnIdx });
+      }
       const seenIds = new Set();
       const out = [];
-      for (const s of allSessions) {
+      for (const s of withFn) {
         if (seenIds.has(s.id)) continue;
         seenIds.add(s.id);
         out.push(s);
@@ -207,10 +228,32 @@ export default function StudioBrowse({ ctx }) {
       }
       return out;
     })();
+    // ═══ RECENT BUILDS (across clients) ═══
+    // Continuing from Event Info mints a brand-new client with `sessions: []` whenever no client is
+    // already active, so a fresh flow lands on Browse with an empty banner and no route back into
+    // anything built earlier — the saved work belongs to the previous client record, not this one.
+    // Shown only when the active client has nothing of its own, so it never competes with the
+    // client's own sessions above.
+    const recentBuilds = (() => {
+      if (bannerSaved.length > 0) return [];
+      const out = [];
+      for (const c of (clientLedger || [])) {
+        for (const s of (c.sessions || [])) {
+          if (!fnSnapHasData(s.fnSnapshots?.[0] || s.fnSnapshots?.["0"] || s)) continue;
+          out.push({ client: c, session: s, savedAt: s.savedAt || 0 });
+        }
+      }
+      out.sort((a, b) => b.savedAt - a.savedAt);
+      return out.slice(0, 3);
+    })();
+
     const bannerCurrentId = sourceVideo?.id || null;
     // "Continue build" (vs "Resume") if the current pill's video matches one of the saved session's
     // snapshot for this pill. Walk fnSnapshots[activeFnIdx].sourceVideo.id, else legacy session.sourceVideoId.
+    // Only sessions belonging to THIS pill can stand in for the current selection — one listed
+    // against Fn1 must not suppress the "not yet saved" row while you're building Fn2.
     const bannerCurrentInSaved = bannerCurrentId ? bannerSaved.some(s => {
+      if (s._fnIdx !== activeFnIdx) return false;
       const snapForPill = s.fnSnapshots?.[activeFnIdx];
       if (snapForPill?.sourceVideo?.id === bannerCurrentId) return true;
       return s.sourceVideoId === bannerCurrentId;
@@ -288,9 +331,22 @@ export default function StudioBrowse({ ctx }) {
 .sb-alt:hover{background:${isDark?"rgba(201,169,110,0.14)":"#F6E7C8"} !important;transform:translateY(-1px)}
 .sb-gate:hover{filter:brightness(0.97);box-shadow:0 8px 18px -8px rgba(124,58,237,0.5) !important}
 .sb-cta:active,.sb-alt:active{transform:translateY(0) scale(0.98)}
+/* Fix tags now sits on the thumbnail, where the card's own :hover lift is the only feedback it
+   would otherwise get — it needs its own so it reads as a control and not a label. */
+.sb-fix{transition:background .15s ease, border-color .15s ease}
+.sb-fix:hover{background:rgba(0,0,0,0.78) !important;border-color:rgba(255,255,255,0.7) !important}
+.sb-fix:active{transform:scale(0.96)}
+/* The session banner cards use .sb-rcard, which now lives in makeFilterUI so Build's reference
+   banner shares one definition with it. Only the banner's ACTIONS are Browse-specific: the outline
+   button tints with its OWN colour via currentColor, so one rule serves the amber and indigo card. */
+.sb-bnr-btn{transition:filter .16s ease, background .16s ease, box-shadow .18s ease, transform .14s ease}
+.sb-bnr-btn:hover{transform:translateY(-1px)}
+.sb-bnr-out:hover{background:color-mix(in srgb, currentColor 14%, transparent) !important}
+.sb-bnr-solid:hover{filter:brightness(1.10);box-shadow:0 7px 15px -9px rgba(0,0,0,0.6)}
+.sb-bnr-btn:active{transform:translateY(0) scale(0.97)}
 @media (prefers-reduced-motion: reduce){
-  .sb-pill,.sb-head,.sb-card,.sb-thumb,.sb-play,.sb-title,.sb-cta,.sb-alt,.sb-gate{transition:none}
-  .sb-pill:hover,.sb-card:hover,.sb-cta:hover,.sb-alt:hover,.sb-pill:active{transform:none}
+  .sb-pill,.sb-head,.sb-card,.sb-thumb,.sb-play,.sb-title,.sb-cta,.sb-alt,.sb-gate,.sb-rcard,.sb-bnr-btn{transition:none}
+  .sb-pill:hover,.sb-card:hover,.sb-cta:hover,.sb-alt:hover,.sb-pill:active,.sb-bnr-btn:hover,.sb-bnr-btn:active,.sb-rcard:hover{transform:none}
   .sb-card:hover .sb-thumb,.sb-card:hover .sb-play{transform:none}
   .sb-head span[style*="rotate"]{transition:none}}
 `;
@@ -300,19 +356,9 @@ export default function StudioBrowse({ ctx }) {
       // monitor and pushed the filter panel far off the left edge. Wider cap + a roomier sidebar.
       <div style={{...S.main,maxWidth:1800,display:"flex",flexDirection:"column",gap:0}}>
         <style>{browseCSS}</style>
-        {/* ═══ COMMIT 3 — "Adding to" badge (only when multi-function) ═══ */}
-        {extraFunctions.length > 0 && (() => {
-          const m = activeFnMeta;
-          const slotLetter = m.shift ? (SHIFT_LETTER[m.shift] || m.shift.charAt(0).toUpperCase()) : "";
-          const dateLbl = m.date ? (() => { try { return new Date(m.date+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}); } catch { return m.date; } })() : "—";
-          const label = `${m.type || "—"} · ${dateLbl}${slotLetter ? " " + slotLetter : ""}${m.venue ? " · " + m.venue : ""}`;
-          return (
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",marginBottom:16,borderRadius:10,background:`${accent}15`,border:`1px solid ${accent}40`}}>
-              <div style={{fontSize:10,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600}}>Active function</div>
-              <div style={{fontSize:12,color:accentText,fontWeight:600}}>{label}</div>
-            </div>
-          );
-        })()}
+        {/* The "Active function" strip is gone. On a multi-function event the function pills in the
+            sticky header already show which one is selected, so this was a full-width bar restating
+            it — and it pushed the filters and the first row of videos down to say so. */}
         <div style={{display:"flex",gap:24,alignItems:"flex-start"}}>
 
         {/* ═══ SIDEBAR FILTERS ═══ */}
@@ -324,8 +370,76 @@ export default function StudioBrowse({ ctx }) {
             ends. The earlier version of this capped the panel and added a fade cue that covered the
             last rows of pills — there is deliberately no overlay here, just a slim scrollbar. */}
         <div ref={railRef} style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
-          maxHeight:railMaxH,display:"flex"}}>
-          <div style={{...S.card,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden"}}>
+          maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:10}}>
+          {/* Saved-session banner. Lives under the filters rather than above the grid: it is a way
+              back into a build, not a property of the results, and at the top it pushed the first
+              row of videos below the fold. Re-stacked for the 248px column — title, then buttons. */}
+          {(bannerSaved.length > 0 || bannerShowCurrent) && (
+            <div style={{display:"flex",flexDirection:"column",gap:8,flexShrink:0}}>
+              {bannerSaved.map(s => {
+                const vid = allVideos.find(v => v.id === s.sourceVideoId);
+                // "Continue" only when this really is the build in front of you — same video AND
+                // same pill. On another pill it's a Resume, since continuing would carry on with
+                // whatever is loaded here rather than with this session.
+                const isCurrent = bannerCurrentId === s.sourceVideoId && s._fnIdx === activeFnIdx;
+                const videoTitle = s.sourceVideoTitle || vid?.title || "Video";
+                const unavailable = !vid && !s.sourceVideoTitle;
+                return (
+                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:9}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11.5,fontWeight:600,color:textP,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                        {videoTitle}
+                        {unavailable && <span style={{marginLeft:8,fontSize:10,color:textS,fontWeight:400}}>(no longer in library)</span>}
+                        {isCurrent && <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",letterSpacing:0.3}}>LIVE</span>}
+                        {/* Only worth saying when it isn't the pill you're on — otherwise it's noise. */}
+                        {s._fnIdx !== activeFnIdx && <span title={`This session's build is on Function ${s._fnIdx+1}`} style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(99,102,241,0.18)":"rgba(99,102,241,0.12)",color:isDark?"#A5B4FC":"#4338CA",letterSpacing:0.3}}>Fn{s._fnIdx+1}</span>}
+                      </div>
+                      <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4}}>
+                        Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}{typeof s.total==="number"?` · ${fmt(s.total)}`:""}{s.tier?` ${s.tier}`:""}
+                      </div>
+                    </div>
+                    </div>
+                    <div style={{display:"flex",gap:7}}>
+                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${s.sourceVideoId}`,venue:s.venue||"",fn:s.fn||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
+                    {/* Pass _fnIdx so the restore lands on the function that HAS the build. */}
+                    <button onClick={(e)=>{e.stopPropagation();if(isCurrent){setStep(2);}else{resumeSavedSession(s,s._fnIdx);}}}
+                      title={s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined}
+                      className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flex:1}}>
+                      {isCurrent?"Continue":"Resume"} build {"→"}
+                    </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {bannerShowCurrent && (() => {
+                const vid = allVideos.find(v => v.id === bannerCurrentId);
+                const videoTitle = sourceVideo?.title || vid?.title || "Video";
+                return (
+                  <div className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.10)":"rgba(99,102,241,0.06)",border:`1px solid ${isDark?"rgba(99,102,241,0.30)":"rgba(99,102,241,0.25)"}`}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:9}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconPalette size={15}/></div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11.5,fontWeight:600,color:textP,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{videoTitle}</div>
+                      <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4}}>Current selection — not yet saved</div>
+                    </div>
+                    </div>
+                    <div style={{display:"flex",gap:7}}>
+                    <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${bannerCurrentId}`,venue:venue||"",fn:activeFnMeta.type||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#6366F1)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>
+                    <button onClick={(e)=>{e.stopPropagation();setStep(2);}} className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#4F46E5":"#4338CA",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flex:1}}>
+                      Continue build {"→"}
+                    </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+          {/* The filter card takes what is left after the banner, and keeps its own scrollport, so a
+              long banner shortens the filters rather than pushing them off the bottom of the rail. */}
+          {/* sb-panel is the shared filter-panel class from makeFilterUI — Build gets it for free via
+              FPanel, and Browse hand-rolls this shell, so it opts in explicitly. Same hover on both
+              pages rather than a second lookalike rule that drifts. */}
+          <div className="sb-panel" style={{...S.card,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden",flex:"1 1 auto"}}>
             {/* Panel header — total active count + one-click reset. Outside the scrollport, so it
                 stays visible while the sections below scroll. */}
             <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:8,
@@ -464,50 +578,30 @@ export default function StudioBrowse({ ctx }) {
         {/* ═══ MAIN CONTENT — VIDEO CARDS ═══ */}
         <div style={{flex:1,minWidth:0}}>
           {/* Session banner — per-pill Resume/Continue entry points. Hidden entirely when pill has no saved sessions and no current selection. */}
-          {(bannerSaved.length > 0 || bannerShowCurrent) && (
-            <div style={{marginBottom:14,display:"flex",flexDirection:"column",gap:8}}>
-              {bannerSaved.map(s => {
-                const vid = allVideos.find(v => v.id === s.sourceVideoId);
-                const isCurrent = bannerCurrentId === s.sourceVideoId;
-                const videoTitle = s.sourceVideoTitle || vid?.title || "Video";
-                const unavailable = !vid && !s.sourceVideoTitle;
-                return (
-                  <div key={s.sourceVideoId+"_"+s.savedAt} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
-                    <div style={{flexShrink:0,display:"flex",color:"#B45309"}}><IconSave size={15}/></div>
+          {/* Recent builds from other clients — the only way back in once Event Info has minted a
+              fresh client record. Resume goes through loadClientSession so the client's own name,
+              date, venue and functions come back with the build, not just the zones. */}
+          {recentBuilds.length > 0 && (
+            <div style={{marginBottom:14,padding:"9px 12px",borderRadius:10,background:isDark?"rgba(148,163,184,0.07)":"rgba(100,116,139,0.05)",border:`1px solid ${isDark?"rgba(148,163,184,0.20)":"rgba(100,116,139,0.18)"}`}}>
+              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.9,textTransform:"uppercase",color:textS,marginBottom:7}}>Recent builds</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {recentBuilds.map(({client,session}) => (
+                  <div key={client.id+"_"+session.savedAt} style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{flexShrink:0,display:"flex",color:textS}}><IconSave size={13}/></div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:600,color:textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                        {videoTitle}
-                        {unavailable && <span style={{marginLeft:8,fontSize:10,color:textS,fontWeight:400}}>(no longer in library)</span>}
-                        {isCurrent && <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",letterSpacing:0.3}}>LIVE</span>}
-                      </div>
-                      <div style={{fontSize:10,color:textS,marginTop:2}}>
-                        Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}{typeof s.total==="number"?` · ${fmt(s.total)}`:""}{s.tier?` ${s.tier}`:""}
+                      <div style={{fontSize:11.5,fontWeight:600,color:textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{client.name||"Client"}</div>
+                      <div style={{fontSize:10,color:textS,marginTop:1}}>
+                        {session.sourceVideoTitle||"Build"} · saved {bannerFmtDate(session.savedAt)}{session.savedBy?` by ${session.savedBy}`:""}{typeof session.total==="number"?` · ${fmt(session.total)}`:""}
                       </div>
                     </div>
-                    {!unavailable && <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${s.sourceVideoId}`,venue:s.venue||"",fn:s.fn||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[],tags:[]});setVideoPlaying(true);}} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconPlay size={11}/>Play</button>}
-                    <button onClick={(e)=>{e.stopPropagation();if(isCurrent){setStep(2);}else{resumeSavedSession(s);}}} style={{padding:"5px 12px",borderRadius:6,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-                      {isCurrent?"Continue":"Resume"} build {"→"}
+                    <button onClick={(e)=>{e.stopPropagation();loadClientSession(client,session,2);}}
+                      title={`Switch to ${client.name||"this client"} and open their saved build`}
+                      style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${isDark?"rgba(148,163,184,0.45)":"rgba(100,116,139,0.4)"}`,background:"transparent",color:textP,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                      Open {"→"}
                     </button>
                   </div>
-                );
-              })}
-              {bannerShowCurrent && (() => {
-                const vid = allVideos.find(v => v.id === bannerCurrentId);
-                const videoTitle = sourceVideo?.title || vid?.title || "Video";
-                return (
-                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.10)":"rgba(99,102,241,0.06)",border:`1px solid ${isDark?"rgba(99,102,241,0.30)":"rgba(99,102,241,0.25)"}`}}>
-                    <div style={{flexShrink:0,display:"flex",color:"#B45309"}}><IconPalette size={15}/></div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:600,color:textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{videoTitle}</div>
-                      <div style={{fontSize:10,color:textS,marginTop:2}}>Current selection — not yet saved</div>
-                    </div>
-                    <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${bannerCurrentId}`,venue:venue||"",fn:activeFnMeta.type||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#6366F1)",photos:[],tags:[]});setVideoPlaying(true);}} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${isDark?"rgba(99,102,241,0.5)":"#6366F1"}`,background:"transparent",color:isDark?"#A5B4FC":"#4338CA",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconPlay size={11}/>Play</button>
-                    <button onClick={(e)=>{e.stopPropagation();setStep(2);}} style={{padding:"5px 12px",borderRadius:6,border:"none",background:isDark?"#4F46E5":"#4338CA",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-                      Continue build {"→"}
-                    </button>
-                  </div>
-                );
-              })()}
+                ))}
+              </div>
             </div>
           )}
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>

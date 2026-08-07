@@ -614,7 +614,7 @@ export default function StudioBuild({ ctx }) {
   // A folded rail: a 38px strip on its own edge that brings the panel back. The label reads
   // vertically so the strip stays narrow.
   const railTab = (side, label, icon) => (
-    <div className="rail-tab" onClick={()=>setRailsOpen(true)} title={`Show ${label}`}
+    <div className="rail-tab" onClick={()=>(side==="left"?setLeftRailOpen:setRightRailOpen)(true)} title={`Show ${label}`}
       style={{width:38,flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start",cursor:"pointer",
         display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"12px 0 14px",
         borderRadius:10,border:`1px solid ${border}`,background:cardBg}}>
@@ -726,7 +726,14 @@ export default function StudioBuild({ ctx }) {
   const [newCzOtherName, setNewCzOtherName] = useState("");
   const [phPage, setPhPage] = useState({});   // per-zone page index for the photo picker
   // Both side rails fold away together, from the one control in the Photo filters header.
-  const [railsOpen, setRailsOpen] = useState(true);
+  // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
+  // running total off screen — the one thing you want kept while you widen it.
+  const [leftRailOpen, setLeftRailOpen] = useState(true);
+  const [rightRailOpen, setRightRailOpen] = useState(true);
+  // Element cards widen as each rail folds: 4 with both open, 6 with neither. A kit row spans
+  // about half the grid, so it is derived rather than hardcoded against a fixed column count.
+  const elCols = 4 + (leftRailOpen ? 0 : 1) + (rightRailOpen ? 0 : 1);
+  const kitSpan = Math.ceil(elCols / 2);
   // Palette search in the photo-filter rail. Held here, not in the Section, so it survives the
   // panel re-rendering on every filter change.
   const [zpPaletteQ, setZpPaletteQ] = useState("");
@@ -1119,7 +1126,7 @@ export default function StudioBuild({ ctx }) {
       const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
       return <FPanel title="Photo filters" total={total} onClear={clearAll} note="Applies to every zone"
         scroll={railMaxH}
-        action={<span className="rail-btn" onClick={()=>setRailsOpen(false)} title="Fold both side panels away and widen the build"
+        action={<span className="rail-btn" onClick={()=>setLeftRailOpen(false)} title="Hide the filters and widen the build"
           style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.4,
             textTransform:"uppercase",color:textS,padding:"3px 7px",borderRadius:7,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>
           <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
@@ -1205,7 +1212,16 @@ export default function StudioBuild({ ctx }) {
         {/* Gilt rule, matching the Event Info sheet */}
         <div style={{height:3,background:`linear-gradient(90deg,${accent},${accent}66 42%,transparent)`}}/>
         <div style={{padding:"13px 15px",borderBottom:`1px solid ${rule}`}}>
-          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",color:textS}}>Live estimate</div>
+          {/* Its own Hide, mirroring the filter panel's. Same markup and the same rail-btn class, so
+              the two read as one control repeated rather than two different affordances. */}
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",color:textS}}>Live estimate</div>
+            <span className="rail-btn" onClick={()=>setRightRailOpen(false)} title="Hide the estimate and widen the build"
+              style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.4,
+                textTransform:"uppercase",color:textS,padding:"3px 7px",borderRadius:7,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>
+              Hide<span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={10}/></span>
+            </span>
+          </div>
           <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:5,flexWrap:"wrap"}}>
             <div style={{fontSize:23,fontWeight:700,color:textP,letterSpacing:-0.6,fontVariantNumeric:"tabular-nums"}}>{fmt(grandTotal)}</div>
             <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:6,background:cat.bg,color:cat.color}}>{cat.label}</span>
@@ -1250,7 +1266,17 @@ export default function StudioBuild({ ctx }) {
       title={uploadTargetZone
         ? `Upload a client photo — goes to ${uploadTargetLabel}, changeable in the review step`
         : "Switch on a zone first — an upload has to land somewhere"}
-      style={{padding:"4px 12px",borderRadius:8,border:`1px solid ${accent}60`,background:zoneUploading?accent+"20":"transparent",color:accent,fontSize:10,fontWeight:600,opacity:uploadTargetZone?1:0.45,cursor:!uploadTargetZone?"not-allowed":zoneUploading?"wait":"pointer",display:"inline-flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>
+      style={{padding:"6px 14px",borderRadius:8,
+        // Filled once it can actually do something. As a faint outline on a faint background it read
+        // as decoration; this is the one action on the banner, so it should look like one. The
+        // no-zone state keeps the old ghost treatment — dimming a solid button just looks broken.
+        border:uploadTargetZone?"none":`1px solid ${accent}60`,
+        background:uploadTargetZone?(zoneUploading?accent+"CC":accent):"transparent",
+        color:uploadTargetZone?(isDark?"#1a1a2e":"#fff"):accent,
+        boxShadow:uploadTargetZone?`0 2px 8px -3px ${accent}`:"none",
+        fontSize:10.5,fontWeight:700,opacity:uploadTargetZone?1:0.45,
+        cursor:!uploadTargetZone?"not-allowed":zoneUploading?"wait":"pointer",
+        display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
       {zoneUploading?"Uploading…":<><IconCamera size={11}/>Upload</>}
       <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading||!uploadTargetZone}
         onChange={e=>{const f=e.target.files?.[0];if(f&&uploadTargetZone)handleZoneUpload(uploadTargetZone,f);e.target.value="";}}/>
@@ -1401,9 +1427,11 @@ export default function StudioBuild({ ctx }) {
    reach it — on its own against the page background it read as a static label. Fills in on hover
    and presses on click. Skipped mid-upload: the control is inert then, so it must not invite a
    second click. */
-.zone-upload{transition:background .15s ease,border-color .15s ease,transform .12s ease,box-shadow .15s ease}
-.zone-upload[data-busy="0"]:hover{background:${accent}1F !important;border-color:${accent} !important;
-  transform:translateY(-1px);box-shadow:0 2px 8px ${isDark?"rgba(0,0,0,0.45)":"rgba(201,169,110,0.35)"}}
+.zone-upload{transition:filter .15s ease,background .15s ease,border-color .15s ease,transform .12s ease,box-shadow .15s ease}
+/* data-busy="0" is exactly the state where the button is a SOLID accent fill, so the old faint-tint
+   hover would have washed it out. Brighten and lift instead. */
+.zone-upload[data-busy="0"]:hover{filter:brightness(1.08);transform:translateY(-1px);
+  box-shadow:0 5px 14px -4px ${isDark?"rgba(0,0,0,0.65)":"rgba(201,169,110,0.8)"} !important}
 .zone-upload[data-busy="0"]:active{transform:translateY(0) scale(.98);box-shadow:none}
 .zone-upload:focus-within{outline:2px solid ${accent};outline-offset:2px}
 undefined
@@ -1418,7 +1446,7 @@ undefined
   /* the spine still appears, it just does not grow into place */
   .el-row:hover::before{transform:scaleY(1)}
 }
-` + `@media (prefers-reduced-motion: reduce){.sb-pill,.sb-head,.sb-search{transition:none}.sb-pill:hover,.sb-pill:active{transform:none}}`}</style>
+` + `@media (prefers-reduced-motion: reduce){.sb-pill,.sb-head,.sb-search,.sb-rcard{transition:none}.sb-pill:hover,.sb-pill:active,.sb-rcard:hover{transform:none}}`}</style>
     {customPicker && (
       <InventoryItemPickerModal
         title={customPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
@@ -1460,79 +1488,67 @@ undefined
     </div>
     {/* ═══ TWO-COLUMN SHELL ═══ Photo filters live permanently in a sticky left rail, exactly
         as on Browse — always visible, no toggle. ═══ */}
-    <div style={{display:"flex",gap:railsOpen?22:12,alignItems:"flex-start"}}>
-      {railsOpen
-        ? <div ref={railRef} style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{ZP_PANEL}</div>
-        : railTab("left","Photo filters",<IconSliders size={14}/>)}
-      <div style={{flex:1,minWidth:0}}>
-
-    {/* Event Palette strip removed on request. The palette still comes from the selected
-        video's tag via clientPalette / extraFunctions[].palette — there is simply no override
-        control on Build any more. */}
-
-    {/* ═══ DATE DEMAND BANNER ═══ */}
-    {clientDate&&dateDemand&&(()=>{
-      const { dt, booked, ongoing, isHigh } = dateDemand;   // one source, shared with the chip above
-      const dtInfo=dt==='saya'?{bg:"rgba(239,68,68,0.08)",border:"rgba(239,68,68,0.2)",label:"Saya Day"}:dt==='competition'?{bg:"rgba(100,100,100,0.08)",border:"rgba(100,100,100,0.2)",label:"Competition Day"}:null;
-      if (!dtInfo && !booked && !ongoing) return null;   // nothing to report once the date moved up
-      return <div style={{padding:"8px 14px",borderRadius:10,marginBottom:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",fontSize:12,background:isHigh?"rgba(239,68,68,0.08)":(dtInfo?dtInfo.bg:(isDark?"rgba(201,169,110,0.05)":"#FFFDF7")),border:`1px solid ${isHigh?"rgba(239,68,68,0.2)":(dtInfo?dtInfo.border:border)}`}}>
-        {dtInfo&&<span style={{padding:"2px 8px",borderRadius:6,fontSize:10,fontWeight:600,background:dtInfo.bg,color:dt==="saya"?"#EF4444":"#888"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dt==="saya"?"#EF4444":"#666",marginRight:6,verticalAlign:"middle"}}/>{dtInfo.label}</span>}
-        {booked>0&&<span style={{color:"#047857",fontWeight:600}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#10B981",marginRight:6,verticalAlign:"middle"}}/>{booked} booked</span>}
-        {ongoing>0&&<span style={{color:"#B45309"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6,verticalAlign:"middle"}}/>{ongoing} ongoing</span>}
-      </div>;
-    })()}
-
+    <div style={{display:"flex",gap:leftRailOpen||rightRailOpen?22:12,alignItems:"flex-start"}}>
+      {leftRailOpen
+        ? <div ref={railRef} style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start",
+            maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:12}}>
+            {ZP_PANEL}
+          {/* Reference banner — moved out of the main column into the rail, under the filters, so
+              the zones start at the top of the page instead of below a full-width header. Restacked
+              for the 258px column: media on top, details beneath. */}
     {/* ═══ SOURCE EVENT BANNER ═══ */}
-    {sourceEvent&&<div style={{...S.card,marginBottom:14,overflow:"hidden"}}>
-      <div style={{display:"flex",gap:0}}>
-        <div style={{width:168,minHeight:108,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
+    {sourceEvent&&<div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
+      <div style={{display:"flex",flexDirection:"column",gap:0}}>
+        <div style={{width:"100%",height:128,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
           <LazyYT src={sourceEvent.video} gradient={sourceEvent.gradient} poster={sourceEvent.img||sourceEvent.photos?.[0]} title={sourceEvent.name} style={{position:"absolute",inset:0}}/>
         </div>
-        <div style={{flex:1,padding:"10px 14px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+        <div style={{flex:1,padding:"10px 12px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
             <div>
               <div style={{fontSize:9,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:3}}>Building from reference</div>
-              <div style={{fontSize:14.5,fontWeight:700}}>{sourceEvent.name}</div>
+              <div style={{fontSize:13,fontWeight:700,lineHeight:1.3}}>{sourceEvent.name}</div>
               <div style={{fontSize:11,color:textS,marginTop:2}}>{sourceEvent.venue} · {sourceEvent.fn} · {sourceEvent.space}</div>
             </div>
             {/* The running total lives in the Live Estimate rail, which is on screen the whole
                 time — repeating it here just gave the same number two homes. Only the tier chip
                 stays, since the rail states it once and this is where the reference is judged. */}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+            {/* flex-start, not flex-end: right-aligning made sense when this sat opposite the title
+                in a full-width banner. In the rail the row wraps, so the chip and Upload drop onto
+                their own line and now line up with the title above them instead of floating right. */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:6,flexShrink:0}}>
               {showCosts&&<span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>}
               {BANNER_UPLOAD}
             </div>
           </div>
-          <div style={{fontSize:11,color:textS,lineHeight:1.45,marginBottom:6,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{sourceEvent.desc}</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-            {(sourceEvent.tags||[]).map((t,i)=><span key={i} style={{fontSize:9.5,padding:"2px 7px",borderRadius:8,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS,fontWeight:500}}>{t}</span>)}
-          </div>
+          {/* Description and tag chips dropped, matching the Browse cards. In a 258px rail they were
+              three more stacked rows under a title that already names the reference, and they pushed
+              the filters — the thing you actually work with — further down. The tags still live on
+              the video and still drive the filters in the panel above. */}
           {sourceEvent.photos?.length>0&&<div style={{display:"flex",gap:5,marginTop:7,overflowX:"auto"}}>
             {sourceEvent.photos.map((p,i)=><img key={i} src={p} alt="" loading="lazy" style={{width:54,height:36,objectFit:"cover",borderRadius:6,flexShrink:0,cursor:"pointer",border:`2px solid ${border}`}} onClick={()=>setPreviewImg(p)} onError={e=>{e.target.style.display="none"}}/>)}
           </div>}
         </div>
       </div>
     </div>}
-
     {/* ═══ SOURCE VIDEO BANNER ═══ */}
     {sourceVideo&&!sourceEvent&&(()=>{
       const vTag=ytVideoTags[sourceVideo.id]||{};
       const vid=allVideos.find(v=>v.id===sourceVideo.id);
       const ytWatchUrl=sourceVideo.id?`https://www.youtube.com/watch?v=${sourceVideo.id}`:"";
       const embedUrl=sourceVideo.id?`https://www.youtube.com/embed/${sourceVideo.id}`:null;
-      return <div style={{...S.card,marginBottom:20,overflow:"hidden"}}>
-        <div style={{display:"flex",gap:0}}>
-          {vid?.thumb&&<div style={{width:220,minHeight:120,flexShrink:0,position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}}>
+      return <div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
+        <div style={{display:"flex",flexDirection:"column",gap:0}}>
+          {vid?.thumb&&<div style={{width:"100%",height:128,flexShrink:0,position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}}>
             <img src={vid.thumb} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none"}}/>
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.2)"}}>
               <div style={{width:48,height:34,borderRadius:8,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 12px rgba(255,0,0,0.4)"}}><div style={{width:0,height:0,borderLeft:"12px solid #fff",borderTop:"7px solid transparent",borderBottom:"7px solid transparent",marginLeft:2}}/></div>
             </div>
           </div>}
-          <div style={{flex:1,padding:"14px 18px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div style={{flex:1,padding:"10px 12px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
               <div>
                 <div style={{fontSize:10,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:4}}>Building from video</div>
-                <div style={{fontSize:17,fontWeight:700}}>{sourceVideo.title||vid?.title||"Video"}</div>
+                <div style={{fontSize:13,fontWeight:700,lineHeight:1.3}}>{sourceVideo.title||vid?.title||"Video"}</div>
               </div>
               {showCosts&&<div style={{textAlign:"right"}}>
                 <div style={{fontSize:18,fontWeight:700,color:textP}}>{fmt(grandTotal)}</div>
@@ -1552,7 +1568,29 @@ undefined
           </div>
         </div>
       </div>;
-    })()}      {savedInsps.length>0&&<div style={{background:"#FFF1F2",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{display:"flex",gap:4}}>{savedInsps.slice(0,5).map((s,i)=><div key={i} style={{width:32,height:32,borderRadius:6,background:s.gradient||"#EDE9FE"}}/>)}</div><div style={{fontSize:12,fontWeight:600,color:"#BE123C"}}>{savedInsps.length} inspirations</div></div></div>}
+    })()}
+          </div>
+        : railTab("left","Photo filters",<IconSliders size={14}/>)}
+      <div style={{flex:1,minWidth:0}}>
+
+    {/* Event Palette strip removed on request. The palette still comes from the selected
+        video's tag via clientPalette / extraFunctions[].palette — there is simply no override
+        control on Build any more. */}
+
+    {/* ═══ DATE DEMAND BANNER ═══ */}
+    {clientDate&&dateDemand&&(()=>{
+      const { dt, booked, ongoing, isHigh } = dateDemand;   // one source, shared with the chip above
+      const dtInfo=dt==='saya'?{bg:"rgba(239,68,68,0.08)",border:"rgba(239,68,68,0.2)",label:"Saya Day"}:dt==='competition'?{bg:"rgba(100,100,100,0.08)",border:"rgba(100,100,100,0.2)",label:"Competition Day"}:null;
+      if (!dtInfo && !booked && !ongoing) return null;   // nothing to report once the date moved up
+      return <div style={{padding:"8px 14px",borderRadius:10,marginBottom:16,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",fontSize:12,background:isHigh?"rgba(239,68,68,0.08)":(dtInfo?dtInfo.bg:(isDark?"rgba(201,169,110,0.05)":"#FFFDF7")),border:`1px solid ${isHigh?"rgba(239,68,68,0.2)":(dtInfo?dtInfo.border:border)}`}}>
+        {dtInfo&&<span style={{padding:"2px 8px",borderRadius:6,fontSize:10,fontWeight:600,background:dtInfo.bg,color:dt==="saya"?"#EF4444":"#888"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dt==="saya"?"#EF4444":"#666",marginRight:6,verticalAlign:"middle"}}/>{dtInfo.label}</span>}
+        {booked>0&&<span style={{color:"#047857",fontWeight:600}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#10B981",marginRight:6,verticalAlign:"middle"}}/>{booked} booked</span>}
+        {ongoing>0&&<span style={{color:"#B45309"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6,verticalAlign:"middle"}}/>{ongoing} ongoing</span>}
+      </div>;
+    })()}
+
+
+    {savedInsps.length>0&&<div style={{background:"#FFF1F2",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{display:"flex",gap:4}}>{savedInsps.slice(0,5).map((s,i)=><div key={i} style={{width:32,height:32,borderRadius:6,background:s.gradient||"#EDE9FE"}}/>)}</div><div style={{fontSize:12,fontWeight:600,color:"#BE123C"}}>{savedInsps.length} inspirations</div></div></div>}
 
 
 
@@ -1947,7 +1985,7 @@ undefined
               </div>
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
-              <div className="el-grid" style={{"--el-cols":railsOpen?4:6}}>
+              <div className="el-grid" style={{"--el-cols":elCols}}>
                 {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                   const rc = priceInfo.rc;
@@ -1964,7 +2002,7 @@ undefined
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${railsOpen?2:3}`:`span ${railsOpen?2:3}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${kitSpan}`:`span ${kitSpan}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -2415,7 +2453,7 @@ undefined
               </div>}
             </div>
             {isElCardOpen(k)&&(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
-              <div className="el-grid" style={{"--el-cols":railsOpen?4:6}}>
+              <div className="el-grid" style={{"--el-cols":elCols}}>
               {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
                 const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
                 const rc = priceInfo.rc;
@@ -2432,7 +2470,7 @@ undefined
                 const thumbKey = `${k}:${idx}`;
                 const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                 return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${railsOpen?2:3}`:`span ${railsOpen?2:3}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
+                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${kitSpan}`:`span ${kitSpan}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
                     <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
@@ -2962,7 +3000,7 @@ undefined
       </div>);
     })()}
       </div>{/* /right column */}
-      {PRICING_TILE&&(railsOpen
+      {PRICING_TILE&&(rightRailOpen
         ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
         : railTab("right","Live estimate",<IconBolt size={14}/>))}
     </div>{/* /two-column shell */}

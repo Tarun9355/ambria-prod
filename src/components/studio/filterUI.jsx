@@ -271,6 +271,16 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
 .sb-panel:hover{box-shadow:${isDark
   ? "0 2px 4px rgba(0,0,0,0.5), 0 18px 36px -14px rgba(0,0,0,0.7)"
   : "0 2px 4px rgba(26,26,46,0.08), 0 18px 36px -14px rgba(26,26,46,0.28)"} !important}
+/* Cards that share the rail BELOW the panel — the reference banner on Build, the session banner on
+   Browse. Deliberately a lighter lift than .sb-panel: they are small surfaces, and the panel's
+   two-layer shadow reads as overweight on them. Lives here so both pages share one definition. */
+.sb-rcard{transition:box-shadow .18s ease, border-color .16s ease, transform .14s ease}
+/* A 1px lift as well as the shadow: the shadow alone was pitched so soft it read as nothing, and
+   these cards sit on a tinted background that swallows it. The lift is what you actually notice. */
+.sb-rcard:hover{transform:translateY(-1px);box-shadow:${isDark
+  ? "0 6px 18px -8px rgba(0,0,0,0.8)"
+  : "0 6px 18px -8px rgba(26,26,46,0.42)"}}
+.sb-rcard:active{transform:translateY(0)}
 /* Slim scrollbar for the panel body — the default chrome one is wide enough to crowd a 248px rail.
    No fade/gradient cue over the content: an earlier attempt at that covered the last rows of pills. */
 .sb-scroll{scrollbar-width:thin;scrollbar-color:${isDark?"rgba(255,255,255,0.18) transparent":"rgba(26,26,46,0.18) transparent"}}
