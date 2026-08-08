@@ -6,6 +6,7 @@
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
 import { useState, useMemo } from "react";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
+import { thumbUrl } from "../../lib/studio/thumb";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
   // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
@@ -94,6 +95,21 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const inv = inventory.find((i) => i.id === invId);
     return Number(inv?.qty ?? inv?.qtyOwned) || 0;
   };
+  // Photo + dimensions off an inventory row. The standing-item rows already derived these inline;
+  // the picker needs the same, so it lives in one place rather than being written twice.
+  const invPhoto = (inv) => inv?.img || inv?.photoUrls?.[0] || inv?.photo_urls?.[0] || "";
+  const invDims = (inv) => {
+    const raw = inv?.dims_LxWxH ?? inv?.dims?.lxwxh;
+    if (typeof raw === "string" && raw) return raw;
+    if (raw && typeof raw === "object") {
+      const d = [raw.l, raw.w, raw.h].filter((x) => x != null && x !== "").join(" × ");
+      if (d) return d;
+    }
+    return typeof inv?.size === "string" ? inv.size : "";
+  };
+  // Which venue tab's picker is open, and what has been typed into it.
+  const [pickQuery, setPickQuery] = useState({});
+  const [pickOpen, setPickOpen] = useState(null);
   // Pieces of a truss size available to assign HERE = stock (Planning) minus what other
   // fixed venues already hold standing.
   const trussAvail = (kind, size, vid) => {
@@ -285,17 +301,87 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 </div>
                 );
               })}
-              {v.items.length === 0 && <div className="text-xs text-gray-400 italic">No standing items yet — add the specific designs installed at {v.name}.</div>}
+              {/* Same plain wording as the placeholder — "designs" only means something to us. */}
+              {v.items.length === 0 && <div className="text-xs text-gray-400 italic">Nothing added yet — search below for the items permanently installed at {v.name}.</div>}
             </div>
 
-            {/* Item picker — by specific inventory item */}
-            <div className="flex items-center gap-2">
-              <input list={"fv-inv-" + v.id} placeholder="Add a specific inventory item (design)…" className="border rounded-lg px-3 py-1.5 text-sm flex-1"
-                onChange={(e) => { const inv = inventory.find((i) => (i.name || "").toLowerCase() === e.target.value.toLowerCase()); if (inv) { addItem(v.id, inv); e.target.value = ""; } }} />
-              <datalist id={"fv-inv-" + v.id}>
-                {inventory.filter((i) => !v.items.some((it) => it.invId === i.id)).map((i) => <option key={i.id} value={i.name}>{i.cat ? `${i.cat}${i.subCat ? " · " + i.subCat : ""}` : ""}</option>)}
-              </datalist>
-            </div>
+            {/* ═══ ITEM PICKER ═══
+                Was a native <datalist>, which the browser renders itself — no photo, no dimensions,
+                no stock, and no say in how it looks. Standing inventory is chosen by DESIGN, and
+                these items are told apart by appearance far more than by name ("Ivory Couple Couch
+                11" vs "15"), so a list of bare strings made you guess. This is the same shape as the
+                Deal Check lookup: thumbnail, sub-category › category, size, and what is free. */}
+            {(() => {
+              const q = (pickQuery[v.id] || "").trim().toLowerCase();
+              const taken = new Set(v.items.map((it) => it.invId));
+              const pool = inventory.filter((i) => !taken.has(i.id));
+              const hits = !q ? pool.slice(0, 40) : pool.filter((i) => {
+                const hay = `${i.name || ""} ${i.code || ""} ${i.cat || ""} ${i.subCat || i.sub_cat || ""}`.toLowerCase();
+                // every word must appear somewhere, so "ivory couch" finds "Ivory Couple Couch 11"
+                return q.split(/\s+/).every((t) => hay.includes(t));
+              }).slice(0, 40);
+              const open = pickOpen === v.id;
+              // Capped rather than full-bleed: a search box as wide as the panel looks like the
+              // primary control on the page, when it is a small add action under the list.
+              // Bounding the wrapper keeps the dropdown (left-0 right-0) to the same width.
+              return (
+                <div className="relative max-w-md">
+                  {/* The box sits below the list, so without a label it reads as a filter for the
+                      rows above. "Add" and the venue name are the whole point; the placeholder
+                      already covers how to search. */}
+                  <div className="text-[11px] font-semibold text-gray-600 mb-1">Add standing inventory at {v.name}</div>
+                  <input
+                    value={pickQuery[v.id] || ""}
+                    // "(design)" was internal shorthand for "pick the exact item, not the category".
+                    // An example does that job without the jargon, and shows what typing gets you.
+                    placeholder="Type to search — e.g. chandelier, ivory couch"
+                    // Width is capped by the wrapper; the height stays normal. Shrinking the padding
+                    // and text as well made it look squashed rather than just narrower.
+                    className="border rounded-lg px-3 py-1.5 text-sm w-full"
+                    onFocus={() => setPickOpen(v.id)}
+                    onChange={(e) => { setPickQuery((s) => ({ ...s, [v.id]: e.target.value })); setPickOpen(v.id); }}
+                    // A click on a result would otherwise be lost to the blur that closes the list.
+                    onBlur={() => setTimeout(() => setPickOpen((o) => (o === v.id ? null : o)), 150)}
+                  />
+                  {open && (
+                    <div className="absolute z-30 left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-white border rounded-lg shadow-lg">
+                      {hits.length === 0 && (
+                        <div className="px-3 py-3 text-xs text-gray-400 italic">
+                          {q ? `Nothing matches “${pickQuery[v.id]}”.` : "No inventory left to add here."}
+                        </div>
+                      )}
+                      {hits.map((i) => {
+                        const free = invAvail(i.id, v.id);
+                        const photo = invPhoto(i);
+                        const dims = invDims(i);
+                        const sub = i.subCat || i.sub_cat || "";
+                        return (
+                          <button key={i.id} type="button"
+                            onMouseDown={(e) => e.preventDefault()}   // keep focus so onBlur does not fire first
+                            onClick={() => { addItem(v.id, i); setPickQuery((s) => ({ ...s, [v.id]: "" })); setPickOpen(null); }}
+                            className="w-full flex items-center gap-3 px-3 py-2 hover:bg-indigo-50 text-left border-b last:border-b-0">
+                            {photo
+                              ? <img src={thumbUrl(photo, 40)} alt="" loading="lazy" decoding="async" className="w-10 h-10 rounded object-cover border flex-shrink-0" onError={(e) => { e.target.style.visibility = "hidden"; }} />
+                              : <div className="w-10 h-10 rounded border bg-gray-100 flex-shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm text-gray-900 truncate">{i.name}</div>
+                              <div className="text-[11px] text-gray-500 truncate">
+                                {sub && <span className="text-indigo-600">{sub}</span>}
+                                {sub && i.cat ? " › " : ""}{i.cat || ""}{dims ? ` · ${dims}` : ""}
+                              </div>
+                            </div>
+                            {/* What is actually free to install HERE — stock minus other venues. */}
+                            <span className={"text-[10px] px-2 py-0.5 rounded flex-shrink-0 " + (free > 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+                              {free > 0 ? `${free} free` : "none free"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Standing truss — pillars/beams installed here (totals per size, sizes live from Planning) */}
             <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing truss <span className="font-normal text-gray-400 normal-case">— installed pillars/beams · “/N” = pieces free to assign here</span></div>
