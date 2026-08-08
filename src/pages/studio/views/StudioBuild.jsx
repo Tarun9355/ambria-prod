@@ -582,27 +582,13 @@ export default function StudioBuild({ ctx }) {
     const isHigh = booked >= 2 || dt === "saya";
     return { dt, booked, ongoing, isHigh, isMod: !isHigh && booked === 1 };
   })();
-  // Height of the sticky header plus a little air, so what we scroll to clears it.
-  const SCROLL_OFFSET = 74;
-  // Which zone just opened, if any. An effect (below) does the scrolling: it runs after React has
-  // committed the newly revealed content, whereas requestAnimationFrame only guesses at that moment.
-  const [scrollToZone, setScrollToZone] = useState(null);
-  useEffect(() => {
-    if (!scrollToZone || typeof document === "undefined") return;
-    setScrollToZone(null);
-    // The SECTION TILES, not the zone card. The card's header is already on screen — you just
-    // clicked a chip in it — so scrolling there moves up, not down to the details. Custom zones have
-    // no tiles, so they fall back to their card.
-    const el = document.getElementById(`zone-sec-${scrollToZone}`) || document.getElementById(`zone-${scrollToZone}`);
-    if (!el) return;
-    const top = el.getBoundingClientRect().top + window.scrollY - SCROLL_OFFSET;
-    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    window.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
-  }, [scrollToZone]);
+  // The scroll-to-zone effect that lived here is gone with its only caller. It was local to this
+  // file and nothing else referenced it, so it was dead once Details stopped scrolling.
   const toggleZoneCollapse = (k) => {
-    const opening = isCollapsed(k);          // collapsed now means this click opens it
+    // Expanding used to scroll the page to the zone. The zone header you just clicked is already
+    // where you are looking, so the jump moved you away from it rather than towards it — it read
+    // as the page navigating somewhere. Details now just opens in place.
     setZoneCollapsed((p) => ({ ...p, [k]: p[k] === false ? true : false }));
-    if (opening) setScrollToZone(k);         // never on collapse — that would yank the page
   };
   // Which of the four zone sections is open, per zone. Undefined = none, so a zone body starts
   // as four tiles and nothing else. The element card's collapse reads this too, so the tile and
