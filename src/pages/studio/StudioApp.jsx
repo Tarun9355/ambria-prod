@@ -3532,7 +3532,7 @@ export default function StudioApp() {
           if (!pat) pat = fp.find(p => { const n = (p.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
         }
         if (!pat) return;
-        const sk = szMap(rc?.inhouseMode, el.size);
+        const sk = szMap(pat?.mode || rc?.inhouseMode, el.size);
         const sizes = pat.sizes || {};
         let comp = sizes[sk] || sizes.medium;
         if (!comp && sk === "big" && sizes.large) comp = sizes.large;
