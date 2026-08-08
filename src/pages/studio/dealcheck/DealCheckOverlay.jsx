@@ -10,6 +10,7 @@ import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
+import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
@@ -53,18 +54,25 @@ export default function DealCheckOverlay({ ctx }) {
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
 
-  // Effective per-unit rental for a card's item. For an EDITED kit (dcKitEdits) it is
-  // kit base + Σ(edited component rentals) so customising add-ons updates the rental everywhere;
-  // otherwise it's the item's stored price (which already = base + master parts).
+  // Effective per-unit rental for a card's item — the ONE answer to "what does this cost", used by
+  // every rental path below so they cannot disagree.
+  //
+  // A kit is always priced LIVE: kit base + Σ(component rentals), taking the edited components when
+  // the salesperson has customised them and the master list otherwise. It used to fall back to the
+  // item's stored `price` whenever the kit was untouched, on the assumption that price already
+  // equalled base + parts. IMS does set it that way on save, but nothing rewrites it when a
+  // component's rental later changes — 31 of 74 kits had drifted, by up to ₹700 a unit in both
+  // directions. Recomputing means changing a component's rental in IMS re-prices every kit at once.
   const effKitRental = (item, fnIdx, cardKey) => {
-    let r = imsField.rentalCost(item);
-    if (item && Array.isArray(item.subItems) && item.subItems.length) {
-      const edited = dcKitEdits?.[fnIdx]?.[cardKey];
-      if (Array.isArray(edited)) {
-        r = (Number(item.kitBase) || 0) + edited.reduce((s, cp) => { const ci = dcInventoryCache.find(x => x.id === cp.itemId); return s + (ci ? imsField.rentalCost(ci) : 0) * (Number(cp.qty) || 0); }, 0);
-      }
-    }
-    return r;
+    if (!item || !Array.isArray(item.subItems) || !item.subItems.length) return imsField.rentalCost(item);
+    const edited = dcKitEdits?.[fnIdx]?.[cardKey];
+    const parts = Array.isArray(edited) ? edited : item.subItems;
+    return (Number(item.kitBase) || 0) + parts.reduce((s, cp) => {
+      const ci = dcInventoryCache.find(x => x.id === (cp.itemId ?? cp.id));
+      // An explicit 0 means the component was removed; a missing qty on a master row means one.
+      const q = cp.qty == null ? 1 : (Number(cp.qty) || 0);
+      return s + (ci ? imsField.rentalCost(ci) : 0) * q;
+    }, 0);
   };
 
   // Live soft-blocking: how much of an inventory item is left for THIS deal, netting out both
@@ -85,6 +93,17 @@ export default function DealCheckOverlay({ ctx }) {
   };
 
   // Pull the latest dept-head actuals (IMS) whenever Deal Check opens for this client.
+  // The overlay is position:fixed over the whole viewport and scrolls its own body, but the Build
+  // page underneath was never frozen — so the browser kept showing ITS scrollbar too, and you got
+  // two side by side, the outer one dragging content you cannot even see. Freeze the page while the
+  // overlay is mounted and restore exactly what was there before (not a hardcoded "visible", which
+  // would clobber any lock another overlay had set).
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   useEffect(() => { refreshDcEoActuals && refreshDcEoActuals(); }, [activeClientId]);
 
   // Truss/masking calcs across every function look up a zone's selected photo by URL to read its
@@ -209,14 +228,9 @@ export default function DealCheckOverlay({ ctx }) {
               if (!item) return;
               // Fixed-venue rental discount: standing units (already installed here) bill at a
               // discount; fresh units / other venues / swapped designs bill full rate-card.
-              // For an EDITED kit (dcKitEdits), the per-unit rental = kit base + Σ(edited component
-              // rentals) — NOT the stored master price — so customising add-ons updates the total.
-              let baseR = imsField.rentalCost(item);
-              const _kitEdited = (Array.isArray(item.subItems) && item.subItems.length) ? dcKitEdits[fi]?.[ck] : null;
-              if (Array.isArray(_kitEdited)) {
-                const _kb = Number(item.kitBase) || 0;
-                baseR = _kb + _kitEdited.reduce((s, cp) => { const ci = dcInventoryCache.find(x => x.id === cp.itemId); return s + (ci ? imsField.rentalCost(ci) : 0) * (Number(cp.qty) || 0); }, 0);
-              }
+              // Kit pricing lives in effKitRental — this used to carry its own copy of that logic,
+              // which is how the charge and the kit breakdown line came to disagree on screen.
+              const baseR = effKitRental(item, fi, ck);
               const qty = c.qty || 1;
               const _rep = zoneIsRepeat(fn, ck);
               // Unavailable-shortfall pricing: qty beyond what's actually free in stock for this
@@ -263,7 +277,8 @@ export default function DealCheckOverlay({ ctx }) {
               const item = dcInventoryCache.find(x => x.id === mi.imsId);
               if (!item) return;
               const q = Number(mi.qty) || 1;
-              const baseR = imsField.rentalCost(item);
+              // A manually added item can be a kit too — price it the same way as a matched card.
+              const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
               const lineRental = _rep ? q * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : q * baseR;
               rental += lineRental;
@@ -859,7 +874,8 @@ export default function DealCheckOverlay({ ctx }) {
                         const item = dcInventoryCache.find(x => x.id === mi.imsId);
                         if (!item) return;
                         const q = Number(mi.qty) || 1;
-                        const baseR = imsField.rentalCost(item);
+                        // Same as the rollup above — a manual item may be a kit.
+                        const baseR = effKitRental(item, fi, null);
                         const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
                         fnDecor += _rep ? q * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : q * baseR;
                       });
@@ -1030,7 +1046,7 @@ export default function DealCheckOverlay({ ctx }) {
                             <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 14px",cursor:"pointer",background:"rgba(255,255,255,0.03)",borderBottom:collapsed?"none":`1px solid ${border}`}}>
                               <div style={{display:"flex",alignItems:"center",gap:10}}>
                                 <span style={{fontSize:11,color:textS,transition:"transform 0.15s",display:"inline-block",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}>▼</span>
-                                {zonePhoto && <img src={zonePhoto} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
+                                {zonePhoto && <img loading="lazy" decoding="async" src={thumbUrl(zonePhoto, 160)} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
                                 <span style={{fontSize:13,fontWeight:700,color:"#fff",letterSpacing:0.2,textTransform:"capitalize"}}>{zk}</span>
                                 <span style={{fontSize:10,color:textS}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
                                 {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:11,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
@@ -1169,7 +1185,7 @@ export default function DealCheckOverlay({ ctx }) {
                                       </div>
                                       {carpetItem && calc ? (
                                         <div style={{display:"flex",gap:10,alignItems:"center",padding:"6px 8px",borderRadius:7,background:"rgba(16,185,129,0.06)",border:"1px solid rgba(16,185,129,0.2)"}}>
-                                          {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <img src={cp} alt="" style={{width:48,height:48,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:48,height:48,borderRadius:6,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>🟥</div>;})()}
+                                          {(()=>{const cp=imsField.photos(carpetItem)[0]; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:48,height:48,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:48,height:48,borderRadius:6,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>🟥</div>;})()}
                                           <div style={{flex:1,minWidth:0}}>
                                             <div style={{fontSize:11,fontWeight:600,color:"#fff"}}>{carpetItem.name}</div>
                                             <div style={{fontSize:10,color:textS,marginTop:2}}>
@@ -1196,7 +1212,7 @@ export default function DealCheckOverlay({ ctx }) {
                                           return (
                                             <div key={opt.id} onClick={()=>{setPick(opt.id); setSearch("");}} style={{minWidth:100,maxWidth:110,cursor:"pointer",borderRadius:8,overflow:"hidden",border:isSelected?`2px solid #10B981`:themeScore>0?`1.5px solid rgba(201,169,110,0.5)`:`1px solid ${border}`,background:isSelected?"rgba(16,185,129,0.08)":themeScore>0?"rgba(201,169,110,0.06)":"rgba(255,255,255,0.025)",flexShrink:0,transition:"border 0.15s",position:"relative"}}>
                                               {themeScore>0&&<div style={{position:"absolute",top:3,right:3,fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(201,169,110,0.85)",color:"#fff",fontWeight:700,zIndex:1}}>🎨 match</div>}
-                                              {optPhoto ? <img src={optPhoto} alt="" style={{width:"100%",height:72,objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:72,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🟥</div>}
+                                              {optPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(optPhoto, 180)} alt="" style={{width:"100%",height:72,objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:72,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🟥</div>}
                                               <div style={{padding:"5px 6px"}}>
                                                 <div style={{fontSize:9,fontWeight:600,color:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{opt.name}</div>
                                                 <div style={{fontSize:8,color:textS,marginTop:1}}>{optOwned.toLocaleString("en-IN")} sqft{optRental>0?` · ₹${optRental}/sqft`:""}</div>
@@ -1226,7 +1242,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   }[card.source] || { icon: "·", color: textS, label: "" };
                                   return (
                                     <div key={card._cardKey} style={{padding:"11px 12px",borderRadius:9,background:"rgba(255,255,255,0.025)",border:`1px solid ${border}`,display:"flex",gap:11,alignItems:"flex-start"}}>
-                                      {photo ? <img src={photo} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:textS,flexShrink:0}}>?</div>}
+                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:textS,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
                                           <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>{item?.name || card.rcName || "(unnamed)"}</span>
@@ -1294,7 +1310,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                   return (
                                                     <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
                                                     <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
-                                                      {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img src={cp} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>🌸</span>; })()}
+                                                      {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>🌸</span>; })()}
                                                       <span style={{color:cItem?(short?"#EF4444":"#fff"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
                                                       <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:textS,fontSize:14,padding:"0 4px",userSelect:"none"}}>−</span>
@@ -1438,7 +1454,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                   }));
                                                 }} title={`${alt.name || altItem?.name || alt.imsId}${altDims?" · "+altDims:""} · ₹${altRental.toLocaleString("en-IN")}${altHold?" · ⏳ "+altHold.salesperson:""}`}
                                                 style={{position:"relative",width:56,height:56,borderRadius:6,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":"pointer",flexShrink:0,opacity:altHold?0.55:1}}>
-                                                  {altPhoto ? <img src={altPhoto} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:"100%",background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:textS}}>?</div>}
+                                                  {altPhoto ? <img loading="lazy" decoding="async" src={thumbUrl(altPhoto, 96)} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/> : <div style={{width:"100%",height:"100%",background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:textS}}>?</div>}
                                                   <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"2px 4px",background:"rgba(0,0,0,0.65)",fontSize:8,color:"#fff",fontWeight:700,letterSpacing:0.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>₹{altRental >= 1000 ? Math.round(altRental/100)/10+"k" : altRental} · <span style={{color:altEnough?"#34D399":"#F87171"}}>{altOwned}</span></div>
                                                   {altHold && <div style={{position:"absolute",top:2,right:2,fontSize:9,background:"rgba(245,158,11,0.85)",borderRadius:3,padding:"1px 3px",color:"#0F0F1A",fontWeight:700}}>⏳</div>}
                                                   {isCurrent && <div style={{position:"absolute",top:2,left:2,fontSize:9,background:`${accent}cc`,borderRadius:3,padding:"1px 3px",color:"#0F0F1A",fontWeight:700}}>✓</div>}
@@ -1479,7 +1495,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                   const upd=(patch)=>setSplit(split.map((x,i)=>i===si?{...x,...patch}:x));
                                                   return (
                                                     <div key={si} style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}>
-                                                      {(()=>{const p=it2?imsField.photos(it2)[0]:null; return p?<img src={p} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",flexShrink:0}}/>:<span style={{width:20,height:20,borderRadius:4,background:"rgba(255,255,255,0.06)",flexShrink:0,display:"inline-block"}}/>;})()}
+                                                      {(()=>{const p=it2?imsField.photos(it2)[0]:null; return p?<img loading="lazy" decoding="async" src={thumbUrl(p, 24)} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",flexShrink:0}}/>:<span style={{width:20,height:20,borderRadius:4,background:"rgba(255,255,255,0.06)",flexShrink:0,display:"inline-block"}}/>;})()}
                                                       <select value={s.imsId} onChange={e=>upd({imsId:e.target.value})} style={{flex:1,minWidth:0,fontSize:10,padding:"3px 6px",borderRadius:5,border:`1px solid ${border}`,background:"#0F0F1A",color:"#fff"}}>
                                                         {subItems.map(x=><option key={x.id} value={x.id}>{x.name} ({imsField.qtyOwned(x)})</option>)}
                                                         {!subItems.some(x=>x.id===s.imsId) && it2 && <option value={s.imsId}>{it2.name}</option>}
@@ -1520,7 +1536,9 @@ export default function DealCheckOverlay({ ctx }) {
                                 {manualItemsInZone.map(mi => {
                                   const item = dealCheckInventory.find(i => i.id === mi.imsId);
                                   const photo = item ? imsField.photos(item)[0] : null;
-                                  const rental = item ? imsField.rentalCost(item) : 0;
+                                  // Same figure the rollup charges, so the row cannot show one price
+                                  // while the total is built from another.
+                                  const rental = item ? effKitRental(item, activeFnIdx, null) : 0;
                                   const dims = item ? imsField.sizeText(item) : "";
                                   const sub = item ? imsField.subcategory(item) : "";
                                   // Hard cap: you can't block more than is available at this venue.
@@ -1528,7 +1546,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const _avail = item ? Math.max(0, Math.min(getStudioAvailable(item, fnBlocksForChip), availableAtVenue({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, _vName, item))) : 0;
                                   return (
                                     <div key={mi.manualId} style={{padding:"11px 12px",borderRadius:9,background:"rgba(193,154,107,0.05)",border:`1px solid rgba(193,154,107,0.30)`,display:"flex",gap:11,alignItems:"flex-start"}}>
-                                      {photo ? <img src={photo} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:textS,flexShrink:0}}>?</div>}
+                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:54,height:54,borderRadius:7,objectFit:"cover",flexShrink:0,background:"#0F0F1A"}}/> : <div style={{width:54,height:54,borderRadius:7,background:"#0F0F1A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:textS,flexShrink:0}}>?</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:3}}>
                                           <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>{item?.name || mi.imsId}</span>
@@ -1557,7 +1575,7 @@ export default function DealCheckOverlay({ ctx }) {
                                               <span style={{fontSize:9,color:textS,letterSpacing:0.6,textTransform:"uppercase",fontWeight:600}}>Alternatives:</span>
                                               {mAlts.slice(0,5).map(a=>{ const ao=altAvail(a); const ap=imsField.photos(a)[0]; return (
                                                 <span key={a.id} onClick={()=>setDcManualItems(prev=>prev.map(x=>x.manualId===mi.manualId?{...x,imsId:a.id}:x))} title={`${a.name} · ${ao} free`} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",padding:"2px 7px 2px 3px",borderRadius:12,border:`1px solid ${border}`,background:"rgba(255,255,255,0.03)",fontSize:9}}>
-                                                  {ap?<img src={ap} alt="" style={{width:16,height:16,borderRadius:4,objectFit:"cover"}}/>:<span style={{width:16,height:16,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9}}>?</span>}
+                                                  {ap?<img loading="lazy" decoding="async" src={thumbUrl(ap, 20)} alt="" style={{width:16,height:16,borderRadius:4,objectFit:"cover"}}/>:<span style={{width:16,height:16,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9}}>?</span>}
                                                   <span style={{color:"#fff",maxWidth:82,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span>
                                                   <span style={{color:ao>0?"#10B981":"#EF4444",fontWeight:800}}>{ao}</span>
                                                 </span>
@@ -1654,7 +1672,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const unitCost = ci.manualPrice || ci.refPrice || 0;
                                   return (
                                     <div key={ci.id} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${ciColor}40`,background:`${ciColor}08`,display:"flex",gap:10,alignItems:"center"}}>
-                                      {photo ? <img src={photo} alt="" style={{width:44,height:44,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:44,height:44,borderRadius:6,background:`${ciColor}15`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{ciIcon}</div>}
+                                      {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:44,height:44,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:44,height:44,borderRadius:6,background:`${ciColor}15`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{ciIcon}</div>}
                                       <div style={{flex:1,minWidth:0}}>
                                         <div style={{fontSize:11,fontWeight:600,color:textP}}>{ciIcon} {ci.subCat} <span style={{fontSize:9,padding:"1px 5px",borderRadius:4,background:`${ciColor}20`,color:ciColor,fontWeight:700,marginLeft:4}}>{isP?"PRODUCTION":"BUYING"}</span></div>
                                         <div style={{fontSize:9,color:textS,marginTop:2}}>× {ci.qty} · {ci.dims.w||"?"}W × {ci.dims.l||"?"}D × {ci.dims.h||"?"}H ft{ci.notes?` · ${ci.notes}`:""}</div>
@@ -1725,7 +1743,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const photo = ci.photo || zonePhoto || refPhoto || null;
                         return (
                           <div key={ci.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${ciColor}30`,background:`${ciColor}06`,display:"flex",gap:10,alignItems:"center"}}>
-                            {photo ? <img src={photo} alt="" style={{width:48,height:48,borderRadius:8,objectFit:"cover"}} /> : <div style={{width:48,height:48,borderRadius:8,background:`${ciColor}12`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{isP?"🏭":"🛒"}</div>}
+                            {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:48,height:48,borderRadius:8,objectFit:"cover"}} /> : <div style={{width:48,height:48,borderRadius:8,background:`${ciColor}12`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{isP?"🏭":"🛒"}</div>}
                             <div style={{flex:1}}>
                               <div style={{fontSize:12,fontWeight:600,color:textP}}>{ci.cat ? `${ci.cat} → ` : ""}{ci.subCat}</div>
                               <div style={{fontSize:10,color:textS,marginTop:2}}>× {ci.qty}{ci.dims?.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
@@ -1783,7 +1801,9 @@ export default function DealCheckOverlay({ ctx }) {
                       if (!card.imsId) return;
                       if (!itemFnMap[card.imsId]) {
                         const item = dcInventoryCache.find(x => x.id === card.imsId);
-                        const rental = item ? imsField.rentalCost(item) : 0;
+                        // Aggregated across functions, so the master component list is the right
+                        // basis here — no single function's kit edits apply.
+                        const rental = item ? effKitRental(item, null, null) : 0;
                         const photo = item ? imsField.photos(item)[0] : null;
                         itemFnMap[card.imsId] = { name: item?.name || card.imsName || "?", photo, rental, fns: new Set(), totalQty: 0, fnLabels: {} };
                       }
@@ -1825,7 +1845,7 @@ export default function DealCheckOverlay({ ctx }) {
                           <div style={{display:"flex",flexDirection:"column",gap:1}}>
                             {conflicts.map((c, ci) => (
                               <div key={ci} style={{padding:"10px 14px",display:"flex",gap:10,alignItems:"center",background:ci%2===0?"rgba(255,255,255,0.015)":"transparent"}}>
-                                {c.photo ? <img src={c.photo} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:40,height:40,borderRadius:6,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>📦</div>}
+                                {c.photo ? <img loading="lazy" decoding="async" src={thumbUrl(c.photo, 40)} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:40,height:40,borderRadius:6,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>📦</div>}
                                 <div style={{flex:1,minWidth:0}}>
                                   <div style={{fontSize:11,fontWeight:600,color:"#fff"}}>{c.name}</div>
                                   <div style={{fontSize:10,color:textS,marginTop:2}}>
@@ -1861,7 +1881,7 @@ export default function DealCheckOverlay({ ctx }) {
                           <div style={{display:"flex",flexDirection:"column",gap:1}}>
                             {reuseItems.map((r, ri) => (
                               <div key={ri} style={{padding:"10px 14px",display:"flex",gap:10,alignItems:"center",background:ri%2===0?"rgba(255,255,255,0.015)":"transparent"}}>
-                                {r.photo ? <img src={r.photo} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:40,height:40,borderRadius:6,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>📦</div>}
+                                {r.photo ? <img loading="lazy" decoding="async" src={thumbUrl(r.photo, 40)} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover",flexShrink:0}}/> : <div style={{width:40,height:40,borderRadius:6,background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>📦</div>}
                                 <div style={{flex:1,minWidth:0}}>
                                   <div style={{fontSize:11,fontWeight:600,color:"#fff"}}>{r.name} ×{r.totalQty}</div>
                                   <div style={{fontSize:10,color:textS,marginTop:2}}>♻ {r.fnNames}</div>
@@ -2205,7 +2225,7 @@ export default function DealCheckOverlay({ ctx }) {
                             }
                             setDcBrowseAllOpen(null);
                           }} style={{position:"relative",borderRadius:9,overflow:"hidden",border:isCurrent?`2px solid ${accent}`:`1px solid ${border}`,cursor:isCurrent?"default":isBlocked?"not-allowed":"pointer",background:"rgba(255,255,255,0.02)",opacity:hold?0.6:isBlocked?0.45:1}}>
-                            {photo ? <img src={photo} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#0A0A14"}}/> : <div style={{width:"100%",height:110,background:"#0A0A14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>?</div>}
+                            {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:"100%",height:110,objectFit:"cover",display:"block",background:"#0A0A14"}}/> : <div style={{width:"100%",height:110,background:"#0A0A14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>?</div>}
                             <div style={{padding:"8px 9px"}}>
                               <div style={{fontSize:11,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
                               <div style={{fontSize:10,color:textS,marginTop:2}}>₹{rental.toLocaleString("en-IN")}{dims&&" · "+dims}</div>
