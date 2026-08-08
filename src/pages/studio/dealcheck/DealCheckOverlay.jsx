@@ -339,11 +339,34 @@ export default function DealCheckOverlay({ ctx }) {
               const picks = dcCarpetPick[fi] || {};
               Object.keys(zc).forEach(zk => {
                 if (!en[zk] || !zc[zk] || zc[zk].cpT === CARPET_OFF) return;
+                // ═══ CARPET COST — priced from the BUILD's carpet material, not the IMS pick ═══
+                // The zone already carries a carpet material (zc.cpT, e.g. "Carpet Old · ₹5/sqft")
+                // and Build charges area × that rate. Deal Check used to ignore it and cost from
+                // whichever IMS carpet was picked, at that item's own rental — ₹400/sqft against
+                // Build's ₹5. On a 384 sqft floor that is ₹1,920 quoted against ₹16,800+ costed, so
+                // margin collapsed on any zone with carpet.
+                // Worse, with NO pick it returned early and carpet cost nothing at all.
+                // The IMS pick still matters — it says WHICH carpet ops should pull, and drives the
+                // stock/availability checks — but the money now comes from the same place the quote
+                // does, so the two agree.
+                const zcz = zc[zk];
+                const fd = zcz.floorDims || zcz.dims || {};
+                const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+                const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
+                const cc = area > 0 ? area * cRate : 0;
                 const pickedId = picks[zk];
-                if (!pickedId) return;
-                const carpetItem = dcInventoryCache.find(x => x.id === pickedId);
-                if (!carpetItem) return;
-                { const cc = calcZoneCarpet(zc[zk], carpetItem, carpetMarkup).cost; rental += cc; addD("Tenting", "rental", cc); if (cc > 0 && deptInv["Tenting"]) deptInv["Tenting"].push({ name: carpetItem.name || "Carpet", photo: imsField.photos(carpetItem)[0] || "", qty: 1, unit: 0, total: Math.round(cc), sub: imsField.subcategory(carpetItem) || "carpet", imsId: carpetItem.id }); } // carpet → Tenting
+                const carpetItem = pickedId ? dcInventoryCache.find(x => x.id === pickedId) : null;
+                if (cc > 0) {
+                  rental += cc;
+                  addD("Tenting", "rental", cc);
+                  if (deptInv["Tenting"]) deptInv["Tenting"].push({
+                    name: carpetItem?.name || carpetPricingFor(zcz.cpT, imsCarpetMaterials).label || "Carpet",
+                    photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : "",
+                    qty: 1, unit: 0, total: Math.round(cc),
+                    sub: carpetItem ? imsField.subcategory(carpetItem) || "carpet" : "carpet",
+                    imsId: carpetItem?.id,
+                  });
+                }
               });
             });
           } catch {}
@@ -1148,6 +1171,11 @@ export default function DealCheckOverlay({ ctx }) {
                                   const carpetItem = pickedId ? dcInventoryCache.find(x=>x.id===pickedId) : null;
                                   const markup = dealCheckData?.carpetFreshMarkup ?? 40;
                                   const calc = carpetItem ? calcZoneCarpet(zc, carpetItem, markup) : null;
+                                  // What the rollup actually charges — area × the zone's carpet
+                                  // material rate, the same figure Build shows. Displayed here so the
+                                  // card cannot state one number while the total is built on another.
+                                  const cPrice = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+                                  const chargedCarpet = neededSqft * (cPrice.rate || 0);
                                   const setPick = (id)=> setDcCarpetPick(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[zk]: id}}));
                                   const searchKey = `${fnIdx}|${zk}`;
                                   const searchText = dcCarpetSearch[searchKey] || "";
@@ -1182,6 +1210,17 @@ export default function DealCheckOverlay({ ctx }) {
                                         <span style={{fontSize:12,fontWeight:700,color:"#fff"}}>🟥 Carpet</span>
                                         <span style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#94A3B8",fontWeight:700,letterSpacing:0.4}}>{carpetPricingFor(zc.cpT, imsCarpetMaterials).label.toLowerCase().includes("old")?"REUSED PREF":"FLOOR"}</span>
                                         <span style={{fontSize:10,color:textS}}>{neededSqft} sqft needed</span>
+                                        {/* The charged figure, from the zone's carpet material —
+                                            the same basis Build quotes on. The picker below chooses
+                                            WHICH carpet ops pulls, not what it costs. */}
+                                        {chargedCarpet > 0 && (
+                                          <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:"#fff"}}>
+                                            {fmt(chargedCarpet)}
+                                            <span style={{fontWeight:400,fontSize:9,color:textS,marginLeft:5}}>
+                                              {cPrice.label || "carpet"} · ₹{cPrice.rate}/sqft
+                                            </span>
+                                          </span>
+                                        )}
                                       </div>
                                       {carpetItem && calc ? (
                                         <div style={{display:"flex",gap:10,alignItems:"center",padding:"6px 8px",borderRadius:7,background:"rgba(16,185,129,0.06)",border:"1px solid rgba(16,185,129,0.2)"}}>
