@@ -137,7 +137,9 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "transport", label: "Transport",        icon: "🚚", live: true  },
           { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
-          { id: "depts",     label: "Dept Income",      icon: "🏦", live: true  },
+          // Dept Income removed from the tab strip. Its body below is left in place and still
+          // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
+          // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
         ];
         const activeTabDef = TABS.find(t => t.id === dcActiveTab) || TABS[0];
 
@@ -822,6 +824,19 @@ export default function DealCheckOverlay({ ctx }) {
 
         return (
           <div style={{position:"fixed",inset:0,zIndex:9000,background:"#FAF9F6",display:"flex",flexDirection:"column"}}>
+            {/* Hover layer. Everything here is inline-styled, and inline styles cannot express
+                :hover — so the tab strip and the cost chips had no feedback at all and read as
+                labels rather than things you can point at. */}
+            <style>{`
+.dc-tab{transition:background .14s ease,color .14s ease}
+.dc-tab[data-on="0"]:hover{background:rgba(26,26,46,0.05) !important;color:#000 !important}
+.dc-chip{transition:background .14s ease,box-shadow .16s ease,transform .12s ease}
+.dc-chip:hover{background:rgba(26,26,46,0.09) !important;box-shadow:0 3px 10px -6px rgba(26,26,46,0.5);transform:translateY(-1px)}
+@media (prefers-reduced-motion: reduce){
+  .dc-tab,.dc-chip{transition:none}
+  .dc-chip:hover{transform:none}
+}
+`}</style>
             {/* TOP BAR */}
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:`1px solid ${border}`,background:"#FFFFFF"}}>
               <div style={{display:"flex",alignItems:"center",gap:14}}>
@@ -843,7 +858,7 @@ export default function DealCheckOverlay({ ctx }) {
             {/* TAB STRIP */}
             <div style={{display:"flex",gap:2,padding:"8px 14px 0 14px",background:"#FFFFFF",borderBottom:`1px solid ${border}`,overflowX:"auto"}}>
               {TABS.map(t => (
-                <button key={t.id} onClick={()=>setDcActiveTab(t.id)} style={{padding:"9px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#FAF9F6":"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative"}}>
+                <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"9px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#FAF9F6":"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative"}}>
                   <span style={{marginRight:5}}>{t.icon}</span>{t.label}
                   {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                 </button>
@@ -2198,7 +2213,7 @@ export default function DealCheckOverlay({ ctx }) {
                     <div><div style={{fontSize:11,color:"#000",letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Project total</div><div style={{fontSize:18,fontWeight:800,color:"#000",letterSpacing:0.3}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                     <div style={{height:30,width:1,background:border}}/>
                     {chips.map(c => (
-                      <div key={c.id} style={{padding:"6px 10px",borderRadius:8,background:"rgba(26, 26, 46,0.04)",fontSize:12,color:"#000",minWidth:70,opacity:c.live?1:0.5}}>
+                      <div key={c.id} className="dc-chip" title={`${c.label} — ${c.value}`} style={{padding:"6px 10px",borderRadius:8,background:"rgba(26, 26, 46,0.04)",fontSize:12,color:"#000",minWidth:70,opacity:c.live?1:0.5}}>
                         <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600}}>{c.icon} {c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
                         <div style={{fontSize:14.5,fontWeight:700,color:"#000",marginTop:1}}>{c.value}</div>
                       </div>
