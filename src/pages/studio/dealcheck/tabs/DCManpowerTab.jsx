@@ -792,6 +792,32 @@ export default function DCManpowerTab({ ctx }) {
                             🧹 Include dismantle day
                           </label>
                           {!isAdmin && <span style={{fontSize:12,color:"#6B7280",fontStyle:"italic",alignSelf:"center"}}>Manpower planning now lives in IMS → Dept Ops</span>}
+                          {/* ═══ RESET TO DERIVED ═══
+                              Window picks and per-window head counts are saved per client and
+                              restored on load, and a stored count WINS over the derived one
+                              (winCountFor returns it whenever present). So a number typed weeks ago
+                              silently outranks today's derivation — including after the build, the
+                              recipe or the element list has changed.
+                              Regenerate used to be the way to clear that, and it is gone, so this is
+                              the only path back to a clean derivation. Shown only when something is
+                              actually pinned, so it is not noise on an untouched deal. */}
+                          {isAdmin && (Object.keys(dcMpOverrides || {}).length > 0 || Object.keys(dcMpWinCount || {}).length > 0) && (
+                            <button
+                              onClick={() => {
+                                const nWin = Object.keys(dcMpWinCount || {}).length;
+                                const nWnd = Object.keys(dcMpOverrides || {}).length;
+                                const bits = [];
+                                if (nWnd) bits.push(`${nWnd} shift selection${nWnd === 1 ? "" : "s"}`);
+                                if (nWin) bits.push(`${nWin} manual head count${nWin === 1 ? "" : "s"}`);
+                                if (!window.confirm(`Reset manpower to the derived plan?\n\nDiscards ${bits.join(" and ")}.\nThe crew is recalculated from the build. This cannot be undone.`)) return;
+                                setDcMpOverrides({});
+                                setDcMpWinCount({});
+                              }}
+                              title="Discard saved shift picks and head counts, and recalculate from the build"
+                              style={{alignSelf:"center",padding:"4px 10px",borderRadius:7,border:"1px solid rgba(180,83,9,0.4)",background:"rgba(245,158,11,0.10)",color:"#B45309",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+                              ↺ Reset to derived
+                            </button>
+                          )}
                         </div>
                       </div>
 
