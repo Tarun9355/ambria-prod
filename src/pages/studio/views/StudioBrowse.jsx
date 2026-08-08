@@ -63,6 +63,9 @@ export default function StudioBrowse({ ctx }) {
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
   const railTop = extraFunctions.length > 0 ? 120 : 70;
   const railRef = useRef(null);
+  // Browse had no way to fold its filters, unlike Build. Same behaviour here: a Hide in the
+  // panel header, and a slim tab on the edge to bring it back.
+  const [filtersOpen, setFiltersOpen] = useState(true);
   const railMaxH = useRailMaxHeight(railRef, railTop);
   // Search narrows what the filters already produced, so the two compose instead of competing.
   // Token-AND over the fields a card actually shows, so word order does not matter.
@@ -369,7 +372,20 @@ export default function StudioBrowse({ ctx }) {
             `overscrollBehavior:contain` keeps that scroll from chaining back to the page at the
             ends. The earlier version of this capped the panel and added a fade cue that covered the
             last rows of pills — there is deliberately no overlay here, just a slim scrollbar. */}
-        <div ref={railRef} style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
+        {/* Folded: a slim edge strip that brings the rail back. The label reads vertically so the
+            strip stays narrow, matching Build's folded rail. */}
+        {!filtersOpen && (
+          <div onClick={()=>setFiltersOpen(true)} title="Show filters"
+            style={{width:38,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",cursor:"pointer",
+              display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"12px 0 14px",
+              borderRadius:10,border:`1px solid ${border}`,background:cardBg}}>
+            <span style={{display:"flex",color:accent}}><IconSearch size={13}/></span>
+            <span style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:9.5,fontWeight:700,
+              letterSpacing:1,textTransform:"uppercase",color:textS,whiteSpace:"nowrap"}}>Filters{activeTotal>0?` · ${activeTotal}`:""}</span>
+            <span style={{display:"flex",color:textS,transform:"rotate(-90deg)"}}><IconChevron size={11}/></span>
+          </div>
+        )}
+        {filtersOpen && <div ref={railRef} style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
           maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:10}}>
           {/* Saved-session banner. Lives under the filters rather than above the grid: it is a way
               back into a build, not a property of the results, and at the top it pushed the first
@@ -450,6 +466,12 @@ export default function StudioBrowse({ ctx }) {
                 background:isDark?"rgba(201,169,110,0.18)":"#F6E7C8",color:gold,border:`1px solid ${accent}44`}}>{activeTotal}</span>}
               {activeTotal > 0 && <div className="sb-pill sb-ghost" onClick={clearAllFilters} title="Reset every filter"
                 style={{...ghostPill,marginLeft:"auto"}}>Clear all</div>}
+              {/* Same fold Build has. marginLeft only when "Clear all" has not already claimed the
+                  gap, so the two never fight over it. */}
+              <span className="sb-pill sb-ghost" onClick={()=>setFiltersOpen(false)} title="Hide the filters and widen the grid"
+                style={{...ghostPill,marginLeft:activeTotal>0?0:"auto",display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+                <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
+              </span>
             </div>
             <div className="sb-scroll" style={{flex:1,minHeight:0,overflowY:"auto",overscrollBehavior:"contain",padding:"14px 16px 16px"}}>
 
@@ -481,7 +503,9 @@ export default function StudioBrowse({ ctx }) {
                 <div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,marginTop:8,paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
                   <Pill on={outsideSub==="all"} onClick={()=>{setOutsideSub("all");setBrowseVenues([]);setShowMoreOutside(false);}}>All</Pill>
                   <Pill on={outsideSub==="empanelled"} onClick={()=>{setOutsideSub("empanelled");setBrowseVenues([]);setShowMoreOutside(false);}}>Empanelled</Pill>
-                  <Pill on={outsideSub==="other"} onClick={()=>{setOutsideSub("other");setBrowseVenues([]);setShowMoreOutside(false);}}>Other</Pill>
+                  {/* "Other" said nothing next to "Empanelled" — this is its exact opposite, so name
+                      it that. The stored value stays "other" so saved filters keep working. */}
+                  <Pill on={outsideSub==="other"} onClick={()=>{setOutsideSub("other");setBrowseVenues([]);setShowMoreOutside(false);}}>Non-empanelled</Pill>
                 </div>
                 <div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:6,marginTop:6,paddingLeft:9,borderLeft:`2px solid ${accent}33`}}>
                   {(()=>{
@@ -573,7 +597,7 @@ export default function StudioBrowse({ ctx }) {
             </FSection>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* ═══ MAIN CONTENT — VIDEO CARDS ═══ */}
         <div style={{flex:1,minWidth:0}}>
@@ -719,7 +743,8 @@ export default function StudioBrowse({ ctx }) {
                         <div style={{ ...chipRow, marginTop: 6 }}>
                           {chip("All", taxOutsideSub === "all", () => setTaxOutsideSub("all"))}
                           {chip("Empanelled", taxOutsideSub === "empanelled", () => setTaxOutsideSub("empanelled"))}
-                          {chip("Other", taxOutsideSub === "other", () => setTaxOutsideSub("other"))}
+                          {/* Same rename as the filter rail above — one label for one concept. */}
+                          {chip("Non-empanelled", taxOutsideSub === "other", () => setTaxOutsideSub("other"))}
                         </div>
                         <div style={{ ...chipRow, marginTop: 4 }}>{outsideFiltered.map(o => chip(o.name + (o.empanelled ? " ★" : ""), curVenue === o.name, () => setVidVenue(curVenue === o.name ? "" : o.name)))}</div>
                       </>}
