@@ -6364,15 +6364,18 @@ export default function StudioApp() {
   }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
-  const runDealCheckGenerate = useCallback(async (fnIdxFilter = null) => {
+  // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
+  // That mode is free and repeatable, so it neither consumes the run allowance nor needs a limit
+  // check; only a real AI run does.
+  const runDealCheckGenerate = useCallback(async (fnIdxFilter = null, { skipAi = false } = {}) => {
     const cli = clientLedger.find(c => c.id === activeClientId);
-    if (!cli) { showMsg("No active client", "red"); return { ok: false, error: "no-client" }; }
+    if (!cli) { if (!skipAi) showMsg("No active client", "red"); return { ok: false, error: "no-client" }; }
     const isSold = cli.status === "booked";
     const counterKey = activeClientId;
     const cur = dcRunCounter[counterKey] || { preSold: 0, postSold: 0, isSold: false };
     const limit = 999;  // TESTING — revert to 2 after testing complete
     const usedNow = isSold ? cur.postSold : cur.preSold;
-    if (usedNow >= limit) {
+    if (!skipAi && usedNow >= limit) {
       const msg = isSold
         ? "Post-SOLD Deal Check limit reached (2/2). Contact admin to unlock more runs."
         : "Pre-SOLD Deal Check limit reached (2/2). Mark function as SOLD to unlock 2 more runs.";
@@ -6390,15 +6393,17 @@ export default function StudioApp() {
     }
     const inventory = ims.inventory;
     setDcInventoryCache(inventory);  // Patch 4 — cache for card rendering lookups
-    const nextCounter = {
-      ...cur,
-      isSold,
-      preSold: isSold ? cur.preSold : (cur.preSold + 1),
-      postSold: isSold ? (cur.postSold + 1) : cur.postSold,
-    };
-    const nextAllCounters = { ...dcRunCounter, [counterKey]: nextCounter };
-    setDcRunCounter(nextAllCounters);
-    try { await reliableSave(DC_RUN_COUNTER_SK, JSON.stringify(nextAllCounters)); } catch {}
+    if (!skipAi) {
+      const nextCounter = {
+        ...cur,
+        isSold,
+        preSold: isSold ? cur.preSold : (cur.preSold + 1),
+        postSold: isSold ? (cur.postSold + 1) : cur.postSold,
+      };
+      const nextAllCounters = { ...dcRunCounter, [counterKey]: nextCounter };
+      setDcRunCounter(nextAllCounters);
+      try { await reliableSave(DC_RUN_COUNTER_SK, JSON.stringify(nextAllCounters)); } catch {}
+    }
     const allFns = collectAllFunctionData ? collectAllFunctionData() : [];
     const fnsToProcess = fnIdxFilter == null ? allFns : allFns.filter((_, i) => i === fnIdxFilter);
     const newCards = { ...dcCards };
@@ -6477,6 +6482,11 @@ export default function StudioApp() {
             if (nm.matched) {
               primary = { imsId: nm.item.id, name: nm.item.name };
               source = "name-match"; cardsNameMatch += 1;
+            } else if (skipAi) {
+              // Deterministic mode: knowledge and name-match only. Anything they cannot resolve is
+              // left as "no-match" rather than guessed at, so Deal Check shows exactly the elements
+              // that were selected and says plainly which ones still need an item picked.
+              source = "no-match"; cardsUnmatched += 1;
             } else {
               const ai = await aiMatchCardWithSubcat(spec, scoped, ac.signal);
               if (ai?.aborted) { zoneAborted = true; return; }
@@ -6619,6 +6629,19 @@ export default function StudioApp() {
     showMsg(`Deal Check generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match (no AI cost) · ${cardsAi} AI calls`, "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
   }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds]);
+
+  // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
+  // used to do this is gone, and matching is free in this mode (knowledge + name-match, no vision
+  // calls), so there is nothing to gate it behind — it just mirrors whatever the build currently
+  // says. Runs after openDealCheck has loaded IMS, and only once per open.
+  const dcAutoFilledRef = useRef(false);
+  useEffect(() => {
+    if (!dcFullPageOpen) { dcAutoFilledRef.current = false; return; }
+    if (dcAutoFilledRef.current || dealCheckLoading || !activeClientId) return;
+    dcAutoFilledRef.current = true;
+    runDealCheckGenerate(null, { skipAi: true }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dcFullPageOpen, dealCheckLoading, activeClientId]);
 
   // ═══════════════════════════════════════════════════════════════
   // STYLES + THEME
