@@ -3496,20 +3496,43 @@ export default function StudioApp() {
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (!fn.enabledEls?.[zk]) return;
       (elems || []).forEach(el => {
-        const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-        if (!rc || String(rc.cat || "").toLowerCase() !== "florals") return;
+        // Mirrors DCFloralsTab's resolution — the two must agree, or the tab lists elements the
+        // bottom-bar total does not count. An exact-only rate-card match dropped "Blue Pottery Pot
+        // Big" (the row is "Blue Pottery Pot"), and keying "is this floral" off the rate-card
+        // category alone dropped "Floating Floral", which is priced from its own patternId and has
+        // no rate-card row at all. Both were costed as plain rental instead.
+        const elNm = (el.name || "").toLowerCase().trim();
+        let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elNm);
+        if (!rc) {
+          rc = rcItems.find(i => {
+            if (String(i.cat || "").toLowerCase() !== "florals") return false;
+            const n = (i.name || "").toLowerCase().trim();
+            return n && (elNm.includes(n) || n.includes(elNm));
+          });
+        }
+        const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
+        if (!el.patternId && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc) / 100, ap = 1 - rp;
         // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
         // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
         // getElPrice's blend). Computed at element level, before the recipe gate below.
-        { const szU = String(el.size || "").toUpperCase(); const { realRate: rr, artRate: ar } = resolveRcRate(rc, szU);
+        // Guarded: rc can be null now (element priced from its own patternId with no rate-card row).
+        // resolveRcRate reads rc.inhouseFlat unguarded and would throw. No rate-card row means no
+        // billed rate to split, so income simply has nothing to add here — the sourcing COST below
+        // still computes from the recipe, which is the number this function exists to produce.
+        if (rc) { const szU = String(el.size || "").toUpperCase(); const { realRate: rr, artRate: ar } = resolveRcRate(rc, szU);
           realIncome += q * rp * rr; artIncome += q * ap * ar; }
-        const tn = (rc.name || "").toLowerCase().trim();
-        let pat = fp.find(p => (p.name || "").toLowerCase().trim() === tn);
-        if (!pat) pat = fp.find(p => { const n = (p.name || "").toLowerCase().trim(); return n && (n.includes(tn) || tn.includes(n)); });
+        // The element's OWN recipe wins — that is what Build priced it with. Name matching is only
+        // the fallback, and could otherwise land on a different recipe than the one chosen.
+        let pat = elPat;
+        if (!pat) {
+          const tn = (rc?.name || el.name || "").toLowerCase().trim();
+          pat = fp.find(p => (p.name || "").toLowerCase().trim() === tn);
+          if (!pat) pat = fp.find(p => { const n = (p.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
+        }
         if (!pat) return;
-        const sk = szMap(rc.inhouseMode, el.size);
+        const sk = szMap(rc?.inhouseMode, el.size);
         const sizes = pat.sizes || {};
         let comp = sizes[sk] || sizes.medium;
         if (!comp && sk === "big" && sizes.large) comp = sizes.large;

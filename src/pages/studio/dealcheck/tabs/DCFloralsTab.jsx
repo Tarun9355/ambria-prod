@@ -72,6 +72,10 @@ export default function DCFloralsTab({ ctx }) {
                   // Walk all floral elements in this function
                   const flowerAgg = new Map();  // parentId → { flowerId(=parentId), name, totalQty, unit, currentPrice, contributors[], realOnly }
                   const elementBreakdown = [];  // [{ name, zoneKey, qty, realPct, realCost, artCost, total }]
+                  // Elements this tab could not price as flowers. They are still costed elsewhere
+                  // (Inventory prices them as plain rental), so the money is not lost — it is in the
+                  // wrong bucket. Listing them makes that visible instead of silent.
+                  const uncosted = [];
                   let totalReal = 0, totalArtificial = 0;
                   // Tier 2.1 (25 May 2026) — per-row overrides from floralOverrides.rows.
                   // Map: parentId → { colorVariant?, splitFromOriginal? } for quick lookup during aggregation.
@@ -82,25 +86,51 @@ export default function DCFloralsTab({ ctx }) {
                   Object.entries(activeFn.zoneElements || {}).forEach(([zk, elems]) => {
                     if (!activeFn.enabledEls?.[zk]) return;
                     (elems || []).forEach(el => {
-                      const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-                      if (!rc) return;
-                      if (String(rc.cat||"").toLowerCase() !== "florals") return;
+                      const elName = (el.name || "").toLowerCase().trim();
                       const elQty = el.qty || 0;
+                      let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elName);
+                      if (!rc) {
+                        // Same leniency the pattern lookup uses. Exact-only meant "Blue Pottery Pot
+                        // Big" never found the "Blue Pottery Pot" row. Restricted to FLORALS rows so
+                        // a loose substring cannot drag a lighting or structure element in here.
+                        rc = rcItems.find(i => {
+                          if (String(i.cat || "").toLowerCase() !== "florals") return false;
+                          const n = (i.name || "").toLowerCase().trim();
+                          return n && (elName.includes(n) || n.includes(elName));
+                        });
+                      }
+                      // el.patternId is what BUILD prices this element from (getElPriceFromPattern),
+                      // and it is the authoritative signal that the element is floral. This tab used
+                      // to decide purely from the rate-card category, so an element priced as flowers
+                      // in the build but missing from the rate card vanished here entirely.
+                      const elPattern = el.patternId ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
+                      const isFloral = !!el.patternId || String(rc?.cat || "").toLowerCase() === "florals";
+                      if (!isFloral) return;                 // lighting, structure, furniture — not this tab's business
                       if (elQty <= 0) return;
+                      // Floral, but nothing to price it by. Record rather than drop: the header used
+                      // to read "1 ELEMENT" while others were silently on the floor.
+                      if (!rc && !elPattern) {
+                        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
+                        return;
+                      }
                       const realPct = resolveRealPct(el, rc);
                       const realFrac = realPct / 100;
                       const artFrac = 1 - realFrac;
-                      // Real cost from pattern recipe — lenient name match (exact then substring)
-                      const targetName = (rc.name||"").toLowerCase().trim();
-                      let pattern = flowerPatterns.find(p => (p.name||"").toLowerCase().trim() === targetName);
+                      // Prefer the recipe the BUILD actually priced this element with. Re-deriving it
+                      // from the name could land on a different recipe than the salesperson chose —
+                      // or on none at all — so the two screens disagreed on the same element.
+                      // Name matching stays as the fallback for elements with no patternId.
+                      let pattern = elPattern;
                       if (!pattern) {
-                        pattern = flowerPatterns.find(p => {
-                          const n = (p.name||"").toLowerCase().trim();
-                          return n && (n.includes(targetName) || targetName.includes(n));
-                        });
+                        const targetName = (rc?.name || el.name || "").toLowerCase().trim();
+                        pattern = flowerPatterns.find(p => (p.name||"").toLowerCase().trim() === targetName);
+                        if (!pattern) {
+                          pattern = flowerPatterns.find(p => {
+                            const n = (p.name||"").toLowerCase().trim();
+                            return n && targetName && (n.includes(targetName) || targetName.includes(n));
+                          });
+                        }
                       }
-                      // eslint-disable-next-line no-console
-                      if (!pattern) console.log("[deal-check florals] no pattern for", rc.name, "· available patterns:", flowerPatterns.map(p => p.name));
                       let realCostPerUnit = 0;
                       let realLines = [];
                       // Fixed extra cost (pot/base/frame) per unit — a real cost regardless of the
@@ -109,7 +139,7 @@ export default function DCFloralsTab({ ctx }) {
                       // didn't, so it ran lower than the rollup for any pattern with a nonzero extraCost.
                       let patternExtraCost = 0;
                       if (pattern) {
-                        const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
+                        const sizeKey = sizeFromMode(rc?.inhouseMode, el.size);
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
                         if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -178,7 +208,7 @@ export default function DCFloralsTab({ ctx }) {
                       const artLines = []; // breakdown for "how" panel
                       let artBunchesFlower = 0, artBunchesGreen = 0;
                       if (artFrac > 0 && pattern) {
-                        const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
+                        const sizeKey = sizeFromMode(rc?.inhouseMode, el.size);
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
                         if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -239,7 +269,7 @@ export default function DCFloralsTab({ ctx }) {
                       }
                       totalReal += realCost;
                       totalArtificial += artCost;
-                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeFromMode(rc.inhouseMode, el.size), artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate });
+                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeFromMode(rc?.inhouseMode, el.size), artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate });
                     });
                   });
                   if (elementBreakdown.length === 0) {
@@ -569,6 +599,27 @@ export default function DCFloralsTab({ ctx }) {
                           </div>
                         );
                       })()}
+                      {/* Floral elements this tab could not price. They ARE costed — Inventory bills
+                          them as plain rental — but not as flower recipes, so they never reach the
+                          mandi list or the real/artificial split. Shown so the count above cannot
+                          quietly disagree with the build. */}
+                      {uncosted.length > 0 && (
+                        <div style={{marginTop:14,padding:"11px 13px",borderRadius:10,border:"1px solid rgba(245,158,11,0.35)",background:"rgba(245,158,11,0.07)"}}>
+                          <div style={{fontSize:11,fontWeight:700,color:"#F59E0B",marginBottom:6}}>
+                            ⚠ {uncosted.length} element{uncosted.length===1?"":"s"} not costed as florals
+                          </div>
+                          {uncosted.map((u,ui)=>(
+                            <div key={ui} style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:textS,padding:"2px 0"}}>
+                              <span style={{color:"#fff",fontWeight:600}}>{u.name}</span>
+                              <span style={{opacity:0.7}}>{u.zoneKey} · ×{u.qty}</span>
+                              <span style={{marginLeft:"auto",color:"#F59E0B"}}>{u.reason}</span>
+                            </div>
+                          ))}
+                          <div style={{fontSize:10,color:textS,marginTop:6,fontStyle:"italic"}}>
+                            Add these to the Rate Card under “florals” to price them from a flower recipe. Until then they bill as rental.
+                          </div>
+                        </div>
+                      )}
                       {/* Per-element breakdown — merged by name (§26.19) */}
                       {(()=>{
                         // Merge same-name elements across zones

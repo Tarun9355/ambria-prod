@@ -101,7 +101,24 @@ export default function DCManpowerTab({ ctx }) {
                     Object.entries(fn.zoneElements || {}).forEach(([zk, elems]) => {
                       if (!fn.enabledEls?.[zk]) return;
                       (elems || []).forEach(el => {
-                        const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
+                        // Same resolution as the Florals tab and calcFnFloralSourcingCost — all three
+                        // walk the same elements and must agree on which exist. An exact-only match
+                        // dropped "Blue Pottery Pot Big" (the row is "Blue Pottery Pot"), and an
+                        // element priced from its own patternId with no rate-card row at all
+                        // ("Floating Floral") was dropped outright — so the flowerist derivation
+                        // counted one element where the build has three.
+                        const elNm = (el.name || "").toLowerCase().trim();
+                        let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elNm);
+                        if (!rc) {
+                          rc = rcItems.find(i => {
+                            if (String(i.cat || "").toLowerCase() !== "florals") return false;
+                            const n = (i.name || "").toLowerCase().trim();
+                            return n && (elNm.includes(n) || n.includes(elNm));
+                          });
+                        }
+                        // No rate-card row but a recipe of its own: still a floral element. Hand the
+                        // consumers a minimal stand-in so their rc.cat / rc.sub reads stay valid.
+                        if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
                         if (!rc) return;
                         const qty = el.qty || 0;
                         if (qty <= 0) return;
@@ -142,8 +159,11 @@ export default function DCManpowerTab({ ctx }) {
                       // its own (so a defined recipe like "Console Table Floral" is included without needing its
                       // sub-cat toggled into flowerRecipeSubcats); loose name matching stays gated to those subs.
                       const inRS = recipeSubsMP.includes(subLC);
+                      // The element's own recipe first — that is what Build priced it with, and it
+                      // resolves even when there is no rate-card row to match a name against.
                       const targetName = (rc.name||"").toLowerCase().trim();
-                      let pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
+                      let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
+                      if (!pattern) pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
                       if (!pattern && inRS) {
                         pattern = flowerPatternsMP.find(p => {
                           const n = (p.name||"").toLowerCase().trim();
@@ -354,8 +374,11 @@ export default function DCManpowerTab({ ctx }) {
                       // its own (so a defined recipe like "Console Table Floral" is included without needing its
                       // sub-cat toggled into flowerRecipeSubcats); loose name matching stays gated to those subs.
                       const inRS = recipeSubsMP.includes(subLC);
+                      // The element's own recipe first — that is what Build priced it with, and it
+                      // resolves even when there is no rate-card row to match a name against.
                       const targetName = (rc.name||"").toLowerCase().trim();
-                      let pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
+                      let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
+                      if (!pattern) pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
                       if (!pattern && inRS) {
                         pattern = flowerPatternsMP.find(p => {
                           const n = (p.name||"").toLowerCase().trim();
