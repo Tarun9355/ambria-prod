@@ -39,7 +39,7 @@ export default function DCManpowerTab({ ctx }) {
                   // - Cost = people × ticked_windows × rate (sequential window count)
                   // - Day-wise window checkbox overrides stored in dcMpOverrides
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:textS,fontSize:11}}>No functions configured yet.</div>;
+                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No functions configured yet.</div>;
 
                   // ── Settings (IMS Redis) ──────────────────────────────────
                   const dihariSchemes = dealCheckData?.dihariSchemes || {};
@@ -171,7 +171,7 @@ export default function DCManpowerTab({ ctx }) {
                         });
                       }
                       if (!pattern) return;
-                      const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
+                      const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       const sizes = pattern.sizes || {};
                       let comp = sizes[sizeKey] || sizes.medium;
                       if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -189,7 +189,9 @@ export default function DCManpowerTab({ ctx }) {
                       const sub = rc.sub || "";
                       const prod = electricianProdMP[sub];
                       if (!prod) return;
-                      const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
+                      // Lighting, not florals — there is no recipe here, so the rate card's own mode
+                      // is the only source for the size.
+                      const sizeKey = sizeFromMode(rc?.inhouseMode, el.size);
                       const upe = Number(prod.sizes?.[sizeKey]) || Number(prod.sizes?.medium) || 0;
                       if (upe > 0) total += qty / upe; // fractional, ceil once below
                     });
@@ -386,7 +388,7 @@ export default function DCManpowerTab({ ctx }) {
                         });
                       }
                       if (!pattern) { const k = `${targetName}||nopattern`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no pattern" }; agg[k].qty += qty; return; }
-                      const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
+                      const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       const sizes = pattern.sizes || {};
                       let comp = sizes[sizeKey] || sizes.medium;
                       if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -407,7 +409,8 @@ export default function DCManpowerTab({ ctx }) {
                       const sub = rc.sub || "";
                       const prod = electricianProdMP[sub];
                       if (!prod) { const k = `${(rc.name||"").toLowerCase().trim()}||noprod`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no productivity" }; agg[k].qty += qty; return; }
-                      const sizeKey = sizeFromMode(rc.inhouseMode, el.size);
+                      // Lighting, not florals — no recipe, so the rate card's mode is the only source.
+                      const sizeKey = sizeFromMode(rc?.inhouseMode, el.size);
                       const upe = Number(prod.sizes?.[sizeKey]) || Number(prod.sizes?.medium) || 0;
                       const k = `${(rc.name||"").toLowerCase().trim()}|${sizeKey}|${upe}`;
                       if (!agg[k]) agg[k] = { name: rc.name, size: sizeKey, qty: 0, productivity: upe, missing: upe <= 0 ? "no productivity" : null };
@@ -620,7 +623,7 @@ export default function DCManpowerTab({ ctx }) {
 
                   // ── Booking timeline ──────────────────────────────────────
                   const fnDates = fns.map(f => f.fnDate).filter(Boolean).sort();
-                  if (fnDates.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:textS,fontSize:11}}>No function dates set.</div>;
+                  if (fnDates.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No function dates set.</div>;
                   const addDays = (isoDate, n) => {
                     const d = new Date(isoDate + "T00:00:00Z");
                     d.setUTCDate(d.getUTCDate() + n);
@@ -759,7 +762,7 @@ export default function DCManpowerTab({ ctx }) {
                   })[t] || "👷";
 
                   if (labourTypes.length === 0) {
-                    return <div style={{padding:"50px 30px",textAlign:"center",color:textS,fontSize:11}}>
+                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>
                       No labour types defined. Set them in IMS Settings → 💰 Dihari Timings.
                     </div>;
                   }
@@ -770,25 +773,25 @@ export default function DCManpowerTab({ ctx }) {
                       <div style={{padding:"14px 16px",borderRadius:10,background:"rgba(251,191,36,0.06)",border:`1px solid rgba(251,191,36,0.20)`}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:10}}>
                           <div>
-                            <div style={{fontSize:11,color:textS,letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:4}}>👷 Manpower Forecast — Booking</div>
-                            <div style={{fontSize:10,color:textS}}>{fns.length} ceremon{fns.length===1?"y":"ies"} · {dayList.length} day{dayList.length===1?"":"s"} · cumulative MAX rule applied</div>
+                            <div style={{fontSize:13,color:"#000",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:4}}>👷 Manpower Forecast — Booking</div>
+                            <div style={{fontSize:12,color:"#000"}}>{fns.length} ceremon{fns.length===1?"y":"ies"} · {dayList.length} day{dayList.length===1?"":"s"} · cumulative MAX rule applied</div>
                           </div>
                           <div style={{textAlign:"right"}}>
-                            <div style={{fontSize:11,color:textS}}>Total cost</div>
-                            <div style={{fontSize:22,fontWeight:800,color:"#FBBF24",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(bookingTotalCost).toLocaleString("en-IN")}</div>
-                            <div style={{fontSize:10,color:textS,fontVariantNumeric:"tabular-nums"}}>{bookingTotalDihari} dihari total</div>
+                            <div style={{fontSize:13,color:"#000"}}>Total cost</div>
+                            <div style={{fontSize:22,fontWeight:800,color:"#B45309",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(bookingTotalCost).toLocaleString("en-IN")}</div>
+                            <div style={{fontSize:12,color:"#000",fontVariantNumeric:"tabular-nums"}}>{bookingTotalDihari} dihari total</div>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:isAdmin?"#fff":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
+                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:isAdmin?"#000":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
                             <input type="checkbox" checked={dcMpIncludeMinusOne} disabled={!isAdmin} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} />
                             ⏮️ Include -1 day early setup
                           </label>
-                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:isAdmin?"#fff":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
+                          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:isAdmin?"#000":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
                             <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!isAdmin} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} />
                             🧹 Include dismantle day
                           </label>
-                          {!isAdmin && <span style={{fontSize:10,color:"#6B7280",fontStyle:"italic",alignSelf:"center"}}>Manpower planning now lives in IMS → Dept Ops</span>}
+                          {!isAdmin && <span style={{fontSize:12,color:"#6B7280",fontStyle:"italic",alignSelf:"center"}}>Manpower planning now lives in IMS → Dept Ops</span>}
                         </div>
                       </div>
 
@@ -801,15 +804,15 @@ export default function DCManpowerTab({ ctx }) {
                             {/* Day header */}
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:12,flexWrap:"wrap",borderBottom:`1px solid ${border}33`,paddingBottom:8,marginBottom:10}}>
                               <div>
-                                <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>{phaseEmoji(d.phase)} {fmtDateShort(d.date)} · <span style={{color:textS,fontWeight:500}}>{phaseLabel(d.phase)}</span></div>
+                                <div style={{fontSize:14.5,fontWeight:700,color:"#000"}}>{phaseEmoji(d.phase)} {fmtDateShort(d.date)} · <span style={{color:"#000",fontWeight:500}}>{phaseLabel(d.phase)}</span></div>
                                 {fnsOnDay.length > 0 && (
-                                  <div style={{fontSize:10,color:textS,marginTop:2}}>
+                                  <div style={{fontSize:12,color:"#000",marginTop:2}}>
                                     {fnsOnDay.map((fn, fi) => `${fn.fnType||"?"}${fn.fnShift?` (${fn.fnShift})`:""}`).join(" · ")}
                                   </div>
                                 )}
                               </div>
-                              <div style={{fontSize:14,fontWeight:700,color:"#fff",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
-                                {breakdown.total > 0 ? `₹${Math.round(breakdown.total).toLocaleString("en-IN")}` : <span style={{color:textS,fontWeight:400,fontSize:11}}>—</span>}
+                              <div style={{fontSize:15.5,fontWeight:700,color:"#000",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
+                                {breakdown.total > 0 ? `₹${Math.round(breakdown.total).toLocaleString("en-IN")}` : <span style={{color:"#000",fontWeight:400,fontSize:13}}>—</span>}
                               </div>
                             </div>
                             {/* Labour type rows */}
@@ -829,15 +832,15 @@ export default function DCManpowerTab({ ctx }) {
                                 return (
                                   <div key={t} style={{padding:"8px 10px",borderRadius:7,background:"rgba(148,163,184,0.04)",border:`1px solid ${border}55`}}>
                                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:6}}>
-                                      <div style={{fontSize:11,color:"#fff",fontWeight:600}}>
-                                        {typeEmoji(t)} {t}  <span style={{color:textS,fontWeight:400}}>· {ppl} ppl @ ₹{effRate}/dihari</span>
+                                      <div style={{fontSize:13,color:"#000",fontWeight:600}}>
+                                        {typeEmoji(t)} {t}  <span style={{color:"#000",fontWeight:400}}>· {ppl} ppl @ ₹{effRate}/dihari</span>
                                         {src.kind === "vendor_avg" ? (
-                                          <span title={`Avg of: ${(src.vendors||[]).join(", ")}`} style={{marginLeft:6,fontSize:9,padding:"1px 6px",borderRadius:7,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>📊 avg of {src.count} vendor{src.count===1?"":"s"}</span>
+                                          <span title={`Avg of: ${(src.vendors||[]).join(", ")}`} style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:7,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>📊 avg of {src.count} vendor{src.count===1?"":"s"}</span>
                                         ) : (
-                                          <span style={{marginLeft:6,fontSize:9,padding:"1px 6px",borderRadius:7,background:"rgba(148,163,184,0.10)",color:textS,fontWeight:500}}>🏠 house rate</span>
+                                          <span style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:7,background:"rgba(148,163,184,0.10)",color:"#000",fontWeight:500}}>🏠 house rate</span>
                                         )}
                                       </div>
-                                      <div style={{fontSize:11,color:cost>0?"#10B981":textS,fontWeight:700,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
+                                      <div style={{fontSize:13,color:cost>0?"#10B981":textS,fontWeight:700,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                                         {cost > 0 ? (uniform ? `${dihari} dihari × ${ppl} = ₹${Math.round(cost).toLocaleString("en-IN")}` : `${slots} crew-shifts = ₹${Math.round(cost).toLocaleString("en-IN")}`) : "0 dihari"}
                                       </div>
                                     </div>
@@ -846,7 +849,7 @@ export default function DCManpowerTab({ ctx }) {
                                         const on = ticked.includes(w.id);
                                         if (!on) return (
                                           <button key={w.id} onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined}
-                                            style={{ fontSize:10,padding:"3px 8px",borderRadius:11,cursor:isAdmin?"pointer":"default",border:`1px solid ${border}`,background:"transparent",color:textS,fontWeight:400 }}>
+                                            style={{ fontSize:12,padding:"3px 8px",borderRadius:11,cursor:isAdmin?"pointer":"default",border:`1px solid ${border}`,background:"transparent",color:"#000",fontWeight:400 }}>
                                             {w.label}
                                           </button>
                                         );
@@ -854,21 +857,21 @@ export default function DCManpowerTab({ ctx }) {
                                         const wc = winCountFor(d.date, t, w.id, ppl);
                                         return (
                                           <span key={w.id} style={{display:"inline-flex",alignItems:"center",border:`1px solid #10B981`,borderRadius:11,overflow:"hidden",background:"rgba(16,185,129,0.15)"}}>
-                                            <button onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={isAdmin?"Remove this shift":undefined} style={{fontSize:10,padding:"3px 6px 3px 9px",cursor:isAdmin?"pointer":"default",border:"none",background:"transparent",color:"#10B981",fontWeight:600}}>✓ {w.label}</button>
-                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>−</button>}
-                                            <span title="Crew in this shift" style={{fontSize:10,minWidth:16,textAlign:"center",color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{wc}</span>
-                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:11,width:18,cursor:"pointer",border:"none",borderRight:`1px solid rgba(16,185,129,0.4)`,borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>+</button>}
+                                            <button onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={isAdmin?"Remove this shift":undefined} style={{fontSize:12,padding:"3px 6px 3px 9px",cursor:isAdmin?"pointer":"default",border:"none",background:"transparent",color:"#10B981",fontWeight:600}}>✓ {w.label}</button>
+                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:13,width:18,cursor:"pointer",border:"none",borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>−</button>}
+                                            <span title="Crew in this shift" style={{fontSize:12,minWidth:16,textAlign:"center",color:"#000",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{wc}</span>
+                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:13,width:18,cursor:"pointer",border:"none",borderRight:`1px solid rgba(16,185,129,0.4)`,borderLeft:`1px solid rgba(16,185,129,0.4)`,background:"rgba(16,185,129,0.10)",color:"#10B981",fontWeight:700}}>+</button>}
                                           </span>
                                         );
                                       })}
-                                      {wins.length === 0 && <span style={{fontSize:10,color:textS,fontStyle:"italic"}}>No windows defined for this type</span>}
+                                      {wins.length === 0 && <span style={{fontSize:12,color:"#000",fontStyle:"italic"}}>No windows defined for this type</span>}
                                       {/* "how" toggle — opens calculation breakdown */}
                                       <button onClick={()=>toggleCalcOpen(d.date, t)}
                                         style={{
-                                          marginLeft:"auto",fontSize:10,padding:"2px 8px",borderRadius:7,cursor:"pointer",
+                                          marginLeft:"auto",fontSize:12,padding:"2px 8px",borderRadius:7,cursor:"pointer",
                                           border:dcMpCalcOpen[`${d.date}|${t}`]?`1px solid #A78BFA`:`1px solid rgba(167,139,250,0.40)`,
                                           background:dcMpCalcOpen[`${d.date}|${t}`]?"rgba(124,58,237,0.20)":"rgba(124,58,237,0.08)",
-                                          color:"#A78BFA",fontWeight:500
+                                          color:"#7C3AED",fontWeight:500
                                         }}>
                                         {dcMpCalcOpen[`${d.date}|${t}`] ? "× hide" : "🧮 how"}
                                       </button>
@@ -883,33 +886,33 @@ export default function DCManpowerTab({ ctx }) {
                                               const trace = traceForType(cfn, t);
                                               return (
                                                 <div key={cfi} style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
-                                                  <div style={{fontSize:9,color:"#A78BFA",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>
+                                                  <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>
                                                     How {trace.total||0} {t.toLowerCase()} derived{d.fns.length > 1 ? ` · ${cfn.fnType || "fn "+(cfi+1)}` : ""}
                                                   </div>
                                                   {/* Element table (Flowerists/Electricians) */}
                                                   {trace.kind === "element_table" && (
                                                     trace.items.length === 0 ? (
-                                                      <div style={{fontSize:10,color:textS,fontStyle:"italic"}}>No matching elements in this function.</div>
+                                                      <div style={{fontSize:12,color:"#000",fontStyle:"italic"}}>No matching elements in this function.</div>
                                                     ) : (
                                                       <>
-                                                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                                                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                                                           <thead><tr style={{borderBottom:`1px solid ${border}`}}>
                                                             {trace.header.map((h,hi) => (
-                                                              <th key={hi} style={{textAlign:hi===0?"left":"right",padding:"4px 4px 6px",color:textS,fontWeight:500}}>{h}</th>
+                                                              <th key={hi} style={{textAlign:hi===0?"left":"right",padding:"4px 4px 6px",color:"#000",fontWeight:500}}>{h}</th>
                                                             ))}
                                                           </tr></thead>
                                                           <tbody>
                                                             {trace.items.map((it, ii) => (
                                                               <tr key={ii}>
-                                                                <td style={{padding:"5px 4px",color:"#fff"}}>{it.name}{it.size?<span style={{color:textS,marginLeft:4,textTransform:"capitalize"}}>({it.size})</span>:null}</td>
-                                                                <td style={{textAlign:"right",padding:"5px 4px",color:"#fff",fontVariantNumeric:"tabular-nums"}}>{it.qty}</td>
-                                                                <td style={{textAlign:"right",padding:"5px 4px",color:textS,fontVariantNumeric:"tabular-nums"}}>{it.missing?"⚠ "+it.missing:"÷ "+it.productivity}</td>
-                                                                <td style={{textAlign:"right",padding:"5px 4px",color:it.missing?"#F59E0B":"#fff",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{it.missing?"—":it.need}</td>
+                                                                <td style={{padding:"5px 4px",color:"#000"}}>{it.name}{it.size?<span style={{color:"#000",marginLeft:4,textTransform:"capitalize"}}>({it.size})</span>:null}</td>
+                                                                <td style={{textAlign:"right",padding:"5px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{it.qty}</td>
+                                                                <td style={{textAlign:"right",padding:"5px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{it.missing?"⚠ "+it.missing:"÷ "+it.productivity}</td>
+                                                                <td style={{textAlign:"right",padding:"5px 4px",color:it.missing?"#F59E0B":"#000",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{it.missing?"—":it.need}</td>
                                                               </tr>
                                                             ))}
                                                             <tr style={{borderTop:`1px solid ${border}`}}>
-                                                              <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:textS}}>Sum:</td>
-                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#FBBF24",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
+                                                              <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:"#000"}}>Sum:</td>
+                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
                                                             </tr>
                                                           </tbody>
                                                         </table>
@@ -925,26 +928,26 @@ export default function DCManpowerTab({ ctx }) {
                                                   {/* Sub-cat table (Carpenters/Painters Tier 2) */}
                                                   {trace.kind === "subcat_table" && (
                                                     trace.rows.length === 0 ? (
-                                                      <div style={{fontSize:10,color:textS,fontStyle:"italic"}}>No matching sub-cats; using minimum ({trace.minimum}).</div>
+                                                      <div style={{fontSize:12,color:"#000",fontStyle:"italic"}}>No matching sub-cats; using minimum ({trace.minimum}).</div>
                                                     ) : (
-                                                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                                                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                                                         <thead><tr style={{borderBottom:`1px solid ${border}`}}>
                                                           {trace.header.map((h,hi) => (
-                                                            <th key={hi} style={{textAlign:hi===0?"left":"right",padding:"4px 4px 6px",color:textS,fontWeight:500}}>{h}</th>
+                                                            <th key={hi} style={{textAlign:hi===0?"left":"right",padding:"4px 4px 6px",color:"#000",fontWeight:500}}>{h}</th>
                                                           ))}
                                                         </tr></thead>
                                                         <tbody>
                                                           {trace.rows.map((r, ri) => (
                                                             <tr key={ri}>
-                                                              <td style={{padding:"5px 4px",color:"#fff"}}>{r.sub}</td>
-                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#fff",fontVariantNumeric:"tabular-nums"}}>{r.count}</td>
-                                                              <td style={{textAlign:"right",padding:"5px 4px",color:textS,fontVariantNumeric:"tabular-nums"}}>÷ {r.batch}</td>
-                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#fff",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{r.need}</td>
+                                                              <td style={{padding:"5px 4px",color:"#000"}}>{r.sub}</td>
+                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{r.count}</td>
+                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>÷ {r.batch}</td>
+                                                              <td style={{textAlign:"right",padding:"5px 4px",color:"#000",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{r.need}</td>
                                                             </tr>
                                                           ))}
                                                           <tr style={{borderTop:`1px solid ${border}`}}>
-                                                            <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:textS}}>Σ {trace.frac} → ⌈⌉ {trace.sum} · max(min {trace.minimum}):</td>
-                                                            <td style={{textAlign:"right",padding:"5px 4px",color:"#FBBF24",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
+                                                            <td colSpan={3} style={{textAlign:"right",padding:"5px 4px",color:"#000"}}>Σ {trace.frac} → ⌈⌉ {trace.sum} · max(min {trace.minimum}):</td>
+                                                            <td style={{textAlign:"right",padding:"5px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{trace.total}</td>
                                                           </tr>
                                                         </tbody>
                                                       </table>
@@ -952,42 +955,42 @@ export default function DCManpowerTab({ ctx }) {
                                                   )}
                                                   {/* Formula chain (Tier 3 Labours) */}
                                                   {trace.kind === "formula_chain" && (
-                                                    <div style={{display:"flex",flexDirection:"column",gap:5,fontSize:11}}>
+                                                    <div style={{display:"flex",flexDirection:"column",gap:5,fontSize:13}}>
                                                       {trace.steps.map((s, si) => (
                                                         <div key={si} style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-                                                          <span style={{color:textS}}>{s.label}</span>
-                                                          <span style={{color:"#fff",fontVariantNumeric:"tabular-nums",fontWeight:si===trace.steps.length-1?500:400}}>{s.value}</span>
+                                                          <span style={{color:"#000"}}>{s.label}</span>
+                                                          <span style={{color:"#000",fontVariantNumeric:"tabular-nums",fontWeight:si===trace.steps.length-1?500:400}}>{s.value}</span>
                                                         </div>
                                                       ))}
                                                       <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
-                                                        <span style={{color:"#FBBF24"}}>Total</span>
-                                                        <span style={{color:"#FBBF24",fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
+                                                        <span style={{color:"#B45309"}}>Total</span>
+                                                        <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
                                                       </div>
                                                     </div>
                                                   )}
                                                   {/* Range lookup (Fabric Bangali / Truss Labour) */}
                                                   {trace.kind === "range_lookup" && (
                                                     trace.items.length === 0 ? (
-                                                      <div style={{fontSize:10,color:textS,fontStyle:"italic"}}>No {trace.totalUnit==="sqft"?"fabric/wall masking":"pillar/truss"} elements in this function.</div>
+                                                      <div style={{fontSize:12,color:"#000",fontStyle:"italic"}}>No {trace.totalUnit==="sqft"?"fabric/wall masking":"pillar/truss"} elements in this function.</div>
                                                     ) : (
-                                                      <div style={{display:"flex",flexDirection:"column",gap:5,fontSize:11}}>
+                                                      <div style={{display:"flex",flexDirection:"column",gap:5,fontSize:13}}>
                                                         {trace.items.map((it, ii) => (
                                                           <div key={ii} style={{display:"flex",justifyContent:"space-between"}}>
-                                                            <span style={{color:textS}}>{it.name}{it.L?` (${it.L}×${it.W} ft)`:""}</span>
-                                                            <span style={{color:"#fff",fontVariantNumeric:"tabular-nums"}}>{it.sqft||it.qty} {trace.totalUnit==="sqft"?"sqft":""}</span>
+                                                            <span style={{color:"#000"}}>{it.name}{it.L?` (${it.L}×${it.W} ft)`:""}</span>
+                                                            <span style={{color:"#000",fontVariantNumeric:"tabular-nums"}}>{it.sqft||it.qty} {trace.totalUnit==="sqft"?"sqft":""}</span>
                                                           </div>
                                                         ))}
                                                         <div style={{display:"flex",justifyContent:"space-between",paddingTop:5,borderTop:`1px solid ${border}`}}>
-                                                          <span style={{color:textS}}>Total {trace.totalUnit}</span>
-                                                          <span style={{color:"#fff",fontVariantNumeric:"tabular-nums",fontWeight:500}}>{trace.totalAmount} {trace.totalUnit}</span>
+                                                          <span style={{color:"#000"}}>Total {trace.totalUnit}</span>
+                                                          <span style={{color:"#000",fontVariantNumeric:"tabular-nums",fontWeight:500}}>{trace.totalAmount} {trace.totalUnit}</span>
                                                         </div>
                                                         <div style={{display:"flex",justifyContent:"space-between"}}>
-                                                          <span style={{color:textS}}>Range lookup · "{trace.rangeLabel}"</span>
-                                                          <span style={{color:"#fff",fontVariantNumeric:"tabular-nums"}}>→ {trace.total} ppl</span>
+                                                          <span style={{color:"#000"}}>Range lookup · "{trace.rangeLabel}"</span>
+                                                          <span style={{color:"#000",fontVariantNumeric:"tabular-nums"}}>→ {trace.total} ppl</span>
                                                         </div>
                                                         <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
-                                                          <span style={{color:"#FBBF24"}}>Total</span>
-                                                          <span style={{color:"#FBBF24",fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
+                                                          <span style={{color:"#B45309"}}>Total</span>
+                                                          <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums"}}>{trace.total}</span>
                                                         </div>
                                                       </div>
                                                     )
@@ -995,38 +998,38 @@ export default function DCManpowerTab({ ctx }) {
                                                   {/* Per-zone Fabric Bangali (§23 Phase 2.8) — each zone shows its own RFT ceil */}
                                                   {trace.kind === "range_lookup_per_zone" && (
                                                     trace.items.length === 0 ? (
-                                                      <div style={{fontSize:10,color:textS,fontStyle:"italic"}}>No truss masking found in this function (no zone with mkOn + walls selected).</div>
+                                                      <div style={{fontSize:12,color:"#000",fontStyle:"italic"}}>No truss masking found in this function (no zone with mkOn + walls selected).</div>
                                                     ) : (
-                                                      <div style={{display:"flex",flexDirection:"column",gap:8,fontSize:11}}>
+                                                      <div style={{display:"flex",flexDirection:"column",gap:8,fontSize:13}}>
                                                         {trace.items.map((zone, zi) => (
-                                                          <div key={zi} style={{padding:"6px 8px",background:"rgba(255,255,255,0.04)",borderRadius:6,border:`1px solid ${border}`}}>
+                                                          <div key={zi} style={{padding:"6px 8px",background:"rgba(26, 26, 46,0.04)",borderRadius:6,border:`1px solid ${border}`}}>
                                                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-                                                              <span style={{color:"#fff",fontWeight:600}}>{zone.zoneHeader}</span>
-                                                              <span style={{color:"#FBBF24",fontVariantNumeric:"tabular-nums",fontWeight:600}}>→ {zone.zoneTotal} ppl</span>
+                                                              <span style={{color:"#000",fontWeight:600}}>{zone.zoneHeader}</span>
+                                                              <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums",fontWeight:600}}>→ {zone.zoneTotal} ppl</span>
                                                             </div>
                                                             <div style={{display:"flex",flexDirection:"column",gap:2,paddingLeft:8}}>
                                                               {zone.parts.map((p, pi) => (
-                                                                <div key={pi} style={{fontSize:10,color:textS}}>• {p.label}</div>
+                                                                <div key={pi} style={{fontSize:12,color:"#000"}}>• {p.label}</div>
                                                               ))}
                                                             </div>
                                                             {zone.zoneSubLabel && (
-                                                              <div style={{marginTop:4,paddingTop:4,borderTop:`1px dashed ${border}`,fontSize:10,color:textS,fontStyle:"italic"}}>{zone.zoneSubLabel}</div>
+                                                              <div style={{marginTop:4,paddingTop:4,borderTop:`1px dashed ${border}`,fontSize:12,color:"#000",fontStyle:"italic"}}>{zone.zoneSubLabel}</div>
                                                             )}
                                                           </div>
                                                         ))}
                                                         <div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${border}`,fontWeight:600}}>
-                                                          <span style={{color:"#FBBF24"}}>Grand Total</span>
-                                                          <span style={{color:"#FBBF24",fontVariantNumeric:"tabular-nums"}}>{trace.total} ppl</span>
+                                                          <span style={{color:"#B45309"}}>Grand Total</span>
+                                                          <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums"}}>{trace.total} ppl</span>
                                                         </div>
                                                       </div>
                                                     )
                                                   )}
                                                   {/* Default (Supervisors etc.) */}
                                                   {trace.kind === "default" && (
-                                                    <div style={{fontSize:11,color:textS,fontStyle:"italic"}}>{trace.note}</div>
+                                                    <div style={{fontSize:13,color:"#000",fontStyle:"italic"}}>{trace.note}</div>
                                                   )}
                                                   {trace.formula && (
-                                                    <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:10,color:textS,fontStyle:"italic"}}>{trace.formula}</div>
+                                                    <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#000",fontStyle:"italic"}}>{trace.formula}</div>
                                                   )}
                                                 </div>
                                               );
@@ -1045,9 +1048,9 @@ export default function DCManpowerTab({ ctx }) {
                                             ? `Dismantle day: ${dismPct}% of event-day crew. Event peak × ${dismPct}% = ${ppl} ${t.toLowerCase()}.`
                                             : "Dismantle day: count carried forward from final event day (no dismantling % set in Settings → Workforce).";
                                       return (
-                                        <div style={{marginTop:10,padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7,fontSize:11,color:textS}}>
-                                          <div style={{fontSize:9,color:"#A78BFA",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:6}}>How {ppl} {t.toLowerCase()} on this day</div>
-                                          <div style={{color:"#fff",fontStyle:"italic"}}>{phaseNote}</div>
+                                        <div style={{marginTop:10,padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7,fontSize:13,color:"#000"}}>
+                                          <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:6}}>How {ppl} {t.toLowerCase()} on this day</div>
+                                          <div style={{color:"#000",fontStyle:"italic"}}>{phaseNote}</div>
                                           <div style={{marginTop:6}}>See trajectory footer for cumulative MAX progression.</div>
                                         </div>
                                       );
@@ -1056,7 +1059,7 @@ export default function DCManpowerTab({ ctx }) {
                                 );
                               })}
                               {Object.keys(breakdown.byType).length === 0 && (
-                                <div style={{fontSize:11,color:textS,fontStyle:"italic",padding:"6px 0"}}>No manpower needed this day. (Untick all windows to model labour going home.)</div>
+                                <div style={{fontSize:13,color:"#000",fontStyle:"italic",padding:"6px 0"}}>No manpower needed this day. (Untick all windows to model labour going home.)</div>
                               )}
                             </div>
                           </div>
@@ -1065,18 +1068,18 @@ export default function DCManpowerTab({ ctx }) {
 
                       {/* Hire trajectory footer */}
                       <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(148,163,184,0.04)",border:`1px dashed ${border}`}}>
-                        <div style={{fontSize:11,fontWeight:700,color:textS,letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📈 Hire Trajectory (cumulative MAX)</div>
-                        <div style={{fontSize:10,color:textS,marginBottom:8,fontStyle:"italic"}}>People hired per type across booking days. Labour only scales UP — once hired, they stay.</div>
+                        <div style={{fontSize:13,fontWeight:700,color:"#000",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📈 Hire Trajectory (cumulative MAX)</div>
+                        <div style={{fontSize:12,color:"#000",marginBottom:8,fontStyle:"italic"}}>People hired per type across booking days. Labour only scales UP — once hired, they stay.</div>
                         <div style={{display:"flex",flexDirection:"column",gap:4}}>
                           {labourTypes.map(t => {
                             const seq = dayList.map(d => countByDay[d.date][t] || 0);
                             const peak = Math.max(...seq, 0);
                             if (peak === 0) return null;
                             return (
-                              <div key={t} style={{display:"flex",alignItems:"center",gap:8,fontSize:11}}>
-                                <span style={{minWidth:140,color:"#fff",fontWeight:600}}>{typeEmoji(t)} {t}</span>
-                                <span style={{color:textS,fontVariantNumeric:"tabular-nums",fontFamily:"monospace"}}>{seq.join(" → ")}</span>
-                                <span style={{color:"#FBBF24",fontVariantNumeric:"tabular-nums",fontWeight:700}}>peak {peak}</span>
+                              <div key={t} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                                <span style={{minWidth:140,color:"#000",fontWeight:600}}>{typeEmoji(t)} {t}</span>
+                                <span style={{color:"#000",fontVariantNumeric:"tabular-nums",fontFamily:"monospace"}}>{seq.join(" → ")}</span>
+                                <span style={{color:"#B45309",fontVariantNumeric:"tabular-nums",fontWeight:700}}>peak {peak}</span>
                               </div>
                             );
                           })}
