@@ -16,20 +16,26 @@ const SB_PUBLIC = "/storage/v1/object/public/";
 const SB_RENDER = "/storage/v1/render/image/public/";
 
 /**
- * A resized copy of a Supabase Storage image, or the original URL if it is not one.
+ * A square, resized copy of a Supabase Storage image, or the original URL if it is not one.
+ *
+ * BOTH width and height must be sent, with resize=cover. Passing `width` alone does NOT scale
+ * proportionally — it sets the width and leaves the height untouched, so a 899×1599 photo came
+ * back 80×1599 and rendered into a square box as a stretched vertical sliver. cover crops to the
+ * centre instead, which is what an `object-cover` thumbnail wants anyway.
+ *
  * @param {string} url    source image url
- * @param {number} width  target width in CSS px — pass the rendered size, not the natural size
+ * @param {number} size   rendered box size in CSS px (these thumbnails are square)
  * @param {number} [quality=60]
  */
-export function thumbUrl(url, width, quality = 60) {
+export function thumbUrl(url, size, quality = 60) {
   if (typeof url !== "string" || !url) return url;
   if (!url.includes(SB_PUBLIC)) return url;              // not Supabase Storage — leave it alone
   if (url.includes("/render/image/")) return url;         // already a transform
-  // Retina: ask for twice the CSS width so the thumbnail is not soft on a HiDPI screen. Still
-  // ~50x smaller than the original at these sizes.
-  const w = Math.max(32, Math.round((Number(width) || 64) * 2));
+  // Retina: ask for twice the CSS size so it is not soft on a HiDPI screen. Still ~100x smaller
+  // than the original — the 899×1599 case goes 293 KB → 2 KB.
+  const px = Math.max(32, Math.round((Number(size) || 64) * 2));
   const [base, query] = url.split("?");
   const rendered = base.replace(SB_PUBLIC, SB_RENDER);
   // Preserve any existing query (a signed token, say) rather than dropping it.
-  return `${rendered}?${query ? query + "&" : ""}width=${w}&quality=${quality}`;
+  return `${rendered}?${query ? query + "&" : ""}width=${px}&height=${px}&resize=cover&quality=${quality}`;
 }
