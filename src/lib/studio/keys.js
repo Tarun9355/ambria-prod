@@ -73,6 +73,11 @@ export const TAX_BOTH_MIG_SK = "ambria-tax-venuetype-both-migrated-v1"; // one-t
 export const TAG_KB_SK = "ambria-tag-knowledgebase-v1"; // AI-tagging knowledge base distilled from VERIFIED photos (per-area profiles + few-shot exemplars); rebuilt when stale
 export const TAG_HIDDEN_SUBS_SK = "ambria-tag-hidden-subs-v1"; // array of "cat::sub" keys flagged in Pricing as NOT taggable (hidden from element-search boxes + AI vocabulary; items still exist in pricing/IMS)
 export const PREMIA_CFG_SK = "ambria-premia-config-v1";
+// Hand-curated photo groups per zone: { [areaName]: [libraryPhotoId, …] }, in display order.
+// A curation layer on top of the AI/manual `areasElements` tags, never a replacement for them —
+// Build shows a zone's group first and then the rest of its tagged photos, so removing a photo
+// from a group only demotes it, it doesn't untag it.
+export const ZONE_GROUPS_SK = "ambria-zone-photo-groups-v1";
 
 export const DEFAULT_FILTER_PRIORITY = [
   { id: "tier", label: "Tier", icon: "🏷️" },

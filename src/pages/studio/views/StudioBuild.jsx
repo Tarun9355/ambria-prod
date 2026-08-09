@@ -962,7 +962,10 @@ export default function StudioBuild({ ctx }) {
   const [zoneMatchCache, setZoneMatchCache] = useState({});
   const zoneFetchInFlight = useRef(new Set());
   const [matchGen, setMatchGen] = useState(0);
-  useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters)]);
+  // Zone groups belong in here alongside the filters: they change what getLibPhotosForZone returns
+  // AND the order it returns it in, and the cache key is the only thing that invalidates it. Without
+  // this, regrouping a zone in Manage leaves an open Build page showing the old strip indefinitely.
+  useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters), JSON.stringify(ctx.zoneGroups || {})]);
   // Which library "areas / zones" tags feed this zone. Static map first; custom or renamed zones
   // have no entry, so fall back to their display label — reverse-looked-up into the area-set that
   // contains it, else used as an area name of its own. One definition, three callers: the strip, the
@@ -991,12 +994,30 @@ export default function StudioBuild({ ctx }) {
     const kept = names.filter((n) => n === label || !otherZoneLabels.has(n));
     return kept.length ? kept : names;   // never strip a zone down to nothing
   };
+  // Groups are per zone AND per function, so the active function is part of the cache identity —
+  // switching from Sangeet to Wedding has to refetch, not reuse Sangeet's arrangement.
+  const groupFn = activeFnMeta?.type || "";
+  const zoneCacheKey = (areaNames) => `${matchGen}::${groupFn}::${areaNames.join("|")}`;
+  // Switching function mints a new cache key, so the entry is missing until the refetch lands and
+  // every strip would blank out in the meantime. Fall back to the same zone's set under any other
+  // function: it's the same photos bar the leading group, and it reorders when the fetch returns.
+  // Matching on "::" + the joined names can't collide across zones ("…::Entertainment Stage" does
+  // not end with "::Stage").
+  const zoneMatchesFor = (areaNames) => {
+    const hit = zoneMatchCache[zoneCacheKey(areaNames)];
+    if (hit) return hit;
+    const suffix = `::${areaNames.join("|")}`;
+    for (const k of Object.keys(zoneMatchCache)) {
+      if (k.startsWith(`${matchGen}::`) && k.endsWith(suffix)) return zoneMatchCache[k];
+    }
+    return [];
+  };
   const ensureZoneMatches = (areaNames) => {
     if (!areaNames.length) return;
-    const cacheKey = `${matchGen}::${areaNames.join("|")}`;
+    const cacheKey = zoneCacheKey(areaNames);
     if (zoneFetchInFlight.current.has(cacheKey) || zoneMatchCache[cacheKey]) return;
     zoneFetchInFlight.current.add(cacheKey);
-    getLibPhotosForZone(areaNames, zpHasFilters ? zpFilterPhoto : null)
+    getLibPhotosForZone(areaNames, zpHasFilters ? zpFilterPhoto : null, groupFn)
       .then((result) => setZoneMatchCache((prev) => ({ ...prev, [cacheKey]: result })))
       .finally(() => zoneFetchInFlight.current.delete(cacheKey));
   };
@@ -1008,8 +1029,9 @@ export default function StudioBuild({ ctx }) {
       const srcType = czSrc?.sourceType || k;
       ensureZoneMatches(areaNamesFor(srcType));
     });
+    // groupFn included: switching function changes which group leads, so it needs its own fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoneKeys, customZones, matchGen]);
+  }, [zoneKeys, customZones, matchGen, groupFn]);
 
   const getMatchedPhotos = (elKey) => {
     const areaNames = areaNamesFor(elKey);
@@ -1027,15 +1049,20 @@ export default function StudioBuild({ ctx }) {
     if (areaNames.length) {
       // Async zone match (getLibPhotosForZone) — read from the cache populated by the effect above
       // (empty array until it resolves, same render cost as before once warm).
-      const allMatches = zoneMatchCache[`${matchGen}::${areaNames.join("|")}`] || [];
+      const allMatches = zoneMatchesFor(areaNames);
+      let groupRank = 0;
       for (const img of allMatches) {
         if (!img.url || seen.has(img.url)) continue;
         seen.add(img.url);
         photos.push({
+          // Rank within the hand-picked group. Carried per photo because the venue and verified
+          // sorts below reshuffle the array, and the group's arranged order has to survive them.
+          groupRank: img._grouped ? groupRank++ : Infinity,
           src: img.url, eventId: img.id, eventName: img.name || "Library",
           fn: "", space: "", mood: "", venue: "", video: "",
           tags: [], zones: [], itemGrades: {}, itemQtys: {}, enabledEls: [],
           isLibrary: true, elements: img.elements || [], dims: img.dims || {},
+          grouped: !!img._grouped,
         });
       }
     }
@@ -1652,6 +1679,17 @@ undefined
       } else {
         matchedPhotos = verifiedFirst(matchedPhotos);
       }
+      // The hand-picked group (Manage → Library → Grouping) outranks both venue and verified, so it
+      // partitions last — someone chose these photos for this zone deliberately, which is a stronger
+      // signal than any of the automatic ordering above. Re-sorted on groupRank because the sorts
+      // above are stable only within their own buckets and would otherwise interleave the group.
+      const groupedCount = matchedPhotos.reduce((n, ph) => n + (ph.grouped ? 1 : 0), 0);
+      if (groupedCount) {
+        const inGroup = [], rest = [];
+        for (const ph of matchedPhotos) (ph.grouped ? inGroup : rest).push(ph);
+        inGroup.sort((a, b) => (a.groupRank ?? Infinity) - (b.groupRank ?? Infinity));
+        matchedPhotos = [...inGroup, ...rest];
+      }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
       // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/
@@ -1662,6 +1700,14 @@ undefined
         const existing = matchedPhotos.find(ph => ph.src === selP.src);
         matchedPhotos = [existing || selP, ...matchedPhotos.filter(ph => ph.src !== selP.src)];
       }
+      // The lightbox walks the set the photo you opened belongs to, not the whole zone. Stepping
+      // out of a 5-photo group into the other 237 reads as the group having silently ended, and the
+      // "1 / 242" counter says nothing about where in the group you are. Computed after every
+      // reorder above (including the selected-photo pin), so a grouped photo moved to the front is
+      // still counted as grouped rather than assumed to be at a fixed index.
+      // With no group, everything lands in lbRest and this is the old whole-zone behaviour.
+      const lbGrouped = matchedPhotos.filter(p => p.grouped);
+      const lbRest = matchedPhotos.filter(p => !p.grouped);
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
@@ -1789,7 +1835,7 @@ undefined
                 return (<>
               <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...phSwipeHandlers(k,page,pageCount)}>
               {shown.map((ph,pi)=>{
-                const i = start + pi;   // absolute index: the lightbox browses the whole matched set
+                const i = start + pi;   // absolute index across pages — keeps React keys unique
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
                 const isSelected = elSelectedPhoto[k]?.src === ph.src;
                 // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
@@ -1805,9 +1851,16 @@ undefined
                   cursor:"pointer",position:"relative",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):cardBg,
                   boxShadow:isSelected?"0 2px 12px rgba(5,150,105,0.2)":"none",
                   transition:"all 0.15s"}}>
-                  {/* Opens on this photo but hands the lightbox the whole matched set, so the
-                      arrows there walk the zone's photos rather than one image in isolation. */}
-                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{e.stopPropagation();if(phSwipedJustNow())return;setLightbox({idx:i,items:matchedPhotos.map(p=>({src:p.src,name:p.eventName}))});}}>
+                  {/* Opens on this photo and hands the lightbox its own set — the group if this is
+                      a grouped photo, the rest of the zone otherwise — so the arrows stay inside
+                      what you were looking at and the counter reads against it. */}
+                  <div style={{position:"relative",cursor:"zoom-in"}} onClick={(e)=>{
+                    e.stopPropagation();
+                    if(phSwipedJustNow())return;
+                    const set = ph.grouped ? lbGrouped : lbRest;
+                    const at = set.indexOf(ph);
+                    setLightbox({idx: at < 0 ? 0 : at, items: set.map(p=>({src:p.src,name:p.eventName}))});
+                  }}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
                     {(()=>{

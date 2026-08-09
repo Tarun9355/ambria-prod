@@ -83,8 +83,9 @@ import {
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK_CATS, RC_SK_TR, TR_TIERS, TC_UNITS, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
-  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK,
+  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, ZONE_GROUPS_SK,
 } from "../../lib/studio/keys.js";
+import { normaliseZoneGroups, groupIdsForZones } from "../../lib/studio/zoneGroups.js";
 import { rowToVideoTag, videoTagToRow, rowsToVideoTagMap } from "../../lib/studio/videoTags.js";
 import { logWrite, installActionLogFlush } from "../../lib/studio/userActions.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
@@ -1085,14 +1086,25 @@ export default function StudioApp() {
   const [loaded, setLoaded] = useState(true);
   const [toast, setToast] = useState(null);
   const [confirmToast, setConfirmToast] = useState(null);
+  // The dialog can be dismissed three ways — Escape, the backdrop, the Cancel button — and the
+  // promise form below has to settle on all of them or its caller waits forever. Routing every
+  // dismissal through one closer is what makes that safe to rely on. Held in a ref as well as
+  // state because the callback must fire outside the state updater (updaters have to stay pure).
+  const confirmToastRef = useRef(null);
+  const closeConfirm = useCallback((confirmed) => {
+    const c = confirmToastRef.current;
+    confirmToastRef.current = null;
+    setConfirmToast(null);
+    if (c) (confirmed ? c.onYes : c.onCancel)?.();
+  }, []);
   // Escape cancels the confirm dialog — bound only while one is open, so it never competes with the
   // Escape handling on galleries and overlays.
   useEffect(() => {
     if (!confirmToast) return;
-    const onKey = e => { if (e.key === "Escape") setConfirmToast(null); };
+    const onKey = e => { if (e.key === "Escape") closeConfirm(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmToast]);
+  }, [confirmToast, closeConfirm]);
 
   // ═══ ADMIN STATE ═══
   const [editEv, setEditEv] = useState(null);
@@ -1631,6 +1643,11 @@ export default function StudioApp() {
   const [tplEdit, setTplEdit] = useState(null);
   const [tplTab, setTplTab] = useState("list");
 
+  // ═══ ZONE PHOTO GROUPS ═══ { [areaName]: { [functionType]: [libraryPhotoId, …] } }
+  // Hand-picked in Manage → Library → Grouping; Build floats the group for the active function to
+  // the front of that zone's strip. See lib/studio/zoneGroups.js for the shape and the lookup rules.
+  const [zoneGroups, setZoneGroups] = useState({});
+
   // ═══ ZONE DEFINITIONS STATE ═══
   const [zoneDefs, setZoneDefs] = useState({ elements: {}, meta: JSON.parse(JSON.stringify(ZONE_META)) });
   const zoneMeta = useMemo(() => zoneDefs.meta || ZONE_META, [zoneDefs]);
@@ -1735,7 +1752,16 @@ export default function StudioApp() {
   // In-app confirm, so destructive actions ask in the app's own voice instead of a browser alert()
   // (which is unstyled, blocks the whole tab, and on some browsers offers "don't show again").
   // Deliberately does NOT auto-dismiss — an unanswered question must wait for an answer.
-  const askConfirm = (msg, onYes, opts = {}) => setConfirmToast({ msg, onYes, yesLabel: opts.yesLabel || "Remove", note: opts.note });
+  const openConfirm = (cfg) => { confirmToastRef.current = cfg; setConfirmToast(cfg); };
+  const askConfirm = (msg, onYes, opts = {}) => openConfirm({ msg, onYes, yesLabel: opts.yesLabel || "Remove", note: opts.note });
+  // Promise form, so a call site written as `if (!confirm(...)) return;` keeps its shape when it
+  // moves off the browser's native dialog. Resolves false on every dismissal route.
+  const askConfirmAsync = useCallback((msg, opts = {}) => new Promise((resolve) => {
+    openConfirm({
+      msg, note: opts.note, yesLabel: opts.yesLabel || "Confirm",
+      onYes: () => resolve(true), onCancel: () => resolve(false),
+    });
+  }), []);
   const doLogout = () => { logout(); };
   // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
   // reference Studio used "admin". Also honor the seeded u_admin id.
@@ -2020,6 +2046,9 @@ export default function StudioApp() {
       // Zone definitions
       let loadedZones = null;
       try { const v = await kvGet(ZONE_DEF_SK); if (v != null) { const zp = parse(v); if (zp && zp.elements) { loadedZones = zp; if (!cancelled) setZoneDefs(zp); } } } catch {}
+      // Zone photo groups — normalised on read, so a blob written before groups were per-function
+      // (a bare id array per zone) loads as an any-function group instead of being ignored.
+      try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) setZoneGroups(normaliseZoneGroups(parse(v))); } catch {}
       // Taxonomy — backfill missing keys from DEFAULT_TAX
       let loadedTax = null;
       try {
@@ -2233,6 +2262,7 @@ export default function StudioApp() {
           // hid what goes stale for as long as it stays open, and the folder counts silently disagree
           // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
           else if (key === HIDDEN_VID_SK) { const hv = pj(await kvGet(HIDDEN_VID_SK)); if (hv && typeof hv === "object") setHiddenVideos(hv); }
+          else if (key === ZONE_GROUPS_SK) { setZoneGroups(normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK)))); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
       })
@@ -2393,6 +2423,14 @@ export default function StudioApp() {
   }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
   const saveZD = useCallback(async (nd) => { setZoneDefs(nd); await reliableSave(ZONE_DEF_SK, JSON.stringify(nd), "Zone config"); }, []);
+
+  // Zone photo groups. Normalised on write as well as read — that drops empty lists, so the blob
+  // doesn't accumulate a key for every zone/function pair anyone ever opened.
+  const saveZoneGroups = useCallback(async (next) => {
+    const clean = normaliseZoneGroups(next);
+    setZoneGroups(clean);
+    return reliableSave(ZONE_GROUPS_SK, JSON.stringify(clean), "Zone photo groups");
+  }, []);
   // Row-level library persistence. `nl` is the set of items to upsert (NOT the whole library —
   // now that `libItems` is a lazy cache rather than the full table, callers pass just the item(s)
   // they changed/added, or a locally-known slice with edits applied — either way). We UPSERT only
@@ -3832,7 +3870,9 @@ export default function StudioApp() {
   // instead of scanning the whole in-memory library. Returns every photo tagged for this zone,
   // unranked — no video-taxonomy or palette-based scoring. Build shows the full zone-tagged set
   // and the user always picks manually; nothing is auto-preselected.
-  const getLibPhotosForZone = useCallback(async (zone, filterFn) => {
+  // `fnType` (optional) is the build's active function — it selects which of the zone's groups
+  // leads the strip. Omitted, only the any-function group applies.
+  const getLibPhotosForZone = useCallback(async (zone, filterFn, fnType = "") => {
     // `zone` may be a single tag name or an array of synonym names (Build page).
     // filterFn (optional): a predicate applied to the zone matches — e.g. Build's explicit
     // "Filter whole build" photo filters (event type, palette, etc.), a user-initiated filter,
@@ -3841,11 +3881,33 @@ export default function StudioApp() {
     if (!zoneList.length) return [];
     const zoneCandidates = await fetchZoneLibraryPhotos(zoneList);
     mergeLibItems(zoneCandidates);
-    return zoneCandidates.filter(li => {
+    const tagged = zoneCandidates.filter(li => {
       const ae = li.tags?.areasElements || [];
       return zoneList.some(z => ae.includes(z)) && (!filterFn || filterFn(li));
     });
-  }, [mergeLibItems]);
+
+    // The hand-picked group floats to the front, in the order it was arranged. A grouped photo
+    // need not carry the zone tag — putting one in a group is itself the statement that it belongs
+    // here — so anything the zone query didn't return is fetched by id rather than dropped.
+    const groupIds = groupIdsForZones(zoneGroups, zoneList, fnType);
+    if (!groupIds.length) return tagged;
+
+    const byId = new Map(tagged.map(li => [li.id, li]));
+    const missing = groupIds.filter(id => !byId.has(id));
+    if (missing.length) {
+      try {
+        const extra = await fetchLibraryItemsByIds(missing);
+        mergeLibItems(extra);
+        for (const li of extra) byId.set(li.id, li);
+      } catch { /* a group entry whose photo has since been deleted just stays absent */ }
+    }
+    const pinned = groupIds.map(id => byId.get(id)).filter(li => li && (!filterFn || filterFn(li)));
+    const pinnedIds = new Set(pinned.map(li => li.id));
+    return [
+      ...pinned.map(li => ({ ...li, _grouped: true })),
+      ...tagged.filter(li => !pinnedIds.has(li.id)),
+    ];
+  }, [mergeLibItems, zoneGroups]);
 
   // ── All videos (youtube + manual), newest first — VERBATIM ──
   const allVideos = useMemo(() => {
@@ -4066,7 +4128,10 @@ export default function StudioApp() {
   const handleCldBulkDelete = useCallback(async () => {
     const ids = Array.from(cldSelected);
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""} permanently from Storage?`)) return;
+    if (!(await askConfirmAsync(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""}?`, {
+      note: "Removed from Storage permanently. Library rows pointing at them will show as orphaned.",
+      yesLabel: "Delete",
+    }))) return;
     setCldDeleting(true);
     try {
       const deletedCount = await deleteStorageObjects(ids);
@@ -4081,7 +4146,10 @@ export default function StudioApp() {
   // ═══ DELETE FOLDER ═══
   const handleCldDeleteFolder = useCallback(async (folderName) => {
     const fullPath = [...cldPath, folderName].join("/");
-    if (!confirm(`Delete folder "${folderName}" and ALL its contents permanently?\n\nPath: ${fullPath}\n\nThis cannot be undone!`)) return;
+    if (!(await askConfirmAsync(`Delete the folder "${folderName}"?`, {
+      note: `Everything inside ${fullPath} goes with it, permanently. This can't be undone.`,
+      yesLabel: "Delete folder",
+    }))) return;
     setCldDeleting(true);
     try {
       const n = await deleteStorageFolder(fullPath);
@@ -6762,7 +6830,7 @@ export default function StudioApp() {
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
     // app mode + steps
-    mode, setMode, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, loaded, setLoaded, saveError, setSaveError,
+    mode, setMode, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, askConfirmAsync, loaded, setLoaded, saveError, setSaveError,
     // events
     events, setEvents, editEv, setEditEv, save, filteredEvents,
     // admin / library state
@@ -6839,6 +6907,7 @@ export default function StudioApp() {
     // templates
     templates, setTemplates, saveTpl, tplEdit, setTplEdit, tplTab, setTplTab,
     // zones
+    zoneGroups, saveZoneGroups,
     zoneDefs, setZoneDefs, saveZD, zoneMeta, zoneKeys, zoneLabelsD, zdEditZone, setZdEditZone,
     // premia (read-only gate — editor removed)
     premiaConfig, premiaGate, setPremiaGate, isPremiaPlatinum, PREMIA_DEFAULTS,
@@ -6941,14 +7010,14 @@ export default function StudioApp() {
           the eye instead of arriving as a pill that reads like a status message. Backdrop click and
           Escape both cancel; only the red button commits. */}
       {confirmToast && (
-        <div onClick={() => setConfirmToast(null)} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.44)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
+        <div onClick={() => closeConfirm(false)} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.44)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
           <div role="alertdialog" aria-modal="true" aria-label={confirmToast.msg} onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: "#fff", borderRadius: 16, padding: "24px 24px 18px", boxShadow: "0 24px 60px rgba(15,15,26,0.30)", textAlign: "center", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
             <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(220,38,38,0.10)", color: "#dc2626", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 21, fontWeight: 700, margin: "0 auto 14px" }}>!</div>
             <div style={{ fontSize: 16.5, fontWeight: 700, color: "#111827", letterSpacing: -0.2, marginBottom: 6 }}>{confirmToast.msg}</div>
             <div style={{ fontSize: 12.5, color: "#6B7280", lineHeight: 1.5, marginBottom: 20 }}>{confirmToast.note || "This can’t be undone — its elements and pricing go with it."}</div>
             <div style={{ display: "flex", gap: 9 }}>
-              <button onClick={() => setConfirmToast(null)} style={{ flex: 1, background: "#F3F4F6", color: "#374151", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
-              <button autoFocus onClick={() => { const fn = confirmToast.onYes; setConfirmToast(null); fn?.(); }} style={{ flex: 1, background: "#dc2626", color: "#fff", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{confirmToast.yesLabel}</button>
+              <button onClick={() => closeConfirm(false)} style={{ flex: 1, background: "#F3F4F6", color: "#374151", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+              <button autoFocus onClick={() => closeConfirm(true)} style={{ flex: 1, background: "#dc2626", color: "#fff", border: "none", padding: "11px 0", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{confirmToast.yesLabel}</button>
             </div>
           </div>
         </div>

@@ -129,9 +129,15 @@ function pgLit(v) { return `"${String(v).replace(/"/g, '\\"')}"`; }
 // JSONB has no `&&` (array overlap) operator — PostgREST's `.overlaps()`/`ov` 400s on a jsonb path
 // ("operator does not exist: jsonb && unknown"). `cs` (containment, `@>`) IS valid on jsonb, and
 // `tags->key @> '["value"]'` checks "does this jsonb array contain value" — OR-ing one `cs` check
-// per selected value across all active categories (via a single `.and()` of per-category `or()`
-// groups, so multiple categories AND together and multiple values within a category OR together)
-// reproduces the overlap semantics `libFiltered` used to have client-side.
+// per selected value, per active category, reproduces the overlap semantics `libFiltered` used to
+// have client-side.
+//
+// The categories are combined with one CHAINED `.or()` per category, not a single `.and()` of
+// `or()` groups: PostgrestFilterBuilder has no `.and()` method (checked against postgrest-js
+// 2.108.2), so the previous version threw "q.and is not a function" on every filtered query and
+// the whole sidebar came back as "Failed to load images". Chained filters already AND together,
+// which is exactly the semantics wanted — every active category must match, any one of its values
+// will do.
 function pgArrayLit(v) { return JSON.stringify([v]); }
 
 // Shared WHERE-clause builder for both the paginated list query and the count query —
@@ -139,10 +145,10 @@ function pgArrayLit(v) { return JSON.stringify([v]); }
 // count query needs the SAME base filters applied once per status bucket).
 function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inhouseVenueNames = [], search = "" }) {
   q = q.in("source_folder", ALLOWED_SOURCE_FOLDERS);
-  const categoryGroups = Object.entries(filters)
-    .filter(([, values]) => Array.isArray(values) && values.length)
-    .map(([key, values]) => `or(${values.map((v) => `tags->${key}.cs.${pgArrayLit(v)}`).join(",")})`);
-  if (categoryGroups.length) q = q.and(categoryGroups.join(","));
+  for (const [key, values] of Object.entries(filters)) {
+    if (!Array.isArray(values) || !values.length) continue;
+    q = q.or(values.map((v) => `tags->${key}.cs.${pgArrayLit(v)}`).join(","));
+  }
   if (venueNames.length) {
     q = q.in("tags->>venue", venueNames);
   } else if (venueGroup === "inhouse" && inhouseVenueNames.length) {
