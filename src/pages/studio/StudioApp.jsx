@@ -26,8 +26,7 @@ import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
 import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
-import { cldAdmin } from "../../lib/cloudinary";
-import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
+import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
 import { extractLabeledValue, bestTaxMatch } from "../../lib/studio/videoDescriptionTags";
 import { paletteNames, paletteInList } from "../../lib/studio/colours";
@@ -3897,62 +3896,85 @@ export default function StudioApp() {
   // plus the property row, not both a property AND that same name again as a "sub-venue".
   const leafInhouseVenues = useMemo(() => allInhouseVenues.filter(v => !inhouseParentNames.includes(v)), [allInhouseVenues, inhouseParentNames]);
 
-  // ═══ CLOUDINARY PHOTO BROWSER (reference ~4111) — rewired /api/cloudinary → cldAdmin ═══
+  // ═══ SUPABASE STORAGE PHOTO BROWSER (was Cloudinary) ═══
+  // Same folder-tree UI, different backend: the `media` bucket, listed through the /upload Edge
+  // Function. Storage can't be listed with the anon key — storage.objects has no public SELECT
+  // policy, and adding one would make the whole bucket enumerable by anyone holding that key.
+  //
+  // The `cld*` state names and the public_id/secure_url aliases below are kept deliberately. The
+  // browser UI in ManageLibrary reads those two fields on every tile, and every photo already in
+  // the library was imported under them — renaming here would mean rewriting that UI and the
+  // library's dedupe keys for no behavioural gain.
+  const storageEntries = useCallback(async (path) => {
+    const folders = [], files = [];
+    for (let page = 0; page < 20; page++) {          // 20 × 500 = 10k objects, matching the old cap
+      const data = await listStorage(path, { limit: 500, offset: page * 500 });
+      folders.push(...(data.folders || []));
+      files.push(...(data.files || []));
+      if (!data.truncated) break;
+    }
+    return {
+      folders,
+      images: files
+        .filter((f) => /^image\//.test(f.type || "") || /\.(jpe?g|png|gif|webp|avif|svg)$/i.test(f.name))
+        .map((f) => ({ ...f, public_id: f.path, secure_url: f.url, display_name: f.name })),
+    };
+  }, []);
+
+  // One request serves both panes — Storage returns folders and files from the same listing, so
+  // splitting this into a folders call and an images call would just double the round trips.
   const fetchCldFolders = useCallback(async (path = "") => {
     setCldLoading(true);
     try {
-      const data = await cldAdmin("folders", { path });
-      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldLoading(false); return; }
-      setCldFolders(data.folders || []);
-      setCldImages([]);
-    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+      const { folders, images } = await storageEntries(path);
+      setCldFolders(folders);
+      setCldImages(path ? images : []);            // bucket root shows folders only, as before
+    } catch (e) { showMsg("Storage fetch failed: " + e.message, "red"); }
     setCldLoading(false);
-  }, []);
+  }, [storageEntries]);
 
   const fetchCldImages = useCallback(async (prefix) => {
+    if (!prefix) { setCldImages([]); return; }
     setCldLoading(true);
     try {
-      const data = await cldAdmin("list", { prefix, max_results: 200 });
-      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldLoading(false); return; }
-      setCldImages(data.resources || []);
-    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+      setCldImages((await storageEntries(prefix)).images);
+    } catch (e) { showMsg("Storage fetch failed: " + e.message, "red"); }
     setCldLoading(false);
-  }, []);
+  }, [storageEntries]);
 
   const cldNavigate = useCallback((folderName) => {
     const newPath = [...cldPath, folderName];
     setCldPath(newPath);
-    const fullPath = newPath.join("/");
-    fetchCldFolders(fullPath);
-    fetchCldImages(fullPath);
-  }, [cldPath, fetchCldFolders, fetchCldImages]);
+    fetchCldFolders(newPath.join("/"));
+  }, [cldPath, fetchCldFolders]);
 
   const cldGoBack = useCallback((idx) => {
     const newPath = cldPath.slice(0, idx);
     setCldPath(newPath);
-    const fullPath = newPath.join("/");
-    fetchCldFolders(fullPath);
-    if (newPath.length > 0) fetchCldImages(fullPath); else setCldImages([]);
-  }, [cldPath, fetchCldFolders, fetchCldImages]);
+    fetchCldFolders(newPath.join("/"));
+  }, [cldPath, fetchCldFolders]);
 
-  // ═══ CLOUDINARY DIRECT UPLOAD FROM LIBRARY (reference ~4155) — unsigned client upload ═══
-  // Sanitize folder path for Cloudinary — & breaks uploads; #, ?, %, \ are URL-unsafe
-  const sanitizeCloudinaryPath = (s) => s.replace(/&/g, "and").replace(/[#?%\\]/g, "_");
-  // Fetch ALL existing display_names in a folder (paginated, case-insensitive)
-  const fetchExistingNames = async (folder) => {
+  // ═══ UPLOAD FROM THE LIBRARY BROWSER — via the /upload Edge Function ═══
+  // Mirrors the Edge Function's key sanitiser. It has to match exactly: the dedupe pre-check lists
+  // the folder the file will actually land in, and a path that differs by so much as a capital
+  // would list an empty folder and wave every duplicate through.
+  const sanitizeCloudinaryPath = (s) =>
+    s.split("/").map(p => p.trim()).filter(Boolean).join("/")
+      .toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9._/-]/g, "-")
+      .replace(/-{2,}/g, "-").replace(/(^|\/)[-.]+|[-.]+(\/|$)/g, "$1");
+  // Every existing filename in a folder, lowercased and stripped of its extension — the dedupe
+  // pre-check. Named uploads key on the filename, so a match here means the file is already there.
+  const fetchExistingNames = useCallback(async (folder) => {
     const names = new Set();
-    let cursor = "";
-    for (let i = 0; i < 20; i++) { // hard cap 20 pages × 500 = 10k files
-      const data = await cldAdmin("list", { prefix: folder, max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
-      (data.resources || []).forEach(r => {
-        const displayName = r.display_name || (r.public_id || "").split("/").pop();
-        if (displayName) names.add(displayName.toLowerCase());
+    try {
+      const { images } = await storageEntries(folder);
+      images.forEach(r => {
+        const n = (r.name || "").replace(/\.[^.]+$/, "");
+        if (n) names.add(n.toLowerCase());
       });
-      if (!data.next_cursor) break;
-      cursor = data.next_cursor;
-    }
+    } catch (e) { /* a folder that doesn't exist yet lists as empty; nothing to dedupe against */ }
     return names;
-  };
+  }, [storageEntries]);
   const handleCldUpload = useCallback(async (files, isFolderUpload = false) => {
     if (!files || files.length === 0 || cldUploading) return;
     const baseFolder = cldPath.join("/");
@@ -4013,9 +4035,16 @@ export default function StudioApp() {
           const compressed = await compressImageForUpload(file);
           progress[idx].status = "uploading";
           setCldUploadProgress([...progress]);
-          const url = await uploadToStorage(compressed, targetFolder);
-          progress[idx] = { ...progress[idx], status: "done", url };
-          doneCount++;
+          // keepName so the tile caption is the filename and a re-upload overwrites rather than
+          // adding a second copy under a fresh random id.
+          const res = await uploadToStorage(compressed, targetFolder, { keepName: file.name, detail: true });
+          if (res.duplicate) {
+            progress[idx] = { ...progress[idx], status: "skipped" };
+            skippedCount++;
+          } else {
+            progress[idx] = { ...progress[idx], status: "done", url: res.url };
+            doneCount++;
+          }
         } catch (e) {
           progress[idx] = { ...progress[idx], status: "error" };
         }
@@ -4030,19 +4059,17 @@ export default function StudioApp() {
     if (unsupportedFiles.length > 0) parts.push(`⚠ ${unsupportedFiles.length} unsupported`);
     if (failedCount > 0) parts.push(`✗ ${failedCount} failed`);
     showMsg(parts.join(", ") || "Nothing to upload", failedCount === 0 ? "green" : "orange");
-    fetchCldImages(baseFolder);
-    fetchCldFolders(baseFolder);
-  }, [cldPath, cldUploading, fetchCldImages, fetchCldFolders]);
+    fetchCldFolders(baseFolder);      // one call now refreshes both folders and images
+  }, [cldPath, cldUploading, fetchCldFolders, fetchExistingNames]);
 
-  // ═══ CLOUDINARY BULK DELETE (reference ~4282) ═══
+  // ═══ BULK DELETE ═══
   const handleCldBulkDelete = useCallback(async () => {
     const ids = Array.from(cldSelected);
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""} permanently from Cloudinary?`)) return;
+    if (!confirm(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""} permanently from Storage?`)) return;
     setCldDeleting(true);
     try {
-      const d = await cldAdmin("delete_bulk", { public_ids: ids });
-      const deletedCount = d.deleted ? Object.values(d.deleted).filter(v => v === "deleted").length : 0;
+      const deletedCount = await deleteStorageObjects(ids);
       setCldImages(prev => prev.filter(img => !cldSelected.has(img.public_id)));
       setCldSelected(new Set());
       setCldSelectMode(false);
@@ -4051,15 +4078,15 @@ export default function StudioApp() {
     setCldDeleting(false);
   }, [cldSelected]);
 
-  // ═══ CLOUDINARY DELETE FOLDER (reference ~4303) ═══
+  // ═══ DELETE FOLDER ═══
   const handleCldDeleteFolder = useCallback(async (folderName) => {
     const fullPath = [...cldPath, folderName].join("/");
     if (!confirm(`Delete folder "${folderName}" and ALL its contents permanently?\n\nPath: ${fullPath}\n\nThis cannot be undone!`)) return;
     setCldDeleting(true);
     try {
-      const d = await cldAdmin("delete_folder", { prefix: fullPath });
+      const n = await deleteStorageFolder(fullPath);
       setCldFolders(prev => prev.filter(f => (f.name || f.path) !== folderName));
-      showMsg(`✓ Folder "${folderName}" deleted`, "green");
+      showMsg(`✓ Folder "${folderName}" deleted (${n} file${n !== 1 ? "s" : ""})`, "green");
     } catch (e) { showMsg("Folder delete failed: " + e.message, "red"); }
     setCldDeleting(false);
   }, [cldPath]);
@@ -4109,27 +4136,42 @@ export default function StudioApp() {
     return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
-  // ═══ CLOUDINARY VIDEO BROWSER (reference ~4415) — rewired /api/cloudinary → cldAdmin ═══
+  // ═══ STORAGE VIDEO BROWSER (was Cloudinary) ═══
+  // Same bucket and same folder tree as the photo browser — only the type filter differs.
+  const storageVideos = useCallback(async (path) => {
+    const folders = [], files = [];
+    for (let page = 0; page < 10; page++) {
+      const data = await listStorage(path, { limit: 500, offset: page * 500 });
+      folders.push(...(data.folders || []));
+      files.push(...(data.files || []));
+      if (!data.truncated) break;
+    }
+    return {
+      folders,
+      videos: files
+        .filter((f) => /^video\//.test(f.type || "") || /\.(mp4|webm|mov|m4v)$/i.test(f.name))
+        .map((f) => ({ ...f, public_id: f.path, secure_url: f.url, display_name: f.name })),
+    };
+  }, []);
+
   const fetchCldVideoFolders = useCallback(async (path = "") => {
     setCldVideoLoading(true);
     try {
-      const data = await cldAdmin("folders", { path });
-      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldVideoLoading(false); return; }
-      setCldVideoFolders(data.folders || []);
-      setCldVideoList([]);
-    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+      const { folders, videos } = await storageVideos(path);
+      setCldVideoFolders(folders);
+      setCldVideoList(path ? videos : []);
+    } catch (e) { showMsg("Storage fetch failed: " + e.message, "red"); }
     setCldVideoLoading(false);
-  }, []);
+  }, [storageVideos]);
 
   const fetchCldVideoList = useCallback(async (prefix) => {
+    if (!prefix) { setCldVideoList([]); return; }
     setCldVideoLoading(true);
     try {
-      const data = await cldAdmin("list_video", { prefix, max_results: 100 });
-      if (data.error) { showMsg("CLD: " + data.error, "red"); setCldVideoLoading(false); return; }
-      setCldVideoList(data.resources || []);
-    } catch (e) { showMsg("Cloudinary fetch failed", "red"); }
+      setCldVideoList((await storageVideos(prefix)).videos);
+    } catch (e) { showMsg("Storage fetch failed: " + e.message, "red"); }
     setCldVideoLoading(false);
-  }, []);
+  }, [storageVideos]);
 
   const openCldVideoBrowser = useCallback(() => {
     setAddVideoOpen(true); setCldVideoPath([]); setCldVideoFolders([]); setCldVideoList([]);
@@ -4139,30 +4181,29 @@ export default function StudioApp() {
   const cldVideoNavigate = useCallback((folderName) => {
     const newPath = [...cldVideoPath, folderName];
     setCldVideoPath(newPath);
-    const fullPath = newPath.join("/");
-    fetchCldVideoFolders(fullPath);
-    fetchCldVideoList(fullPath);
-  }, [cldVideoPath, fetchCldVideoFolders, fetchCldVideoList]);
+    fetchCldVideoFolders(newPath.join("/"));
+  }, [cldVideoPath, fetchCldVideoFolders]);
 
   const cldVideoGoBack = useCallback((idx) => {
     const newPath = cldVideoPath.slice(0, idx);
     setCldVideoPath(newPath);
-    const fullPath = newPath.join("/");
-    fetchCldVideoFolders(fullPath);
-    if (newPath.length > 0) fetchCldVideoList(fullPath); else setCldVideoList([]);
-  }, [cldVideoPath, fetchCldVideoFolders, fetchCldVideoList]);
+    fetchCldVideoFolders(newPath.join("/"));
+  }, [cldVideoPath, fetchCldVideoFolders]);
 
   const addCldVideo = useCallback((resource) => {
     const vidUrl = resource.secure_url;
-    // Generate thumbnail: replace /video/upload/ path and extension
-    const thumbUrl = vidUrl.replace("/video/upload/", "/video/upload/so_0,w_320,h_180,c_fill/").replace(/\.[^.]+$/, ".jpg");
     const vid = {
       id: "M" + Date.now().toString(36),
       title: (resource.public_id || "").split("/").pop().replace(/[-_]/g, " "),
-      thumb: thumbUrl,
+      // No poster: Storage doesn't render video frames the way Cloudinary's so_0 transform did.
+      // The cards fall back to the <video> element itself, which they already do for playback.
+      thumb: "",
       videoUrl: vidUrl,
-      duration: resource.duration ? Math.floor(resource.duration / 60) + ":" + String(Math.floor(resource.duration % 60)).padStart(2, "0") : "",
-      date: (resource.created_at || "").slice(0, 10),
+      duration: "",
+      date: (resource.updatedAt || "").slice(0, 10),
+      // Kept as "cloudinary": this string is the app's flag for "a file we host and play in a
+      // <video> tag" as opposed to a YouTube embed, and every card, filter and delete button
+      // branches on it. The 6 videos already stored under it would break if this changed.
       source: "cloudinary",
       addedAt: Date.now()
     };
@@ -5776,7 +5817,7 @@ export default function StudioApp() {
     return { ok, fail };
   }, [aiTagImage, saveLib, showMsg, taxonomy, mergeLibItems]);
 
-  // ── Recursive Cloudinary folder import ──────────────────────────────────────
+  // ── Recursive Storage folder import ─────────────────────────────────────────
   // Pulls EVERY image under a folder prefix (all subfolders, paginated) into the library,
   // deduped by URL so re-importing the same folder is safe (already-added photos are skipped —
   // no duplicates). Stamps each with the event (folder) name + best-effort zone from filename.
@@ -5785,48 +5826,27 @@ export default function StudioApp() {
     const zones = taxonomy.areasElements || [];
     const KW = { stage: "Stage", entry: "Entry Passage", passage: "Entry Passage", vedi: "Vedi", mandap: "Vedi", lounge: "Centre Lounge", "side lounge": "Side Lounge", photobooth: "Photobooth", "photo booth": "Photobooth", centrepiece: "Centre Pieces", "centre piece": "Centre Pieces", "center piece": "Centre Pieces", prop: "Props", install: "Installations" };
     const detectZone = (f) => { const s = f.toLowerCase(); let z = zones.find(zn => s.includes(zn.toLowerCase())); if (z) return z; for (const [k, zn] of Object.entries(KW)) { if (s.includes(k) && zones.includes(zn)) return zn; } return ""; };
-    const seen = new Set();           // secure_urls collected this run (dedupe within this scan)
+    const seen = new Set();           // urls collected this run (dedupe within this scan)
     let scanned = 0;
     let fresh = [];
-    const take = (res) => { (res || []).forEach(r => {
-      if (!r.secure_url || r.resource_type === "video") return;
-      scanned++;
-      if (seen.has(r.secure_url)) return;
-      seen.add(r.secure_url); fresh.push(r);
-    }); };
     try {
-      // 1) Walk the whole folder TREE under the prefix (asset-folder based — matches the Media
-      //    Library you see in the Cloudinary console, which the old public_id prefix missed).
-      const folders = [prefix];
+      // Breadth-first walk of the prefix. Storage has no folder entity — a folder is only implied
+      // by the keys beneath it — so each level is one listing and subfolders come back as entries.
       const queue = [prefix];
-      let guard = 0;
+      let guard = 0, visited = 0;
       while (queue.length && guard++ < 500) {
         const f = queue.shift();
-        try {
-          const fd = await cldAdmin("folders", { path: f });
-          (fd.folders || []).forEach(sub => { const full = sub.path || `${f}/${sub.name}`; if (!folders.includes(full)) { folders.push(full); queue.push(full); } });
-        } catch { /* skip unreadable folder */ }
+        const { folders, images } = await storageEntries(f);
+        folders.forEach(sub => queue.push(sub.path || `${f}/${sub.name}`));
+        images.forEach(r => {
+          if (!r.secure_url) return;
+          scanned++;
+          if (seen.has(r.secure_url)) return;
+          seen.add(r.secure_url); fresh.push(r);
+        });
+        if (visited++ % 4 === 0) showMsg(`Scanning "${eventName}" — ${visited} folder(s), ${fresh.length} new so far…`, "blue");
       }
-      // 2) List each folder by asset-folder, paginated.
-      for (let fi = 0; fi < folders.length; fi++) {
-        let cursor = "";
-        for (let pg = 0; pg < 40; pg++) {
-          const d = await cldAdmin("list_by_folder", { asset_folder: folders[fi], max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
-          take(d.resources);
-          if (!d.next_cursor) break;
-          cursor = d.next_cursor;
-        }
-        if (fi % 4 === 0) showMsg(`Scanning "${eventName}" — ${folders.length} folders, ${fresh.length} new so far…`, "blue");
-      }
-      // 3) Also page the public_id prefix (catches any fixed-mode assets not under an asset folder).
-      let pc = "";
-      for (let pg = 0; pg < 60; pg++) {
-        const d = await cldAdmin("list", { prefix, max_results: 500, ...(pc ? { next_cursor: pc } : {}) });
-        take(d.resources);
-        if (!d.next_cursor) break;
-        pc = d.next_cursor;
-      }
-    } catch (e) { showMsg("Folder import failed: " + (e.message || "Cloudinary error"), "red"); return null; }
+    } catch (e) { showMsg("Folder import failed: " + (e.message || "Storage error"), "red"); return null; }
     // Batched server existence check (not a full-table scan) drops URLs already in the Library.
     try { const existing = await checkExistingLibraryUrls(fresh.map(r => r.secure_url)); fresh = fresh.filter(r => !existing.has(r.secure_url)); } catch { /* best-effort; worst case a dupe slips through */ }
     const skipped = scanned - fresh.length;
@@ -5840,7 +5860,7 @@ export default function StudioApp() {
     saveLib(newImgs);
     showMsg(`✓ Imported ${newImgs.length} new photo(s) from "${eventName}" (whole folder tree)${skipped ? ` · skipped ${skipped} already in library` : ""}. Run "Tag all untagged" to AI-tag them.`, "green");
     return { added: newImgs.length, skipped, scanned, eventName };
-  }, [cldAdmin, saveLib, showMsg, taxonomy]);
+  }, [storageEntries, saveLib, showMsg, taxonomy]);
 
   // ── Zone upload (Cloudinary → AI tag → review) — VERBATIM ──
   const handleZoneUpload = async (elKey, file) => {
@@ -6824,7 +6844,7 @@ export default function StudioApp() {
     premiaConfig, premiaGate, setPremiaGate, isPremiaPlatinum, PREMIA_DEFAULTS,
     // youtube
     ytVideos, setYtVideos, ytPlaylists, setYtPlaylists, ytLoading, setYtLoading, ytSearch, setYtSearch, ytFilterPL, setYtFilterPL,
-    loadAllYT, searchYT, fetchYTPlaylist, untaggedVideoCount, cldAdmin,
+    loadAllYT, searchYT, fetchYTPlaylist, untaggedVideoCount,
     ytPicker, setYtPicker, ytLastFetch, setYtLastFetch, ytVideoTags, setYtVideoTags, saveYtTags, ytTagEdit, setYtTagEdit,
     tagVenueGroup, setTagVenueGroup, tagOutsideSub, setTagOutsideSub, aiTaggingVideo, setAiTaggingVideo, aiVideoDraft, setAiVideoDraft,
     ytFilterVenue, setYtFilterVenue, ytFilterFn, setYtFilterFn, ytFilterTier, setYtFilterTier, ytFilterLinked, setYtFilterLinked,

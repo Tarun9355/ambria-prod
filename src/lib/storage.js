@@ -26,7 +26,7 @@ export const STORAGE_FOLDERS = {
  * Upload a File/Blob (or a `data:` URL string) and return its public URL.
  * Throws on failure so call sites can surface a message rather than silently storing "".
  */
-export async function uploadToStorage(fileOrDataUrl, folder = STORAGE_FOLDERS.CLIENT) {
+export async function uploadToStorage(fileOrDataUrl, folder = STORAGE_FOLDERS.CLIENT, opts = {}) {
   let file = fileOrDataUrl;
 
   // IMS's add-item form hands over a base64 data: URL rather than a File. Convert it here so
@@ -44,6 +44,9 @@ export async function uploadToStorage(fileOrDataUrl, folder = STORAGE_FOLDERS.CL
   const fd = new FormData();
   fd.append("file", file);
   fd.append("folder", folder);
+  // Only the library browser sets this. It makes the key the original filename, so tiles read as
+  // filenames and a re-upload of the same file lands on the same key instead of a second copy.
+  if (opts.keepName) fd.append("name", opts.keepName === true ? file.name : opts.keepName);
 
   const r = await fetch(FN_URL, {
     method: "POST",
@@ -53,7 +56,73 @@ export async function uploadToStorage(fileOrDataUrl, folder = STORAGE_FOLDERS.CL
   const data = await r.json().catch(() => ({}));
   if (!r.ok || data.error) throw new Error(data.error || `Upload failed (${r.status})`);
   if (!data.url) throw new Error("Upload returned no URL");
-  return data.url;
+  return opts.detail ? data : data.url;
+}
+
+// ─── Browsing ─────────────────────────────────────────────────────────────────
+// Listing goes through the same Edge Function for the same reason uploads do: `storage.objects`
+// has no public SELECT policy, so the anon key sees zero rows under every prefix. Adding one
+// would make the entire bucket enumerable by anyone holding the public key.
+
+async function storageOp(body) {
+  const r = await fetch(FN_URL, {
+    method: "POST",
+    headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.error) throw new Error(data.error || `Storage ${body.op} failed (${r.status})`);
+  return data;
+}
+
+/**
+ * One level of the `media` bucket.
+ * @returns {Promise<{path:string, folders:{name,path}[], files:{name,path,url,bytes,type,updatedAt}[], truncated:boolean}>}
+ */
+export function listStorage(path = "", { limit = 500, offset = 0 } = {}) {
+  return storageOp({ op: "list", path, limit, offset });
+}
+
+/**
+ * Every image under `root`, walking subfolders. Pass "" for the whole bucket — that also picks up
+ * the loose files sitting at the root, which a hardcoded list of top folders would miss and a
+ * cross-check would then report as orphaned.
+ *
+ * Storage lists one level at a time, so depth costs a request per folder. Measured on the real
+ * bucket that's ~190 requests / 5.4k files / ~35s, hence `onProgress`.
+ * @param {(info:{folder:string, files:number, visited:number}) => void} [onProgress]
+ */
+export async function listStorageTree(root, onProgress) {
+  const out = [];
+  const queue = [root];
+  let visited = 0;
+  while (queue.length && visited < 2000) {
+    const folder = queue.shift();
+    visited++;
+    for (let page = 0; page < 20; page++) {
+      const data = await listStorage(folder, { limit: 500, offset: page * 500 });
+      (data.folders || []).forEach((f) => queue.push(f.path));
+      (data.files || []).forEach((f) => {
+        if (/^image\//.test(f.type || "") || /\.(jpe?g|png|gif|webp|avif|svg)$/i.test(f.name)) out.push(f);
+      });
+      if (!data.truncated) break;
+    }
+    onProgress?.({ folder, files: out.length, visited });
+  }
+  return out;
+}
+
+/** Delete objects by key. Returns the number actually removed. */
+export async function deleteStorageObjects(keys) {
+  const list = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
+  if (!list.length) return 0;
+  return (await storageOp({ op: "delete", keys: list })).deleted || 0;
+}
+
+/** Delete a folder and everything under it. Storage has no folder entity — this sweeps the keys. */
+export async function deleteStorageFolder(path) {
+  if (!path) return 0;
+  return (await storageOp({ op: "rmdir", path })).deleted || 0;
 }
 
 /** Voice notes from IMS Department Ops. */

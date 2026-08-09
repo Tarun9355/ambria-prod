@@ -10,6 +10,7 @@ import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
+import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
@@ -328,66 +329,45 @@ export default function ManageLibrary({ ctx }) {
     runBulkTag?.();
   };
 
-  // Rebuild Library — scans ALL Cloudinary folders and inserts missing images.
-  // Uses the same cldAdmin edge-function path as importCloudinaryFolder.
+  // Rebuild Library — walks every top-level Storage folder and inserts missing images.
   // Existing images (and their tags) are always preserved.
   const handleRebuildLibrary = async () => {
-    const TOP_FOLDERS = ["Ambria", "inhouse venues", "inventory", "Outside Venues", "client-uploads", "production-ref"];
     if (!window.confirm(
-      `Rebuild Library from Cloudinary?\n\n` +
-      `Scans all ${TOP_FOLDERS.length} folders (~9,987 images total).\n` +
+      `Rebuild Library from Storage?\n\n` +
+      `Walks the whole media bucket (~5,400 images).\n` +
       `• Existing tags are preserved — nothing is overwritten\n` +
       `• Missing images are added as Untagged\n` +
-      `• May take 3–8 minutes\n\n` +
+      `• Takes about a minute\n\n` +
       `Run "🤖 Tag all untagged" afterwards.`
     )) return;
 
     setRebuildRunning(true);
     setRebuildMsg("Starting…");
 
-    const seen = new Set(); // secure_urls/public_ids collected THIS scan (dedupe within this run)
+    const seen = new Set(); // keys collected THIS scan (dedupe within this run)
     const fresh = [];
     let totalScanned = 0;
 
     try {
-      for (const topFolder of TOP_FOLDERS) {
-        setRebuildMsg(`Scanning "${topFolder}"…`);
-
-        // Page through all images under this prefix (catches all depths)
-        let cursor = "";
-        let folderScanned = 0;
-        for (let pg = 0; pg < 100; pg++) {
-          const d = await ctx.cldAdmin("list", {
-            prefix: topFolder,
-            max_results: 500,
-            ...(cursor ? { next_cursor: cursor } : {}),
-          });
-          for (const r of d.resources || []) {
-            if (!r.secure_url) continue;
-            folderScanned++;
-            totalScanned++;
-            if (seen.has(r.secure_url) || seen.has(r.public_id)) continue;
-            seen.add(r.secure_url);
-            seen.add(r.public_id);
-            const name = (r.public_id ?? "").split("/").pop().replace(/[-_]/g, " ");
-            fresh.push({
-              id: r.public_id,
-              name,
-              url: r.secure_url,
-              folder: topFolder,
-              tags: {},
-              elements: [],
-              addedAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-              width:  r.width  ?? null,
-              height: r.height ?? null,
-              source: "cloudinary-rebuild",
-            });
-          }
-          setRebuildMsg(`"${topFolder}": ${folderScanned} scanned · ${fresh.length} new total…`);
-          if (!d.next_cursor) break;
-          cursor = d.next_cursor;
-        }
-        console.log(`Rebuild: "${topFolder}" — ${folderScanned} scanned`);
+      // From the root, so loose files outside the known top-level folders are picked up too.
+      const files = await listStorageTree("", ({ folder, files: n, visited }) =>
+        setRebuildMsg(`Scanning "${folder || "/"}" — ${visited} folder(s), ${n} images…`));
+      for (const r of files) {
+        totalScanned++;
+        if (seen.has(r.path)) continue;
+        seen.add(r.path);
+        fresh.push({
+          id: r.path,
+          name: r.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "),
+          url: r.url,
+          folder: r.path.includes("/") ? r.path.slice(0, r.path.lastIndexOf("/")) : "",
+          tags: {},
+          elements: [],
+          addedAt: r.updatedAt ? new Date(r.updatedAt).getTime() : Date.now(),
+          width: null,
+          height: null,
+          source: "storage-rebuild",
+        });
       }
 
       // Batched server existence check (not a full-table scan) drops anything already in the Library.
@@ -396,7 +376,7 @@ export default function ManageLibrary({ ctx }) {
       const newImgs = fresh.filter(r => !existing.has(r.url));
       const skipped = totalScanned - newImgs.length;
       if (newImgs.length === 0) {
-        showMsg(`Library up to date — all ${totalScanned} Cloudinary images already in Library.`, "green");
+        showMsg(`Library up to date — all ${totalScanned} Storage images already in Library.`, "green");
         return;
       }
 
@@ -417,51 +397,48 @@ export default function ManageLibrary({ ctx }) {
     }
   };
 
-  // Cloudinary secure_url → public_id (strip domain/version prefix + extension) — lets the
-  // orphan check match a library row even if its stored URL's version number is stale (e.g. the
-  // asset was re-uploaded/overwritten rather than deleted), same as handleRebuildLibrary's own
-  // dedupe which keys on both secure_url AND public_id.
-  const cldPublicIdFromUrl = (url) => {
+  // A public Storage URL → its object key. Lets the orphan check match a Library row whose stored
+  // URL differs cosmetically from the one we'd build today — a /render/image/ transform URL, a
+  // query string, or different percent-encoding of the same path.
+  const storageKeyFromUrl = (url) => {
     if (!url) return null;
-    const afterUpload = String(url).replace(/^.*\/upload\/(v\d+\/)?/, "").replace(/\.[a-zA-Z0-9]+$/, "");
-    try { return decodeURIComponent(afterUpload); } catch { return afterUpload; }
+    const m = String(url).split("?")[0].match(/\/(?:object|render\/image)\/public\/[^/]+\/(.+)$/);
+    if (!m) return null;
+    try { return decodeURIComponent(m[1]); } catch { return m[1]; }
   };
 
-  // Find Orphaned Images — the reverse of Rebuild Library. Scans the same Cloudinary folders to
-  // build the set of assets that ACTUALLY still exist, then flags any Library row whose image
-  // isn't in that set (e.g. the team deleted it directly in Cloudinary, bypassing the app).
+  // Find Orphaned Images — the reverse of Rebuild Library. Walks the same Storage folders to build
+  // the set of objects that ACTUALLY still exist, then flags any Library row whose image isn't in
+  // that set (e.g. the team deleted it straight from the bucket, bypassing the app).
   // Read-only: only reports the list — deleting is a separate explicit action below.
   const handleFindOrphaned = async () => {
-    const TOP_FOLDERS = ["Ambria", "inhouse venues", "inventory", "Outside Venues", "client-uploads", "production-ref"];
     if (!window.confirm(
       `Scan for orphaned Library images?\n\n` +
-      `Scans all ${TOP_FOLDERS.length} Cloudinary folders (~9,987 images) and cross-checks every Library row.\n` +
+      `Walks the whole media bucket (~5,400 images) and cross-checks every Library row.\n` +
       `Read-only — nothing is deleted yet, you'll get a list to review first.\n` +
-      `May take 3–8 minutes.`
+      `Takes about a minute.`
     )) return;
 
     setOrphanScan({ running: true, msg: "Starting…", result: null });
     const existingUrls = new Set();
     const existingIds = new Set();
     try {
-      for (const topFolder of TOP_FOLDERS) {
-        setOrphanScan((s) => ({ ...s, msg: `Scanning "${topFolder}"…` }));
-        let cursor = "";
-        for (let pg = 0; pg < 100; pg++) {
-          const d = await ctx.cldAdmin("list", { prefix: topFolder, max_results: 500, ...(cursor ? { next_cursor: cursor } : {}) });
-          for (const r of d.resources || []) {
-            if (r.secure_url) existingUrls.add(r.secure_url);
-            if (r.public_id) existingIds.add(r.public_id);
-          }
-          if (!d.next_cursor) break;
-          cursor = d.next_cursor;
-        }
+      // From the root — a folder missed here becomes a Library row wrongly offered for deletion.
+      const files = await listStorageTree("", ({ folder, files: n, visited }) =>
+        setOrphanScan((s) => ({ ...s, msg: `Scanning "${folder || "/"}" — ${visited} folder(s), ${n} images…` })));
+      for (const r of files) { existingUrls.add(r.url); existingIds.add(r.path); }
+      // A scan that found nothing means the listing failed or the bucket moved — not that every
+      // Library row is orphaned. Bailing out here stops the UI offering to delete all of them.
+      if (existingIds.size === 0) {
+        setOrphanScan({ running: false, msg: "", result: null });
+        showMsg("Orphan scan aborted — Storage returned no files at all. Check the upload Edge Function is deployed.", "red");
+        return;
       }
       setOrphanScan((s) => ({ ...s, msg: `Fetching Library rows…` }));
       const rows = await fetchAllLibraryRowsMinimal((n) => setOrphanScan((s) => ({ ...s, msg: `Fetching Library rows… ${n}` })));
-      const orphaned = rows.filter((r) => r.url && !existingUrls.has(r.url) && !existingIds.has(cldPublicIdFromUrl(r.url)));
+      const orphaned = rows.filter((r) => r.url && !existingUrls.has(r.url) && !existingIds.has(storageKeyFromUrl(r.url)));
       setOrphanScan({ running: false, msg: "", result: { orphaned, totalLibrary: rows.length, totalCloudinary: existingUrls.size } });
-      showMsg(orphaned.length ? `Found ${orphaned.length} orphaned row(s) out of ${rows.length} Library images.` : "No orphaned rows found — Library matches Cloudinary.", orphaned.length ? "orange" : "green");
+      showMsg(orphaned.length ? `Found ${orphaned.length} orphaned row(s) out of ${rows.length} Library images.` : "No orphaned rows found — Library matches Storage.", orphaned.length ? "orange" : "green");
     } catch (e) {
       setOrphanScan({ running: false, msg: "", result: null });
       showMsg("Orphan scan failed: " + (e.message || "Unknown error"), "red");
@@ -471,7 +448,7 @@ export default function ManageLibrary({ ctx }) {
   const handleDeleteOrphaned = async () => {
     const ids = (orphanScan.result?.orphaned || []).map((r) => r.id);
     if (!ids.length) return;
-    if (!window.confirm(`Delete ${ids.length} orphaned Library row(s)?\n\nThis removes the Library entry only (there's no Cloudinary image left to delete) and cannot be undone.`)) return;
+    if (!window.confirm(`Delete ${ids.length} orphaned Library row(s)?\n\nThis removes the Library entry only (there's no Storage file left to delete) and cannot be undone.`)) return;
     setOrphanDeleting(true);
     try {
       await saveLib([], ids);
@@ -1602,9 +1579,9 @@ export default function ManageLibrary({ ctx }) {
     <div>
       {/* Inline add bar */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 12, background: cardBg, border: `1px dashed ${accent}40`, borderRadius: 12, marginBottom: 14 }}>
-        <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>☁️ Cloudinary</button>
-        <button onClick={handleRebuildLibrary} disabled={rebuildRunning} title="Scan all Cloudinary folders and add any missing images to the Library" style={{ ...S.btn(false), fontSize: 11, opacity: rebuildRunning ? 0.5 : 1, border: `1px solid ${rebuildRunning ? "#9CA3AF" : "#7C3AED"}`, color: rebuildRunning ? "#9CA3AF" : "#7C3AED" }}>{rebuildRunning ? "⏳ Rebuilding…" : "🔄 Rebuild Library"}</button>
-        <button onClick={handleFindOrphaned} disabled={orphanScan.running} title="Scan Cloudinary and flag Library rows whose image no longer exists there" style={{ ...S.btn(false), fontSize: 11, opacity: orphanScan.running ? 0.5 : 1, border: `1px solid ${orphanScan.running ? "#9CA3AF" : "#E11D48"}`, color: orphanScan.running ? "#9CA3AF" : "#E11D48" }}>{orphanScan.running ? "⏳ Scanning…" : "🧹 Find Orphaned"}</button>
+        <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>🗂️ Storage</button>
+        <button onClick={handleRebuildLibrary} disabled={rebuildRunning} title="Scan all Storage folders and add any missing images to the Library" style={{ ...S.btn(false), fontSize: 11, opacity: rebuildRunning ? 0.5 : 1, border: `1px solid ${rebuildRunning ? "#9CA3AF" : "#7C3AED"}`, color: rebuildRunning ? "#9CA3AF" : "#7C3AED" }}>{rebuildRunning ? "⏳ Rebuilding…" : "🔄 Rebuild Library"}</button>
+        <button onClick={handleFindOrphaned} disabled={orphanScan.running} title="Scan Storage and flag Library rows whose image no longer exists there" style={{ ...S.btn(false), fontSize: 11, opacity: orphanScan.running ? 0.5 : 1, border: `1px solid ${orphanScan.running ? "#9CA3AF" : "#E11D48"}`, color: orphanScan.running ? "#9CA3AF" : "#E11D48" }}>{orphanScan.running ? "⏳ Scanning…" : "🧹 Find Orphaned"}</button>
       </div>
       {rebuildMsg && <div style={{ padding: "8px 14px", borderRadius: 8, background: "#7C3AED12", border: "1px solid #7C3AED30", marginBottom: 8, fontSize: 11, color: "#7C3AED" }}>⏳ {rebuildMsg}</div>}
       {orphanScan.msg && <div style={{ padding: "8px 14px", borderRadius: 8, background: "#E11D4812", border: "1px solid #E11D4830", marginBottom: 8, fontSize: 11, color: "#E11D48" }}>⏳ {orphanScan.msg}</div>}
@@ -1612,10 +1589,10 @@ export default function ManageLibrary({ ctx }) {
         <div style={{ border: `1px solid ${border}`, borderRadius: 12, padding: 14, marginBottom: 14, background: cardBg }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: orphanScan.result.orphaned.length ? 10 : 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: orphanScan.result.orphaned.length ? "#E11D48" : "#10B981" }}>
-              {orphanScan.result.orphaned.length ? `🧹 ${orphanScan.result.orphaned.length} orphaned row(s) found` : "✓ No orphaned rows — Library matches Cloudinary"}
+              {orphanScan.result.orphaned.length ? `🧹 ${orphanScan.result.orphaned.length} orphaned row(s) found` : "✓ No orphaned rows — Library matches Storage"}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 10, color: textS }}>{orphanScan.result.totalLibrary} Library rows · {orphanScan.result.totalCloudinary} Cloudinary images</span>
+              <span style={{ fontSize: 10, color: textS }}>{orphanScan.result.totalLibrary} Library rows · {orphanScan.result.totalCloudinary} Storage images</span>
               {orphanScan.result.orphaned.length > 0 && (
                 <button onClick={handleDeleteOrphaned} disabled={orphanDeleting} style={{ ...S.btn(true), fontSize: 11, padding: "5px 10px", background: "#E11D48", opacity: orphanDeleting ? 0.5 : 1 }}>
                   {orphanDeleting ? "Deleting…" : `🗑 Delete ${orphanScan.result.orphaned.length}`}
@@ -1639,7 +1616,7 @@ export default function ManageLibrary({ ctx }) {
       {/* Cloudinary Browser for Library */}
       {cldOpen==="library"&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:14,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontSize:12,fontWeight:700,color:accent}}>📂 Browse Cloudinary Photos</div>
+          <div style={{fontSize:12,fontWeight:700,color:accent}}>📂 Browse Storage Photos</div>
           <span onClick={()=>setCldOpen(null)} style={{fontSize:11,cursor:"pointer",color:"#E11D48",fontWeight:700}}>✕ Close</span>
         </div>
         <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
@@ -1769,12 +1746,12 @@ export default function ManageLibrary({ ctx }) {
                 </div>
                 {!cldSelectMode&&<button onClick={async(e)=>{
                   e.stopPropagation();
-                  if(!confirm("Delete this photo from Cloudinary permanently?")) return;
+                  if(!confirm("Delete this photo from Storage permanently?")) return;
                   try {
-                    const d=await ctx.cldAdmin("delete",{public_id:img.public_id});
-                    if(d.deleted){setCldImages(prev=>prev.filter(p=>p.public_id!==img.public_id));showMsg("✓ Deleted","green");}
-                    else{showMsg("Delete failed: "+(d.error||"unknown"),"red");}
-                  }catch(err){showMsg("Delete failed","red");}
+                    await deleteStorageObjects([img.public_id]);
+                    setCldImages(prev=>prev.filter(p=>p.public_id!==img.public_id));
+                    showMsg("✓ Deleted","green");
+                  }catch(err){showMsg("Delete failed: "+err.message,"red");}
                 }} style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.6)",border:"none",borderRadius:4,padding:"2px 5px",cursor:"pointer",fontSize:10,color:"#F87171",lineHeight:1}}>✕</button>}
               </div>;
             })}
@@ -1925,7 +1902,7 @@ export default function ManageLibrary({ ctx }) {
           {/* Add Video Panel (Cloudinary Video Browser) */}
           {addVideoOpen&&<div style={{border:`1px solid ${accent}`,borderRadius:12,padding:14,marginBottom:12,background:isDark?"rgba(201,169,110,0.04)":"rgba(201,169,110,0.06)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div style={{fontSize:12,fontWeight:700,color:accent}}>📂 Add Video from Cloudinary</div>
+              <div style={{fontSize:12,fontWeight:700,color:accent}}>📂 Add Video from Storage</div>
               <span onClick={()=>setAddVideoOpen(false)} style={{fontSize:11,cursor:"pointer",color:"#E11D48",fontWeight:700}}>✕ Close</span>
             </div>
             {/* Breadcrumb */}
@@ -1946,11 +1923,13 @@ export default function ManageLibrary({ ctx }) {
             {/* Video files */}
             {!cldVideoLoading&&cldVideoList.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
               {cldVideoList.map(res=>{
-                const thumbUrl=res.secure_url.replace("/video/upload/","/video/upload/so_0,w_320,h_180,c_fill/").replace(/\.[^.]+$/,".jpg");
                 const fileName=(res.public_id||"").split("/").pop().replace(/[-_]/g," ");
                 const alreadyAdded=manualVideos.some(m=>m.videoUrl===res.secure_url);
                 return <div key={res.public_id} style={{borderRadius:8,border:`1px solid ${border}`,overflow:"hidden",opacity:alreadyAdded?0.4:1}}>
-                  <img src={thumbUrl} alt={fileName} style={{width:"100%",height:100,objectFit:"cover",display:"block"}} loading="lazy" onError={e=>{e.target.style.background=isDark?"#1a1a2e":"#f0f0f0";e.target.style.height="100px";}}/>
+                  {/* Storage has no server-side video thumbnailing the way Cloudinary did, so the
+                      tile is the video itself seeked to its first frame — preload="metadata" keeps
+                      that to a range request rather than pulling the whole file. */}
+                  <video src={res.secure_url+"#t=0.1"} preload="metadata" muted playsInline style={{width:"100%",height:100,objectFit:"cover",display:"block",background:isDark?"#1a1a2e":"#f0f0f0"}}/>
                   <div style={{padding:"6px 8px"}}>
                     <div style={{fontSize:10,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}}>{fileName}</div>
                     {alreadyAdded?<div style={{fontSize:9,color:"#059669",fontWeight:600}}>✓ Added</div>:
@@ -1960,7 +1939,7 @@ export default function ManageLibrary({ ctx }) {
               })}
             </div>}
             {!cldVideoLoading&&cldVideoFolders.length===0&&cldVideoList.length===0&&cldVideoPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>No video files in this folder</div>}
-            <div style={{fontSize:9,color:textS,marginTop:8}}>Upload videos to any Cloudinary folder first, then browse them here. Supports mp4, mov, webm.</div>
+            <div style={{fontSize:9,color:textS,marginTop:8}}>Upload videos to any Storage folder first, then browse them here. Supports mp4, mov, webm.</div>
           </div>}
           {/* Filter pills row */}
           <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
@@ -2082,7 +2061,11 @@ export default function ManageLibrary({ ctx }) {
                     setBigTagVid(v.id); // open the full-screen editor (play + tag + hide)
                   }
                 }}>
-                  <img src={v.thumb} alt={v.title} loading="lazy" style={{width:"100%",height:140,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                  {/* Storage-hosted videos have no poster image — Storage can't render a frame the
+                      way Cloudinary's so_0 transform did — so the first frame of the file stands in. */}
+                  {v.thumb
+                    ? <img src={v.thumb} alt={v.title} loading="lazy" style={{width:"100%",height:140,objectFit:"cover",display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+                    : <video src={v.videoUrl?v.videoUrl+"#t=0.1":undefined} preload="metadata" muted playsInline style={{width:"100%",height:140,objectFit:"cover",display:"block",background:"#000"}}/>}
                   <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
                     <div style={{width:44,height:32,borderRadius:8,background:"rgba(255,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:0,height:0,borderLeft:"12px solid #fff",borderTop:"7px solid transparent",borderBottom:"7px solid transparent",marginLeft:2}}/></div>
                   </div>
