@@ -13,6 +13,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
+import { setGroupIds } from "../../../lib/studio/zoneGroups";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemImsSubcat, itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
@@ -24,6 +25,10 @@ import InventoryItemPickerModal from "../../../components/shared/InventoryItemPi
 // can push a corrected element list back to the master library photo ("Save correction to
 // master"). Flip to false (one-line deploy) once all photos are verified to remove the button.
 const CORRECTION_MODE = true;
+
+// Stable empty set for zones with no grouping selection — a fresh `new Set()` per render would
+// change identity every time and defeat any memo downstream of it.
+const EMPTY_SET = new Set();
 
 
 // ═══ TrussCard ═══
@@ -476,6 +481,8 @@ export default function StudioBuild({ ctx }) {
     imsPaletteCatalogue, imsColourCatalogue,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
     allInhouseVenues = [], customOutdoor = [], allVenueData = {}, allOutdoorDB = [], leafInhouseVenues = [],
+    // zone photo groups (hand-picked leading photos, keyed by zone + function)
+    zoneGroups = {}, saveZoneGroups,
     // date demand
     dateTypes, clientLedger, activeClientId,
     // build canvas
@@ -711,6 +718,67 @@ export default function StudioBuild({ ctx }) {
   // only this panel reads, and it is cleared the moment the zone is added or the picker changes.
   const [newCzOtherName, setNewCzOtherName] = useState("");
   const [phPage, setPhPage] = useState({});   // per-zone page index for the photo picker
+
+  // ═══ ZONE PHOTO GROUPING ═══ tick photos in a zone's strip to pin them to the front of that
+  // zone for the current function. Kept apart from elSelectedPhoto: that is the ONE photo whose
+  // elements price the zone, and overloading the same click to also mean "put this in the group"
+  // would make every grouping tick re-price the build.
+  const [grpSel, setGrpSel] = useState({});   // { [zoneKey]: Set<libraryPhotoId> }
+  const grpSelFor = (k) => grpSel[k] || EMPTY_SET;
+  const toggleGrpPick = (k, id) => setGrpSel(prev => {
+    const cur = new Set(prev[k] || []);
+    cur.has(id) ? cur.delete(id) : cur.add(id);
+    return { ...prev, [k]: cur };
+  });
+  const clearGrpPick = (k) => setGrpSel(prev => ({ ...prev, [k]: new Set() }));
+  // Groups are stored per AREA name, which is the vocabulary photos are tagged with and that
+  // getLibPhotosForZone reads back. A zone maps to one or more area names; write to the first,
+  // since the read unions across all of them. An unmapped custom zone falls back to its label.
+  const groupAreaFor = (srcType, label) => areaNamesFor(srcType)[0] || label || srcType;
+  const saveZoneGroup = async (zoneKey, srcType, label, ids, { remove = false } = {}) => {
+    const area = groupAreaFor(srcType, label);
+    // Returning quietly here is how a group silently fails to persist — say so instead.
+    if (!area) { showMsg("This zone has no area name to group against", "red"); return; }
+    if (!saveZoneGroups) { showMsg("Grouping isn't available — reload the page", "red"); return; }
+    const current = zoneGroups?.[area]?.[groupFn] || [];
+    const next = remove
+      ? current.filter(id => !ids.includes(id))
+      : [...current, ...ids.filter(id => !current.includes(id))];
+    try {
+      await saveZoneGroups(setGroupIds(zoneGroups, area, groupFn, next));
+      clearGrpPick(zoneKey);
+      // The pinned photos move to the front of the zone, which is page 1 — but the strip pager
+      // stays wherever it was, so pinning from page 3 sends them somewhere you can't see. Jump
+      // back to the start so the result of the click is on screen.
+      setPhPage(p => ({ ...p, [zoneKey]: 0 }));
+      const n = Math.abs(next.length - current.length);
+      showMsg(
+        remove
+          ? `✓ ${n} photo${n === 1 ? "" : "s"} removed from the ${area}${groupFn ? ` · ${groupFn}` : ""} group`
+          : n ? `✓ ${n} photo${n === 1 ? "" : "s"} pinned to the front of ${area}${groupFn ? ` · ${groupFn}` : ""}`
+              : "Already pinned — nothing to add",
+        n ? "green" : "orange"
+      );
+    } catch (e) { showMsg("Couldn't save the group: " + (e.message || "unknown"), "red"); }
+  };
+  // Delete a zone's whole group for the current function. Confirmed, because unlike unpinning a
+  // ticked photo or two this throws away an arrangement that could have taken a while to build.
+  const clearZoneGroup = (zoneKey, srcType, label) => {
+    const area = groupAreaFor(srcType, label);
+    const current = zoneGroups?.[area]?.[groupFn] || [];
+    if (!area || !current.length || !saveZoneGroups) return;
+    askConfirm(`Delete the ${area}${groupFn ? ` · ${groupFn}` : ""} group?`, async () => {
+      try {
+        await saveZoneGroups(setGroupIds(zoneGroups, area, groupFn, []));
+        clearGrpPick(zoneKey);
+        setPhPage(p => ({ ...p, [zoneKey]: 0 }));   // the whole order just changed under the pager
+        showMsg(`✓ Group deleted — ${area} goes back to its normal photo order`, "green");
+      } catch (e) { showMsg("Couldn't delete the group: " + (e.message || "unknown"), "red"); }
+    }, {
+      yesLabel: "Delete group",
+      note: `The ${current.length} photo${current.length === 1 ? "" : "s"} stay in the Library and keep their tags — they just stop leading this zone.`,
+    });
+  };
   // Both side rails fold away together, from the one control in the Photo filters header.
   // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
   // running total off screen — the one thing you want kept while you widen it.
@@ -1395,9 +1463,16 @@ export default function StudioBuild({ ctx }) {
 .ph-tile:hover img{transform:scale(1.06)}
 /* the generic ring would double up on a tile that now has its own hover */
 .ph-tile:hover{outline:none}
+/* ═══ GROUPING TICK ═══ It sits on top of a tile that is itself clickable for something else, so
+   it needs its own hover as well as its own cursor — otherwise there is nothing to tell you the
+   corner of the photo does a different thing from the middle of it. */
+.ph-tick:hover{transform:scale(1.22);background:${accent} !important;border-color:#fff !important}
+.ph-tile:hover .ph-tick{border-color:${accent} !important}
 @media (prefers-reduced-motion: reduce){
   .ph-tile,.ph-tile img{transition:none}
   .ph-tile:hover,.ph-tile:hover img{transform:none}
+  .ph-tick{transition:none}
+  .ph-tick:hover{transform:none}
 }
 /* ═══ "TAP TO SELECT" ═══ The caption is a separate click target from the image above it (select
    vs. preview), so it gets its own hover. [data-sel="0"] keeps it off already-selected tiles,
@@ -1708,6 +1783,21 @@ undefined
       // With no group, everything lands in lbRest and this is the old whole-zone behaviour.
       const lbGrouped = matchedPhotos.filter(p => p.grouped);
       const lbRest = matchedPhotos.filter(p => !p.grouped);
+      // Grouping selection for this zone, plus how much of it is already pinned — that decides
+      // whether the bar offers to pin, to unpin, or both.
+      // Grouping lives in the ▦ grid view only. The strip shows four large tiles at a time, which
+      // is for judging one photo; picking a set to pin is a survey job, and that's what the grid is.
+      // Keeping the ticks out of the strip also keeps its tiles free of a control that competes
+      // with the click that actually selects a photo for pricing.
+      const grpOn = !!gridZones[k];
+      const grpPicked = grpOn ? grpSelFor(k) : EMPTY_SET;
+      const grpArea = groupAreaFor(srcType, el.label);
+      // The EXACT list for this function, not groupIdsFor's any-function fallback. Pinning writes
+      // this function's list, so counting against the fallback would let "Unpin 3" report removing
+      // photos that live in the All-functions group and were never touched.
+      const grpSaved = zoneGroups?.[grpArea]?.[groupFn] || [];
+      const grpPickedArr = [...grpPicked];
+      const grpAlready = grpPickedArr.filter(id => grpSaved.includes(id)).length;
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
@@ -1734,7 +1824,14 @@ undefined
             {/* Photo-strip controls. They live up here rather than in the strip's own header so the
                 zone's whole control set sits in one row. stopPropagation because an OFF zone's
                 header toggles the zone — but these only render when it is already on. */}
-            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>({...g,[k]:!g[k]}));}} title={gridZones[k]?"Show as strip":"Show all in a grid"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {/* Leaving the grid hides the ticks, so drop the selection with them — a selection you
+                can't see is one you'd later act on without meaning to. */}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{const on=!g[k];if(!on)clearGrpPick(k);return {...g,[k]:on};});}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {/* Pinned-count chip. The only sign a zone is grouped during normal browsing, and the
+                way in to editing it: clicking ticks every pinned photo, which opens the group bar
+                where Unpin and Delete group live. Hidden when the zone has no group, so a strip
+                nobody has curated stays exactly as clean as before. */}
+            {isOn&&grpOn&&grpSaved.length>0&&<button onClick={e=>{e.stopPropagation();setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));}} title={`${grpSaved.length} photo${grpSaved.length===1?"":"s"} pinned to the front of ${grpArea}${groupFn?` · ${groupFn}`:""} — click to edit the group`} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${accent}`,background:`${accent}18`,color:accent,fontSize:10,fontWeight:800,cursor:"pointer"}}>◆ {grpSaved.length}</button>}
             {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(o=>o===k?null:k);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen===k||zpHasFilters?accent:border}`,background:zpFilterOpen===k||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen===k||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
@@ -1760,6 +1857,29 @@ undefined
               {/* The strip's own header row is gone. It repeated the zone name already in the card
                   header, and its controls have moved up there; the selected photo is marked on the
                   tile itself, so the ✓ id was a second copy of that too. */}
+              {/* ═══ GROUP BAR ═══ Appears the moment you tick a photo in this zone. Pinning writes
+                  the zone's group for the CURRENT function, which is why the button names it —
+                  otherwise the same click means something different depending on which function
+                  tab you happen to be on, with nothing on screen saying so. */}
+              {grpPicked.size>0&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8,padding:"8px 12px",borderRadius:10,border:`1.5px solid ${accent}`,background:isDark?"rgba(201,169,110,0.10)":"rgba(201,169,110,0.14)"}}>
+                <span style={{fontSize:12,fontWeight:700,color:accent}}>{grpPicked.size} photo{grpPicked.size===1?"":"s"} ticked</span>
+                <span style={{fontSize:10.5,color:textS}}>
+                  {grpAlready===grpPicked.size ? "already pinned" : `pin to the front of ${grpArea}${groupFn?` · ${groupFn}`:" · every function"}`}
+                </span>
+                <div style={{flex:1}}/>
+                <span onClick={()=>clearGrpPick(k)} title="Untick these — the group itself is untouched" style={{fontSize:10.5,color:textS,cursor:"pointer",padding:"4px 8px"}}>Clear ticks</span>
+                {/* Deleting the whole group vs unpinning the ticked ones are easy to confuse, so
+                    both are spelled out with their counts rather than sharing one "remove". */}
+                {grpSaved.length>0&&<button onClick={()=>clearZoneGroup(k,srcType,el.label)} style={{padding:"5px 12px",borderRadius:8,border:`1px solid #E11D48`,background:"transparent",color:"#E11D48",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  🗑 Delete group ({grpSaved.length})
+                </button>}
+                {grpAlready>0&&<button onClick={()=>saveZoneGroup(k,srcType,el.label,grpPickedArr,{remove:true})} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  Unpin {grpAlready}
+                </button>}
+                {grpAlready<grpPicked.size&&<button onClick={()=>saveZoneGroup(k,srcType,el.label,grpPickedArr)} style={{padding:"5px 14px",borderRadius:8,border:"none",background:accent,color:"#1a1a2e",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  ◆ Group these ({grpPicked.size-grpAlready})
+                </button>}
+              </div>}
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
                   along the strip look like the venue pick silently failed. */}
               {!!(zpFilters.venue||[]).length&&matchedPhotos.length>0&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
@@ -1880,6 +2000,27 @@ undefined
                         <IconStar size={11} filled/>
                       </div>;
                     })()}
+                    {/* ── Grouping tick ── Only library photos can be grouped: a group stores library
+                        ids, and an event photo has none. stopPropagation because the tile itself
+                        selects the photo for pricing, which is a different act entirely. */}
+                    {grpOn&&ph.isLibrary&&ph.eventId&&(()=>{
+                      const ticked=grpPicked.has(ph.eventId);
+                      return <div title={ticked?"Untick — remove from this selection":"Tick to pin this photo to the front of the zone"}
+                        className="ph-tick"
+                        onClick={e=>{e.stopPropagation();toggleGrpPick(k,ph.eventId);}}
+                        style={{position:"absolute",top:6,left:6,width:20,height:20,borderRadius:5,zIndex:2,
+                          cursor:"pointer",
+                          border:`2px solid ${ticked?accent:"rgba(255,255,255,0.85)"}`,
+                          background:ticked?accent:"rgba(0,0,0,0.38)",
+                          display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,
+                          color:ticked?"#1a1a2e":"#fff",boxShadow:"0 1px 4px rgba(0,0,0,0.35)",
+                          transition:"transform .12s ease, background .12s ease"}}>
+                        {ticked?"✓":""}
+                      </div>;
+                    })()}
+                    {/* Which photos are already pinned, shown only while a selection is open so the
+                        strip stays clean during normal browsing. */}
+                    {grpPicked.size>0&&ph.grouped&&<div title="Already pinned to the front of this zone" style={{position:"absolute",bottom:6,left:6,padding:"2px 7px",borderRadius:6,background:"rgba(201,169,110,0.95)",color:"#1a1a2e",fontSize:9,fontWeight:800}}>◆ pinned</div>}
                     {isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#059669",color:"#fff",width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700}}>✓</div>}
                     {isSource&&!isSelected&&!ph.isLibrary&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#0F0F1A",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>SOURCE</div>}
                     {ph.isVideoDefault&&!isSelected&&<div style={{position:"absolute",top:6,right:6,background:"#C9A96E",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 7px",borderRadius:4}}>Default</div>}

@@ -1647,6 +1647,10 @@ export default function StudioApp() {
   // Hand-picked in Manage → Library → Grouping; Build floats the group for the active function to
   // the front of that zone's strip. See lib/studio/zoneGroups.js for the shape and the lookup rules.
   const [zoneGroups, setZoneGroups] = useState({});
+  // Mirror of the above. saveZoneGroups needs the pre-save value to roll back to, and reading it
+  // from a ref keeps the callback free of a zoneGroups dependency — otherwise every group edit
+  // would mint a new saveZoneGroups, and with it a new getLibPhotosForZone.
+  const zoneGroupsRef = useRef({});
 
   // ═══ ZONE DEFINITIONS STATE ═══
   const [zoneDefs, setZoneDefs] = useState({ elements: {}, meta: JSON.parse(JSON.stringify(ZONE_META)) });
@@ -2048,7 +2052,7 @@ export default function StudioApp() {
       try { const v = await kvGet(ZONE_DEF_SK); if (v != null) { const zp = parse(v); if (zp && zp.elements) { loadedZones = zp; if (!cancelled) setZoneDefs(zp); } } } catch {}
       // Zone photo groups — normalised on read, so a blob written before groups were per-function
       // (a bare id array per zone) loads as an any-function group instead of being ignored.
-      try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) setZoneGroups(normaliseZoneGroups(parse(v))); } catch {}
+      try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {}
       // Taxonomy — backfill missing keys from DEFAULT_TAX
       let loadedTax = null;
       try {
@@ -2262,7 +2266,7 @@ export default function StudioApp() {
           // hid what goes stale for as long as it stays open, and the folder counts silently disagree
           // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
           else if (key === HIDDEN_VID_SK) { const hv = pj(await kvGet(HIDDEN_VID_SK)); if (hv && typeof hv === "object") setHiddenVideos(hv); }
-          else if (key === ZONE_GROUPS_SK) { setZoneGroups(normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK)))); }
+          else if (key === ZONE_GROUPS_SK) { const zg = normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK))); zoneGroupsRef.current = zg; setZoneGroups(zg); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
       })
@@ -2426,10 +2430,24 @@ export default function StudioApp() {
 
   // Zone photo groups. Normalised on write as well as read — that drops empty lists, so the blob
   // doesn't accumulate a key for every zone/function pair anyone ever opened.
+  //
+  // reliableSave REPORTS failure, it doesn't throw: a rejected write comes back as {ok:false}. So
+  // this has to check the result and throw itself, or a failed save would set the local state,
+  // return normally, and let the caller announce "✓ pinned" for a group that only exists in this
+  // tab — gone the moment the page reloads. On failure the optimistic state is rolled back too,
+  // so the screen never shows a group the database doesn't have.
   const saveZoneGroups = useCallback(async (next) => {
     const clean = normaliseZoneGroups(next);
+    const prev = zoneGroupsRef.current;
+    zoneGroupsRef.current = clean;
     setZoneGroups(clean);
-    return reliableSave(ZONE_GROUPS_SK, JSON.stringify(clean), "Zone photo groups");
+    const res = await reliableSave(ZONE_GROUPS_SK, JSON.stringify(clean), "Zone photo groups");
+    if (!res?.ok) {
+      zoneGroupsRef.current = prev;
+      setZoneGroups(prev);
+      throw new Error(res?.error || "Storage rejected the write");
+    }
+    return res;
   }, []);
   // Row-level library persistence. `nl` is the set of items to upsert (NOT the whole library —
   // now that `libItems` is a lazy cache rather than the full table, callers pass just the item(s)

@@ -7,11 +7,10 @@ import InventoryItemPickerModal from "../../../components/shared/InventoryItemPi
 import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
-import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, fetchLibraryItemsByIds, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
+import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
 import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
-import { ANY_FN, groupIdsFor, setGroupIds, countGroups } from "../../../lib/studio/zoneGroups";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
@@ -191,8 +190,6 @@ export default function ManageLibrary({ ctx }) {
     showMsg, askConfirm, askConfirmAsync, aiTagImage, authUser, corrLog, logVerificationEvent, refreshCorrLog, tagKB, rebuildTagKB, tagCorrections, refreshTagCorrections, bulkTag, runBulkTag, stopBulkTag, runTagSelected, bulkVid, runBulkTagVideos, bulkVidVenue, runBulkTagVideoVenues, importCloudinaryFolder,
     // events + persistence (video → event linking)
     events, save,
-    // ═══ ZONE PHOTO GROUPS ═══
-    zoneGroups, saveZoneGroups,
     // ═══ CLOUDINARY PHOTO BROWSER ═══
     cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading,
     cldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
@@ -279,28 +276,8 @@ export default function ManageLibrary({ ctx }) {
   };
   const [libStatus, setLibStatus] = useState(LIB_STATUS.REVIEW); // LIB_STATUS.* | TAG_SOURCE.* (a UI-only union of the two dims) — defaults to review so users don't land on Verified images and accidentally retag them
 
-  // ═══ ZONE PHOTO GROUPING ═══ which group is being edited. Declared up here because the library
-  // query below reads them: in the Grouping tab the function pill doubles as the grid's filter.
-  const [grpZone, setGrpZone] = useState("");
-  const [grpFn, setGrpFn] = useState(ANY_FN);            // "" = applies to every function
-  const [grpAllFns, setGrpAllFns] = useState(false);     // browse past the picked function's photos
-
-  // The Grouping tab shows neither the status folders nor the filter sidebar, so it must not query
-  // by them either — libStatus, libFilters and the venue picker are all shared with the Images tab,
-  // and leaving them applied behind a hidden UI means the grid is narrowed by settings you can
-  // neither see nor clear. Empty status/filters make fetchLibraryPage drop those predicates
-  // entirely, so grouping browses the whole library. Search stays: that box is still on screen.
-  //
-  // The picked function DOES filter the grid — grouping "Stage · Sangeet" out of all ~2,600 photos
-  // is not a job anyone wants. `grpAllFns` reopens the full set for the case where the photo you
-  // want isn't tagged for that function.
-  const grouping = libView === "grouping";
-  const groupingFnFilter = grouping && grpFn && !grpAllFns ? { eventType: [grpFn] } : {};
   const libPage = usePaginatedLibrary({
-    libStatus: grouping ? "" : libStatus,
-    filters: grouping ? groupingFnFilter : libFilters,
-    venueGroup: grouping ? "all" : libVenueGroup,
-    venueNames: grouping ? [] : libVenueNames,
+    libStatus, filters: libFilters, venueGroup: libVenueGroup, venueNames: libVenueNames,
     inhouseVenueNames: allInhouseVenues, search: libSearch, mergeLibItems,
   });
   // Keep the folder counts (esp. "Needs review") live during and after batch tagging. The count query
@@ -496,62 +473,11 @@ export default function ManageLibrary({ ctx }) {
   const markImgBroken = useCallback((id) => setBrokenImgIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id))), []);
   const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
 
-  // ═══ ZONE PHOTO GROUPING ═══ staging state for the Grouping tab. `grpSelected` is what's been
-  // ticked in the browser but not yet committed to a zone; the saved groups themselves live in
-  // ctx.zoneGroups. Kept apart from libSelected so a half-finished grouping selection can't be
-  // handed to the bulk AI tagger by accident.
-  const [grpSelected, setGrpSelected] = useState(() => new Set());
-  const [grpSaving, setGrpSaving] = useState(false);
-  const [grpMembers, setGrpMembers] = useState([]);      // resolved photos of grpZone+grpFn, in order
-  const toggleGrpSelected = useCallback((id) => setGrpSelected((prev) => {
-    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
-  }), []);
-  // Zones are the areasElements taxonomy — the same vocabulary the photos are tagged against and
-  // that Build maps its strips from, so a group can never name a zone that doesn't exist.
-  const grpZones = useMemo(() => [...(taxonomy.areasElements || [])].sort((a, b) => a.localeCompare(b)), [taxonomy.areasElements]);
-  // Functions to group against — the same event-type vocabulary photos are tagged with.
-  const grpFns = useMemo(() => [...new Set([...(taxonomy.eventType || []), ...FUNCTIONS])].sort((a, b) => a.localeCompare(b)), [taxonomy.eventType]);
-  const groupedZoneCount = useMemo(() => countGroups(zoneGroups), [zoneGroups]);
-  // The EXACT list for this zone+function — not groupIdsFor, which falls back to the any-function
-  // group. Editing "Stage · Sangeet" must not silently show and then overwrite the shared group.
-  const grpZoneIds = useMemo(() => (grpZone && zoneGroups?.[grpZone]?.[grpFn]) || [], [grpZone, grpFn, zoneGroups]);
-  // What Build would actually use for this pair, so the panel can say when a fallback is in play.
-  const grpEffectiveIds = useMemo(() => (grpZone ? groupIdsFor(zoneGroups, grpZone, grpFn) : []), [grpZone, grpFn, zoneGroups]);
-
-  // Switching zone or function switches which group you're editing, so a selection staged for the
-  // old one must not survive — otherwise "Save to Wedding" quietly commits photos you ticked while
-  // looking at Sangeet.
-  useEffect(() => { setGrpSelected(new Set()); }, [grpZone, grpFn]);
-
-  // Resolve the selected zone's group to real photos. The ids are all we store, and they may point
-  // at rows outside the current page (or at a photo since deleted), so this is a fetch by id rather
-  // than a lookup in libPage. Order follows the stored list, not whatever order the fetch returns.
-  useEffect(() => {
-    let cancelled = false;
-    if (!grpZoneIds.length) { setGrpMembers([]); return; }
-    (async () => {
-      try {
-        const rows = await fetchLibraryItemsByIds(grpZoneIds);
-        if (cancelled) return;
-        const byId = new Map(rows.map(r => [r.id, r]));
-        setGrpMembers(grpZoneIds.map(id => byId.get(id)).filter(Boolean));
-      } catch { if (!cancelled) setGrpMembers([]); }
-    })();
-    return () => { cancelled = true; };
-  }, [grpZoneIds]);
-
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
-  // `pick` mode is the Grouping tab reusing this browser wholesale: same server-side filters,
-  // search, status folders and pagination, but a tile toggles group selection instead of opening
-  // the editor. Duplicating the browser for grouping would have meant two filter sidebars to keep
-  // in step, and the whole point of grouping is finding photos, which is what these filters do.
-  const LibraryBrowse = (mode) => {
-    const pick = mode === "pick";
-    return (
+  const LibraryBrowse = () => (
     <div style={{ display: "flex", gap: 16, minHeight: "70vh" }}>
-      {/* Filter sidebar — hidden while picking for a group (see the query below: pick mode also
-          drops these filters from the fetch, so nothing can narrow the grid invisibly). */}
-      <div style={{ display: pick ? "none" : "block", width: 190, flexShrink: 0, overflowY: "auto", maxHeight: "75vh" }}>
+      {/* Filter sidebar */}
+      <div style={{ width: 190, flexShrink: 0, overflowY: "auto", maxHeight: "75vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: accent }}>Filters</div>
           {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>Clear all</div>}
@@ -600,11 +526,8 @@ export default function ManageLibrary({ ctx }) {
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name..." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
-        {/* ── Status "folders" + bulk AI tag (Phase 1a) ──
-            Hidden entirely when picking for a group: the whole library is in scope there, so the
-            folders have nothing to select and their counts would only describe a cut that isn't
-            being applied. */}
-        <div style={{ display: pick ? "none" : "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+        {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
+        <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
             [LIB_STATUS.VERIFIED, "✅", "Verified", "reviewed by a person", libPage.counts.verified, "#059669"],
             [LIB_STATUS.REVIEW, "🤖", "Needs review", "AI-tagged — to check", libPage.counts.review, "#7C3AED"],
@@ -618,7 +541,7 @@ export default function ManageLibrary({ ctx }) {
             </div>;
           })}
           <div style={{ flex: 1 }} />
-          <div style={{ display: pick ? "none" : "flex", alignItems: "center", gap: 6, alignSelf: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, alignSelf: "center" }}>
             {bulkTag?.running ? (
               <>
                 <span style={{ fontSize: 10, color: textS }}>Tagging {bulkTag.done}/{bulkTag.total} · {bulkTag.ok}✓ {bulkTag.fail}✕</span>
@@ -643,29 +566,8 @@ export default function ManageLibrary({ ctx }) {
         </div>
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          {/* Pick mode has no status folder, so there's no counts[libStatus] to total against, and
-              summing the four chips doesn't reconcile with the table either (Untagged reads 0 while
-              the same query returns thousands). Rather than print a number that disagrees with what
-              "Load more" will actually keep producing, it just reports what's loaded. */}
-          <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length}{pick ? "" : ` of ${libPage.counts[libStatus] ?? libVisible.length}`}{libPage.loading ? "…" : ""}</span>
-          {/* The function pill filters the grid, so say so here and give a way out — otherwise a
-              function with few tagged photos looks like the library is empty. */}
-          {pick && grpFn && (
-            <button onClick={() => setGrpAllFns(v => !v)} title={grpAllFns ? `Show only photos tagged ${grpFn}` : "Show photos from every function, so you can group one that isn't tagged for this function"} style={{ ...S.btn(!grpAllFns), fontSize: 10, padding: "3px 10px" }}>
-              {grpAllFns ? `All functions shown · filter by ${grpFn}` : `Showing ${grpFn} photos · show all`}
-            </button>
-          )}
-          {pick && libVisible.length > 0 && (
-            <button onClick={() => setGrpSelected(prev => {
-              const allShown = libVisible.every(i => prev.has(i.id));
-              const n = new Set(prev);
-              libVisible.forEach(i => allShown ? n.delete(i.id) : n.add(i.id));
-              return n;
-            })} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>
-              {libVisible.every(i => grpSelected.has(i.id)) ? "Deselect all shown" : `Select all shown (${libVisible.length})`}
-            </button>
-          )}
-          {!pick && libStatus === LIB_STATUS.UNTAGGED && libVisible.length > 0 && (
+          <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libPage.counts[libStatus] ?? libVisible.length}{libPage.loading ? "…" : ""}</span>
+          {libStatus === LIB_STATUS.UNTAGGED && libVisible.length > 0 && (
             <>
               <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>
                 {libSelected.size === libVisible.length ? "Deselect all" : `Select all (${libVisible.length})`}
@@ -701,10 +603,9 @@ export default function ManageLibrary({ ctx }) {
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
           {libVisible.map(img => {
-            const isSel = pick ? grpSelected.has(img.id) : libSelected.has(img.id);
-            const selCol = pick ? accent : "#7C3AED";
+            const isSel = libSelected.has(img.id);
             return (
-            <div key={img.id} onClick={() => pick ? toggleGrpSelected(img.id) : libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? selCol : libEditImg?.id === img.id && !pick ? accent : border}`, cursor: "pointer", background: isSel ? `${selCol}0A` : cardBg, position: "relative" }}>
+            <div key={img.id} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
               <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
@@ -723,18 +624,13 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                 );
               })()}
-              {/* Checkbox — always on when picking for a group, otherwise only in the untagged view */}
-              {(pick || libStatus === LIB_STATUS.UNTAGGED) && (
-                <div onClick={e => { e.stopPropagation(); pick ? toggleGrpSelected(img.id) : setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }); }} style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSel ? selCol : "rgba(255,255,255,0.8)"}`, background: isSel ? selCol : "rgba(0,0,0,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", fontWeight: 700 }}>
+              {/* Checkbox — shown in untagged view; clicking it toggles selection without opening detail */}
+              {libStatus === LIB_STATUS.UNTAGGED && (
+                <div onClick={e => { e.stopPropagation(); setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }); }} style={{ position: "absolute", top: 6, right: 6, width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSel ? "#7C3AED" : "rgba(255,255,255,0.8)"}`, background: isSel ? "#7C3AED" : "rgba(0,0,0,0.35)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", fontWeight: 700 }}>
                   {isSel ? "✓" : ""}
                 </div>
               )}
-              {/* Already in the zone being edited — stops you re-adding the same photo and wondering
-                  why the group count didn't move. */}
-              {pick && grpZone && grpZoneIds.includes(img.id) && (
-                <div title={`Already in "${grpZone} · ${grpFn || "All functions"}"`} style={{ position: "absolute", bottom: 34, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(201,169,110,0.95)", color: "#1a1a2e", fontSize: 8, fontWeight: 800 }}>◆ in group</div>
-              )}
-              {!pick && libStatus !== LIB_STATUS.UNTAGGED && (img.linkedTemplates || []).length > 0 &&<div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
+              {libStatus !== LIB_STATUS.UNTAGGED && (img.linkedTemplates || []).length > 0 &&<div style={{ position: "absolute", top: 6, right: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(0,0,0,0.65)", fontSize: 9, color: "#fff", display: "flex", alignItems: "center", gap: 3 }}>🔗 {(img.linkedTemplates || []).length}</div>}
               {(img.elements || []).length > 0 && <div style={{ position: "absolute", top: 28, left: 6, padding: "2px 6px", borderRadius: 6, background: "rgba(124,58,237,0.8)", fontSize: 9, color: "#fff" }}>📋 {(img.elements || []).length}</div>}
               {/* AI tag confidence badge — tag-TIME estimate (match strength + completeness), NOT verified
                   accuracy. Green ≥80 / amber ≥60 / red <60 flags photos that most need a human review. */}
@@ -802,10 +698,8 @@ export default function ManageLibrary({ ctx }) {
             isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
           />
         )}
-        {/* Detail panel — opens as a centered popup so you don't scroll past the whole grid.
-            Never in pick mode: a photo left open in the Images tab would otherwise reappear over
-            the Grouping tab the moment you switched to it. */}
-        {libEditImg && !pick && (
+        {/* Detail panel — opens as a centered popup so you don't scroll past the whole grid */}
+        {libEditImg && (
           <div onClick={() => setLibEditImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: 16 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "96vw", maxWidth: "96vw", margin: "0 auto", background: cardBg, borderRadius: 14, border: `1px solid ${border}`, height: "96vh", boxShadow: "0 12px 48px rgba(0,0,0,0.45)", display: "flex", overflow: "hidden" }}>
             {/* Left: big image, fixed in place — the right side scrolls on its own so you never
@@ -1597,8 +1491,7 @@ export default function ManageLibrary({ ctx }) {
         )}
       </div>
     </div>
-    );
-  };
+  );
 
   // ═══ CONTRIBUTIONS PANEL — who corrected how many photos, by date (Phase 1b reporting) ═══
   const CorrectionsPanel = () => {
@@ -1876,7 +1769,6 @@ export default function ManageLibrary({ ctx }) {
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
-        {libAllowed("images") && <button onClick={() => setLibView("grouping")} title="Hand-pick which photos lead each zone's strip on the Build page" style={{ ...S.btn(libView === "grouping"), fontSize: 11 }}>🗂️ Grouping ({groupedZoneCount})</button>}
       </div>
       {libView === "palettes" && !paletteCatalogueLoaded && (
         <div style={{ maxWidth: 650, padding: "24px 18px", textAlign: "center", color: textS, fontSize: 12 }}>Loading palette catalogue…</div>
@@ -1952,115 +1844,6 @@ export default function ManageLibrary({ ctx }) {
       {/* Content */}
       {libView === "corrections" && CorrectionsPanel()}
       {libView === "images" && LibraryBrowse()}
-      {libView === "grouping" && (
-        <div>
-          {/* ═══ ZONE PICKER ═══ Every zone, with its group size, so you can see at a glance which
-              zones are curated and which still fall back to plain tag order. */}
-          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "12px 14px", marginBottom: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: textP }}>🗂️ Zone photo groups</div>
-            <div style={{ fontSize: 10.5, color: textS, marginTop: 3, marginBottom: 9, lineHeight: 1.5 }}>
-              Pick a zone and a function, tick photos below, then save. On the Build page that zone's strip shows the group first, in this order, followed by the rest of the zone's photos. Grouping never changes a photo's tags — removing one only drops it back in with the others.
-            </div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: textS, marginBottom: 4 }}>Zone</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {grpZones.map(z => {
-                // Every group this zone holds, across all functions — a zone curated only for
-                // Sangeet should still read as curated in the zone row.
-                const n = Object.values(zoneGroups?.[z] || {}).reduce((s, l) => s + (l?.length || 0), 0);
-                const on = grpZone === z;
-                return <span key={z} onClick={() => setGrpZone(on ? "" : z)} style={{ padding: "4px 10px", fontSize: 10.5, borderRadius: 10, cursor: "pointer", border: `1px solid ${on ? accent : n ? `${accent}66` : border}`, background: on ? `${accent}22` : "transparent", color: on ? accentText : n ? accent : textS, fontWeight: on || n ? 700 : 400 }}>
-                  {z}{n ? ` · ${n}` : ""}
-                </span>;
-              })}
-              {!grpZones.length && <span style={{ fontSize: 11, color: textS }}>No zones in the taxonomy yet — add some under Areas / zones in Settings.</span>}
-            </div>
-            {grpZone && <>
-              <div style={{ fontSize: 10, fontWeight: 700, color: textS, margin: "10px 0 4px" }}>Function</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                {[[ANY_FN, "All functions"], ...grpFns.map(f => [f, f])].map(([val, label]) => {
-                  const n = (zoneGroups?.[grpZone]?.[val] || []).length;
-                  const on = grpFn === val;
-                  return <span key={val || "__any"} onClick={() => setGrpFn(val)} style={{ padding: "4px 10px", fontSize: 10.5, borderRadius: 10, cursor: "pointer", border: `1px solid ${on ? accent : n ? `${accent}66` : border}`, background: on ? `${accent}22` : "transparent", color: on ? accentText : n ? accent : textS, fontWeight: on || n ? 700 : 400 }}>
-                    {label}{n ? ` · ${n}` : ""}
-                  </span>;
-                })}
-              </div>
-              <div style={{ fontSize: 9.5, color: textS, marginTop: 6, lineHeight: 1.5 }}>
-                A function's own group replaces the <b>All functions</b> one on Build rather than adding to it — so a Sangeet group is the whole answer for Sangeet. Leave a function empty and it falls back to All functions.
-              </div>
-            </>}
-          </div>
-
-          {!grpZone && <div style={{ textAlign: "center", padding: 40, color: textS, fontSize: 12 }}>Pick a zone above, then a function, to start grouping.</div>}
-
-          {grpZone && <>
-            {/* ═══ CURRENT GROUP ═══ ordered, reorderable, removable */}
-            <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "12px 14px", marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: accent }}>{grpZone} · {grpFn || "All functions"} — group ({grpZoneIds.length})</div>
-                {grpZoneIds.length > 0 && <button onClick={async () => {
-                  if (!(await askConfirmAsync(`Clear the “${grpZone} · ${grpFn || "All functions"}” group?`, {
-                    note: "The photos stay in the Library and keep their tags — they just stop leading this zone on Build.",
-                    yesLabel: "Clear group",
-                  }))) return;
-                  setGrpSaving(true);
-                  try { await saveZoneGroups(setGroupIds(zoneGroups, grpZone, grpFn, [])); showMsg(`Cleared the "${grpZone} · ${grpFn || "All functions"}" group`, "green"); }
-                  catch (e) { showMsg("Save failed: " + (e.message || "unknown"), "red"); }
-                  setGrpSaving(false);
-                }} disabled={grpSaving} style={{ ...S.btn(false), fontSize: 10, padding: "3px 10px", color: "#E11D48", opacity: grpSaving ? 0.5 : 1 }}>Clear group</button>}
-              </div>
-              {grpZoneIds.length === 0
-                ? <div style={{ fontSize: 11, color: textS }}>
-                    Nothing grouped for {grpZone} · {grpFn || "All functions"} yet. Tick photos below and save.
-                    {/* Say what Build will do meanwhile, so an empty panel isn't read as "no group". */}
-                    {grpFn && grpEffectiveIds.length > 0 && <> Until then Build uses the <b>All functions</b> group ({grpEffectiveIds.length} photo{grpEffectiveIds.length === 1 ? "" : "s"}) for {grpFn}.</>}
-                  </div>
-                : grpMembers.length === 0
-                  ? <div style={{ fontSize: 11, color: textS }}>Loading grouped photos…</div>
-                  : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8 }}>
-                    {grpMembers.map((img, i) => (
-                      <div key={img.id} style={{ position: "relative", borderRadius: 9, overflow: "hidden", border: `1.5px solid ${accent}66`, background: cardBg }}>
-                        <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 84, objectFit: "cover", display: "block" }} />
-                        <div style={{ position: "absolute", top: 4, left: 4, padding: "1px 6px", borderRadius: 6, background: "rgba(201,169,110,0.95)", color: "#1a1a2e", fontSize: 9, fontWeight: 800 }}>◆ {i + 1}</div>
-                        <div style={{ display: "flex", gap: 2, padding: "4px 5px", alignItems: "center" }}>
-                          <button title="Move earlier" disabled={i === 0 || grpSaving} onClick={() => { const n = [...grpZoneIds]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; saveZoneGroups(setGroupIds(zoneGroups, grpZone, grpFn, n)); }} style={{ ...S.btn(false), fontSize: 9, padding: "2px 6px", opacity: i === 0 ? 0.35 : 1 }}>←</button>
-                          <button title="Move later" disabled={i === grpZoneIds.length - 1 || grpSaving} onClick={() => { const n = [...grpZoneIds]; [n[i + 1], n[i]] = [n[i], n[i + 1]]; saveZoneGroups(setGroupIds(zoneGroups, grpZone, grpFn, n)); }} style={{ ...S.btn(false), fontSize: 9, padding: "2px 6px", opacity: i === grpZoneIds.length - 1 ? 0.35 : 1 }}>→</button>
-                          <div style={{ flex: 1 }} />
-                          <button title="Remove from this group" disabled={grpSaving} onClick={() => saveZoneGroups(setGroupIds(zoneGroups, grpZone, grpFn, grpZoneIds.filter(id => id !== img.id)))} style={{ ...S.btn(false), fontSize: 9, padding: "2px 6px", color: "#E11D48" }}>✕</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>}
-            </div>
-
-            {/* ═══ STAGED SELECTION ═══ sticky so it stays reachable while scrolling the grid */}
-            {grpSelected.size > 0 && (
-              <div style={{ position: "sticky", top: 0, zIndex: 20, background: cardBg, borderRadius: 10, border: `1.5px solid ${accent}`, padding: "9px 14px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", boxShadow: "0 4px 14px rgba(0,0,0,0.18)" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: accentText }}>{grpSelected.size} photo{grpSelected.size === 1 ? "" : "s"} selected</span>
-                <span style={{ fontSize: 11, color: textS }}>→ add to <b style={{ color: accent }}>{grpZone} · {grpFn || "All functions"}</b></span>
-                <div style={{ flex: 1 }} />
-                <button onClick={() => setGrpSelected(new Set())} style={{ ...S.btn(false), fontSize: 10, padding: "4px 10px" }}>Clear</button>
-                <button disabled={grpSaving} onClick={async () => {
-                  // Appended, not merged in grid order — a photo already grouped keeps the position
-                  // it was arranged into rather than jumping to wherever it sits in this page.
-                  const next = [...grpZoneIds, ...[...grpSelected].filter(id => !grpZoneIds.includes(id))];
-                  const added = next.length - grpZoneIds.length;
-                  const label = `${grpZone} · ${grpFn || "All functions"}`;
-                  setGrpSaving(true);
-                  try {
-                    await saveZoneGroups(setGroupIds(zoneGroups, grpZone, grpFn, next));
-                    setGrpSelected(new Set());
-                    showMsg(added ? `✓ ${added} photo${added === 1 ? "" : "s"} added to "${label}"` : `Already in "${label}" — nothing to add`, added ? "green" : "orange");
-                  } catch (e) { showMsg("Save failed: " + (e.message || "unknown"), "red"); }
-                  setGrpSaving(false);
-                }} style={{ ...S.btn(true), fontSize: 11, padding: "5px 16px", opacity: grpSaving ? 0.5 : 1 }}>{grpSaving ? "Saving…" : `Save to ${grpFn || "All functions"}`}</button>
-              </div>
-            )}
-
-            {LibraryBrowse("pick")}
-          </>}
-        </div>
-      )}
       {libView === "videos" && (
         <div>
           {/* Search + Refresh + Add Video row */}
