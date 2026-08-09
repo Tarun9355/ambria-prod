@@ -1537,22 +1537,30 @@ export default function StudioApp() {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
   const zpHasFilters = Object.values(zpFilters).some(a => a.length > 0);
+  // Which categories HIDE a photo. Event type is the one that has to be exact — a Haldi build has
+  // no use for Reception stages, so showing them ranked below would just be noise. Venue and colour
+  // palette rank instead of hiding (see zpVenueMatch / zpPaletteMatch): too little is tagged per
+  // venue or palette for an exact match to leave enough to build a zone from, and the same
+  // reasoning that made venue a preference on Browse applies to palette here.
   const zpFilterPhoto = useCallback((li) => {
     if (!li) return true;
     const tags = li.tags || {};
-    for (const cat of ["eventType", "venueType", "designStyle", "colorPalette", "timeSetting"]) {
+    for (const cat of ["eventType", "venueType", "designStyle", "timeSetting"]) {
       const vals = zpFilters[cat] || [];
       if (!vals.length) continue;
       const it = tags[cat] || [];
-      // Palette pills are trimmed by paletteNames() while photo tags keep whatever was typed, so
-      // this one category has to compare loosely or a trailing space hides the photo.
-      const hit = cat === "colorPalette"
-        ? vals.some(v => paletteInList(it, v))
-        : vals.some(v => it.includes(v));
-      if (!hit) return false;
+      if (!vals.some(v => it.includes(v))) return false;
     }
-    // Venue deliberately does NOT exclude here — see zpVenueMatch below.
     return true;
+  }, [zpFilters]);
+  // Palette is a preference, like venue. Pills are trimmed by paletteNames() while photo tags keep
+  // whatever was typed, so this compares loosely or a trailing space costs you the photo.
+  // True when nothing is picked, i.e. no preference to express.
+  const zpPaletteMatch = useCallback((li) => {
+    const vals = zpFilters.colorPalette || [];
+    if (!vals.length) return true;
+    if (!li) return true;
+    return vals.some(v => paletteInList(li.tags?.colorPalette || [], v));
   }, [zpFilters]);
   // Venue is a preference, not a filter: too few photos are tagged per venue for an exact match to
   // leave enough to build from, so the zone strips rank the chosen venue first and keep the rest
@@ -6843,7 +6851,7 @@ export default function StudioApp() {
     normalizePaintAllocation, paintPillLabel, isSubcatPaintable,
     lmsCacheRef,
     // zone photo filters + upload
-    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch,
+    zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,

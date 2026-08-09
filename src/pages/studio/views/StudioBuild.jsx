@@ -500,7 +500,7 @@ export default function StudioBuild({ ctx }) {
     zoneUploading, handleZoneUpload,
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
-    zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto, zpVenueMatch,
+    zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
     // rate card — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // IMS inventory — "+Add element" sources from here now, not the Rate Card
@@ -1737,20 +1737,29 @@ undefined
         for (const ph of arr) (phVerified(ph) ? yes : no).push(ph);
         return [...yes, ...no];
       };
-      // venuePrefCount feeds the caption below the strip header. Browse labels its venue split for a
-      // reason — an unlabelled list that still shows other venues reads as the filter being broken —
-      // and the strip needs the same explanation.
-      let venuePrefCount = 0;
-      if ((zpFilters.venue || []).length) {
-        const atVenue = [], elsewhere = [];
+      // ═══ VENUE + PALETTE PREFERENCE ═══ Neither hides anything; both float their matches up, the
+      // way Browse treats venue. Four stable tiers, venue dominant, because a photo shot at this
+      // venue is worth more to a salesperson than one that merely shares a colour scheme:
+      //   1. this venue AND this palette   2. this venue   3. this palette   4. everything else
+      // With only one of the two picked this collapses to the plain two-way split it was.
+      // The counts feed the caption below — an unlabelled list that still shows other venues reads
+      // as the filter having quietly broken.
+      const venueOn = !!(zpFilters.venue || []).length;
+      const paletteOn = !!(zpFilters.colorPalette || []).length;
+      let venuePrefCount = 0, palettePrefCount = 0;
+      if (venueOn || paletteOn) {
+        const both = [], venueOnly = [], paletteOnly = [], rest = [];
         for (const ph of matchedPhotos) {
           const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-          (zpVenueMatch(li) ? atVenue : elsewhere).push(ph);
+          const v = venueOn && zpVenueMatch(li);
+          const p = paletteOn && zpPaletteMatch(li);
+          if (v) venuePrefCount++;
+          if (p) palettePrefCount++;
+          (v && p ? both : v ? venueOnly : p ? paletteOnly : rest).push(ph);
         }
-        venuePrefCount = atVenue.length;
-        // Verified-first runs INSIDE each venue group, so the venue you picked still leads the strip
-        // and verification only decides the order within it. Sorting across both would undo it.
-        matchedPhotos = [...verifiedFirst(atVenue), ...verifiedFirst(elsewhere)];
+        // Verified-first runs INSIDE each tier, so the preference still leads and verification only
+        // decides the order within it. Sorting across tiers would undo the preference entirely.
+        matchedPhotos = [...verifiedFirst(both), ...verifiedFirst(venueOnly), ...verifiedFirst(paletteOnly), ...verifiedFirst(rest)];
       } else {
         matchedPhotos = verifiedFirst(matchedPhotos);
       }
@@ -1882,9 +1891,11 @@ undefined
               </div>}
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
                   along the strip look like the venue pick silently failed. */}
-              {!!(zpFilters.venue||[]).length&&matchedPhotos.length>0&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
-                <span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venuePrefCount} at {zpFilters.venue.length===1?zpFilters.venue[0]:"selected venues"}</span>
-                <span>shown first{matchedPhotos.length>venuePrefCount?`, then ${matchedPhotos.length-venuePrefCount} from other venues`:""}</span>
+              {/* Strip only: in grid view the section headings say all of this, in place. */}
+              {(venueOn||paletteOn)&&matchedPhotos.length>0&&!gridZones[k]&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+                {venueOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venuePrefCount} at {zpFilters.venue.length===1?zpFilters.venue[0]:"selected venues"}</span>}
+                {paletteOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{palettePrefCount} in {zpFilters.colorPalette.length===1?zpFilters.colorPalette[0]:"selected palettes"}</span>}
+                <span>shown first, then the rest of this zone's {matchedPhotos.length} photo{matchedPhotos.length===1?"":"s"}</span>
               </div>}
               {zpFilterOpen===k&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
                 <div>
@@ -1952,9 +1963,49 @@ undefined
                 const page = Math.min(phPage[k] || 0, pageCount - 1);   // clamp: filters can shrink the list
                 const start = paged ? page * PH_PER_PAGE : 0;
                 const shown = paged ? matchedPhotos.slice(start, start + PH_PER_PAGE) : matchedPhotos;
+                // ═══ SECTION HEADINGS ═══ Browse splits its ranked list under headings for a
+                // reason: unlabelled, a list that still shows other venues just looks like a broken
+                // filter. Same three sections here, derived from the FINAL order so the pinned
+                // group and the selected photo keep their places inside them.
+                // Grid view only — the strip paginates four at a time, and a heading that appears
+                // on whichever page its tier happens to start on explains nothing.
+                const secOf = (ph) => {
+                  const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
+                  if ((venueOn && zpVenueMatch(li)) || (paletteOn && zpPaletteMatch(li))) return 0;
+                  return (li?.tags?.venue || ph.venue) ? 1 : 2;
+                };
+                const sectioned = gridZones[k] && (venueOn || paletteOn);
+                const secs = [[], [], []];
+                if (sectioned) shown.forEach((ph) => secs[secOf(ph)].push(ph));
+                const prefLabel = venueOn && paletteOn
+                  ? `${zpFilters.venue.length === 1 ? zpFilters.venue[0] : "Selected venues"} · ${zpFilters.colorPalette.length === 1 ? zpFilters.colorPalette[0] : "selected palettes"}`
+                  : venueOn ? (zpFilters.venue.length === 1 ? zpFilters.venue[0] : "Selected venues")
+                  : (zpFilters.colorPalette.length === 1 ? zpFilters.colorPalette[0] : "Selected palettes");
+                const SEC_META = [
+                  [prefLabel, (n) => `${n} tagged here`],
+                  ["More references", (n) => `${n} from other venues`],
+                  ["Not tagged to a venue", (n) => `${n} — still usable, but nobody has said where they were shot`],
+                ];
+                // Headings ride in the same list as the photos, marked with __head, so one map
+                // renders both and the grid lays them out together. `i = start + pi` is only a
+                // React key now, so the extra entries shifting it is harmless.
+                const firstSec = secs.findIndex(s => s.length);
+                const renderList = sectioned
+                  ? secs.flatMap((list, si) => list.length
+                      ? [{ __head: si, __n: list.length, __first: si === firstSec }, ...list]
+                      : [])
+                  : shown;
                 return (<>
               <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...phSwipeHandlers(k,page,pageCount)}>
-              {shown.map((ph,pi)=>{
+              {renderList.map((ph,pi)=>{
+                // A section heading: a full-width row inside the same grid, so the tiles either
+                // side of it keep one consistent size.
+                if (ph.__head !== undefined) return (
+                  <div key={`sec${ph.__head}`} style={{gridColumn:"1/-1",margin:ph.__first?"0 0 2px":"14px 0 2px",paddingTop:ph.__first?0:12,borderTop:ph.__first?"none":`1px solid ${border}`,display:"flex",alignItems:"baseline",gap:8}}>
+                    <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS}}>{SEC_META[ph.__head][0]}</span>
+                    <span style={{fontSize:10,color:textS,fontWeight:400}}>{SEC_META[ph.__head][1](ph.__n)}</span>
+                  </div>
+                );
                 const i = start + pi;   // absolute index across pages — keeps React keys unique
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
                 const isSelected = elSelectedPhoto[k]?.src === ph.src;
