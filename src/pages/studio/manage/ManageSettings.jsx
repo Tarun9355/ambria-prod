@@ -24,7 +24,7 @@ export default function ManageSettings({ ctx }) {
     // auth
     authUser, isAdmin, hasPerm, studioSettingsAllowed,
     // venues
-    customInhouse, customOutdoor, saveVenues,
+    customInhouse, customOutdoor, saveVenues, ytVideoTags, saveYtTags, trVenues, saveTR,
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, allVenueData,
     // clients
@@ -93,6 +93,72 @@ export default function ManageSettings({ ctx }) {
     const removeInhouse = (name) => saveVenues(customInhouse.filter(v=>v.name!==name), customOutdoor);
     const removeOutdoor = (name) => saveVenues(customInhouse, customOutdoor.filter(v=>v.name!==name));
 
+    // ═══ VENUE RENAME → EVERYTHING KEYED BY THE NAME ═══
+    // Venues are referenced by NAME, not id, in four separate places. Renaming one used to update
+    // only the venue list, silently breaking the other three:
+    //
+    //   • video tags     — the video stops matching the venue filters
+    //   • library photos — same, for stills (604 carry a venue; 131 are already stranded)
+    //   • transport tier — THE COSTLY ONE. transportCalc matches trVenues by name, so a renamed
+    //                      venue falls through to isNew, tier "New venue", and the trip rate drops
+    //                      to customTripRate. The quote changes with nothing on screen saying why.
+    //
+    // Past EVENTS are deliberately excluded — client_ledger and event_orders record where a job
+    // actually happened, and rewriting that would falsify history. Reference data has no such
+    // reason, so it follows the rename.
+    const renameVenueEverywhere = async (oldName, newName) => {
+      const from = (oldName || "").trim(), to = (newName || "").trim();
+      const out = { videos: 0, transport: 0, photos: 0 };
+      if (!from || !to || from === to) return out;
+
+      // 1. video tags — saveYtTags takes a PATCH keyed by video id, not the whole map. Passing the
+      //    whole map would re-upsert every tagged video (one chained write each) and overwrite any
+      //    tag edited elsewhere since this component rendered. Only the matching ids go in, and each
+      //    value is the function form so it composes onto the freshest tag rather than our snapshot.
+      const tags = ytVideoTags || {};
+      const vids = Object.keys(tags).filter((id) => (tags[id]?.venue || "").trim() === from);
+      if (vids.length) {
+        const patch = {};
+        vids.forEach((id) => { patch[id] = (prev) => ({ ...prev, venue: to }); });
+        saveYtTags(patch);
+        out.videos = vids.length;
+      }
+
+      // 2. transport tier — match case-insensitively, exactly as transportCalc does when it looks
+      //    the venue up, so a tier written with different casing still follows the rename.
+      const tiers = Array.isArray(trVenues) ? trVenues : [];
+      const hitsT = tiers.filter((v) => String(v?.name || "").trim().toLowerCase() === from.toLowerCase());
+      if (hitsT.length) {
+        saveTR(tiers.map((v) => (String(v?.name || "").trim().toLowerCase() === from.toLowerCase() ? { ...v, name: to } : v)));
+        out.transport = hitsT.length;
+      }
+
+      // 3. library photos (a real table) — page through the matches and rewrite tags.venue only,
+      //    leaving every other tag on the row untouched.
+      try {
+        for (let guard = 0; guard < 100; guard++) {
+          const { data, error } = await supabase.from("library").select("id,tags").eq("tags->>venue", from).limit(500);
+          if (error || !data?.length) break;
+          const res = await Promise.all(data.map((r) =>
+            supabase.from("library").update({ tags: { ...r.tags, venue: to } }).eq("id", r.id)));
+          if (res.some((x) => x.error)) break;
+          out.photos += data.length;
+          if (data.length < 500) break;
+        }
+      } catch { /* a failed photo pass must not undo the renames above */ }
+
+      return out;
+    };
+
+    // "3 videos · 2 photos · transport tier" — only the parts that actually moved.
+    const renameSummary = (r) => {
+      const bits = [];
+      if (r.videos) bits.push(`${r.videos} video tag${r.videos === 1 ? "" : "s"}`);
+      if (r.photos) bits.push(`${r.photos} photo${r.photos === 1 ? "" : "s"}`);
+      if (r.transport) bits.push("transport tier");
+      return bits.length ? ` — ${bits.join(" · ")} updated` : "";
+    };
+
     const updateInhouse = () => {
       if(!editIH) return;
       const newName = (editIH.name||"").trim();
@@ -112,8 +178,15 @@ export default function ManageSettings({ ctx }) {
         parent,
       } : v);
       saveVenues(updated, customOutdoor);
+      const renamed = newName !== editIH.origName;
+      const origName = editIH.origName;
       setEditIH(null);
-      if(newName!==editIH.origName) showMsg("✓ Venue renamed. Past events keep their original venue name for audit.", "green");
+      if (renamed) {
+        showMsg("✓ Venue renamed — updating references…", "green");
+        renameVenueEverywhere(origName, newName).then((r) => {
+          showMsg(`✓ Venue renamed${renameSummary(r)}. Past events keep their original venue name for audit.`, "green");
+        });
+      }
     };
 
     const updateOutdoor = () => {
@@ -127,7 +200,15 @@ export default function ManageSettings({ ctx }) {
         ...v, name: newName, empanelled: !!editOD.empanelled,
       } : v);
       saveVenues(customInhouse, updated);
+      const renamed = newName !== editOD.origName;
+      const origName = editOD.origName;
       setEditOD(null);
+      if (renamed) {
+        showMsg("✓ Venue renamed — updating references…", "green");
+        renameVenueEverywhere(origName, newName).then((r) => {
+          showMsg(`✓ Venue renamed${renameSummary(r)}.`, "green");
+        });
+      }
     };
 
     return (
