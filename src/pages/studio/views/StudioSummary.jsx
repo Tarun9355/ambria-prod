@@ -567,6 +567,196 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     }
   };
 
+  // "📊 Excel" — a real cost sheet a client/vendor can open in Excel: one tab per function, every
+  // zone's decor items AND structure (truss/masking/platform/carpet/arches/pillars/glass — the same
+  // structItems the PPT/PDF already show) broken out line by line, plus transport & genset, plus a
+  // final Event Summary tab. Replaces the old "📊 PPT" button in the Cost Sheet preview header.
+  const exportExcel = async (combined) => {
+    if (!combined) combined = buildCombinedCostSheetData();
+    showMsg("Generating Excel...", "blue");
+    try {
+      if (!window.ExcelJS) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
+          s.onload = resolve;
+          s.onerror = () => {
+            const s2 = document.createElement("script");
+            s2.src = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js";
+            s2.onload = resolve;
+            s2.onerror = () => reject(new Error("Excel library unavailable — try again after deployment"));
+            document.head.appendChild(s2);
+          };
+          document.head.appendChild(s);
+        });
+      }
+
+      const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
+      const fmtDate = (iso) => {
+        if (!iso) return "—";
+        try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
+      };
+      const fnLine = (fnObj) => {
+        const parts = [fnObj.fnType || "Function", fmtDate(fnObj.fnDate), fnObj.fnVenue || "—"];
+        if (fnObj.fnShift) parts.push(fnObj.fnShift);
+        return parts.filter(Boolean).join(" · ");
+      };
+
+      const gold = "FFC9A96E", dark = "FF1A1A2E", tan = "FF8B7355", subtle = "FFF9F7F3", white = "FFFFFFFF";
+      const workbook = new window.ExcelJS.Workbook();
+      workbook.creator = "Ambria Decorations";
+      workbook.created = new Date(0); // Date.now()/new Date() with no args is unavailable in this
+                                       // environment's tooling elsewhere in the session — epoch is fine,
+                                       // ExcelJS just needs SOME Date object for the metadata field.
+      const COLS = [
+        { header: "Item", key: "item", width: 34 },
+        { header: "Size", key: "size", width: 12 },
+        { header: "Qty", key: "qty", width: 8 },
+        { header: "Rate", key: "rate", width: 14 },
+        { header: "Unit", key: "unit", width: 10 },
+        { header: "Amount", key: "amount", width: 14 },
+      ];
+      const money = { numFmt: '"₹"#,##0' };
+      const usedSheetNames = new Set();
+      const sheetNameFor = (fnObj, i) => {
+        // Excel sheet names: max 31 chars, no  : \ / ? * [ ] , and must be unique.
+        let base = `${i + 1}. ${fnObj.fnType || "Function"}`.replace(/[:\\/?*[\]]/g, "").slice(0, 31);
+        let name = base, n = 2;
+        while (usedSheetNames.has(name)) { name = `${base.slice(0, 28)} (${n})`; n++; }
+        usedSheetNames.add(name);
+        return name;
+      };
+
+      // Section header row — spans every column, dark fill, bold light text (mirrors the PPT's own
+      // section-header bands so the two exports read as the same document).
+      const addSectionRow = (ws, text, opts = {}) => {
+        const row = ws.addRow([text]);
+        ws.mergeCells(row.number, 1, row.number, COLS.length);
+        row.getCell(1).font = { bold: true, color: { argb: opts.color || white }, size: opts.size || 11 };
+        row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill || dark } };
+        row.height = opts.height || 20;
+        return row;
+      };
+      const addTableHeaderRow = (ws) => {
+        const row = ws.addRow(COLS.map(c => c.header));
+        row.eachCell(c => {
+          c.font = { bold: true, color: { argb: white }, size: 10 };
+          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: tan } };
+          c.alignment = { horizontal: c.value === "Item" ? "left" : "right" };
+        });
+        return row;
+      };
+      const addItemRow = (ws, cells, opts = {}) => {
+        const row = ws.addRow(cells);
+        if (opts.italic) row.eachCell(c => { c.font = { ...(c.font || {}), italic: true }; });
+        if (opts.bold) row.eachCell(c => { c.font = { ...(c.font || {}), bold: true }; });
+        if (opts.fill) row.eachCell(c => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: opts.fill } }; });
+        row.getCell(6).numFmt = money.numFmt;
+        row.getCell(3).alignment = { horizontal: "center" };
+        row.getCell(4).alignment = { horizontal: "right" };
+        row.getCell(6).alignment = { horizontal: "right" };
+        return row;
+      };
+
+      combined.functions.forEach((fnObj, i) => {
+        const ws = workbook.addWorksheet(sheetNameFor(fnObj, i));
+        ws.columns = COLS;
+        addSectionRow(ws, `AMBRIA DECORATIONS — ${(combined.clientName || "Client").toUpperCase()}`, { fill: dark, color: gold, size: 13, height: 24 });
+        addSectionRow(ws, fnLine(fnObj).toUpperCase(), { fill: "FF2A2A42", color: white });
+        ws.addRow([]);
+
+        if (fnObj.isEmpty) {
+          ws.mergeCells(ws.rowCount + 1, 1, ws.rowCount + 1, COLS.length);
+          const row = ws.getRow(ws.rowCount);
+          row.getCell(1).value = "Design pending — zones for this function have not been built yet.";
+          row.getCell(1).font = { italic: true, color: { argb: "FF808080" } };
+          return;
+        }
+
+        fnObj.zones.forEach(z => {
+          addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
+          addTableHeaderRow(ws);
+          z.structItems.forEach(si => addItemRow(ws, [si.name, "—", "—", "—", "—", si.total], { italic: true }));
+          z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
+          addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
+          if (z.note) {
+            const row = ws.addRow([`📝 ${z.note}`]);
+            ws.mergeCells(row.number, 1, row.number, COLS.length);
+            row.getCell(1).font = { italic: true, color: { argb: tan } };
+          }
+          ws.addRow([]);
+        });
+
+        if (fnObj.transport) {
+          addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
+          const row = ws.addRow(["Item", "Details", "", "", "", "Amount"]);
+          row.eachCell((c, idx) => { if ([1, 2, 6].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 6 ? "right" : "left" }; } });
+          (fnObj.transport.breakdown || []).forEach(bd => {
+            const r = ws.addRow([bd.label, `${bd.trucks || 0} truck${(bd.trucks || 0) !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2`, "", "", "", (bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2]);
+            r.getCell(6).numFmt = money.numFmt; r.getCell(6).alignment = { horizontal: "right" };
+          });
+          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
+          gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
+          const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
+          tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
+          tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
+          ws.addRow([]);
+        }
+
+        addSectionRow(ws, `FUNCTION TOTAL   —   ${f(fnObj.grand)}`, { fill: dark, color: gold, size: 12, height: 22 });
+      });
+
+      // ═══ EVENT SUMMARY tab ═══
+      const sw = workbook.addWorksheet("Event Summary");
+      sw.columns = [
+        { header: "Function", key: "fn", width: 20 },
+        { header: "Date · Venue", key: "dv", width: 30 },
+        { header: "Decor", key: "decor", width: 14 },
+        { header: "Transport", key: "transport", width: 14 },
+        { header: "Grand", key: "grand", width: 14 },
+      ];
+      const swRow1 = sw.addRow(["EVENT SUMMARY", "", "", "", ""]);
+      sw.mergeCells(1, 1, 1, 5);
+      swRow1.getCell(1).font = { bold: true, size: 13, color: { argb: white } };
+      swRow1.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+      swRow1.height = 22;
+      const swHead = sw.addRow(["Function", "Date · Venue", "Decor", "Transport", "Grand"]);
+      swHead.eachCell(c => { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: tan } }; });
+      combined.functions.forEach(fnObj => {
+        const row = sw.addRow([
+          fnObj.fnType || "—", `${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}`,
+          fnObj.isEmpty ? 0 : (fnObj.decorTotal || 0), fnObj.isEmpty ? 0 : (fnObj.transportTotal || 0), fnObj.isEmpty ? 0 : (fnObj.grand || 0),
+        ]);
+        [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
+      });
+      const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", combined.eventGrandTotal || 0]);
+      sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
+      gtRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
+      gtRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+      gtRow.getCell(5).font = { bold: true, size: 13, color: { argb: gold } };
+      gtRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+      gtRow.getCell(5).numFmt = money.numFmt;
+      gtRow.getCell(5).alignment = { horizontal: "right" };
+
+      // File name: guest name + the earliest function's date + venue — functions are already
+      // date-sorted by buildCombinedCostSheetData, so [0] is the earliest.
+      const first = combined.functions[0] || {};
+      const safe = (s) => String(s || "").trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      const fileName = ["Ambria_CostSheet", safe(combined.clientName), safe(first.fnDate), safe(first.fnVenue)].filter(Boolean).join("_") + ".xlsx";
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fileName; document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+      showMsg("✓ Excel downloaded!", "green");
+    } catch (err) {
+      console.error("Excel export error:", err);
+      showMsg("Excel export failed — " + (err.message || "try again"), "red");
+    }
+  };
+
   // Turns the same cost-sheet data buildPptx uses into a markdown outline for Gamma's Generate API.
   // Sections are separated by "\n---\n" (Gamma's own card-break syntax with cardSplit:
   // "inputTextBreaks" — one break = one extra card), and photos are dropped in as bare URLs for Gamma
@@ -1113,6 +1303,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       };
       const csExportPDF=()=>{const html=exportPDF(csData);const w=window.open("","_blank");if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),800);}else{showMsg("Open in deployed app for PDF export","blue");}};
       const csExportPPT=()=>exportPPT(csData);
+      const csExportExcel=()=>exportExcel(csData);
       const fmtDate=(iso)=>{if(!iso)return"—";try{return new Date(iso+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"});}catch{return iso;}};
       const fnLine=(fnObj)=>{const parts=[fnObj.fnType||"Function",fmtDate(fnObj.fnDate),fnObj.fnVenue||"—"];if(fnObj.fnShift)parts.push(fnObj.fnShift);return parts.filter(Boolean).join(" · ");};
       const fnCount=csData.functions.length;
@@ -1127,7 +1318,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
             <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
-            <button onClick={csExportPPT} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} PPT</button>
+            <button onClick={csExportExcel} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} Excel</button>
             {(() => {
               const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
               const busyLabel = canvaState === "designing" ? "Designing…" : canvaState === "uploading" ? "Uploading…" : "Finalizing…";
