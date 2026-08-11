@@ -494,6 +494,7 @@ export default function StudioBuild({ ctx }) {
     zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
     elSelectedPhoto, selectElPhoto, setElSelectedPhoto, elNotes, setElNotes,
+    elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     setElGallery, setGalleryIdx,
     newCzSrc, setNewCzSrc,
     // uploads / ai
@@ -2039,7 +2040,10 @@ undefined
                 );
                 const i = start + pi;   // absolute index across pages — keeps React keys unique
                 const isSource = sourceEvent && ph.eventName === sourceEvent.name;
-                const isSelected = elSelectedPhoto[k]?.src === ph.src;
+                const multiZone = isMultiPhotoZone(el.label);
+                const isSelected = multiZone
+                  ? (elMultiPhotos[k] || []).some(p => (p.eventId || p.src) === (ph.eventId || ph.src))
+                  : elSelectedPhoto[k]?.src === ph.src;
                 // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
                 const photoFullCost = calcPhotoCost(k, ph);
                 // Column layout so the caption below the photo can take every pixel the image does
@@ -2109,7 +2113,7 @@ undefined
                   </div>
                   {/* The whole strip under the photo selects, not just the two lines of text —
                       flex:1 claims the leftover height and the padding widens the target. */}
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone"} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;selectElPhoto(k,ph);setGridZones(g=>g[k]?{...g,[k]:false}:g);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);setGridZones(g=>g[k]?{...g,[k]:false}:g);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}}>
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
                     <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
@@ -2191,7 +2195,15 @@ undefined
           {zoneSection[k]==="elements"&&(zoneElements[k] ? (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={`Source library photo: ${elSelectedPhoto[k]?.eventName || "Library photo"}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{elSelectedPhoto[k]?.eventName || "Library photo"}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>
+                {(()=>{
+                  // Combined-source label — Installations can have several photos feeding one
+                  // Element card at once, so the badge names all of them instead of just one.
+                  const multiCount = (elMultiPhotos[k] || []).length;
+                  const sourceLabel = multiCount > 1
+                    ? `${multiCount} photos selected`
+                    : elSelectedPhoto[k]?.eventName || "Library photo";
+                  return <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the element list":"Show the element list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}><span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span><IconClipboard size={12}/><span style={{color:textP}}>Element card</span><span style={{color:textS,fontWeight:400}}>· {el.label}</span><span title={multiCount>1?`Combined from: ${elMultiPhotos[k].map(p=>p.eventName).join(", ")}`:`Source library photo: ${sourceLabel}`} style={{fontSize:9.5,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:textS,opacity:0.75,background:isDark?"rgba(255,255,255,0.05)":"rgba(26,26,46,0.05)",padding:"1px 6px",borderRadius:4,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sourceLabel}</span>{!isElCardOpen(k)&&elCardSummary(k)}</div>;
+                })()}
                 {/* Adding an element belongs beside the element list, not up on the photo pager.
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
                 {isElCardOpen(k)&&<div style={{position:"relative"}}>

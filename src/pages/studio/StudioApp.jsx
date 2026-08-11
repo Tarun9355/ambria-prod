@@ -6206,6 +6206,56 @@ export default function StudioApp() {
     setCustomMode(p => ({ ...p, [elKey]: false }));
   };
 
+  // ── Multi-select element photos — Installations zone ONLY. Every other zone keeps the
+  // single-photo-replaces-everything model above (selectElPhoto). A real installation is often
+  // assembled from several reference pieces rather than one photographed "look", so this zone alone
+  // is allowed to pick multiple photos and combine their elements into one build. elMultiPhotos is
+  // intentionally session-local (not threaded through the snapshot/session save-restore paths that
+  // elSelectedPhoto goes through) — zoneElements/zoneConfig, which DO persist normally, already
+  // carry the actual combined pricing; only which tiles show as ticked would need re-deriving after
+  // a reload, which is cosmetic, not a pricing bug.
+  const [elMultiPhotos, setElMultiPhotos] = useState({}); // { [zoneKey]: Array<photo> }
+  const isMultiPhotoZone = (label) => String(label || "").trim().toLowerCase() === "installations";
+  const toggleMultiElPhoto = (elKey, photo) => {
+    const photoKey = photo.eventId || photo.src;
+    const current = elMultiPhotos[elKey] || [];
+    const idx = current.findIndex(p => (p.eventId || p.src) === photoKey);
+    if (idx >= 0) {
+      // Deselect — drop only THIS photo's own contributed elements, leave the rest untouched.
+      const nextPhotos = current.filter((_, i) => i !== idx);
+      setElMultiPhotos(p => ({ ...p, [elKey]: nextPhotos }));
+      setZoneElements(p => ({ ...p, [elKey]: (p[elKey] || []).filter(it => it._srcPhotoKey !== photoKey) }));
+      const wasPrimary = elSelectedPhoto[elKey] && (elSelectedPhoto[elKey].eventId || elSelectedPhoto[elKey].src) === photoKey;
+      if (!nextPhotos.length) {
+        setElSelectedPhoto(p => { const n = { ...p }; delete n[elKey]; return n; });
+      } else if (wasPrimary) {
+        // The zone's truss/platform/print/dims config came from whichever photo was primary —
+        // promote the next remaining one so exports/cost-sheet keep a representative photo, but
+        // leave zoneConfig itself alone (nothing after the first photo ever touched it anyway).
+        setElSelectedPhoto(p => ({ ...p, [elKey]: nextPhotos[0] }));
+      }
+      return;
+    }
+    // Select — append this photo's elements (tagged so a later deselect can pull exactly these back
+    // out) instead of selectElPhoto's normal replace. Only the FIRST photo picked into an empty zone
+    // seeds zoneConfig (truss/platform/print/dims); every one after that contributes elements only.
+    const nextPhotos = [...current, photo];
+    setElMultiPhotos(p => ({ ...p, [elKey]: nextPhotos }));
+    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(it => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey }));
+    setZoneElements(p => ({ ...p, [elKey]: [...(p[elKey] || []), ...tagged] }));
+    if (!current.length) {
+      setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
+      const libImg = photo.isLibrary ? libItems.find(i => i.url === photo.src || i.id === photo.eventId) : null;
+      const photoDims = photo.dims || libImg?.dims || {};
+      let cfg = buildZoneConfig(elKey, photoDims);
+      const savedFull = libImg?.zoneConfigByType?.[elKey] || photo.zoneConfigByType?.[elKey] || null;
+      if (savedFull) cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(savedFull)) };
+      if (cfg) setZoneConfig(p => ({ ...p, [elKey]: cfg }));
+    }
+    setActiveZones([]);
+    setCustomMode(p => ({ ...p, [elKey]: false }));
+  };
+
   // ── Cost-sheet zone builder + combined data — VERBATIM ──
   const buildZonesForFn = useCallback((fnData) => {
     if (!fnData) return [];
@@ -7077,6 +7127,7 @@ export default function StudioApp() {
     enabledEls, setEnabledEls, elTiers, setElTiers, customMode, setCustomMode, itemQty, setItemQty, itemGrades, setItemGrades,
     showInsp, setShowInsp, showAi, setShowAi, showPpt, setShowPpt, showCosts, setShowCosts,
     elInspo, setElInspo, elInspoLoading, setElInspoLoading, elSelectedPhoto, setElSelectedPhoto, elNotes, setElNotes, elCostOpen, setElCostOpen,
+    elMultiPhotos, isMultiPhotoZone, toggleMultiElPhoto,
     customZones, setCustomZones, newCzSrc, setNewCzSrc, elGallery, setElGallery, galleryIdx, setGalleryIdx, webPreview, setWebPreview,
     zoneConfig, setZoneConfig, activeZones, setActiveZones,
     floralRatio, setFloralRatio, floralOverrides, setFloralOverrides,
