@@ -724,44 +724,55 @@ export default function StudioBuild({ ctx }) {
   // zone for the current function. Kept apart from elSelectedPhoto: that is the ONE photo whose
   // elements price the zone, and overloading the same click to also mean "put this in the group"
   // would make every grouping tick re-price the build.
-  const [grpSel, setGrpSel] = useState({});   // { [zoneKey]: Set<libraryPhotoId> }
+  const [grpSel, setGrpSel] = useState({});   // { [zoneKey]: Set<libraryPhotoId> } — the TRUE current
+  // membership once grid mode is on for a zone (pre-loaded from the saved group, see the grid-view
+  // toggle below), not just a pending pick. Ticking/unticking IS the group now — no separate confirm.
   const grpSelFor = (k) => grpSel[k] || EMPTY_SET;
-  const toggleGrpPick = (k, id) => setGrpSel(prev => {
-    const cur = new Set(prev[k] || []);
-    cur.has(id) ? cur.delete(id) : cur.add(id);
-    return { ...prev, [k]: cur };
-  });
-  const clearGrpPick = (k) => setGrpSel(prev => ({ ...prev, [k]: new Set() }));
+  // { [zoneKey]: "saving" | "saved" | "error" } — feedback for the auto-save below, since there's no
+  // button press to feel like confirmation anymore.
+  const [grpSaveStatus, setGrpSaveStatus] = useState({});
+  const grpSaveTimers = useRef({});   // { [zoneKey]: timeoutId } — debounces rapid tick/untick clicks
   // Groups are stored per AREA name, which is the vocabulary photos are tagged with and that
   // getLibPhotosForZone reads back. A zone maps to one or more area names; write to the first,
   // since the read unions across all of them. An unmapped custom zone falls back to its label.
   const groupAreaFor = (srcType, label) => areaNamesFor(srcType)[0] || label || srcType;
-  const saveZoneGroup = async (zoneKey, srcType, label, ids, { remove = false } = {}) => {
-    const area = groupAreaFor(srcType, label);
-    // Returning quietly here is how a group silently fails to persist — say so instead.
-    if (!area) { showMsg("This zone has no area name to group against", "red"); return; }
-    if (!writeZoneGroup) { showMsg("Grouping isn't available — reload the page", "red"); return; }
-    const current = zoneGroups?.[area]?.[groupFn] || [];
-    const next = remove
-      ? current.filter(id => !ids.includes(id))
-      : [...current, ...ids.filter(id => !current.includes(id))];
-    try {
-      await writeZoneGroup(area, groupFn, next);
-      clearGrpPick(zoneKey);
-      // The pinned photos move to the front of the zone, which is page 1 — but the strip pager
-      // stays wherever it was, so pinning from page 3 sends them somewhere you can't see. Jump
-      // back to the start so the result of the click is on screen.
-      setPhPage(p => ({ ...p, [zoneKey]: 0 }));
-      const n = Math.abs(next.length - current.length);
-      showMsg(
-        remove
-          ? `✓ ${n} photo${n === 1 ? "" : "s"} removed from the ${area}${groupFn ? ` · ${groupFn}` : ""} group`
-          : n ? `✓ ${n} photo${n === 1 ? "" : "s"} pinned to the front of ${area}${groupFn ? ` · ${groupFn}` : ""}`
-              : "Already pinned — nothing to add",
-        n ? "green" : "orange"
-      );
-    } catch (e) { showMsg("Couldn't save the group: " + (e.message || "unknown"), "red"); }
+  // Debounced auto-save — fires ~700ms after the last tick/untick in a zone, so a quick run of
+  // clicks collapses into one network round trip instead of one per click. Always REPLACES the
+  // zone's saved list with exactly what's ticked (not an add/remove delta): grid mode pre-loads
+  // ticks from the saved group before any click can happen, so the tick set is always the full
+  // intended membership, and unticking a previously-saved photo removes it the same way ticking a
+  // new one adds it — one gesture, no separate "unpin" action.
+  const scheduleGroupSave = (zoneKey, srcType, label, idsSet) => {
+    if (grpSaveTimers.current[zoneKey]) clearTimeout(grpSaveTimers.current[zoneKey]);
+    grpSaveTimers.current[zoneKey] = setTimeout(async () => {
+      const area = groupAreaFor(srcType, label);
+      if (!area || !writeZoneGroup) return;
+      setGrpSaveStatus(p => ({ ...p, [zoneKey]: "saving" }));
+      try {
+        await writeZoneGroup(area, groupFn, [...idsSet]);
+        setGrpSaveStatus(p => ({ ...p, [zoneKey]: "saved" }));
+        setPhPage(p => ({ ...p, [zoneKey]: 0 }));   // the order just changed — jump the pager back to page 1
+      } catch (e) {
+        setGrpSaveStatus(p => ({ ...p, [zoneKey]: "error" }));
+        showMsg("Couldn't save the group: " + (e.message || "unknown"), "red");
+      }
+    }, 700);
   };
+  const toggleGrpPick = (k, id, srcType, label) => setGrpSel(prev => {
+    const cur = new Set(prev[k] || []);
+    cur.has(id) ? cur.delete(id) : cur.add(id);
+    scheduleGroupSave(k, srcType, label, cur);
+    return { ...prev, [k]: cur };
+  });
+  // Hide the ticks locally WITHOUT touching the saved group — used when leaving grid view, where
+  // the ticks just stop being visible/actionable, same as the group being untouched always meant.
+  const hideGrpPick = (k) => setGrpSel(prev => ({ ...prev, [k]: new Set() }));
+  // Untick everything in this zone AND persist that — with the auto-save above, this empties the
+  // saved group, same as unticking each photo individually would, just in one click.
+  const clearGrpPick = (k, srcType, label) => setGrpSel(prev => {
+    scheduleGroupSave(k, srcType, label, new Set());
+    return { ...prev, [k]: new Set() };
+  });
   // Delete a zone's whole group for the current function. Confirmed, because unlike unpinning a
   // ticked photo or two this throws away an arrangement that could have taken a while to build.
   const clearZoneGroup = (zoneKey, srcType, label) => {
@@ -771,7 +782,7 @@ export default function StudioBuild({ ctx }) {
     askConfirm(`Delete the ${area}${groupFn ? ` · ${groupFn}` : ""} group?`, async () => {
       try {
         await writeZoneGroup(area, groupFn, []);
-        clearGrpPick(zoneKey);
+        clearGrpPick(zoneKey, srcType, label);
         setPhPage(p => ({ ...p, [zoneKey]: 0 }));   // the whole order just changed under the pager
         showMsg(`✓ Group deleted — ${area} goes back to its normal photo order`, "green");
       } catch (e) { showMsg("Couldn't delete the group: " + (e.message || "unknown"), "red"); }
@@ -1824,12 +1835,8 @@ undefined
       const grpOn = !!gridZones[k];
       const grpPicked = grpOn ? grpSelFor(k) : EMPTY_SET;
       const grpArea = groupAreaFor(srcType, el.label);
-      // The EXACT list for this function, not groupIdsFor's any-function fallback. Pinning writes
-      // this function's list, so counting against the fallback would let "Unpin 3" report removing
-      // photos that live in the All-functions group and were never touched.
+      // The EXACT list for this function, not groupIdsFor's any-function fallback.
       const grpSaved = zoneGroups?.[grpArea]?.[groupFn] || [];
-      const grpPickedArr = [...grpPicked];
-      const grpAlready = grpPickedArr.filter(id => grpSaved.includes(id)).length;
       const isDuplicate=!!czSrc?.sourceType;
       return(<div key={k} id={`zone-${k}`} className="zone-row" style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:14,border:isOn?`2px solid ${isDuplicate?"#C9A96E":"#444"}`:`1px solid ${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.09)"}`,marginBottom:10,overflow:"hidden"}}>
         {/* Only the Details chip collapses an open zone. The whole header used to do it, so any
@@ -1856,13 +1863,18 @@ undefined
             {/* Photo-strip controls. They live up here rather than in the strip's own header so the
                 zone's whole control set sits in one row. stopPropagation because an OFF zone's
                 header toggles the zone — but these only render when it is already on. */}
-            {/* Leaving the grid hides the ticks, so drop the selection with them — a selection you
-                can't see is one you'd later act on without meaning to. */}
-            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{const on=!g[k];if(!on)clearGrpPick(k);return {...g,[k]:on};});}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {/* Entering the grid pre-loads the ticks from whatever's already pinned, so tick/untick
+                always acts on the FULL current membership, not a blank slate — ticking more adds,
+                unticking a pinned one removes, both auto-saved. Leaving the grid hides the ticks, so
+                drop the (already-saved) selection with them — nothing left to act on unseen. */}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{const on=!g[k];if(on)setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));else hideGrpPick(k);return {...g,[k]:on};});}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {/* Clear every tick in this zone in one click — with the auto-save above, this also
+                empties the saved group, same as unticking each photo would. */}
+            {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
             {/* Pinned-count chip. The only sign a zone is grouped during normal browsing, and the
-                way in to editing it: clicking ticks every pinned photo, which opens the group bar
-                where Unpin and Delete group live. Hidden when the zone has no group, so a strip
-                nobody has curated stays exactly as clean as before. */}
+                way in to editing it outside grid mode: clicking re-ticks every pinned photo, which
+                opens the group bar (Delete group lives there). Hidden when the zone has no group, so
+                a strip nobody has curated stays exactly as clean as before. */}
             {isOn&&grpOn&&grpSaved.length>0&&<button onClick={e=>{e.stopPropagation();setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));}} title={`${grpSaved.length} photo${grpSaved.length===1?"":"s"} pinned to the front of ${grpArea}${groupFn?` · ${groupFn}`:""} — click to edit the group`} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${accent}`,background:`${accent}18`,color:accent,fontSize:10,fontWeight:800,cursor:"pointer"}}>◆ {grpSaved.length}</button>}
             {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(o=>o===k?null:k);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen===k||zpHasFilters?accent:border}`,background:zpFilterOpen===k||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen===k||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
@@ -1889,27 +1901,19 @@ undefined
               {/* The strip's own header row is gone. It repeated the zone name already in the card
                   header, and its controls have moved up there; the selected photo is marked on the
                   tile itself, so the ✓ id was a second copy of that too. */}
-              {/* ═══ GROUP BAR ═══ Appears the moment you tick a photo in this zone. Pinning writes
-                  the zone's group for the CURRENT function, which is why the button names it —
-                  otherwise the same click means something different depending on which function
-                  tab you happen to be on, with nothing on screen saying so. */}
+              {/* ═══ GROUP BAR ═══ Appears the moment you tick a photo in this zone. Ticking IS the
+                  group now — no confirm click; scheduleGroupSave auto-persists ~700ms after the last
+                  tick, for the CURRENT function, which is why the status line names it — otherwise
+                  the same tick means something different depending on which function tab you're on,
+                  with nothing on screen saying so. */}
               {grpPicked.size>0&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8,padding:"8px 12px",borderRadius:10,border:`1.5px solid ${accent}`,background:isDark?"rgba(201,169,110,0.10)":"rgba(201,169,110,0.14)"}}>
-                <span style={{fontSize:12,fontWeight:700,color:accent}}>{grpPicked.size} photo{grpPicked.size===1?"":"s"} ticked</span>
-                <span style={{fontSize:10.5,color:textS}}>
-                  {grpAlready===grpPicked.size ? "already pinned" : `pin to the front of ${grpArea}${groupFn?` · ${groupFn}`:" · every function"}`}
+                <span style={{fontSize:12,fontWeight:700,color:accent}}>{grpPicked.size} photo{grpPicked.size===1?"":"s"} pinned to the front of {grpArea}{groupFn?` · ${groupFn}`:" · every function"}</span>
+                <span style={{fontSize:10.5,color:grpSaveStatus[k]==="error"?"#E11D48":textS}}>
+                  {grpSaveStatus[k]==="saving"?"Saving…":grpSaveStatus[k]==="error"?"⚠ Couldn't save — will retry on the next tick":"✓ Saved"}
                 </span>
                 <div style={{flex:1}}/>
-                <span onClick={()=>clearGrpPick(k)} title="Untick these — the group itself is untouched" style={{fontSize:10.5,color:textS,cursor:"pointer",padding:"4px 8px"}}>Clear ticks</span>
-                {/* Deleting the whole group vs unpinning the ticked ones are easy to confuse, so
-                    both are spelled out with their counts rather than sharing one "remove". */}
                 {grpSaved.length>0&&<button onClick={()=>clearZoneGroup(k,srcType,el.label)} style={{padding:"5px 12px",borderRadius:8,border:`1px solid #E11D48`,background:"transparent",color:"#E11D48",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                   🗑 Delete group ({grpSaved.length})
-                </button>}
-                {grpAlready>0&&<button onClick={()=>saveZoneGroup(k,srcType,el.label,grpPickedArr,{remove:true})} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:11,fontWeight:700,cursor:"pointer"}}>
-                  Unpin {grpAlready}
-                </button>}
-                {grpAlready<grpPicked.size&&<button onClick={()=>saveZoneGroup(k,srcType,el.label,grpPickedArr)} style={{padding:"5px 14px",borderRadius:8,border:"none",background:accent,color:"#1a1a2e",fontSize:11,fontWeight:700,cursor:"pointer"}}>
-                  ◆ Group these ({grpPicked.size-grpAlready})
                 </button>}
               </div>}
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
@@ -2085,7 +2089,7 @@ undefined
                       const ticked=grpPicked.has(ph.eventId);
                       return <div title={ticked?"Untick — remove from this selection":"Tick to pin this photo to the front of the zone"}
                         className="ph-tick"
-                        onClick={e=>{e.stopPropagation();toggleGrpPick(k,ph.eventId);}}
+                        onClick={e=>{e.stopPropagation();toggleGrpPick(k,ph.eventId,srcType,el.label);}}
                         style={{position:"absolute",top:6,left:6,width:20,height:20,borderRadius:5,zIndex:2,
                           cursor:"pointer",
                           border:`2px solid ${ticked?accent:"rgba(255,255,255,0.85)"}`,
