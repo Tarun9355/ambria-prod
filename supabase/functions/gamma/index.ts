@@ -84,19 +84,33 @@ Deno.serve(async (req) => {
             "- Never centre a wall of text on a blank card. Every card needs a clear focal point and " +
             "asymmetric weighting — image on one side, text block on the other, or full-bleed image with " +
             "an overlaid title.\n" +
-            "- Any card containing a photo: the photo IS the card. Full-bleed or near full-bleed, edge to " +
-            "edge. Never a small inset thumbnail floating in white space.\n" +
-            "- Multiple photos on one card: an editorial collage or asymmetric grid with tight, even gutters " +
-            "— a magazine spread, not a row of equal boxes.\n" +
+            "- A card with a SINGLE photo: the photo IS the card. Full-bleed or near full-bleed. Never a " +
+            "small inset thumbnail floating in empty space.\n" +
             "- Keep text sparse. Large type for the few words that matter, generous margins around them. " +
             "Avoid bullet lists entirely; prefer short standalone lines with real space between them.\n\n" +
+            "IMAGE RULES — these are absolute, break none of them:\n" +
+            "- NEVER overlap images. No image may sit on top of, or touch, another. Every image gets its own " +
+            "rectangle with clear space around it.\n" +
+            "- NEVER let an image cross the edge of the card or run off the bottom. Everything sits inside " +
+            "the card with even margins on all four sides.\n" +
+            "- Keep the images in the ORDER they appear in the source text, reading left to right, then top " +
+            "to bottom. Do not shuffle them.\n" +
+            "- Multiple images on one card go in an ALIGNED grid: shared baselines, identical gutters, " +
+            "consistent sizing within each row. A calm ordered grid, never a scattered collage.\n" +
+            "- The first image on a zone card is the HERO: give it roughly half the card, on its own, larger " +
+            "than everything else. The remaining item photos sit together in one even row or a neat 2x2 " +
+            "beside or beneath it, all identical in size.\n" +
+            "- The short line of text immediately BEFORE each item photo is that photo's name. Keep it with " +
+            "its photo as a small caption directly underneath, never orphaned elsewhere on the card.\n" +
+            "- Identical corner radius and identical framing on every image on a card.\n\n" +
             "CARD TYPES:\n" +
             "- Title card: cinematic. Client name large and confident, function details small and quiet " +
             "beneath it, deep negative space. This is the first impression.\n" +
             "- Moodboard cards: hero photography dominating the frame. The colour palette is a small refined " +
             "accent — a discreet row of swatches in a corner — never the focal point.\n" +
-            "- Zone cards: a gallery of that zone's actual pieces. Lead with the zone's hero shot; the item " +
-            "photos sit beneath as a clean secondary strip with names as small captions.\n" +
+            "- Zone cards: a gallery of that zone's actual pieces. The zone's own hero shot leads, large and " +
+            "alone; the item photos follow as one tidy aligned strip of equal tiles, each with its name in " +
+            "small letter-spaced caps beneath it.\n" +
             "- Cost tables: a refined financial statement. Generous row height, hairline dividers only, " +
             "figures right-aligned and vertically aligned, no heavy grid lines, no zebra striping, no " +
             "cramped rows. Totals set apart in a heavier weight with space above.\n" +
@@ -109,6 +123,11 @@ Deno.serve(async (req) => {
             "COLOUR: lean into the theme's gold, metallic and deep dark grounds. Alternate dark and light " +
             "cards through the deck so it has rhythm instead of page after page of the same ground. Gold as " +
             "thin rules, hairlines and small ornament; let the photographs supply the colour.\n\n" +
+            "FINISH — what separates premium from merely tidy: hold the SAME margin on every card so the " +
+            "deck feels bound rather than assembled. Align everything to a shared grid; nothing sits at a " +
+            "slight angle or a random offset. Give each image a thin gold hairline or a quiet shadow, applied " +
+            "identically throughout. Set captions in small letter-spaced caps, well clear of the image edge. " +
+            "Fewer elements, larger, with more space between them, beats more elements packed in.\n\n" +
             "Prioritise visual elegance and breathing room over information density. If a card looks crowded, " +
             "give the content more room rather than shrinking the type. A card that feels empty but confident " +
             "is better than a card that feels full.",

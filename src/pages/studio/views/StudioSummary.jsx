@@ -610,9 +610,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       fnObj.zones.forEach((z) => {
         if (!z.photo || z.photo.startsWith("data:")) return;
         const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img && !it.img.startsWith("data:")).slice(0, 4);
-        // Items are shot against the warehouse, one piece per frame — square keeps the piece centred
-        // and gives the caption strip an even rhythm under the wide hero above it.
-        const itemLines = withPhoto.map((it) => `${it.name}\n${deckImageUrl(it.img, 1000, 1000)}`).join("\n\n");
+        // 4:3, not square. Item shots are wide — a rug, a run of fabric — and a square centre-crop cut
+        // them down to an unreadable patch of texture. Still one fixed ratio across every item, so the
+        // strip under the hero stays a row of equal tiles.
+        const itemLines = withPhoto.map((it) => `${it.name}\n${deckImageUrl(it.img, 1200, 900)}`).join("\n\n");
         sections.push([`# ${fnLine(fnObj)} — ${z.label}`, deckImageUrl(z.photo), itemLines].filter(Boolean).join("\n\n"));
       });
 
