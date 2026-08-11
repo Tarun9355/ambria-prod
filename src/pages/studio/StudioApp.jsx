@@ -1537,25 +1537,27 @@ export default function StudioApp() {
     setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
   }, []);
   const zpHasFilters = Object.values(zpFilters).some(a => a.length > 0);
-  // Which categories HIDE a photo. Event type is the one that has to be exact — a Haldi build has
-  // no use for Reception stages, so showing them ranked below would just be noise. Venue and colour
-  // palette rank instead of hiding (see zpVenueMatch / zpPaletteMatch): too little is tagged per
-  // venue or palette for an exact match to leave enough to build a zone from, and the same
-  // reasoning that made venue a preference on Browse applies to palette here.
+  // Which categories HIDE a photo. Event type and colour palette are the two the salesperson never
+  // wants a mismatch on — a Haldi build in Pink & Blue has no use for a Reception stage in Maroon &
+  // Gold, no matter how well it otherwise matches. Everything else (venue, venue type, design style,
+  // time/setting) ranks instead of hiding (see zpVenueMatch / zpVenueTypeMatch / zpDesignStyleMatch /
+  // zpTimeSettingMatch below): too little is tagged along those dimensions for an exact match to
+  // leave enough photos to build a zone from, so a partial match should still surface, just lower.
   const zpFilterPhoto = useCallback((li) => {
     if (!li) return true;
     const tags = li.tags || {};
-    for (const cat of ["eventType", "venueType", "designStyle", "timeSetting"]) {
-      const vals = zpFilters[cat] || [];
-      if (!vals.length) continue;
-      const it = tags[cat] || [];
-      if (!vals.some(v => it.includes(v))) return false;
+    const evVals = zpFilters.eventType || [];
+    if (evVals.length) {
+      const it = tags.eventType || [];
+      if (!evVals.some(v => it.includes(v))) return false;
     }
+    const palVals = zpFilters.colorPalette || [];
+    if (palVals.length && !palVals.some(v => paletteInList(tags.colorPalette || [], v))) return false;
     return true;
   }, [zpFilters]);
-  // Palette is a preference, like venue. Pills are trimmed by paletteNames() while photo tags keep
-  // whatever was typed, so this compares loosely or a trailing space costs you the photo.
-  // True when nothing is picked, i.e. no preference to express.
+  // Palette is now enforced above (zpFilterPhoto) — every photo reaching the sort step already
+  // matches it, or no palette was picked. Kept as its own function only for that "no preference"
+  // check to stay in one place; not used for ranking anymore (nothing left to rank by).
   const zpPaletteMatch = useCallback((li) => {
     const vals = zpFilters.colorPalette || [];
     if (!vals.length) return true;
@@ -1574,6 +1576,27 @@ export default function StudioApp() {
     let url = ""; try { url = decodeURIComponent(String(li.url || "")); } catch { url = String(li.url || ""); }
     const hay = (String(li.tags?.venue || "") + " " + url).toLowerCase();
     return venueVals.some(v => hay.includes(String(v).toLowerCase()));
+  }, [zpFilters]);
+  // venueType / designStyle / timeSetting — demoted from the old hard-filter loop to the same kind
+  // of rank-not-hide preference as venue/palette used to be, for the same reason: too few photos
+  // carry an exact match along these to leave enough to build a zone from.
+  const zpVenueTypeMatch = useCallback((li) => {
+    const vals = zpFilters.venueType || [];
+    if (!vals.length) return true;
+    if (!li) return true;
+    return vals.some(v => (li.tags?.venueType || []).includes(v));
+  }, [zpFilters]);
+  const zpDesignStyleMatch = useCallback((li) => {
+    const vals = zpFilters.designStyle || [];
+    if (!vals.length) return true;
+    if (!li) return true;
+    return vals.some(v => (li.tags?.designStyle || []).includes(v));
+  }, [zpFilters]);
+  const zpTimeSettingMatch = useCallback((li) => {
+    const vals = zpFilters.timeSetting || [];
+    if (!vals.length) return true;
+    if (!li) return true;
+    return vals.some(v => (li.tags?.timeSetting || []).includes(v));
   }, [zpFilters]);
 
   // ═══ ZONE UPLOAD STATE — VERBATIM (Cloudinary + AI tag) ═══
@@ -7006,6 +7029,7 @@ export default function StudioApp() {
     lmsCacheRef,
     // zone photo filters + upload
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
+    zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch,
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,

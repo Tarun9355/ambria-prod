@@ -501,6 +501,7 @@ export default function StudioBuild({ ctx }) {
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
+    zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch,
     // rate card — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // IMS inventory — "+Add element" sources from here now, not the Rate Card
@@ -1754,29 +1755,34 @@ undefined
         for (const ph of arr) (phVerified(ph) ? yes : no).push(ph);
         return [...yes, ...no];
       };
-      // ═══ VENUE + PALETTE PREFERENCE ═══ Neither hides anything; both float their matches up, the
-      // way Browse treats venue. Four stable tiers, venue dominant, because a photo shot at this
-      // venue is worth more to a salesperson than one that merely shares a colour scheme:
-      //   1. this venue AND this palette   2. this venue   3. this palette   4. everything else
-      // With only one of the two picked this collapses to the plain two-way split it was.
-      // The counts feed the caption below — an unlabelled list that still shows other venues reads
-      // as the filter having quietly broken.
+      // ═══ PREFERENCE RANKING ═══ Event type and colour palette are enforced as a hard filter
+      // earlier (getMatchedPhotos / zpFilterPhoto) — every photo reaching this point already
+      // matches both, or neither was picked, so there's nothing left to rank them by here. Venue,
+      // venue type, design style and time/setting all rank instead of hiding: a photo's score is how
+      // many of the ACTIVE preference dimensions it matches, highest score first; verified-first
+      // still decides order within a tie, same as before. The counts feed the caption below — an
+      // unlabelled list that still shows non-matches reads as the filter having quietly broken.
       const venueOn = !!(zpFilters.venue || []).length;
-      const paletteOn = !!(zpFilters.colorPalette || []).length;
-      let venuePrefCount = 0, palettePrefCount = 0;
-      if (venueOn || paletteOn) {
-        const both = [], venueOnly = [], paletteOnly = [], rest = [];
+      const venueTypeOn = !!(zpFilters.venueType || []).length;
+      const designStyleOn = !!(zpFilters.designStyle || []).length;
+      const timeSettingOn = !!(zpFilters.timeSetting || []).length;
+      const anyPrefOn = venueOn || venueTypeOn || designStyleOn || timeSettingOn;
+      let venuePrefCount = 0, venueTypePrefCount = 0, designStylePrefCount = 0, timeSettingPrefCount = 0;
+      if (anyPrefOn) {
+        const byScore = new Map();
         for (const ph of matchedPhotos) {
           const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-          const v = venueOn && zpVenueMatch(li);
-          const p = paletteOn && zpPaletteMatch(li);
-          if (v) venuePrefCount++;
-          if (p) palettePrefCount++;
-          (v && p ? both : v ? venueOnly : p ? paletteOnly : rest).push(ph);
+          let score = 0;
+          if (venueOn && zpVenueMatch(li)) { score++; venuePrefCount++; }
+          if (venueTypeOn && zpVenueTypeMatch(li)) { score++; venueTypePrefCount++; }
+          if (designStyleOn && zpDesignStyleMatch(li)) { score++; designStylePrefCount++; }
+          if (timeSettingOn && zpTimeSettingMatch(li)) { score++; timeSettingPrefCount++; }
+          if (!byScore.has(score)) byScore.set(score, []);
+          byScore.get(score).push(ph);
         }
-        // Verified-first runs INSIDE each tier, so the preference still leads and verification only
-        // decides the order within it. Sorting across tiers would undo the preference entirely.
-        matchedPhotos = [...verifiedFirst(both), ...verifiedFirst(venueOnly), ...verifiedFirst(paletteOnly), ...verifiedFirst(rest)];
+        // Verified-first runs INSIDE each score tier, so the preference still leads and verification
+        // only decides the order within it. Sorting across tiers would undo the preference entirely.
+        matchedPhotos = [...byScore.keys()].sort((a, b) => b - a).flatMap(s => verifiedFirst(byScore.get(s)));
       } else {
         matchedPhotos = verifiedFirst(matchedPhotos);
       }
@@ -1909,9 +1915,11 @@ undefined
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
                   along the strip look like the venue pick silently failed. */}
               {/* Strip only: in grid view the section headings say all of this, in place. */}
-              {(venueOn||paletteOn)&&matchedPhotos.length>0&&!gridZones[k]&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+              {anyPrefOn&&matchedPhotos.length>0&&!gridZones[k]&&<div style={{fontSize:10,color:textS,marginBottom:6,display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
                 {venueOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venuePrefCount} at {zpFilters.venue.length===1?zpFilters.venue[0]:"selected venues"}</span>}
-                {paletteOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{palettePrefCount} in {zpFilters.colorPalette.length===1?zpFilters.colorPalette[0]:"selected palettes"}</span>}
+                {venueTypeOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venueTypePrefCount} {zpFilters.venueType.length===1?zpFilters.venueType[0]:"selected venue types"}</span>}
+                {designStyleOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{designStylePrefCount} {zpFilters.designStyle.length===1?zpFilters.designStyle[0]:"selected styles"}</span>}
+                {timeSettingOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{timeSettingPrefCount} {zpFilters.timeSetting.length===1?zpFilters.timeSetting[0]:"selected times"}</span>}
                 <span>shown first, then the rest of this zone's {matchedPhotos.length} photo{matchedPhotos.length===1?"":"s"}</span>
               </div>}
               {zpFilterOpen===k&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
@@ -1988,16 +1996,18 @@ undefined
                 // on whichever page its tier happens to start on explains nothing.
                 const secOf = (ph) => {
                   const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-                  if ((venueOn && zpVenueMatch(li)) || (paletteOn && zpPaletteMatch(li))) return 0;
+                  if ((venueOn && zpVenueMatch(li)) || (venueTypeOn && zpVenueTypeMatch(li)) || (designStyleOn && zpDesignStyleMatch(li)) || (timeSettingOn && zpTimeSettingMatch(li))) return 0;
                   return (li?.tags?.venue || ph.venue) ? 1 : 2;
                 };
-                const sectioned = gridZones[k] && (venueOn || paletteOn);
+                const sectioned = gridZones[k] && anyPrefOn;
                 const secs = [[], [], []];
                 if (sectioned) shown.forEach((ph) => secs[secOf(ph)].push(ph));
-                const prefLabel = venueOn && paletteOn
-                  ? `${zpFilters.venue.length === 1 ? zpFilters.venue[0] : "Selected venues"} · ${zpFilters.colorPalette.length === 1 ? zpFilters.colorPalette[0] : "selected palettes"}`
-                  : venueOn ? (zpFilters.venue.length === 1 ? zpFilters.venue[0] : "Selected venues")
-                  : (zpFilters.colorPalette.length === 1 ? zpFilters.colorPalette[0] : "Selected palettes");
+                const prefLabel = [
+                  venueOn && (zpFilters.venue.length === 1 ? zpFilters.venue[0] : "Selected venues"),
+                  venueTypeOn && (zpFilters.venueType.length === 1 ? zpFilters.venueType[0] : "Selected venue types"),
+                  designStyleOn && (zpFilters.designStyle.length === 1 ? zpFilters.designStyle[0] : "Selected styles"),
+                  timeSettingOn && (zpFilters.timeSetting.length === 1 ? zpFilters.timeSetting[0] : "Selected times"),
+                ].filter(Boolean).join(" · ") || "Selected";
                 const SEC_META = [
                   [prefLabel, (n) => `${n} tagged here`],
                   ["More references", (n) => `${n} from other venues`],
