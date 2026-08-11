@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../components/ui";
-import { canvaAuthUrl, canvaConnectionStatus } from "../../lib/canva";
+import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
@@ -2392,6 +2392,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
             </div>
           </div>
           <p className="text-xs text-gray-400">Connecting redirects to Canva to authorize, then back here automatically. Reconnecting is safe any time — it just re-authorizes the same shared account.</p>
+          {/* If Canva answers "The client ID is invalid", the ID below is what it rejected — compare it
+              with canva.com/developers → your integration → Client ID. It is baked in at build time, so
+              changing it means updating the VITE_CANVA_CLIENT_ID repo secret and redeploying. */}
+          <p className="text-xs text-gray-400">
+            Client ID sent to Canva: <span className="font-mono text-gray-500">{canvaClientId() || "— not configured in this build —"}</span>
+            {" "}· if Canva says the client ID is invalid, check it against canva.com/developers → your integration.
+          </p>
         </div>
       )}
       {/* ═══ TRUCK CAPACITY ═══ How many of each sub-category fit in one truck. Studio's transport

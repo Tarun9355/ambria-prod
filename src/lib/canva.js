@@ -7,7 +7,10 @@
 // Brand Template/Autofill, which requires a Canva Enterprise org; Import works on any plan).
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const CANVA_CLIENT_ID = import.meta.env.VITE_CANVA_CLIENT_ID;
+// Trimmed: the value arrives from a GitHub Actions secret at build time, and a secret pasted with a
+// trailing newline bakes that newline into the authorize URL — Canva then answers "The client ID is
+// invalid" with nothing on our side saying why.
+const CANVA_CLIENT_ID = (import.meta.env.VITE_CANVA_CLIENT_ID || "").trim();
 const FN_URL = `${SUPABASE_URL}/functions/v1/canva`;
 const VERIFIER_KEY = "canva_oauth_verifier";
 const STATE_KEY = "canva_oauth_state";
@@ -28,6 +31,12 @@ const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-"
 
 // Builds the Canva authorize URL (PKCE) and stashes the verifier/state in sessionStorage — the
 // browser tab survives the redirect out to Canva and back, so sessionStorage carries them across.
+// The Client ID this build sends to Canva. Shown in Admin → Settings → Canva so "The client ID is
+// invalid" can be checked against the Developer Portal in one glance — it is baked in at build time
+// from a GitHub Actions secret, so the only other way to see it is to unpack the deployed bundle.
+// Public by design: the client ID travels in the authorize URL. The SECRET never reaches the client.
+export const canvaClientId = () => CANVA_CLIENT_ID;
+
 export async function canvaAuthUrl() {
   if (!CANVA_CLIENT_ID) throw new Error("VITE_CANVA_CLIENT_ID is not configured");
   const verifierBytes = crypto.getRandomValues(new Uint8Array(64));

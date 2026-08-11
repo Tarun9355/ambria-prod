@@ -48,31 +48,113 @@ Deno.serve(async (req) => {
   const basicAuth = "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
 
   // Exchange a token-endpoint response into our stored row shape and persist it.
-  const persistTokens = async (tok: any) => {
+  //
+  // `refresh_token` falls back to the one we sent: a refresh response is not required to include a
+  // new one, and writing `undefined` over the stored token would silently disconnect the account
+  // with no way back except a manual reconnect.
+  const persistTokens = async (tok: any, prevRefresh?: string | null) => {
     const expiresAt = new Date(Date.now() + (Number(tok.expires_in) || 0) * 1000).toISOString();
     const { error } = await svc.from("canva_integration").upsert({
-      id: "default", access_token: tok.access_token, refresh_token: tok.refresh_token,
+      id: "default", access_token: tok.access_token, refresh_token: tok.refresh_token || prevRefresh || null,
       expires_at: expiresAt, updated_at: new Date().toISOString(),
     });
     if (error) throw new Error("Failed to store Canva tokens: " + error.message);
   };
 
-  // A valid access token for the shared account — refreshes (and re-persists, since Canva refresh
-  // tokens are single-use and rotate on every exchange) whenever the stored one is expired/near-expiry.
+  // Canva kills the WHOLE token chain when a spent refresh token is presented ("token lineage has
+  // been revoked"), so a dead lineage has to be recorded — otherwise `status` keeps reporting
+  // Connected off the mere presence of a token string and every send fails with no hint that a
+  // reconnect is what's needed. Matched narrowly: a transient 5xx must not disconnect a live
+  // integration.
+  const isDeadLineage = (status: number, tok: any) => {
+    const blob = `${tok?.error || ""} ${tok?.error_description || ""} ${tok?.message || ""}`.toLowerCase();
+    return (status === 400 || status === 401) && (blob.includes("invalid_grant") || blob.includes("revoke") || blob.includes("lineage"));
+  };
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  // A valid access token for the shared account.
+  //
+  // Canva rotates refresh tokens: every exchange returns a new one and invalidates the old, and
+  // presenting a spent one revokes the entire lineage permanently. This function is called by
+  // create_import AND by every poll_import — the client polls 24 times — and Edge Functions run
+  // concurrently, so two invocations used to read the same refresh token and both spend it. The
+  // second one killed the connection. That is what "Token lineage has been revoked" was.
+  //
+  // So the refresh is CLAIMED before Canva is called, not merely serialised after: the damage is
+  // the second call itself.
+  //
+  // The claim is a LEASE, written into `updated_at` as a timestamp in the FUTURE. A plain
+  // compare-and-set bump is not enough and was my first attempt: it only blocks callers that read
+  // the pre-claim value, while anyone reading after the bump compare-and-sets against the NEW
+  // value and claims as well — two refreshes again. A future timestamp is self-describing: any
+  // reader can see the lease is still held and wait instead. Taking it is still an atomic CAS, so
+  // exactly one invocation wins, and it can't wedge — the lease simply expires.
+  const LEASE_MS = 30_000;
   const getValidAccessToken = async (): Promise<string> => {
-    const { data: row } = await svc.from("canva_integration").select("*").eq("id", "default").maybeSingle();
-    if (!row?.refresh_token) throw new Error("Canva isn't connected yet — connect it in IMS → Admin → Settings");
-    const expiresAt = row.expires_at ? new Date(row.expires_at).getTime() : 0;
-    if (row.access_token && expiresAt - Date.now() > 60_000) return row.access_token;
-    const resp = await fetch(`${CANVA_API}/oauth/token`, {
-      method: "POST",
-      headers: { Authorization: basicAuth, "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: row.refresh_token }),
-    });
-    const tok = await resp.json();
-    if (!resp.ok || !tok.access_token) throw new Error("Canva token refresh failed: " + (tok.error_description || tok.error || resp.status));
-    await persistTokens(tok);
-    return tok.access_token;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data: row } = await svc.from("canva_integration").select("*").eq("id", "default").maybeSingle();
+      if (!row?.refresh_token) throw new Error("Canva isn't connected — reconnect it in IMS → Admin → Settings");
+      const expiresAt = row.expires_at ? new Date(row.expires_at).getTime() : 0;
+      if (row.access_token && expiresAt - Date.now() > 60_000) return row.access_token;
+
+      const now = Date.now();
+      const leaseHeldUntil = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+      const { data: claimed } = leaseHeldUntil > now
+        ? { data: [] }                                     // someone is mid-refresh — don't even try
+        : await svc.from("canva_integration")
+            .update({ updated_at: new Date(now + LEASE_MS).toISOString() })
+            .eq("id", "default").eq("updated_at", row.updated_at)
+            .select("id");
+
+      if (!claimed?.length) {
+        // Another invocation is refreshing. Wait for its token rather than spending ours.
+        for (let i = 0; i < 12; i++) {
+          await sleep(400);
+          const { data: fresh } = await svc.from("canva_integration").select("access_token,expires_at").eq("id", "default").maybeSingle();
+          const exp = fresh?.expires_at ? new Date(fresh.expires_at).getTime() : 0;
+          if (fresh?.access_token && exp - Date.now() > 30_000) return fresh.access_token;
+        }
+        continue;   // whoever held it never finished — re-read and try to claim it ourselves
+      }
+
+      // Hold the lease only for as long as the exchange takes. Every exit from here — success,
+      // Canva error, or a thrown fetch — must put updated_at back in the past, or refreshes are
+      // locked out for the rest of the lease window over a blip.
+      const releaseLease = () => svc.from("canva_integration")
+        .update({ updated_at: new Date().toISOString() }).eq("id", "default");
+
+      let resp: Response;
+      try {
+        resp = await fetch(`${CANVA_API}/oauth/token`, {
+          method: "POST",
+          headers: { Authorization: basicAuth, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: row.refresh_token }),
+        });
+      } catch (e) {
+        await releaseLease();
+        throw new Error("Couldn't reach Canva to refresh the token: " + String((e as Error)?.message || e));
+      }
+
+      const tok = await resp.json().catch(() => ({}));
+      if (!resp.ok || !tok.access_token) {
+        if (isDeadLineage(resp.status, tok)) {
+          // Clearing the tokens is what makes `status` honest: it reports Connected off the mere
+          // presence of a refresh token, so a revoked one left in place showed a green "Connected"
+          // while every send failed, with nothing pointing at Reconnect.
+          await svc.from("canva_integration")
+            .update({ access_token: null, refresh_token: null, expires_at: null, updated_at: new Date().toISOString() })
+            .eq("id", "default");
+          throw new Error("Canva disconnected — the authorisation was revoked. Reconnect it in IMS → Admin → Settings");
+        }
+        await releaseLease();
+        throw new Error("Canva token refresh failed: " + (tok.error_description || tok.error || resp.status));
+      }
+      // persistTokens writes updated_at = now, which releases the lease too.
+      await persistTokens(tok, row.refresh_token);
+      return tok.access_token;
+    }
+    throw new Error("Canva token refresh is busy — try again in a moment");
   };
 
   try {
@@ -93,6 +175,7 @@ Deno.serve(async (req) => {
       });
       const tok = await resp.json();
       if (!resp.ok || !tok.access_token) return json({ error: "Token exchange failed: " + (tok.error_description || tok.error || resp.status) }, 400);
+      if (!tok.refresh_token) return json({ error: "Canva returned no refresh token — reconnect and grant offline access" }, 400);
       await persistTokens(tok);
       return json({ ok: true });
     }
