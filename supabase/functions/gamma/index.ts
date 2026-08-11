@@ -108,9 +108,10 @@ Deno.serve(async (req) => {
             "beneath it, deep negative space. This is the first impression.\n" +
             "- Moodboard cards: hero photography dominating the frame. The colour palette is a small refined " +
             "accent — a discreet row of swatches in a corner — never the focal point.\n" +
-            "- Zone cards: a gallery of that zone's actual pieces. The zone's own hero shot leads, large and " +
-            "alone; the item photos follow as one tidy aligned strip of equal tiles, each with its name in " +
-            "small letter-spaced caps beneath it.\n" +
+            "- Zone cards come in pairs. The first holds ONE photo and nothing else: run it full-bleed, with " +
+            "the zone name overlaid. The second is titled \"The Pieces\" and holds only item photos: lay them " +
+            "out as one row of equal tiles across the card, each with its name in small letter-spaced caps " +
+            "directly beneath, sized so every tile and every caption fits inside the card with room to spare.\n" +
             "- Cost tables: a refined financial statement. Generous row height, hairline dividers only, " +
             "figures right-aligned and vertically aligned, no heavy grid lines, no zebra striping, no " +
             "cramped rows. Totals set apart in a heavier weight with space above.\n" +

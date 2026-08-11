@@ -605,16 +605,20 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const zonePhotos = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4).map((p) => deckImageUrl(p));
       sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
 
-      // One highlight card per zone that has a photo — the zone's hero shot plus its own decor
-      // items' photos (so the deck shows the actual pieces going into that zone, not just a table row).
+      // TWO cards per zone, not one. A hero shot and four item tiles do not fit on a single 16:9 card:
+      // Gamma sized the hero to fill the card and the tiles fell off the bottom edge, half cut. Giving
+      // the pieces their own card lets the hero go full-bleed and the tiles sit at a readable size.
       fnObj.zones.forEach((z) => {
         if (!z.photo || z.photo.startsWith("data:")) return;
+        sections.push(`# ${fnLine(fnObj)} — ${z.label}\n\n${deckImageUrl(z.photo)}`);
+
         const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img && !it.img.startsWith("data:")).slice(0, 4);
+        if (!withPhoto.length) return;
         // 4:3, not square. Item shots are wide — a rug, a run of fabric — and a square centre-crop cut
         // them down to an unreadable patch of texture. Still one fixed ratio across every item, so the
-        // strip under the hero stays a row of equal tiles.
+        // tiles stay a row of equal rectangles.
         const itemLines = withPhoto.map((it) => `${it.name}\n${deckImageUrl(it.img, 1200, 900)}`).join("\n\n");
-        sections.push([`# ${fnLine(fnObj)} — ${z.label}`, deckImageUrl(z.photo), itemLines].filter(Boolean).join("\n\n"));
+        sections.push(`# ${fnLine(fnObj)} — ${z.label} — The Pieces\n\n${itemLines}`);
       });
 
       const rows = fnObj.zones.map((z) => `| ${z.label} | ${z.items.length} | ${f(z.structTotal)} | ${f(z.itemTotal)} | ${f(z.zoneTotal)} |`).join("\n");
