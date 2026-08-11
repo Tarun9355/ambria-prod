@@ -11,7 +11,7 @@
 //   supabase secrets set GAMMA_API_KEY=...
 //
 // Client POSTs { action, ...params }. action ∈
-//   create_generation { inputText, title } · poll_generation { generationId }
+//   create_generation { inputText, title, themeId? } · poll_generation { generationId } · list_themes { cursor? }
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -36,6 +36,17 @@ Deno.serve(async (req) => {
   const { action } = body || {};
 
   try {
+    // themeId must be a real ID from Gamma's own list — an unrecognised one is ignored and the deck
+    // silently comes back in the default theme, which looks like the prompt failing rather than the
+    // theme never being applied. This action makes the valid set visible instead of guessed at.
+    if (action === "list_themes") {
+      const cursor = body.cursor ? `&cursor=${encodeURIComponent(body.cursor)}` : "";
+      const resp = await fetch(`${GAMMA_API}/themes?limit=50${cursor}`, { headers: { "X-API-KEY": API_KEY } });
+      const data = await resp.json();
+      if (!resp.ok) return json({ error: "Gamma themes failed: " + JSON.stringify(data) }, resp.status || 502);
+      return json(data);
+    }
+
     if (action === "create_generation") {
       const { inputText, title } = body;
       if (!inputText) return json({ error: "inputText required" }, 400);
@@ -49,9 +60,20 @@ Deno.serve(async (req) => {
           cardSplit: "inputTextBreaks", // respects the \n---\n breaks we put between sections
           exportAs: "pptx",
           title: String(title || "Ambria Cost Estimate").slice(0, 500),
-          imageOptions: { source: "noImages" }, // only OUR embedded Cloudinary photos, no AI/stock filler
+          // themeAccent, not noImages. noImages meant a card without one of OUR photos got nothing at
+          // all — the cost tables and title card were bare text on a blank ground, which is most of why
+          // the deck read as basic. themeAccent lets Gamma dress those cards with the theme's own
+          // decorative furniture, while still never inventing a photograph of a wedding that never
+          // happened (that would be aiGenerated, and a fake venue shot in a real quote is not on).
+          imageOptions: { source: "themeAccent" },
           cardOptions: { dimensions: "16x9" },
-          themeId: "gold-leaf", // Gamma's built-in gold/champagne/ivory luxury theme — matches Ambria's actual brand palette
+          // Aurum, not Gold Leaf. Both are luxury gold themes, but Gamma's own tone keywords give the
+          // game away: Gold Leaf is "Minimalist, Clean, Subtle, Soft" and was doing exactly that, while
+          // Aurum is "Bold, Loud, Complex, Luxury, Deluxe, Expensive" over gold/metallic/black. No
+          // amount of prompt wording turns a theme built to be subtle into a vibrant one.
+          // Overridable per request so a theme can be trialled without a deploy; ids come from
+          // the list_themes action above.
+          themeId: String(body.themeId || "aurum"),
           // Art direction. Gamma responds to CONCRETE layout instructions ("full-bleed", "one number
           // per card", "no bullet points") far better than to adjectives like "elegant" — the earlier
           // version of this prompt was mostly adjectives and produced flat text-on-white cards.
@@ -79,12 +101,17 @@ Deno.serve(async (req) => {
             "figures right-aligned and vertically aligned, no heavy grid lines, no zebra striping, no " +
             "cramped rows. Totals set apart in a heavier weight with space above.\n" +
             "- Summary card: the grand total is the hero — set it large and let it own the card.\n\n" +
-            "STYLING: elegant serif or high-contrast display type for headings; clean restrained sans for " +
-            "figures and captions. Tasteful gold accents as thin rules and small details, never as fills or " +
-            "large blocks. Muted ivory and champagne grounds. Consistent margins across every card so the " +
-            "deck reads as one designed object.\n\n" +
+            "TYPOGRAPHY: set headings in a high-contrast display serif at a genuinely large size — a heading " +
+            "should be several times the body size, not one notch bigger. Figures and captions in a clean " +
+            "restrained sans, small and quiet, with wide letter-spacing on the small-caps labels. Never set a " +
+            "whole card at one uniform size; the contrast between the largest and smallest type on a card is " +
+            "what makes it look designed.\n\n" +
+            "COLOUR: lean into the theme's gold, metallic and deep dark grounds. Alternate dark and light " +
+            "cards through the deck so it has rhythm instead of page after page of the same ground. Gold as " +
+            "thin rules, hairlines and small ornament; let the photographs supply the colour.\n\n" +
             "Prioritise visual elegance and breathing room over information density. If a card looks crowded, " +
-            "give the content more room rather than shrinking the type.",
+            "give the content more room rather than shrinking the type. A card that feels empty but confident " +
+            "is better than a card that feels full.",
         }),
       });
       const data = await resp.json();
