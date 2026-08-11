@@ -4481,6 +4481,32 @@ export default function StudioApp() {
     return { items, nextPageToken: d.nextPageToken || null };
   }, []);
 
+  // Hydrate videos straight from their ids, bypassing the playlist entirely.
+  // The playlist is a single point of failure and it has already failed once: it reports
+  // totalResults 490 while returning zero accessible items, with no error — at which point every
+  // video vanished from Manage and every Browse card fell back to "Untitled video", because titles
+  // are read from this list while the CARDS come from our own tags. The tagged ids are the durable
+  // record, so anything tagged is fetched by id and unioned with whatever the playlist gives.
+  const fetchYTByIds = useCallback(async (ids) => {
+    const out = [];
+    const list = [...new Set((ids || []).filter(Boolean))];
+    for (let i = 0; i < list.length; i += 50) {          // the videos endpoint caps at 50 ids
+      const d = await ytApi("videos", { part: "snippet,contentDetails", id: list.slice(i, i + 50).join(",") }).catch(() => ({}));
+      (d.items || []).forEach((v) => {
+        out.push({
+          id: v.id,
+          title: v.snippet?.title || "",
+          thumb: v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url || "",
+          date: v.snippet?.publishedAt?.slice(0, 10) || "",
+          duration: ytDuration(v.contentDetails?.duration),
+          playlistId: "tagged",
+          embedUrl: `https://www.youtube.com/embed/${v.id}?rel=0&modestbranding=1`,
+        });
+      });
+    }
+    return out;
+  }, []);
+
   const loadAllYT = useCallback(async (forceRefresh) => {
     if (!forceRefresh && ytVideos.length > 0 && Date.now() - ytLastFetch < YT_CACHE_TTL) return;
     setYtLoading(true);
@@ -4503,11 +4529,21 @@ export default function StudioApp() {
       }
       const seen = new Set();
       vids = vids.filter((v) => { if (seen.has(v.id)) return false; seen.add(v.id); return true; });
+      // Union in every video we've tagged that the playlist didn't return — a video dropped from
+      // the playlist, or a playlist that has stopped serving items altogether, must not take the
+      // whole catalogue down with it.
+      try {
+        const tagged = Object.keys(ytVideoTagsRef.current || {}).filter((id) => id && !seen.has(id));
+        if (tagged.length) {
+          const extra = await fetchYTByIds(tagged);
+          extra.forEach((v) => { if (!seen.has(v.id)) { seen.add(v.id); vids.push(v); } });
+        }
+      } catch { /* the playlist's own results still stand */ }
       setYtVideos(vids); setYtLastFetch(Date.now());
       try { await reliableSave(YT_SK, JSON.stringify({ videos: vids, playlists: ytPlaylists, ts: Date.now() }), "YT cache"); } catch { /* ignore */ }
     } catch { showMsg("YouTube fetch failed", "red"); }
     setYtLoading(false);
-  }, [ytPlaylists, ytVideos, ytLastFetch, fetchYTPlaylist, showMsg]);
+  }, [ytPlaylists, ytVideos, ytLastFetch, fetchYTPlaylist, fetchYTByIds, showMsg]);
 
   const searchYT = useCallback(async (query) => {
     if (!query.trim()) return;
