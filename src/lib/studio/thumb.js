@@ -16,6 +16,33 @@ const SB_PUBLIC = "/storage/v1/object/public/";
 const SB_RENDER = "/storage/v1/render/image/public/";
 
 /**
+ * A deck-ready copy of a Supabase Storage image: cropped to a fixed aspect ratio at presentation
+ * resolution. Returns the original URL untouched if it is not Supabase Storage.
+ *
+ * Gamma lays out whatever shape it is handed. Zone photos are raw camera uploads in whatever
+ * orientation the phone was held, so a deck mixing portrait and landscape gets cards where the image
+ * sits inset with white margins instead of filling the frame — the "flat images" complaint. Feeding
+ * every photo at ONE ratio lets Gamma place them edge to edge, and makes the deck read as a designed
+ * set rather than a folder of snapshots.
+ *
+ * This crops and scales only. Supabase's transform endpoint has no colour or contrast controls, so
+ * a dull photo stays dull — that would need an image pipeline that can actually enhance.
+ *
+ * @param {string} url          source image url
+ * @param {number} [width=1600]
+ * @param {number} [height=900] 16:9 by default — full-bleed on a 16x9 card
+ * @param {number} [quality=85] higher than thumbUrl's 60: this is projected, not a fingernail
+ */
+export function deckImageUrl(url, width = 1600, height = 900, quality = 85) {
+  if (typeof url !== "string" || !url) return url;
+  if (!url.includes(SB_PUBLIC)) return url;
+  if (url.includes("/render/image/")) return url;
+  const [base, query] = url.split("?");
+  const rendered = base.replace(SB_PUBLIC, SB_RENDER);
+  return `${rendered}?${query ? query + "&" : ""}width=${width}&height=${height}&resize=cover&quality=${quality}`;
+}
+
+/**
  * A square, resized copy of a Supabase Storage image, or the original URL if it is not one.
  *
  * BOTH width and height must be sent, with resize=cover. Passing `width` alone does NOT scale

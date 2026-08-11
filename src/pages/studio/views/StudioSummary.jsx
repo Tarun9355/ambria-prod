@@ -17,6 +17,7 @@ import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
+import { deckImageUrl } from "../../../lib/studio/thumb";
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
@@ -598,7 +599,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         sections.push(`# ${fnLine(fnObj)}\n\nDesign pending — zones for this function have not been built yet.`);
         return;
       }
-      const zonePhotos = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4);
+      // Every photo goes to Gamma at ONE aspect ratio (see deckImageUrl). Handing it the raw uploads
+      // meant portrait and landscape phone shots on the same card, which Gamma can only place inset
+      // with white margins — the deck ended up looking like a contact sheet.
+      const zonePhotos = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4).map((p) => deckImageUrl(p));
       sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
 
       // One highlight card per zone that has a photo — the zone's hero shot plus its own decor
@@ -606,8 +610,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       fnObj.zones.forEach((z) => {
         if (!z.photo || z.photo.startsWith("data:")) return;
         const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img && !it.img.startsWith("data:")).slice(0, 4);
-        const itemLines = withPhoto.map((it) => `${it.name}\n${it.img}`).join("\n\n");
-        sections.push([`# ${fnLine(fnObj)} — ${z.label}`, z.photo, itemLines].filter(Boolean).join("\n\n"));
+        // Items are shot against the warehouse, one piece per frame — square keeps the piece centred
+        // and gives the caption strip an even rhythm under the wide hero above it.
+        const itemLines = withPhoto.map((it) => `${it.name}\n${deckImageUrl(it.img, 1000, 1000)}`).join("\n\n");
+        sections.push([`# ${fnLine(fnObj)} — ${z.label}`, deckImageUrl(z.photo), itemLines].filter(Boolean).join("\n\n"));
       });
 
       const rows = fnObj.zones.map((z) => `| ${z.label} | ${z.items.length} | ${f(z.structTotal)} | ${f(z.itemTotal)} | ${f(z.zoneTotal)} |`).join("\n");
