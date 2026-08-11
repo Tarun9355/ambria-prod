@@ -59,6 +59,20 @@ export async function canvaAuthUrl() {
 // whether to show a message and strip the query string.
 export async function canvaHandleOAuthRedirect(showMsg) {
   const params = new URLSearchParams(window.location.search);
+
+  // A REFUSED authorization comes back as ?error=&error_description= with no code — a misconfigured
+  // integration (scopes not enabled, redirect not registered) lands here, as does the user simply
+  // pressing Cancel. Without this branch the app fell through to `return false`, leaving the person
+  // on whatever page they started from with the reason sitting unread in the query string.
+  const err = params.get("error");
+  if (err && !params.get("code")) {
+    sessionStorage.removeItem(VERIFIER_KEY);
+    sessionStorage.removeItem(STATE_KEY);
+    const why = params.get("error_description") || err;
+    showMsg?.(err === "access_denied" ? "Canva connect cancelled" : "Canva connect failed — " + why, "red");
+    return true;
+  }
+
   const code = params.get("code");
   if (!code) return false;
   const expectedState = sessionStorage.getItem(STATE_KEY);
