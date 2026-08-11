@@ -86,6 +86,10 @@ Deno.serve(async (req) => {
             "an overlaid title.\n" +
             "- A card with a SINGLE photo: the photo IS the card. Full-bleed or near full-bleed. Never a " +
             "small inset thumbnail floating in empty space.\n" +
+            "- Every photo supplied is REAL work by this company at this kind of function. When a card has " +
+            "one photo and only a line or two of text, use that photograph as the card's own background, " +
+            "full-bleed, with the text laid over a soft dark scrim for legibility. Prefer it over the " +
+            "theme's decorative artwork every time — a generic pattern says nothing about this event.\n" +
             "- Keep text sparse. Large type for the few words that matter, generous margins around them. " +
             "Avoid bullet lists entirely; prefer short standalone lines with real space between them.\n\n" +
             "IMAGE RULES — these are absolute, break none of them:\n" +

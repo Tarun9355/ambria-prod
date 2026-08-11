@@ -18,6 +18,7 @@ import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { deckImageUrl } from "../../../lib/studio/thumb";
+import { supabase } from "../../../lib/supabase";
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
@@ -568,11 +569,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
   // Turns the same cost-sheet data buildPptx uses into a markdown outline for Gamma's Generate API.
   // Sections are separated by "\n---\n" (Gamma's own card-break syntax with cardSplit:
-  // "inputTextBreaks" — one break = one extra card), and zone photos are dropped in as bare
-  // Cloudinary URLs (Gamma fetches/re-hosts them; imageOptions.source:"noImages" on the edge-function
-  // side means it uses ONLY these, no AI-generated filler). textMode:"preserve" keeps our numbers and
-  // wording exact — Gamma is designing the layout, not rewriting the content.
-  const buildGammaOutline = (combined) => {
+  // "inputTextBreaks" — one break = one extra card), and photos are dropped in as bare URLs for Gamma
+  // to fetch and re-host. textMode:"preserve" keeps our numbers and wording exact — Gamma is designing
+  // the layout, not rewriting the content.
+  //
+  // Async because a card with no photo of its own goes looking for one in the library (see
+  // libraryPhotosForFunction); the alternative is Gamma dressing it in stock theme artwork.
+  const buildGammaOutline = async (combined) => {
     const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
     const fmtDate = (iso) => {
       if (!iso) return "—";
@@ -589,20 +592,68 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const inv = (imsInventory || []).find((i) => (i.name || "").toLowerCase() === String(name || "").toLowerCase());
       return inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || null;
     };
+    // ═══ AMBRIA'S OWN PHOTOGRAPHY, MATCHED TO THE FUNCTION ═══
+    // A card we hand no photo to gets dressed in Gamma's stock theme artwork — a black-and-gold
+    // polygon pattern that says nothing about a Reception at Poolside. The library already tags every
+    // photo with tags.eventType ("Reception", "Sangeet", "Wedding"…), so a card can carry a real
+    // Ambria shot of that same kind of function instead.
+    //
+    // Same venue ranks first: the client recognises the room they have actually booked. Night/day is
+    // the tie-break after that, because a daylight haldi shot behind an evening reception reads wrong
+    // even when the event type matches.
+    const fnPhotoCache = new Map();
+    const libraryPhotosForFunction = async (fnType, venue, shift, limit = 3) => {
+      const type = String(fnType || "").trim();
+      if (!type) return [];
+      const key = `${type}|${venue}|${shift}|${limit}`;
+      if (fnPhotoCache.has(key)) return fnPhotoCache.get(key);
+      let out = [];
+      try {
+        // JSON.stringify, not a bare array. postgrest-js turns an array argument into a Postgres array
+        // literal (cs.{Reception}), which a jsonb column rejects outright with "invalid input syntax
+        // for type json". A string is passed through as-is, giving the cs.["Reception"] this needs.
+        const { data, error } = await supabase
+          .from("library").select("url,tags").contains("tags->eventType", JSON.stringify([type])).limit(60);
+        if (!error && data?.length) {
+          const v = String(venue || "").trim().toLowerCase();
+          const wantNight = /night|evening/i.test(String(shift || ""));
+          const rank = (r) => {
+            const t = r.tags || {};
+            const venueHit = String(t.venue || "").trim().toLowerCase() === v && v ? 2 : 0;
+            const times = Array.isArray(t.timeSetting) ? t.timeSetting.join(" ") : String(t.timeSetting || "");
+            const timeHit = wantNight === /night/i.test(times) ? 1 : 0;
+            return venueHit + timeHit;
+          };
+          out = [...data].sort((a, b) => rank(b) - rank(a))
+            .map((r) => r.url).filter((u) => u && !String(u).startsWith("data:")).slice(0, limit);
+        }
+      } catch { /* a deck without a matched photo is still a deck — never block the export */ }
+      fnPhotoCache.set(key, out);
+      return out;
+    };
+
     const sections = [];
 
     const fnLines = combined.functions.map(fnLine).join("\n");
     sections.push(`# Ambria Decorations — Cost Estimate\n\n**${combined.clientName || "Client"}**\n\n${fnLines}\n\nPushpanjali, Bijwasan, New Delhi`);
 
-    combined.functions.forEach((fnObj) => {
+    for (const fnObj of combined.functions) {
       if (fnObj.isEmpty) {
-        sections.push(`# ${fnLine(fnObj)}\n\nDesign pending — zones for this function have not been built yet.`);
-        return;
+        // An unbuilt function used to be a bare sentence on a blank card. It still has a type, a date
+        // and a venue, so it can at least show what that kind of function looks like in our hands.
+        const [pic] = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1);
+        sections.push([`# ${fnLine(fnObj)}`, pic ? deckImageUrl(pic) : "",
+          "Design pending — zones for this function have not been built yet."].filter(Boolean).join("\n\n"));
+        continue;
       }
       // Every photo goes to Gamma at ONE aspect ratio (see deckImageUrl). Handing it the raw uploads
       // meant portrait and landscape phone shots on the same card, which Gamma can only place inset
       // with white margins — the deck ended up looking like a contact sheet.
-      const zonePhotos = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4).map((p) => deckImageUrl(p));
+      const built = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4);
+      // A moodboard with one photo on it is not a moodboard. Top up from the library, matched to this
+      // function's own type and venue, so the card reads as a board rather than a lone snapshot.
+      const topUp = built.length >= 3 ? [] : await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - built.length);
+      const zonePhotos = [...built, ...topUp.filter((u) => !built.includes(u))].map((p) => deckImageUrl(p));
       sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
 
       // TWO cards per zone, not one. A hero shot and four item tiles do not fit on a single 16:9 card:
@@ -625,7 +676,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const tbl = `| Zone | Items | Structure | Decor Items | Zone Total |\n|---|---|---|---|---|\n${rows}`;
       const transportLine = fnObj.transport ? `\n\nTransport & Power: ${f(fnObj.transport.total || 0)} (${fnObj.transport.trucks || 0} trucks)` : "";
       sections.push(`# ${fnLine(fnObj)} — Cost Breakdown\n\n${tbl}${transportLine}\n\n**Function Total: ${f(fnObj.grand)}**`);
-    });
+    }
 
     const sumRows = combined.functions.map((fnObj) => `| ${fnObj.fnType || "—"} | ${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"} | ${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.grand)} |`).join("\n");
     sections.push(`# Event Summary\n\n| Function | Date · Venue | Decor | Transport | Grand |\n|---|---|---|---|---|\n${sumRows}\n\n**EVENT GRAND TOTAL: ${f(combined.eventGrandTotal)}**\n\nAmbria Decorations · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com\n\n_This is an estimate. Final pricing may vary based on customization and availability._`);
@@ -648,7 +699,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         setCanvaError('Canva isn\'t connected — ask an admin to connect it in IMS → Admin → Settings.');
         return;
       }
-      const outline = buildGammaOutline(combined);
+      const outline = await buildGammaOutline(combined);
       const title = `${combined.clientName || "Ambria"} Cost Estimate`;
       const generationId = await gammaCreateGeneration(outline, title);
       let base64 = null;
