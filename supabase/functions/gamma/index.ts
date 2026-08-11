@@ -52,16 +52,39 @@ Deno.serve(async (req) => {
           imageOptions: { source: "noImages" }, // only OUR embedded Cloudinary photos, no AI/stock filler
           cardOptions: { dimensions: "16x9" },
           themeId: "gold-leaf", // Gamma's built-in gold/champagne/ivory luxury theme — matches Ambria's actual brand palette
+          // Art direction. Gamma responds to CONCRETE layout instructions ("full-bleed", "one number
+          // per card", "no bullet points") far better than to adjectives like "elegant" — the earlier
+          // version of this prompt was mostly adjectives and produced flat text-on-white cards.
           additionalInstructions:
-            "This is a luxury wedding and event décor proposal for high-end clients. Use sophisticated, " +
-            "editorial-style layouts, not plain text-on-white cards. Whenever a card includes a photo, treat " +
-            "it as the visual lead — large, full-bleed or near full-bleed placement, not a small inset " +
-            "thumbnail. Moodboard cards should read like an actual mood board: bold hero photography with " +
-            "the color palette as a small refined accent, not the focal point. Zone highlight cards should " +
-            "read like a gallery showcasing that zone's pieces. Cost tables should look like a refined, " +
-            "minimal financial statement — generous spacing, subtle dividers, right-aligned figures, no " +
-            "cramped rows. Use elegant typography and tasteful gold accent details consistent with the " +
-            "gold-leaf theme. Prioritize visual elegance and breathing room over information density.",
+            "AUDIENCE: an Indian luxury wedding client reviewing a décor proposal worth lakhs. This deck must " +
+            "feel like a designer's pitch book, not a spreadsheet export.\n\n" +
+            "LAYOUT RULES:\n" +
+            "- Never centre a wall of text on a blank card. Every card needs a clear focal point and " +
+            "asymmetric weighting — image on one side, text block on the other, or full-bleed image with " +
+            "an overlaid title.\n" +
+            "- Any card containing a photo: the photo IS the card. Full-bleed or near full-bleed, edge to " +
+            "edge. Never a small inset thumbnail floating in white space.\n" +
+            "- Multiple photos on one card: an editorial collage or asymmetric grid with tight, even gutters " +
+            "— a magazine spread, not a row of equal boxes.\n" +
+            "- Keep text sparse. Large type for the few words that matter, generous margins around them. " +
+            "Avoid bullet lists entirely; prefer short standalone lines with real space between them.\n\n" +
+            "CARD TYPES:\n" +
+            "- Title card: cinematic. Client name large and confident, function details small and quiet " +
+            "beneath it, deep negative space. This is the first impression.\n" +
+            "- Moodboard cards: hero photography dominating the frame. The colour palette is a small refined " +
+            "accent — a discreet row of swatches in a corner — never the focal point.\n" +
+            "- Zone cards: a gallery of that zone's actual pieces. Lead with the zone's hero shot; the item " +
+            "photos sit beneath as a clean secondary strip with names as small captions.\n" +
+            "- Cost tables: a refined financial statement. Generous row height, hairline dividers only, " +
+            "figures right-aligned and vertically aligned, no heavy grid lines, no zebra striping, no " +
+            "cramped rows. Totals set apart in a heavier weight with space above.\n" +
+            "- Summary card: the grand total is the hero — set it large and let it own the card.\n\n" +
+            "STYLING: elegant serif or high-contrast display type for headings; clean restrained sans for " +
+            "figures and captions. Tasteful gold accents as thin rules and small details, never as fills or " +
+            "large blocks. Muted ivory and champagne grounds. Consistent margins across every card so the " +
+            "deck reads as one designed object.\n\n" +
+            "Prioritise visual elegance and breathing room over information density. If a card looks crowded, " +
+            "give the content more room rather than shrinking the type.",
         }),
       });
       const data = await resp.json();
