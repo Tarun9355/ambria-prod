@@ -317,7 +317,7 @@ export default function ManageLibrary({ ctx }) {
   const [importingFolder, setImportingFolder] = useState(false); // recursive folder import in progress
   const [rebuildRunning, setRebuildRunning] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState("");
-  const [orphanScan, setOrphanScan] = useState({ running: false, msg: "", result: null }); // { orphaned:[{id,name,url}], totalLibrary, totalCloudinary }
+  const [orphanScan, setOrphanScan] = useState({ running: false, msg: "", result: null }); // { orphaned:[{id,name,url}], totalLibrary, totalStorage }
   const [orphanDeleting, setOrphanDeleting] = useState(false);
   const untaggedCount = libPage.counts.untagged; // server count (migration 008 `status` column) — not a full-array scan
 
@@ -435,7 +435,7 @@ export default function ManageLibrary({ ctx }) {
       setOrphanScan((s) => ({ ...s, msg: `Fetching Library rows…` }));
       const rows = await fetchAllLibraryRowsMinimal((n) => setOrphanScan((s) => ({ ...s, msg: `Fetching Library rows… ${n}` })));
       const orphaned = rows.filter((r) => r.url && !existingUrls.has(r.url) && !existingIds.has(storageKeyFromUrl(r.url)));
-      setOrphanScan({ running: false, msg: "", result: { orphaned, totalLibrary: rows.length, totalCloudinary: existingUrls.size } });
+      setOrphanScan({ running: false, msg: "", result: { orphaned, totalLibrary: rows.length, totalStorage: existingUrls.size } });
       showMsg(orphaned.length ? `Found ${orphaned.length} orphaned row(s) out of ${rows.length} Library images.` : "No orphaned rows found — Library matches Storage.", orphaned.length ? "orange" : "green");
     } catch (e) {
       setOrphanScan({ running: false, msg: "", result: null });
@@ -1593,7 +1593,7 @@ export default function ManageLibrary({ ctx }) {
               {orphanScan.result.orphaned.length ? `🧹 ${orphanScan.result.orphaned.length} orphaned row(s) found` : "✓ No orphaned rows — Library matches Storage"}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 10, color: textS }}>{orphanScan.result.totalLibrary} Library rows · {orphanScan.result.totalCloudinary} Storage images</span>
+              <span style={{ fontSize: 10, color: textS }}>{orphanScan.result.totalLibrary} Library rows · {orphanScan.result.totalStorage} Storage images</span>
               {orphanScan.result.orphaned.length > 0 && (
                 <button onClick={handleDeleteOrphaned} disabled={orphanDeleting} style={{ ...S.btn(true), fontSize: 11, padding: "5px 10px", background: "#E11D48", opacity: orphanDeleting ? 0.5 : 1 }}>
                   {orphanDeleting ? "Deleting…" : `🗑 Delete ${orphanScan.result.orphaned.length}`}
@@ -2009,7 +2009,7 @@ export default function ManageLibrary({ ctx }) {
             <button onClick={()=>setYtPicker(null)} style={{...S.btn(false),fontSize:10,padding:"4px 10px"}}>Cancel</button>
           </div>}
           {ytLoading&&<div style={{textAlign:"center",padding:40,color:textS}}>⏳ Loading videos from YouTube...</div>}
-          {!ytLoading&&allVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>No videos found. Hit Refresh to load from YouTube or Add Video from Cloudinary.</div>}
+          {!ytLoading&&allVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>No videos found. Hit Refresh to load from YouTube, or Add Video from Storage.</div>}
           {/* Video grid */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
             {allVideos.filter(v=>{

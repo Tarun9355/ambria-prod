@@ -281,6 +281,13 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
   ? "0 6px 18px -8px rgba(0,0,0,0.8)"
   : "0 6px 18px -8px rgba(26,26,46,0.42)"}}
 .sb-rcard:active{transform:translateY(0)}
+/* Skeleton shown in place of the saved-session card while a function switch renders. Lives here
+   with the card it replaces, so the two can't drift apart. */
+@keyframes sbSkelSpin{to{transform:rotate(360deg)}}
+@keyframes sbSkelPulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@media (prefers-reduced-motion: reduce){
+  @keyframes sbSkelPulse{0%,100%{opacity:0.7}}
+}
 /* Slim scrollbar for the panel body — the default chrome one is wide enough to crowd a 248px rail.
    No fade/gradient cue over the content: an earlier attempt at that covered the last rows of pills. */
 .sb-scroll{scrollbar-width:thin;scrollbar-color:${isDark?"rgba(255,255,255,0.18) transparent":"rgba(26,26,46,0.18) transparent"}}

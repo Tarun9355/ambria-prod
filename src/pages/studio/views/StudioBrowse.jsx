@@ -219,7 +219,22 @@ export default function StudioBrowse({ ctx }) {
         } else if (fnSnapHasData(s)) {
           fnIdx = 0;   // legacy session — flat fields, they belong to Fn1
         }
-        if (fnIdx !== null) withFn.push({ ...s, _fnIdx: fnIdx });
+        if (fnIdx !== null) {
+          // The reference video has to be read from the SNAPSHOT being shown, not from the
+          // session's flat sourceVideo* fields. Those describe whichever function happened to be
+          // active when the session was written, which is frequently not the function this card is
+          // badged with — and the rolling autosave sets them to null whenever the active function
+          // has no reference video of its own. That is what made the card flip from a real title to
+          // "Video (no longer in library)" a second after it appeared: same session, rewritten
+          // flat fields. Falls back to the flat fields for legacy sessions that have no snapshots.
+          const snap = snaps ? (snaps[fnIdx] || snaps[String(fnIdx)] || null) : null;
+          withFn.push({
+            ...s,
+            _fnIdx: fnIdx,
+            sourceVideoId: snap?.sourceVideo?.id || snap?.sourceVideoId || s.sourceVideoId || null,
+            sourceVideoTitle: snap?.sourceVideo?.title || snap?.sourceVideoTitle || s.sourceVideoTitle || null,
+          });
+        }
       }
       const seenIds = new Set();
       const out = [];
@@ -390,7 +405,25 @@ export default function StudioBrowse({ ctx }) {
           {/* Saved-session banner. Lives under the filters rather than above the grid: it is a way
               back into a build, not a property of the results, and at the top it pushed the first
               row of videos below the fold. Re-stacked for the 248px column — title, then buttons. */}
-          {(bannerSaved.length > 0 || bannerShowCurrent) && (
+          {/* While a function switch renders, this card still describes the function you just LEFT
+              — React holds the last committed UI during a transition, and the card is built from
+              build state that hasn't been replaced yet. A stale "Saved … · ₹73,570" against a pill
+              that already reads Mehendi is worse than showing nothing, so it becomes a skeleton
+              until the new function's own session is what's on screen. */}
+          {ctx.isFnSwitching ? (
+            <div aria-busy="true" style={{display:"flex",flexDirection:"column",gap:10,flexShrink:0,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.06)":"rgba(234,179,8,0.05)",border:`1px dashed ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{width:13,height:13,borderRadius:"50%",border:`2px solid ${isDark?"rgba(234,179,8,0.35)":"rgba(217,119,6,0.35)"}`,borderTopColor:isDark?"#FBBF24":"#B45309",animation:"sbSkelSpin .6s linear infinite",flexShrink:0}}/>
+                <span style={{fontSize:11,fontWeight:600,color:isDark?"#FBBF24":"#B45309"}}>Loading this function…</span>
+              </div>
+              <div style={{height:11,borderRadius:5,background:isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.07)",animation:"sbSkelPulse 1.1s ease-in-out infinite"}}/>
+              <div style={{height:11,width:"62%",borderRadius:5,background:isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.07)",animation:"sbSkelPulse 1.1s ease-in-out infinite .15s"}}/>
+              <div style={{display:"flex",gap:7}}>
+                <div style={{height:26,width:62,borderRadius:7,background:isDark?"rgba(255,255,255,0.06)":"rgba(26,26,46,0.05)"}}/>
+                <div style={{height:26,flex:1,borderRadius:7,background:isDark?"rgba(255,255,255,0.06)":"rgba(26,26,46,0.05)"}}/>
+              </div>
+            </div>
+          ) : (bannerSaved.length > 0 || bannerShowCurrent) && (
             <div style={{display:"flex",flexDirection:"column",gap:8,flexShrink:0}}>
               {bannerSaved.map(s => {
                 const vid = allVideos.find(v => v.id === s.sourceVideoId);

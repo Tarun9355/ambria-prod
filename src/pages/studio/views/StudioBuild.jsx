@@ -13,7 +13,7 @@ import { paletteSearch, paletteMatches } from "../../../components/studio/filter
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
-import { setGroupIds } from "../../../lib/studio/zoneGroups";
+import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemImsSubcat, itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
@@ -482,7 +482,7 @@ export default function StudioBuild({ ctx }) {
     // venues (for named-venue correction + the zone-photo Venue pill filter)
     allInhouseVenues = [], customOutdoor = [], allVenueData = {}, allOutdoorDB = [], leafInhouseVenues = [],
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
-    zoneGroups = {}, saveZoneGroups,
+    zoneGroups = {}, writeZoneGroup,
     // date demand
     dateTypes, clientLedger, activeClientId,
     // build canvas
@@ -739,13 +739,13 @@ export default function StudioBuild({ ctx }) {
     const area = groupAreaFor(srcType, label);
     // Returning quietly here is how a group silently fails to persist — say so instead.
     if (!area) { showMsg("This zone has no area name to group against", "red"); return; }
-    if (!saveZoneGroups) { showMsg("Grouping isn't available — reload the page", "red"); return; }
+    if (!writeZoneGroup) { showMsg("Grouping isn't available — reload the page", "red"); return; }
     const current = zoneGroups?.[area]?.[groupFn] || [];
     const next = remove
       ? current.filter(id => !ids.includes(id))
       : [...current, ...ids.filter(id => !current.includes(id))];
     try {
-      await saveZoneGroups(setGroupIds(zoneGroups, area, groupFn, next));
+      await writeZoneGroup(area, groupFn, next);
       clearGrpPick(zoneKey);
       // The pinned photos move to the front of the zone, which is page 1 — but the strip pager
       // stays wherever it was, so pinning from page 3 sends them somewhere you can't see. Jump
@@ -766,10 +766,10 @@ export default function StudioBuild({ ctx }) {
   const clearZoneGroup = (zoneKey, srcType, label) => {
     const area = groupAreaFor(srcType, label);
     const current = zoneGroups?.[area]?.[groupFn] || [];
-    if (!area || !current.length || !saveZoneGroups) return;
+    if (!area || !current.length || !writeZoneGroup) return;
     askConfirm(`Delete the ${area}${groupFn ? ` · ${groupFn}` : ""} group?`, async () => {
       try {
-        await saveZoneGroups(setGroupIds(zoneGroups, area, groupFn, []));
+        await writeZoneGroup(area, groupFn, []);
         clearGrpPick(zoneKey);
         setPhPage(p => ({ ...p, [zoneKey]: 0 }));   // the whole order just changed under the pager
         showMsg(`✓ Group deleted — ${area} goes back to its normal photo order`, "green");
@@ -1033,7 +1033,10 @@ export default function StudioBuild({ ctx }) {
   // Zone groups belong in here alongside the filters: they change what getLibPhotosForZone returns
   // AND the order it returns it in, and the cache key is the only thing that invalidates it. Without
   // this, regrouping a zone in Manage leaves an open Build page showing the old strip indefinitely.
-  useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters), JSON.stringify(ctx.zoneGroups || {})]);
+  // Only the photo filters invalidate the cached pool. Zone groups deliberately don't: they change
+  // the ORDER of an already-fetched pool, applied at read time, so bumping this for them would
+  // re-query every zone on every pin — the same mistake keying the cache by function was.
+  useEffect(() => { setMatchGen(g => g + 1); }, [zpHasFilters, JSON.stringify(zpFilters)]);
   // Which library "areas / zones" tags feed this zone. Static map first; custom or renamed zones
   // have no entry, so fall back to their display label — reverse-looked-up into the area-set that
   // contains it, else used as an area name of its own. One definition, three callers: the strip, the
@@ -1062,30 +1065,34 @@ export default function StudioBuild({ ctx }) {
     const kept = names.filter((n) => n === label || !otherZoneLabels.has(n));
     return kept.length ? kept : names;   // never strip a zone down to nothing
   };
-  // Groups are per zone AND per function, so the active function is part of the cache identity —
-  // switching from Sangeet to Wedding has to refetch, not reuse Sangeet's arrangement.
   const groupFn = activeFnMeta?.type || "";
-  const zoneCacheKey = (areaNames) => `${matchGen}::${groupFn}::${areaNames.join("|")}`;
-  // Switching function mints a new cache key, so the entry is missing until the refetch lands and
-  // every strip would blank out in the meantime. Fall back to the same zone's set under any other
-  // function: it's the same photos bar the leading group, and it reorders when the fetch returns.
-  // Matching on "::" + the joined names can't collide across zones ("…::Entertainment Stage" does
-  // not end with "::Stage").
-  const zoneMatchesFor = (areaNames) => {
-    const hit = zoneMatchCache[zoneCacheKey(areaNames)];
-    if (hit) return hit;
-    const suffix = `::${areaNames.join("|")}`;
-    for (const k of Object.keys(zoneMatchCache)) {
-      if (k.startsWith(`${matchGen}::`) && k.endsWith(suffix)) return zoneMatchCache[k];
+  // The cached pool is function-agnostic on purpose. Keying it by function meant every switch
+  // re-queried the server for every zone, which is what made switching crawl. The group order is
+  // applied to the cached pool instead, below — pure array work, no request.
+  const zoneCacheKey = (areaNames) => `${matchGen}::${areaNames.join("|")}`;
+  // Float this zone's hand-picked group to the front, in the order it was arranged. Group members
+  // that aren't zone-tagged are resolved from libById, which the app fills from the groups blob.
+  const applyZoneGroupOrder = (list, areaNames) => {
+    const ids = groupIdsForZones(zoneGroups, areaNames, groupFn);
+    if (!ids.length) return list;
+    const byId = new Map(list.map(li => [li.id, li]));
+    const pinned = [];
+    for (const id of ids) {
+      const li = byId.get(id) || libById.get(id);
+      // A photo the filters excluded stays excluded — a group must not smuggle one past them.
+      if (li && (!zpHasFilters || zpFilterPhoto(li))) pinned.push({ ...li, _grouped: true });
     }
-    return [];
+    if (!pinned.length) return list;
+    const pinnedIds = new Set(pinned.map(li => li.id));
+    return [...pinned, ...list.filter(li => !pinnedIds.has(li.id))];
   };
+  const zoneMatchesFor = (areaNames) => applyZoneGroupOrder(zoneMatchCache[zoneCacheKey(areaNames)] || [], areaNames);
   const ensureZoneMatches = (areaNames) => {
     if (!areaNames.length) return;
     const cacheKey = zoneCacheKey(areaNames);
     if (zoneFetchInFlight.current.has(cacheKey) || zoneMatchCache[cacheKey]) return;
     zoneFetchInFlight.current.add(cacheKey);
-    getLibPhotosForZone(areaNames, zpHasFilters ? zpFilterPhoto : null, groupFn)
+    getLibPhotosForZone(areaNames, zpHasFilters ? zpFilterPhoto : null)
       .then((result) => setZoneMatchCache((prev) => ({ ...prev, [cacheKey]: result })))
       .finally(() => zoneFetchInFlight.current.delete(cacheKey));
   };
@@ -1097,9 +1104,10 @@ export default function StudioBuild({ ctx }) {
       const srcType = czSrc?.sourceType || k;
       ensureZoneMatches(areaNamesFor(srcType));
     });
-    // groupFn included: switching function changes which group leads, so it needs its own fetch.
+    // groupFn is deliberately NOT a dep: the pool it fetches is function-agnostic, and the group
+    // order is applied to it at read time. Adding it here re-queried every zone on every switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoneKeys, customZones, matchGen, groupFn]);
+  }, [zoneKeys, customZones, matchGen]);
 
   const getMatchedPhotos = (elKey) => {
     const areaNames = areaNamesFor(elKey);
@@ -1707,7 +1715,16 @@ undefined
       </div>
     </div>}
 
+    {/* While a function switch renders, the zones below still show the OLD function's build —
+        React keeps the last committed UI on screen during a transition. Left unmarked that reads
+        as the click having done nothing, which is what got the pills clicked again. The veil says
+        the work is happening and blocks clicks that would otherwise land on the outgoing build. */}
+    {ctx.isFnSwitching&&<div style={{position:"relative",zIndex:5,margin:"0 0 10px",padding:"10px 14px",borderRadius:12,border:`1px solid ${accent}55`,background:isDark?"rgba(201,169,110,0.10)":"rgba(201,169,110,0.14)",display:"flex",alignItems:"center",gap:10}}>
+      <span style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${accent}44`,borderTopColor:accent,animation:"saRestoreSpin .6s linear infinite",flexShrink:0}}/>
+      <span style={{fontSize:12,fontWeight:600,color:accent}}>Loading {activeFnMeta?.type || "function"}…</span>
+    </div>}
     {/* ═══ ELEMENT CARDS ═══ One unified photo strip per zone (no Silver/Gold split). ═══ */}
+    <div style={ctx.isFnSwitching?{opacity:0.45,pointerEvents:"none",transition:"opacity .15s ease"}:undefined}>
     {[...zoneKeys, ...customZones.filter(cz=>cz.sourceType).map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
@@ -2913,6 +2930,7 @@ undefined
         </div>}
       </div>);
     })}
+    </div>{/* end of the function-switch veil wrapper */}
 
     {/* ═══ + ADD CUSTOM ZONE ═══ Two things through one picker:
         - A zone TYPE gives you a second Stage / Entry Passage / … that behaves exactly like the

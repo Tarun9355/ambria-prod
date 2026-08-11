@@ -1415,7 +1415,7 @@ Rules:
                       Remove photo
                     </button>
                   )}
-                  <p className="text-xs text-gray-400">Auto-uploads to Cloudinary on pick. Replaces existing URL.</p>
+                  <p className="text-xs text-gray-400">Auto-uploads to Storage on pick. Replaces existing URL.</p>
                 </div>
               </div>
 

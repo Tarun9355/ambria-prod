@@ -10,7 +10,7 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
@@ -85,7 +85,7 @@ import {
   RC_SK_CATS, RC_SK_TR, TR_TIERS, TC_UNITS, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
   TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, ZONE_GROUPS_SK,
 } from "../../lib/studio/keys.js";
-import { normaliseZoneGroups, groupIdsForZones } from "../../lib/studio/zoneGroups.js";
+import { normaliseZoneGroups, groupIdsForZones, setGroupIds } from "../../lib/studio/zoneGroups.js";
 import { rowToVideoTag, videoTagToRow, rowsToVideoTagMap } from "../../lib/studio/videoTags.js";
 import { logWrite, installActionLogFlush } from "../../lib/studio/userActions.js";
 import { buildTagKB, renderTagKBText } from "../../lib/studio/tagKB.js";
@@ -1655,9 +1655,9 @@ export default function StudioApp() {
   // Hand-picked in Manage → Library → Grouping; Build floats the group for the active function to
   // the front of that zone's strip. See lib/studio/zoneGroups.js for the shape and the lookup rules.
   const [zoneGroups, setZoneGroups] = useState({});
-  // Mirror of the above. saveZoneGroups needs the pre-save value to roll back to, and reading it
+  // Mirror of the above. writeZoneGroup needs the pre-save value to roll back to, and reading it
   // from a ref keeps the callback free of a zoneGroups dependency — otherwise every group edit
-  // would mint a new saveZoneGroups, and with it a new getLibPhotosForZone.
+  // would mint a new writeZoneGroup, and with it a new getLibPhotosForZone.
   const zoneGroupsRef = useRef({});
 
   // ═══ ZONE DEFINITIONS STATE ═══
@@ -1747,13 +1747,100 @@ export default function StudioApp() {
         : { note: "", rows: [] }
     );
   };
+  // ═══ FUNCTION SWITCH ═══
+  // Everything here is read from refs rather than the render closure. A switch re-renders the whole
+  // build, which is slow enough that a second click lands while React is still working — and that
+  // click's handler comes from the last COMMITTED render, i.e. before the first switch. Reading
+  // `activeFnIdx` and `fnBuilds` from that stale closure was losing client data two ways:
+  //
+  //   1. `fnBuilds[newIdx]` read a stale map, so switching back to a function whose build had only
+  //      just been stored restored `null` instead — blanking it on screen, after which the 1.5s
+  //      autosave wrote that blank over the client's saved session.
+  //   2. The outgoing snapshot was filed under the stale index, so it could overwrite a DIFFERENT
+  //      function's build with this one's.
+  //
+  // Refs are updated at commit, so curIdx/builds/snapshot always agree with each other, and the ref
+  // is advanced synchronously below so a burst of clicks chains correctly instead of each one
+  // starting from the same stale point.
+  const activeFnIdxRef = useRef(0);
+  const fnBuildsRef = useRef({});
+  const snapshotFnRef = useRef(null);
+  const switchingRef = useRef(false);
+  useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
+  useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
+  useEffect(() => { snapshotFnRef.current = snapshotBuildState; });
+
+  // Rebuilding a function's whole canvas is heavy enough to block for a moment. Marked as a
+  // transition so React keeps the page interactive while it renders and tells us it's working
+  // (`isFnSwitching`) — a plain flag set alongside the switch would commit in the same batch as
+  // the finished render, so it could never be seen. `fnPending` is the one URGENT update: the pill
+  // has to light up on click, otherwise the click reads as ignored and gets repeated.
+  const [isPendingFnRender, startFnSwitch] = useTransition();
+  const [fnPending, setFnPending] = useState(null);
+  useEffect(() => { setFnPending(null); }, [activeFnIdx]);
+
+  // ═══ THE BUSY WINDOW ═══ "You clicked, and what's on screen is not yet this function."
+  //
+  // Neither `isPending` nor comparing fnPending to activeFnIdx is reliable on its own: both depend
+  // on React giving us a render BETWEEN the click and the switch committing, and when it schedules
+  // the urgent update together with the transition there is no such render — the flag flips true
+  // and false within one commit and the loading state never paints. That's why the stale card kept
+  // showing through.
+  //
+  // So the busy flag is owned outright and held for a minimum, guaranteeing the loading state is
+  // actually seen and that a stale card can never flash in its place. It stays up longer if the
+  // switch itself takes longer.
+  const FN_BUSY_MIN_MS = 400;
+  const [fnBusy, setFnBusy] = useState(false);
+  const fnBusyStartRef = useRef(0);
+  // Runs once the new index has committed — i.e. the switch is done — then waits out whatever is
+  // left of the minimum so the message doesn't blink.
+  useEffect(() => {
+    if (!fnBusyStartRef.current) return;
+    const left = Math.max(0, FN_BUSY_MIN_MS - (performance.now() - fnBusyStartRef.current));
+    const t = setTimeout(() => { fnBusyStartRef.current = 0; setFnBusy(false); }, left);
+    return () => clearTimeout(t);
+  }, [activeFnIdx]);
+  const isFnSwitching = fnBusy || isPendingFnRender;
+  // Dev-only timing for the switch. It re-renders the whole of StudioApp and invalidates ten
+  // memo chains, so "it's slow" needs a number before anything is optimised — guessing at the hot
+  // spot is how you end up rewriting the wrong thing. Logs the click→committed duration.
+  const fnSwitchStartRef = useRef(0);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !fnSwitchStartRef.current) return;
+    const ms = Math.round(performance.now() - fnSwitchStartRef.current);
+    fnSwitchStartRef.current = 0;
+    console.info(`[ambria] function switch → idx ${activeFnIdx} took ${ms}ms`);
+  }, [activeFnIdx]);
+
   const switchActiveFn = (newIdx) => {
-    if (newIdx === activeFnIdx) return;
-    const currentSnapshot = snapshotBuildState();
-    const targetSnapshot = fnBuilds[newIdx] || null;
-    setFnBuilds(prev => ({ ...prev, [activeFnIdx]: currentSnapshot }));
-    restoreBuildState(targetSnapshot);
-    setActiveFnIdx(newIdx);
+    const curIdx = activeFnIdxRef.current;
+    if (newIdx === curIdx) { setFnPending(null); return; }
+    fnSwitchStartRef.current = performance.now();
+    // Urgent and first: the loading state must be on screen before any of the heavy work below.
+    fnBusyStartRef.current = performance.now();
+    setFnBusy(true);
+    let builds = fnBuildsRef.current;
+    // Only snapshot when a switch ISN'T already in flight. Mid-switch the live state still belongs
+    // to the function we just left — which has already been stored — so snapshotting again would
+    // file it under the function we are now leaving and destroy that one's real build.
+    if (!switchingRef.current) {
+      builds = { ...builds, [curIdx]: snapshotFnRef.current() };
+      fnBuildsRef.current = builds;
+    }
+    switchingRef.current = true;
+    activeFnIdxRef.current = newIdx;
+    const nextBuilds = builds;
+    const target = builds[newIdx] || null;
+    setFnPending(newIdx);
+    // The ref work above stays OUTSIDE the transition: React may re-run a transition body, and
+    // re-snapshotting there would file the wrong build. Everything in here is a plain setState of
+    // already-computed values, so a replay is harmless.
+    startFnSwitch(() => {
+      setFnBuilds(nextBuilds);
+      restoreBuildState(target);
+      setActiveFnIdx(newIdx);
+    });
   };
 
   // ═══ AUTH- derived helpers (verbatim) ═══
@@ -2444,18 +2531,43 @@ export default function StudioApp() {
   // return normally, and let the caller announce "✓ pinned" for a group that only exists in this
   // tab — gone the moment the page reloads. On failure the optimistic state is rolled back too,
   // so the screen never shows a group the database doesn't have.
-  const saveZoneGroups = useCallback(async (next) => {
-    const clean = normaliseZoneGroups(next);
+  // Writes ONE zone+function list, merged onto a fresh read of the blob.
+  //
+  // Groups are one shared settings row for the whole team. Writing the local copy wholesale would
+  // erase every group another salesperson made since this tab loaded — the tab's copy is only as
+  // fresh as the last realtime event it happened to receive. Since a pin/unpin/delete only ever
+  // changes a single (zone, function) list, the safe move is to send the OPERATION and apply it to
+  // whatever the row currently holds.
+  //
+  // kvTryGet, not kvGet: a failed read is indistinguishable from an empty row through kvGet, and
+  // merging onto "nothing" then saving is precisely how a day of video tagging was lost on
+  // 30 Jul 2026. A read that fails aborts the write instead.
+  const writeZoneGroup = useCallback(async (zone, fnType, ids) => {
+    if (!zone) throw new Error("No zone to group against");
     const prev = zoneGroupsRef.current;
-    zoneGroupsRef.current = clean;
-    setZoneGroups(clean);
-    const res = await reliableSave(ZONE_GROUPS_SK, JSON.stringify(clean), "Zone photo groups");
-    if (!res?.ok) {
+    // Optimistic, so the strip reorders on click rather than after the round trip.
+    const optimistic = normaliseZoneGroups(setGroupIds(prev, zone, fnType, ids));
+    zoneGroupsRef.current = optimistic;
+    setZoneGroups(optimistic);
+    try {
+      const read = await kvTryGet(ZONE_GROUPS_SK);
+      if (!read.ok) throw new Error(read.error || "Couldn't read the current groups");
+      let remote = {};
+      if (!read.missing && read.value != null) {
+        try { remote = typeof read.value === "string" ? JSON.parse(read.value) : read.value; } catch { remote = {}; }
+      }
+      const merged = normaliseZoneGroups(setGroupIds(normaliseZoneGroups(remote), zone, fnType, ids));
+      const res = await reliableSave(ZONE_GROUPS_SK, JSON.stringify(merged), "Zone photo groups");
+      if (!res?.ok) throw new Error(res?.error || "Storage rejected the write");
+      zoneGroupsRef.current = merged;
+      setZoneGroups(merged);
+      return merged;
+    } catch (e) {
+      // Never leave a group on screen that the row doesn't have.
       zoneGroupsRef.current = prev;
       setZoneGroups(prev);
-      throw new Error(res?.error || "Storage rejected the write");
+      throw e;
     }
-    return res;
   }, []);
   // Row-level library persistence. `nl` is the set of items to upsert (NOT the whole library —
   // now that `libItems` is a lazy cache rather than the full table, callers pass just the item(s)
@@ -3896,9 +4008,11 @@ export default function StudioApp() {
   // instead of scanning the whole in-memory library. Returns every photo tagged for this zone,
   // unranked — no video-taxonomy or palette-based scoring. Build shows the full zone-tagged set
   // and the user always picks manually; nothing is auto-preselected.
-  // `fnType` (optional) is the build's active function — it selects which of the zone's groups
-  // leads the strip. Omitted, only the any-function group applies.
-  const getLibPhotosForZone = useCallback(async (zone, filterFn, fnType = "") => {
+  // Deliberately function-agnostic. Group ordering used to happen in here, which meant the active
+  // function was part of the cache key — so switching function re-queried the server for EVERY
+  // zone and made the switch crawl. The zone-tagged pool doesn't depend on the function, so it is
+  // fetched once and Build applies the group order to it client-side (see applyZoneGroupOrder).
+  const getLibPhotosForZone = useCallback(async (zone, filterFn) => {
     // `zone` may be a single tag name or an array of synonym names (Build page).
     // filterFn (optional): a predicate applied to the zone matches — e.g. Build's explicit
     // "Filter whole build" photo filters (event type, palette, etc.), a user-initiated filter,
@@ -3911,29 +4025,20 @@ export default function StudioApp() {
       const ae = li.tags?.areasElements || [];
       return zoneList.some(z => ae.includes(z)) && (!filterFn || filterFn(li));
     });
+    return tagged;
+  }, [mergeLibItems]);
 
-    // The hand-picked group floats to the front, in the order it was arranged. A grouped photo
-    // need not carry the zone tag — putting one in a group is itself the statement that it belongs
-    // here — so anything the zone query didn't return is fetched by id rather than dropped.
-    const groupIds = groupIdsForZones(zoneGroups, zoneList, fnType);
-    if (!groupIds.length) return tagged;
-
-    const byId = new Map(tagged.map(li => [li.id, li]));
-    const missing = groupIds.filter(id => !byId.has(id));
-    if (missing.length) {
-      try {
-        const extra = await fetchLibraryItemsByIds(missing);
-        mergeLibItems(extra);
-        for (const li of extra) byId.set(li.id, li);
-      } catch { /* a group entry whose photo has since been deleted just stays absent */ }
+  // A grouped photo need not carry the zone tag — putting one in a group is itself the statement
+  // that it belongs there — so those rows won't come back from the zone query. Pull every group
+  // member into the lazy library cache once, off the groups blob rather than per zone per switch,
+  // so applyZoneGroupOrder can resolve them from libById with no request on the switch path.
+  useEffect(() => {
+    const ids = new Set();
+    for (const byFn of Object.values(zoneGroups || {})) {
+      for (const list of Object.values(byFn || {})) (list || []).forEach(id => ids.add(id));
     }
-    const pinned = groupIds.map(id => byId.get(id)).filter(li => li && (!filterFn || filterFn(li)));
-    const pinnedIds = new Set(pinned.map(li => li.id));
-    return [
-      ...pinned.map(li => ({ ...li, _grouped: true })),
-      ...tagged.filter(li => !pinnedIds.has(li.id)),
-    ];
-  }, [mergeLibItems, zoneGroups]);
+    if (ids.size) ensureLibItems([...ids]);
+  }, [zoneGroups, ensureLibItems]);
 
   // ── All videos (youtube + manual), newest first — VERBATIM ──
   const allVideos = useMemo(() => {
@@ -4800,12 +4905,19 @@ export default function StudioApp() {
     if (!clientName.trim()) return;
     const totalFns = 1 + (extraFunctions || []).length;
     const fnSnapshots = {};
+    // Refs, not the closure: the periodic/visibility autosaves fire from timers, which can land
+    // between a function switch's setState and the re-render that would refresh this callback.
+    // Taking the index from one render and the builds from another files a snapshot under the
+    // wrong function — the same class of bug switchActiveFn had.
+    const liveIdx = activeFnIdxRef.current;
+    const liveBuilds = fnBuildsRef.current;
+    const takeSnapshot = snapshotFnRef.current || snapshotBuildState;
     for (let i = 0; i < totalFns; i++) {
       let snap;
-      if (i === activeFnIdx) {
-        snap = snapshotBuildState();
+      if (i === liveIdx) {
+        snap = takeSnapshot();
       } else {
-        snap = fnBuilds[i] || null;
+        snap = liveBuilds[i] || null;
       }
       if (snap) {
         if (snap.elSelectedPhoto) {
@@ -4845,7 +4957,7 @@ export default function StudioApp() {
       selectedPalettes: [...selectedPalettes],
       floralRatio,
       fnSnapshots,
-      savedActiveFnIdx: activeFnIdx,
+      savedActiveFnIdx: liveIdx,
       customItems: dcCustomItems,
       auto: !!opts.auto,   // background auto-draft (rolling, updated in place) vs a manual Save Draft
     };
@@ -4913,7 +5025,13 @@ export default function StudioApp() {
       || Object.values(enabledEls || {}).some(Boolean)
     ));
   });
-  const autoSaveBuild = useCallback(() => { if (buildHasDataRef.current) { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } } }, []);
+  // Never mid-switch: a switch replaces the whole build state, and a save landing partway through
+  // writes a session that is half one function and half another. The switch's own settled state
+  // schedules a save straight after, so nothing is skipped — only mistimed.
+  const autoSaveBuild = useCallback(() => {
+    if (switchingRef.current) return;
+    if (buildHasDataRef.current) { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } }
+  }, []);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
@@ -5996,7 +6114,7 @@ export default function StudioApp() {
   const handleZoneUpload = async (elKey, file) => {
     if (!file || zoneUploading) return;
     setZoneUploading(elKey);
-    showMsg("📷 Uploading to Cloudinary...", "blue");
+    showMsg("📷 Uploading…", "blue");
     try {
       // Goes to Supabase Storage via the /functions/v1/upload Edge Function, which holds the
       // secret server-side. Storage has no unsigned-upload equivalent to Cloudinary's preset,
@@ -6920,7 +7038,7 @@ export default function StudioApp() {
     venue, setVenue, fn, setFn, clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds,
+    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData,
     sessionHistoryExpanded, setSessionHistoryExpanded,
@@ -6969,7 +7087,7 @@ export default function StudioApp() {
     // templates
     templates, setTemplates, saveTpl, tplEdit, setTplEdit, tplTab, setTplTab,
     // zones
-    zoneGroups, saveZoneGroups,
+    zoneGroups, writeZoneGroup,
     zoneDefs, setZoneDefs, saveZD, zoneMeta, zoneKeys, zoneLabelsD, zdEditZone, setZdEditZone,
     // premia (read-only gate — editor removed)
     premiaConfig, premiaGate, setPremiaGate, isPremiaPlatinum, PREMIA_DEFAULTS,
@@ -7048,6 +7166,8 @@ export default function StudioApp() {
         @keyframes studioToastIn { from { opacity: 0; transform: translate(-50%, -14px) } to { opacity: 1; transform: translate(-50%, 0) } }
         @keyframes studioDlgFade { from { opacity: 0 } to { opacity: 1 } }
         @keyframes studioDlgPop { from { opacity: 0; transform: scale(0.94) translateY(8px) } to { opacity: 1; transform: none } }
+        /* Shared spinner — the function pills and the build's switching veil both use it. */
+        @keyframes saRestoreSpin { to { transform: rotate(360deg) } }
         @media (prefers-reduced-motion: reduce) {
           @keyframes studioToastIn { from { opacity: 0 } to { opacity: 1 } }
           @keyframes studioDlgPop { from { opacity: 0 } to { opacity: 1 } }
@@ -7192,13 +7312,20 @@ export default function StudioApp() {
             <div style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, paddingTop: 10, marginTop: 6, borderTop: `1px solid rgba(201,169,110,0.12)`, flexWrap: "wrap" }}>
               <div style={{ ...NAV_META, color: "rgba(255,255,255,0.45)", marginRight: 2 }}>Function</div>
               {fns.map((f, i) => {
-                const isActive = i === activeFnIdx;
+                // Highlight follows the PENDING pill while a switch renders, so the click lands
+                // visibly at once. Without it the old pill stays lit for the whole switch and the
+                // click reads as ignored — which is what got it clicked again.
+                const isActive = i === (fnPending ?? activeFnIdx);
+                const isLoading = isFnSwitching && i === fnPending;
                 const f_ = f || {};
                 const typeLbl = (f_.type && String(f_.type).trim()) || `Function ${i + 1}`;
                 const slotLetter = f_.shift ? (SHIFT_LETTER[f_.shift] || String(f_.shift).charAt(0).toUpperCase()) : "";
                 const label = `${typeLbl} · ${fmtDate(f_.date)}${slotLetter ? " " + slotLetter : ""}`;
                 return (
-                  <div key={i} onClick={() => switchActiveFn(i)} style={{ ...NAV_CHIP_BASE, padding: "6px 14px", borderRadius: 999, cursor: "pointer", fontWeight: isActive ? 600 : 500, background: isActive ? accent : "transparent", color: isActive ? "#1a1a2e" : accent, border: `1px solid ${isActive ? accent : "rgba(201,169,110,0.4)"}` }}>{label}</div>
+                  <div key={i} onClick={() => switchActiveFn(i)} title={isLoading ? "Loading this function…" : undefined} style={{ ...NAV_CHIP_BASE, padding: "6px 14px", borderRadius: 999, cursor: isFnSwitching ? "progress" : "pointer", fontWeight: isActive ? 600 : 500, background: isActive ? accent : "transparent", color: isActive ? "#1a1a2e" : accent, border: `1px solid ${isActive ? accent : "rgba(201,169,110,0.4)"}`, display: "flex", alignItems: "center", gap: 7, opacity: isFnSwitching && !isActive ? 0.55 : 1, transition: "opacity .15s ease" }}>
+                    {label}
+                    {isLoading && <span aria-label="Loading" style={{ width: 11, height: 11, borderRadius: "50%", border: "2px solid rgba(26,26,46,0.28)", borderTopColor: "#1a1a2e", animation: "saRestoreSpin .6s linear infinite", flexShrink: 0 }} />}
+                  </div>
                 );
               })}
             </div>
