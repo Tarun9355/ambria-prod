@@ -1786,6 +1786,14 @@ export default function StudioApp() {
   const fnBuildsRef = useRef({});
   const snapshotFnRef = useRef(null);
   const switchingRef = useRef(false);
+  // Set whenever loadClientSession runs — i.e. a fresh visit/meeting has just been opened, whether
+  // starting clean or resuming a past draft. The rolling auto-save below normally collapses
+  // consecutive auto-drafts into the same array slot (so a 15s background timer doesn't spam the
+  // history) — but that collapsing must not carry across a Load, or the new meeting's first autosave
+  // overwrites the very session that was just resumed, silently erasing the prior meeting's build.
+  // saveSession clears this on the first save after a load, so collapsing resumes as normal within
+  // the new meeting.
+  const sessionBoundaryRef = useRef(false);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
   useEffect(() => { snapshotFnRef.current = snapshotBuildState; });
@@ -4834,9 +4842,19 @@ export default function StudioApp() {
     return out;
   }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
 
-  // ── Active client + meeting number — VERBATIM ──
+  // ── Active client + meeting number ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
-  const meetingNumber = useMemo(() => (activeClient?.sessions?.length || 0) + 1, [activeClient]);
+  // Pinned at the session count this client had when the CURRENT visit began, captured once per
+  // activeClientId change — not recomputed live off activeClient.sessions.length. Now that each visit
+  // gets its own preserved session entry (see sessionBoundaryRef), that count grows mid-visit as soon
+  // as this build's own first autosave lands; without pinning, the label would tick from "Meeting #2"
+  // to "Meeting #3" partway through the second meeting instead of staying put until the next Load.
+  const [meetingBaseline, setMeetingBaseline] = useState(0);
+  useEffect(() => {
+    setMeetingBaseline(activeClient?.sessions?.length || 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClientId]);
+  const meetingNumber = meetingBaseline + 1;
 
   // ── Element toggle — VERBATIM ──
   const toggleEl = k => { setEnabledEls(p => ({ ...p, [k]: !p[k] })); setActiveZones([]); };
@@ -5025,11 +5043,18 @@ export default function StudioApp() {
     // Event Info stopped persisting whenever the build happened to be empty — trading a visible bug
     // for a silent one.
     const keepDraft = autoSaveWouldDestroy(snapshot, prevSessions[0] || null, !!opts.auto);
-    client.sessions = keepDraft
-      ? prevSessions
-      : (opts.auto && prevSessions[0]?.auto)
+    if (keepDraft) {
+      client.sessions = prevSessions;
+    } else {
+      // Collapse consecutive auto-drafts into the same slot — UNLESS a Load just opened a new visit
+      // (sessionBoundaryRef), in which case this save must start a fresh entry so the resumed draft
+      // (the previous meeting's build) survives instead of being overwritten in place.
+      const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current;
+      client.sessions = collapseInPlace
         ? [snapshot, ...prevSessions.slice(1)].slice(0, 20)
         : [snapshot, ...prevSessions].slice(0, 20);
+      sessionBoundaryRef.current = false;
+    }
     setActiveClientId(client.id);
     const finalLedger = updated.slice(0, 200);
     saveClientLedger(finalLedger);
@@ -5214,6 +5239,8 @@ export default function StudioApp() {
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3) => {
+    // Loading a client — fresh or resuming a past draft — opens a new visit. See sessionBoundaryRef.
+    sessionBoundaryRef.current = true;
     setClientName(client.name);
     setClientPhone(client.phone || "");
     setActiveClientId(client.id);
