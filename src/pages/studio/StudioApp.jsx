@@ -5004,7 +5004,15 @@ export default function StudioApp() {
       customItems: dcCustomItems,
       auto: !!opts.auto,   // background auto-draft (rolling, updated in place) vs a manual Save Draft
     };
-    let updated = [...clientLedger];
+    // Read the ref, not the `clientLedger` closure: the debounced-edit, 15s-periodic and
+    // tab-hide auto-save triggers can fire back-to-back before React re-renders (each timer
+    // callback runs synchronously, but the closure sync effect that refreshes `saveSession`
+    // only runs on the NEXT commit) — two saves racing on the same stale, pre-write ledger
+    // both saw an empty `sessions` and both prepended their own "first" entry, leaving a
+    // permanent duplicate (collapse-in-place only ever touches slot 0, never cleans up a
+    // stray slot 1). clientLedgerRef is written synchronously inside saveClientLedger, ahead
+    // of the state update, so every save — even one racing right behind another — sees it.
+    let updated = [...(clientLedgerRef.current || clientLedger)];
     let client = updated.find(c => c.id === activeClientId);
     if (!client) {
       client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
