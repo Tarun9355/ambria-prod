@@ -5238,9 +5238,13 @@ export default function StudioApp() {
   }, [saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs]);
 
   // ── Load client session — VERBATIM ──
-  const loadClientSession = useCallback((client, session, landingStep = 3) => {
-    // Loading a client — fresh or resuming a past draft — opens a new visit. See sessionBoundaryRef.
-    sessionBoundaryRef.current = true;
+  const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
+    // A genuine Load (client-search "Load →", a past-session pick, an LMS lead) opens a new visit —
+    // see sessionBoundaryRef. The mount-restore effect below also calls this to bring back a deal
+    // that's already active after a refresh/reopen — that's the SAME visit continuing, not a new one,
+    // so it passes isNewVisit:false. Getting this wrong duplicated the just-loaded session: the
+    // restore's own follow-up autosave would see the boundary flag and clone it before any edit.
+    if (opts.isNewVisit !== false) sessionBoundaryRef.current = true;
     setClientName(client.name);
     setClientPhone(client.phone || "");
     setActiveClientId(client.id);
@@ -5354,7 +5358,7 @@ export default function StudioApp() {
     // With a session and no usable stored step, Summary stays the default as before. Without one
     // there is nothing to summarise, so fall back to Event Info instead.
     const landingStep = (savedStep !== null && savedStep >= 1) ? savedStep : (session ? 3 : 0);
-    loadClientSession(client, session, landingStep);
+    loadClientSession(client, session, landingStep, { isNewVisit: false });
     if (savedFn > 0) setActiveFnIdx(savedFn);
   }, [clientLedger, activeClientId, loadClientSession]);
 
