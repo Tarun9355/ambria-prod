@@ -845,6 +845,50 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       } catch { return []; }
     };
 
+    // ═══ AN IMAGE FOR EACH ELEMENT READ OFF THE REFERENCE ═══
+    // The old "The Pieces" card showed warehouse product shots of the items priced for that zone, and
+    // the client ruled those out. The elements themselves are still worth showing — so instead of
+    // pricing rows, the elements come from READING the zone's own reference photograph (the callouts),
+    // and each one is then matched to a library photograph that actually depicts it.
+    //
+    // The match is made by the model looking at the candidates, not by string-matching the callout
+    // against tags: "Crystal chandelier centrepiece" appears in no tag vocabulary we have, but it is
+    // plainly visible or absent in a photograph.
+    const elementPhotosForZone = async (zoneLabel, callouts, venue, chosenUrl) => {
+      const names = (callouts || []).filter(Boolean).slice(0, 3);
+      if (!names.length) return [];
+      const pool = await alternatesForZone(zoneLabel, chosenUrl, venue, 6);
+      if (pool.length < 2) return [];
+      try {
+        const blocks = [];
+        pool.forEach((u, i) => {
+          blocks.push({ type: "text", text: `CANDIDATE ${i}` });
+          blocks.push({ type: "image", source: { type: "url", url: deckImageUrl(u, 900, 675) } });
+        });
+        blocks.push({ type: "text", text:
+          `Each candidate above is a photograph of real décor work.\n\n` +
+          `For each of these design elements, choose the ONE candidate that most clearly shows it:\n` +
+          names.map((n, i) => `${i}. ${n}`).join("\n") + `\n\n` +
+          `Judge only on what is visible. If no candidate genuinely shows an element, return null for ` +
+          `it rather than forcing a match — a photograph that does not show the thing it is captioned ` +
+          `with is worse than no photograph. Do not use the same candidate twice.\n\n` +
+          `Reply with ONLY this JSON: {"picks":[{"element":0,"candidate":2},{"element":1,"candidate":null}]}` });
+
+        const raw = await callClaudeStreaming({ contentBlocks: blocks, maxTokens: 400 });
+        const m = String(raw || "").match(/\{[\s\S]*\}/);
+        if (!m) return [];
+        const picks = JSON.parse(m[0]).picks || [];
+        const used = new Set();
+        return picks.map((p) => {
+          const ci = Number(p?.candidate);
+          const ni = Number(p?.element);
+          if (!Number.isInteger(ci) || !pool[ci] || used.has(ci) || !names[ni]) return null;
+          used.add(ci);
+          return { name: names[ni], url: pool[ci] };
+        }).filter(Boolean);
+      } catch { return []; }
+    };
+
     // ═══ READ THE REFERENCE IMAGES ═══
     // "Detailed callouts highlighting the key design elements visible within each reference image" and
     // "a flower story that complements the selected references". Both have to come from what is
@@ -933,7 +977,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         const ai = (shot && read.callouts[shot.id]) || [];
         const callouts = (Array.isArray(ai) ? ai : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3);
         const alts = await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 3);
-        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts });
+        // Each element read off this zone's photograph, paired with a library photo that shows it.
+        const elements = await elementPhotosForZone(z.label, callouts, fnObj.fnVenue, z.photo);
+        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts, elements });
       }
 
       fns.push({
@@ -1094,6 +1140,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // Landscape, and centred against the text column. A tall box meant a wide venue shot lost its
         // sides to the crop — the room stopped being readable, which is the whole point of the plate.
         card(s, z.photo, 6.35, 1.65, SLIDE_W - 6.35 - M, (SLIDE_W - 6.35 - M) * 0.68);
+
+        // ── The elements: each thing read off the photograph, shown ──
+        // This is what the old "The Pieces" card was for, without the warehouse product shots the
+        // client ruled out. The caption is the element as read off the zone's own reference, and the
+        // tile beneath it is a library photograph that actually shows that element.
+        if (z.elements?.length >= 2) {
+          const e = newSlide();
+          e.addText("THE ELEMENTS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
+          e.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
+          const n = Math.min(z.elements.length, 3), gut = 0.18;
+          const w = (CONTENT_W - gut * (n - 1)) / n, h = w * 0.72;
+          const y = 2.3;
+          z.elements.slice(0, n).forEach((el, i) => {
+            const x = M + i * (w + gut);
+            card(e, el.url, x, y, w, h);
+            e.addText(el.name, { x, y: y + h + 0.18, w, h: 0.7, fontFace: SANS, fontSize: 11.5, color: CREAM, lineSpacingMultiple: 1.25 });
+          });
+        }
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
