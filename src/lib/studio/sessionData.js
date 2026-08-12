@@ -50,6 +50,45 @@ export function autoSaveWouldDestroy(next, prev, isAuto) {
   return sessionHasData(prev);                    // destructive only if the old one did
 }
 
+// Object-key order is not semantically meaningful for these snapshots (zoneConfig/zoneElements/
+// enabledEls/elTiers/fnSnapshots are all keyed lookups, not ordered lists), but plain JSON.stringify
+// IS order-sensitive. Round-tripping through React state — load populates state from the saved
+// object, a setter rebuilds it via spread/fromEntries, the next save re-serialises it — can reorder
+// those keys without changing a single value, which made a straight stringify comparison see two
+// identical builds as "different". Sorting keys (arrays keep their order — position there IS
+// meaningful) makes the comparison care about content, not incidental rebuild order.
+function stableStringify(value) {
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
+  }
+  return JSON.stringify(value) ?? "null"; // undefined stringifies to `undefined` (not valid JSON) — normalise it
+}
+
+// `sourceVideo`/`sourceEvent` are NOT restored verbatim from the saved snapshot — loadClientSession
+// re-derives each one from the LIVE library (`allVideos`/`events`/`ytVideoTags`) so a since-updated
+// title, photo or AI tag comes along for the ride. That's the right behaviour for the build itself,
+// but it means the very next auto-save can re-capture a `sourceVideo`/`sourceEvent` whose peripheral
+// content (tags, title, photos) has quietly drifted since the original save — through no edit by the
+// salesperson at all. Reducing each to just its id keeps the comparison about "is this the same
+// reference", not "does every denormalised field of it still match byte-for-byte".
+function normalizeSourceRef(v) {
+  if (!v || typeof v !== "object") return v ?? null;
+  return v.id ? { id: v.id } : null;
+}
+function stripVolatile(value) {
+  if (Array.isArray(value)) return value.map(stripVolatile);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const k of Object.keys(value)) {
+      out[k] = (k === "sourceVideo" || k === "sourceEvent") ? normalizeSourceRef(value[k]) : stripVolatile(value[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
 /**
  * Do two session snapshots hold the same build, ignoring save metadata (id/savedAt/savedBy/auto)?
  *
@@ -70,5 +109,5 @@ export function snapshotContentEqual(a, b) {
     const { id, savedAt, savedBy, auto, ...rest } = s; // eslint-disable-line no-unused-vars
     return rest;
   };
-  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+  return stableStringify(stripVolatile(strip(a))) === stableStringify(stripVolatile(strip(b)));
 }

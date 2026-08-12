@@ -5302,6 +5302,11 @@ export default function StudioApp() {
       if (session.eventDate) setClientDate(session.eventDate);
       if (session.venue) setVenue(session.venue);
       if (session.fn) setFn(session.fn);
+      // Missing here left dcCustomItems holding whatever the PREVIOUS client/session had (state
+      // never resets on its own) — so switching clients without a refresh could leak one client's
+      // Deal Check custom items into another's snapshot, and the very next auto-save after a Load
+      // would disagree with the session it just resumed on this field alone, forking a duplicate.
+      setDcCustomItems(Array.isArray(session.customItems) ? session.customItems : []);
       if (session.sourceEventId) {
         const ev = events.find(e => e.id === session.sourceEventId);
         if (ev) setSourceEvent(ev);

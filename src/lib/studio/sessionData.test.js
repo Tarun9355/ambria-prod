@@ -93,4 +93,22 @@ describe("snapshotContentEqual", () => {
     expect(snapshotContentEqual(null, { fnSnapshots: {} })).toBe(false);
     expect(snapshotContentEqual({ fnSnapshots: {} }, null)).toBe(false);
   });
+
+  it("ignores nested object key order (a rebuild via a different code path, same content)", () => {
+    const a = { fnSnapshots: { 0: { zoneElements: { stage: ["truss"], entry: ["arch"] } } } };
+    const b = { fnSnapshots: { 0: { zoneElements: { entry: ["arch"], stage: ["truss"] } } } };
+    expect(snapshotContentEqual(a, b)).toBe(true);
+  });
+
+  it("ignores sourceVideo/sourceEvent fields other than id — loadClientSession re-derives them live, so a since-updated title/tag isn't a real edit", () => {
+    const a = { fnSnapshots: { 0: { sourceVideo: { id: "vid_1", title: "Old Title", tags: { mood: "romantic" } } } } };
+    const b = { fnSnapshots: { 0: { sourceVideo: { id: "vid_1", title: "New Title (retagged)", tags: { mood: "romantic", venue: "outdoor" } } } } };
+    expect(snapshotContentEqual(a, b)).toBe(true);
+  });
+
+  it("still catches a genuine video swap even though only the id differs", () => {
+    const a = { fnSnapshots: { 0: { sourceVideo: { id: "vid_1", title: "X", tags: {} } } } };
+    const b = { fnSnapshots: { 0: { sourceVideo: { id: "vid_2", title: "X", tags: {} } } } };
+    expect(snapshotContentEqual(a, b)).toBe(false);
+  });
 });
