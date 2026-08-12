@@ -1044,16 +1044,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // PowerPoint, Keynote and Canva's importer. A plate behind it works everywhere, and doubles as a
     // hairline edge where the photograph meets the ground.
     const PX = 150;                                        // render pixels per inch — sharp when projected
+    // Keyed by URL *and* box, because the same photograph appears in boxes of different shapes (the
+    // mood board plate is wide, the flower-story plate is tall). A single entry per URL would hand
+    // PptxGenJS a data URI of the wrong aspect and it would stretch it to fit.
+    const rounded = new Map();
+    const rkey = (url, w, h) => url + "|" + w.toFixed(2) + "x" + h.toFixed(2);
     const card = (slide, url, x, y, w, h) => {
       if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
       try {
-        slide.addShape(pptx.ShapeType.rect, {
-          x, y, w, h,
+        // roundRect, not rect: the plate's corners have to follow the photograph's, or a square
+        // shadow shows through the rounded corner as four dark triangles.
+        slide.addShape(pptx.ShapeType.roundRect, {
+          x, y, w, h, rectRadius: 0.12,
           fill: { color: t === LIGHT ? "FFFFFF" : "000000" },
           line: { color: t === LIGHT ? "E2D9CB" : "2E2A26", width: 0.75 },
           shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 14, offset: 5, angle: 90 },
         });
-        slide.addImage({ path: deckImageUrl(url, Math.round(w * PX), Math.round(h * PX)), x, y, w, h });
+        const src = rounded.get(rkey(url, w, h)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
+        slide.addImage(src.startsWith("data:") ? { data: src, x, y, w, h } : { path: src, x, y, w, h });
         return true;
       } catch { return false; }
     };
@@ -1063,44 +1071,157 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     const rule = (slide, x, y, w) =>
       slide.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.02, fill: { color: t.accent } });
 
+    // ═══ DECORATIVE MARKS ═══
+    // Small gold detailing, used sparingly. The references carry almost none, so this stays to a
+    // diamond marking a title, corner brackets framing a chapter card, and a numeral in the corner.
+    const diamond = (slide, x, y, size = 0.11) =>
+      slide.addShape(pptx.ShapeType.diamond, { x, y, w: size, h: size, fill: { color: t.accent } });
+
+    // Brackets rather than a full border: a complete frame boxes the card in and fights the
+    // photograph, while four corners suggest one and leave the space open.
+    const corners = (slide, inset = 0.42, len = 0.62) => {
+      const w = 0.014, c = t.accent, x0 = inset, y0 = inset;
+      const x1 = SLIDE_W - inset, y1 = SLIDE_H - inset;
+      const seg = (x, y, ww, hh) => slide.addShape(pptx.ShapeType.rect, { x, y, w: ww, h: hh, fill: { color: c } });
+      seg(x0, y0, len, w); seg(x0, y0, w, len);                          // top-left
+      seg(x1 - len, y1 - w, len, w); seg(x1 - w, y1 - len, w, len);      // bottom-right
+    };
+
+    let pageNo = 0;
+    const folio = (slide) => {
+      pageNo += 1;
+      slide.addText(String(pageNo).padStart(2, "0"), {
+        x: SLIDE_W - 1.05, y: SLIDE_H - 0.68, w: 0.5, h: 0.3,
+        fontFace: SANS, fontSize: 9, color: t.mute, align: "right", charSpacing: 1,
+      });
+    };
+
     const M = 0.85;                    // the margin every card and title block sits on
     const CONTENT_W = SLIDE_W - M * 2;
+
+    // ═══ ROUNDED CORNERS ═══
+    // PowerPoint has no border-radius for a picture, and PptxGenJS's `rounding` option crops to a
+    // full CIRCLE, not a rounded rectangle. So the corners are cut into the pixels: the photograph is
+    // drawn onto a canvas through a rounded-rect clip and handed to the deck as a data URI.
+    //
+    // This works because Supabase Storage answers with Access-Control-Allow-Origin: *, so the canvas
+    // is not tainted and toDataURL is allowed. PNG, because JPEG cannot carry the transparent corners
+    // and would fill them white — which on the dark cards would show as four bright notches.
+    //
+    // Every photograph is rounded ONCE, up front, keyed by URL, so a photo used on two cards is not
+    // fetched and redrawn twice.
+    const roundCorners = (url, wIn, hIn) => new Promise((resolve) => {
+      const px = { w: Math.round(wIn * PX), h: Math.round(hIn * PX) };
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = px.w; cv.height = px.h;
+          const ctx = cv.getContext("2d");
+          const r = Math.round(Math.min(px.w, px.h) * 0.045);   // ~0.12in at these sizes
+          ctx.beginPath();
+          ctx.moveTo(r, 0);
+          ctx.lineTo(px.w - r, 0); ctx.quadraticCurveTo(px.w, 0, px.w, r);
+          ctx.lineTo(px.w, px.h - r); ctx.quadraticCurveTo(px.w, px.h, px.w - r, px.h);
+          ctx.lineTo(r, px.h); ctx.quadraticCurveTo(0, px.h, 0, px.h - r);
+          ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+          ctx.closePath();
+          ctx.clip();
+          ctx.drawImage(img, 0, 0, px.w, px.h);
+          resolve(cv.toDataURL("image/png"));
+        } catch { resolve(null); }                              // tainted or out of memory — use the URL
+      };
+      img.onerror = () => resolve(null);
+      img.src = deckImageUrl(url, px.w, px.h);
+    });
+
+    // The box a photograph lands in decides its crop, so rounding has to know the size in advance.
+    // Anything not listed here still renders, just with square corners.
+    const prepare = async (jobs) => {
+      const seen = new Set();
+      const work = jobs.filter((j) => j.url && !seen.has(rkey(j.url, j.w, j.h)) && seen.add(rkey(j.url, j.w, j.h)));
+      const done = await Promise.all(work.map((j) => roundCorners(j.url, j.w, j.h).catch(() => null)));
+      work.forEach((j, i) => { if (done[i]) rounded.set(rkey(j.url, j.w, j.h), done[i]); });
+    };
+
+    // ── Box geometry, named once ──
+    // The rounding pass has to cut each photograph to the exact box it will land in, so the sizes
+    // live here rather than inline, and both the pass and the slides read the same numbers.
+    const BOX = {
+      cover: { w: 4.05, h: 3.0 },
+      hero: { w: 4.75, h: 3.55 },
+      element: { w: SLIDE_W - 6.35 - M, h: (SLIDE_W - 6.35 - M) * 0.68 },
+      flower: { w: SLIDE_W - 6.4 - M, h: SLIDE_H - 2.6 },
+    };
+    const boardBoxes = (n) => {
+      const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
+      const bigW = n > 1 ? CONTENT_W * 0.56 : CONTENT_W;
+      const rw = CONTENT_W - bigW - gut, rh = n > 2 ? (botH - gut) / 2 : botH;
+      return { top, botH, gut, bigW, rw, rh };
+    };
+    const optionBoxes = (m) => {
+      const gut = 0.18, w = (CONTENT_W - gut * (m - 1)) / m;
+      return { gut, w, h: w * 0.67 };
+    };
+
+    {
+      const jobs = [];
+      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover });
+      for (const fn of content.functions) {
+        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero });
+        const bb = boardBoxes(Math.min(fn.board.length, 3));
+        if (fn.board[0]) jobs.push({ url: fn.board[0], w: bb.bigW, h: bb.botH });
+        if (fn.board[1]) jobs.push({ url: fn.board[1], w: bb.rw, h: bb.rh });
+        if (fn.board[2]) jobs.push({ url: fn.board[2], w: bb.rw, h: bb.rh });
+        for (const z of fn.zones) {
+          if (z.photo) jobs.push({ url: z.photo, ...BOX.element });
+          if (z.alts?.length >= 2) {
+            const ob = optionBoxes(Math.min(z.alts.length, 3));
+            z.alts.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h }));
+          }
+        }
+      }
+      const flowerPic = content.functions[0]?.board?.[0] || content.cover;
+      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower });
+      await prepare(jobs);
+    }
 
     // ── Cover ──
     {
       const s = newSlide();
+      corners(s);
       s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
       s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
       rule(s, M, 4.6, 2.4);
       s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3, align: "right" });
-      if (content.cover) card(s, content.cover, SLIDE_W - 4.9, 1.35, 4.05, 3.0);
+      if (content.cover) card(s, content.cover, SLIDE_W - M - BOX.cover.w, 1.35, BOX.cover.w, BOX.cover.h);
     }
 
     for (const fn of content.functions) {
       // ── Function opening: title left, one photograph placed low-right ──
       {
         const s = newSlide();
+        corners(s);
         s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
         s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
         s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
         rule(s, M, 4.05, 2.2);
-        card(s, fn.hero, SLIDE_W - 5.6, 2.5, 4.75, 3.55);
+        card(s, fn.hero, SLIDE_W - M - BOX.hero.w, 2.5, BOX.hero.w, BOX.hero.h);
       }
 
       // ── Mood board: photographs of different zones, placed as a considered set ──
       if (fn.board.length) {
         const s = newSlide(true);
-        s.addText("MOOD BOARD", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body });
         // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
         // shared grid so it composes rather than scatters.
-        const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
-        const bigW = fn.board.length > 1 ? CONTENT_W * 0.56 : CONTENT_W;
+        const { top, botH, gut, bigW, rw: rwS, rh: rhS } = boardBoxes(Math.min(fn.board.length, 3));
         card(s, fn.board[0], M, top, bigW, botH);
         if (fn.board[1]) {
-          const rx = M + bigW + gut, rw = CONTENT_W - bigW - gut;
-          const rh = fn.board[2] ? (botH - gut) / 2 : botH;
+          const rx = M + bigW + gut, rw = rwS, rh = rhS;
           card(s, fn.board[1], rx, top, rw, rh);
           if (fn.board[2]) card(s, fn.board[2], rx, top + rh + gut, rw, rh);
         }
@@ -1112,7 +1233,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // Two colours minimum — one swatch stretched across the slide is not a palette, it is a wall.
       if (fn.palette.length >= 2) {
         const s = newSlide(true);
-        s.addText("THE PALETTE", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        diamond(s, M, 0.82); s.addText("THE PALETTE", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
         const n = fn.palette.length, gut = 0.2;
         const w = (CONTENT_W - gut * (n - 1)) / n, h = 2.9;
@@ -1137,17 +1258,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         });
         // Landscape, and centred against the text column. A tall box meant a wide venue shot lost its
         // sides to the crop — the room stopped being readable, which is the whole point of the plate.
-        card(s, z.photo, 6.35, 1.65, SLIDE_W - 6.35 - M, (SLIDE_W - 6.35 - M) * 0.68);
+        card(s, z.photo, 6.35, 1.65, BOX.element.w, BOX.element.h);
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
           const o = newSlide(true);
-          o.addText("OPTIONS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+          diamond(o, M, 0.82); o.addText("OPTIONS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
           o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
-          const m = Math.min(z.alts.length, 3), gut = 0.18;
+          const m = Math.min(z.alts.length, 3);
           // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
           // cropped the option down to a detail you could no longer recognise as the element.
-          const w = (CONTENT_W - gut * (m - 1)) / m, h = w * 0.67;
+          const { gut, w, h } = optionBoxes(m);
           const y = 2.15 + Math.max(0, (SLIDE_H - 2.15 - 0.9 - h) / 2);
           z.alts.slice(0, m).forEach((u, i) => {
             const x = M + i * (w + gut);
@@ -1161,13 +1282,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Flower story: prose left, one photograph right ──
     if (content.flowerStory) {
       const s = newSlide();
+      corners(s);
       s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
       rule(s, M, 2.7, 1.8);
       // shrinkText + a real height: the story ran past the bottom of the slide because the box was
       // sized for a shorter paragraph than the model tends to write.
       s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: SLIDE_H - 3.05 - 0.7, fontFace: SANS, fontSize: 12, color: t.body, lineSpacingMultiple: 1.35, shrinkText: true, valign: "top" });
-      card(s, content.functions[0]?.board?.[0] || content.cover, 6.4, 1.3, SLIDE_W - 6.4 - M, SLIDE_H - 2.6);
+      card(s, content.functions[0]?.board?.[0] || content.cover, 6.4, 1.3, BOX.flower.w, BOX.flower.h);
     }
 
     // ── Close ──
@@ -1175,6 +1297,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const s = newSlide();
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
+      corners(s);
       s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
       s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.25, 2.2);
