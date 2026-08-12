@@ -845,50 +845,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       } catch { return []; }
     };
 
-    // ═══ AN IMAGE FOR EACH ELEMENT READ OFF THE REFERENCE ═══
-    // The old "The Pieces" card showed warehouse product shots of the items priced for that zone, and
-    // the client ruled those out. The elements themselves are still worth showing — so instead of
-    // pricing rows, the elements come from READING the zone's own reference photograph (the callouts),
-    // and each one is then matched to a library photograph that actually depicts it.
-    //
-    // The match is made by the model looking at the candidates, not by string-matching the callout
-    // against tags: "Crystal chandelier centrepiece" appears in no tag vocabulary we have, but it is
-    // plainly visible or absent in a photograph.
-    const elementPhotosForZone = async (zoneLabel, callouts, venue, chosenUrl) => {
-      const names = (callouts || []).filter(Boolean).slice(0, 3);
-      if (!names.length) return [];
-      const pool = await alternatesForZone(zoneLabel, chosenUrl, venue, 6);
-      if (pool.length < 2) return [];
-      try {
-        const blocks = [];
-        pool.forEach((u, i) => {
-          blocks.push({ type: "text", text: `CANDIDATE ${i}` });
-          blocks.push({ type: "image", source: { type: "url", url: deckImageUrl(u, 900, 675) } });
-        });
-        blocks.push({ type: "text", text:
-          `Each candidate above is a photograph of real décor work.\n\n` +
-          `For each of these design elements, choose the ONE candidate that most clearly shows it:\n` +
-          names.map((n, i) => `${i}. ${n}`).join("\n") + `\n\n` +
-          `Judge only on what is visible. If no candidate genuinely shows an element, return null for ` +
-          `it rather than forcing a match — a photograph that does not show the thing it is captioned ` +
-          `with is worse than no photograph. Do not use the same candidate twice.\n\n` +
-          `Reply with ONLY this JSON: {"picks":[{"element":0,"candidate":2},{"element":1,"candidate":null}]}` });
-
-        const raw = await callClaudeStreaming({ contentBlocks: blocks, maxTokens: 400 });
-        const m = String(raw || "").match(/\{[\s\S]*\}/);
-        if (!m) return [];
-        const picks = JSON.parse(m[0]).picks || [];
-        const used = new Set();
-        return picks.map((p) => {
-          const ci = Number(p?.candidate);
-          const ni = Number(p?.element);
-          if (!Number.isInteger(ci) || !pool[ci] || used.has(ci) || !names[ni]) return null;
-          used.add(ci);
-          return { name: names[ni], url: pool[ci] };
-        }).filter(Boolean);
-      } catch { return []; }
-    };
-
     // ═══ READ THE REFERENCE IMAGES ═══
     // "Detailed callouts highlighting the key design elements visible within each reference image" and
     // "a flower story that complements the selected references". Both have to come from what is
@@ -961,25 +917,35 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         extra.forEach((u) => { if (!board.includes(u)) board.push(u); });
       }
 
-      // Palette: names to hexes. swatchHexFor is the same lookup Build uses, so the deck shows the
-      // colours the designer actually picked rather than a re-interpretation.
+      // Palette. Two things were wrong here and both showed on the card.
       //
-      // A name it cannot resolve is DROPPED, not defaulted. "PASTELS" is a family, not a colour, and
-      // defaulting it painted one unnamed slab across the card — worse than having no palette card at
-      // all, which is what an empty list now produces.
-      const palette = String(fnObj.palette || "").split(/[,&/]+/).map((s) => s.trim()).filter(Boolean)
-        .map((n) => ({ name: n, hex: String(swatchHexFor?.(n) || "").replace("#", "").trim() }))
-        .filter((c) => /^[0-9a-fA-F]{6}$/.test(c.hex)).slice(0, 5);
+      // swatchHexFor's signature is (name, colourCatalogue, override) — called with the name alone it
+      // never sees the catalogue and falls through to its "#cccccc" sentinel. That is why the card
+      // read "Navy Blue" over a grey slab. buildPptx has always passed the catalogue; this now does
+      // the same.
+      //
+      // And a palette is not its NAME split on punctuation. "Navy Blue" is one palette whose anchor
+      // colours live in imsPaletteCatalogue — splitting the label gave one entry, so the card showed a
+      // single colour stretched across the slide. The anchors are what the designer actually chose.
+      const paletteObj = (imsPaletteCatalogue || []).find((p) => p.name === fnObj.palette);
+      const anchorNames = paletteObj?.anchorColours?.length ? paletteObj.anchorColours
+        : String(fnObj.palette || "").split(/[,&/]+/).map((s) => s.trim()).filter(Boolean);
+      // "#cccccc" IS the not-found sentinel, so anything landing on it is dropped rather than shown
+      // as a grey block captioned with a colour it isn't.
+      const palette = anchorNames.slice(0, 6)
+        .map((n) => ({ name: n, hex: String(swatchHexFor(n, imsColourCatalogue) || "").replace("#", "").trim().toLowerCase() }))
+        .filter((c) => /^[0-9a-f]{6}$/.test(c.hex) && c.hex !== "cccccc");
 
       const zoneCards = [];
       for (const z of zones) {
         const shot = shots.find((s) => s.zone === z);
         const ai = (shot && read.callouts[shot.id]) || [];
         const callouts = (Array.isArray(ai) ? ai : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3);
-        const alts = await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 3);
-        // Each element read off this zone's photograph, paired with a library photo that shows it.
-        const elements = await elementPhotosForZone(z.label, callouts, fnObj.fnVenue, z.photo);
-        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts, elements });
+        // Excludes whatever the mood board already used, so Options is genuinely other angles rather
+        // than the same photograph a page later.
+        const seen = new Set([z.photo, ...board]);
+        const alts = (await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 6)).filter((u) => !seen.has(u)).slice(0, 3);
+        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts });
       }
 
       fns.push({
@@ -1143,7 +1109,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       }
 
       // ── Palette ──
-      if (fn.palette.length) {
+      // Two colours minimum — one swatch stretched across the slide is not a palette, it is a wall.
+      if (fn.palette.length >= 2) {
         const s = newSlide(true);
         s.addText("THE PALETTE", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
@@ -1171,24 +1138,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // Landscape, and centred against the text column. A tall box meant a wide venue shot lost its
         // sides to the crop — the room stopped being readable, which is the whole point of the plate.
         card(s, z.photo, 6.35, 1.65, SLIDE_W - 6.35 - M, (SLIDE_W - 6.35 - M) * 0.68);
-
-        // ── The elements: each thing read off the photograph, shown ──
-        // This is what the old "The Pieces" card was for, without the warehouse product shots the
-        // client ruled out. The caption is the element as read off the zone's own reference, and the
-        // tile beneath it is a library photograph that actually shows that element.
-        if (z.elements?.length >= 2) {
-          const e = newSlide(true);
-          e.addText("THE ELEMENTS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
-          e.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
-          const n = Math.min(z.elements.length, 3), gut = 0.18;
-          const w = (CONTENT_W - gut * (n - 1)) / n, h = w * 0.72;
-          const y = 2.3;
-          z.elements.slice(0, n).forEach((el, i) => {
-            const x = M + i * (w + gut);
-            card(e, el.url, x, y, w, h);
-            e.addText(el.name, { x, y: y + h + 0.18, w, h: 0.7, fontFace: SANS, fontSize: 11.5, color: t.body, lineSpacingMultiple: 1.25 });
-          });
-        }
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
@@ -1224,11 +1173,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Close ──
     {
       const s = newSlide();
-      s.addText("Thank You", { x: M - 0.06, y: 2.7, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
-      s.addText("We would love to bring this design to life for you.", { x: M, y: 4.05, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
-      rule(s, M, 4.8, 2.2);
-      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 5.05, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
-      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 5.45, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
+      // Sat low and left with dead space above and below it. The block is now centred vertically as
+      // one unit, so the card reads as composed rather than as text that slid down the page.
+      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
+      s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
+      rule(s, M, 4.25, 2.2);
+      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
+      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 4.9, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
     }
 
     return pptx;
