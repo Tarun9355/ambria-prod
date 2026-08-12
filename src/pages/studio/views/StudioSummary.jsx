@@ -1012,9 +1012,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   // So this places every element. Same PptxGenJS already loaded for the cost sheet, exact coordinates,
   // no layout lottery: the deck comes out the same every time, it matches the references, and it
   // arrives in seconds instead of the two to three minutes Gamma took to think about it.
-  const SLIDE_W = 13.333, SLIDE_H = 7.5;                 // LAYOUT_16x9 in inches
-  const GOLD = "D2AC47", CREAM = "F5EFE6", INK = "0D0D0D";
+  const SLIDE_W = 13.333, SLIDE_H = 7.5;                 // 16:9 at 96dpi — see defineLayout below
   const SERIF = "Georgia", SANS = "Trebuchet MS";        // safe on Windows, Mac and Canva's importer
+
+  // ═══ TWO GROUNDS, ALTERNATING ═══
+  // Every card on one near-black ground made the deck oppressive by the third page — the photographs
+  // had nothing to sit against and the whole thing read as a single dark block. The chapter cards
+  // (cover, function opening, flower story, close) stay dark, and the working cards (mood board,
+  // palette, elements, options) sit on a warm ivory. The alternation is what gives a deck rhythm.
+  //
+  // INK is warm rather than pure black (a hint of brown in it), which stops the dark cards looking
+  // like switched-off screens next to the ivory.
+  const INK = "1C1917", IVORY = "F2ECE3";
+  const GOLD = "D2AC47";                                 // on the dark ground
+  const GOLD_DK = "9C7A22";                              // on ivory, where D2AC47 is too pale to read
+  const CREAM = "F5EFE6", BODY_DK = "3A342E", MUTE_D = "8C8C86", MUTE_L = "7A736A";
 
   const buildDesignDeck = async (content) => {
     if (!window.PptxGenJS) {
@@ -1040,31 +1052,50 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // the numbers below mean what they say.
     pptx.defineLayout({ name: "AMBRIA_16x9", width: SLIDE_W, height: SLIDE_H });
     pptx.layout = "AMBRIA_16x9";
-    pptx.defineSlideMaster({ title: "AMBRIA", background: { color: INK } });
-    const newSlide = () => pptx.addSlide({ masterName: "AMBRIA" });
+    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: { color: INK } });
+    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: { color: IVORY } });
 
-    // A photograph is a CARD on the dark ground, never a full-bleed background. This is the single
-    // thing that makes the reference decks look the way they do: deep near-black space, a few
-    // photographs placed within it, gold serif naming each one. Filling the slide edge to edge — my
-    // first reading of them — produces something quite different and much louder.
-    // The crop is asked for at the EXACT proportions of the box it lands in, then placed 1:1. Cropping
-    // to 16:9 up front and then letting PptxGenJS "cover" it into a near-square box cropped twice: the
-    // photograph was enlarged and its subject cut away, which is the zoomed look. Supabase renders it
-    // once, at the right shape, and nothing has to be re-cropped here.
+    // Slides carry their own palette so nothing has to remember which ground it is on. `t` is the one
+    // that changes per slide; every colour below reads from it.
+    const DARK = { head: CREAM, body: CREAM, accent: GOLD, mute: MUTE_D, shadow: "000000", shadowOpacity: 0.75 };
+    const LIGHT = { head: BODY_DK, body: BODY_DK, accent: GOLD_DK, mute: MUTE_L, shadow: "6B5F52", shadowOpacity: 0.42 };
+    let t = DARK;
+    const newSlide = (light = false) => {
+      t = light ? LIGHT : DARK;
+      return pptx.addSlide({ masterName: light ? "AMBRIA_LIGHT" : "AMBRIA_DARK" });
+    };
+
+    // A photograph is a CARD on the ground, never a full-bleed background — the thing that makes the
+    // reference decks read the way they do: space, a few photographs placed in it, gold serif naming
+    // them. Filling the slide edge to edge produces something much louder and quite unlike them.
+    //
+    // The crop is asked for at the EXACT proportions of the box, then placed 1:1. Cropping to 16:9 up
+    // front and letting PptxGenJS "cover" it into a taller box cropped twice, which enlarged the photo
+    // and cut its subject away — the zoomed look. Supabase renders it once, at the right shape.
+    //
+    // The lift is a shape sitting directly behind the photograph, carrying the shadow. PptxGenJS
+    // renders shadows reliably on SHAPES; putting one on an image is far less dependable across
+    // PowerPoint, Keynote and Canva's importer. A plate behind it works everywhere, and doubles as a
+    // hairline edge where the photograph meets the ground.
     const PX = 150;                                        // render pixels per inch — sharp when projected
     const card = (slide, url, x, y, w, h) => {
       if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
-
       try {
+        slide.addShape(pptx.ShapeType.rect, {
+          x, y, w, h,
+          fill: { color: t === LIGHT ? "FFFFFF" : "000000" },
+          line: { color: t === LIGHT ? "E2D9CB" : "2E2A26", width: 0.75 },
+          shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 14, offset: 5, angle: 90 },
+        });
         slide.addImage({ path: deckImageUrl(url, Math.round(w * PX), Math.round(h * PX)), x, y, w, h });
         return true;
       } catch { return false; }
     };
     // The gold italic serif that labels each photograph in the references.
     const label = (slide, text, x, y, w, size = 13) =>
-      slide.addText(text, { x, y, w, h: 0.34, fontFace: SERIF, fontSize: size, color: GOLD, italic: true });
+      slide.addText(text, { x, y, w, h: 0.34, fontFace: SERIF, fontSize: size, color: t.accent, italic: true });
     const rule = (slide, x, y, w) =>
-      slide.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.02, fill: { color: GOLD } });
+      slide.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.02, fill: { color: t.accent } });
 
     const M = 0.85;                    // the margin every card and title block sits on
     const CONTENT_W = SLIDE_W - M * 2;
@@ -1072,11 +1103,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Cover ──
     {
       const s = newSlide();
-      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
-      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: CREAM });
-      s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: CREAM, italic: true });
+      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
+      s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
       rule(s, M, 4.6, 2.4);
-      s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 3, align: "right" });
+      s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3, align: "right" });
       if (content.cover) card(s, content.cover, SLIDE_W - 4.9, 1.35, 4.05, 3.0);
     }
 
@@ -1084,18 +1115,18 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Function opening: title left, one photograph placed low-right ──
       {
         const s = newSlide();
-        s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: GOLD, charSpacing: 5 });
-        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: CREAM });
-        s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: GOLD, italic: true });
+        s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
+        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
+        s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
         rule(s, M, 4.05, 2.2);
         card(s, fn.hero, SLIDE_W - 5.6, 2.5, 4.75, 3.55);
       }
 
       // ── Mood board: photographs of different zones, placed as a considered set ──
       if (fn.board.length) {
-        const s = newSlide();
-        s.addText("MOOD BOARD", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
-        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: CREAM });
+        const s = newSlide(true);
+        s.addText("MOOD BOARD", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body });
         // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
         // shared grid so it composes rather than scatters.
         const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
@@ -1113,29 +1144,29 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       // ── Palette ──
       if (fn.palette.length) {
-        const s = newSlide();
-        s.addText("THE PALETTE", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
-        s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
+        const s = newSlide(true);
+        s.addText("THE PALETTE", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
         const n = fn.palette.length, gut = 0.2;
         const w = (CONTENT_W - gut * (n - 1)) / n, h = 2.9;
         fn.palette.forEach((c, i) => {
           const x = M + i * (w + gut);
           s.addShape(pptx.ShapeType.rect, { x, y: 2.5, w, h, fill: { color: c.hex } });
-          s.addText(c.name.toUpperCase(), { x, y: 2.5 + h + 0.22, w, h: 0.32, fontFace: SANS, fontSize: 10, color: CREAM, charSpacing: 2 });
-          s.addText("#" + c.hex, { x, y: 2.5 + h + 0.55, w, h: 0.3, fontFace: SANS, fontSize: 9, color: "8C8C86" });
+          s.addText(c.name.toUpperCase(), { x, y: 2.5 + h + 0.22, w, h: 0.32, fontFace: SANS, fontSize: 10, color: t.body, charSpacing: 2 });
+          s.addText("#" + c.hex, { x, y: 2.5 + h + 0.55, w, h: 0.3, fontFace: SANS, fontSize: 9, color: t.mute });
         });
       }
 
       // ── Element cards: the photograph placed right, its callouts read down the left ──
       for (const z of fn.zones) {
-        const s = newSlide();
-        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: CREAM });
+        const s = newSlide(true);
+        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body });
         rule(s, M, 2.25, 1.8);
         const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
         outs.slice(0, 3).forEach((c, i) => {
           const y = 2.65 + i * 0.72;
-          s.addShape(pptx.ShapeType.rect, { x: M, y: y + 0.08, w: 0.16, h: 0.02, fill: { color: GOLD } });
-          s.addText(c, { x: M + 0.32, y, w: 4.3, h: 0.6, fontFace: SANS, fontSize: 12.5, color: CREAM, lineSpacingMultiple: 1.3 });
+          s.addShape(pptx.ShapeType.rect, { x: M, y: y + 0.08, w: 0.16, h: 0.02, fill: { color: t.accent } });
+          s.addText(c, { x: M + 0.32, y, w: 4.3, h: 0.6, fontFace: SANS, fontSize: 12.5, color: t.body, lineSpacingMultiple: 1.3 });
         });
         // Landscape, and centred against the text column. A tall box meant a wide venue shot lost its
         // sides to the crop — the room stopped being readable, which is the whole point of the plate.
@@ -1146,24 +1177,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // client ruled out. The caption is the element as read off the zone's own reference, and the
         // tile beneath it is a library photograph that actually shows that element.
         if (z.elements?.length >= 2) {
-          const e = newSlide();
-          e.addText("THE ELEMENTS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
-          e.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
+          const e = newSlide(true);
+          e.addText("THE ELEMENTS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+          e.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
           const n = Math.min(z.elements.length, 3), gut = 0.18;
           const w = (CONTENT_W - gut * (n - 1)) / n, h = w * 0.72;
           const y = 2.3;
           z.elements.slice(0, n).forEach((el, i) => {
             const x = M + i * (w + gut);
             card(e, el.url, x, y, w, h);
-            e.addText(el.name, { x, y: y + h + 0.18, w, h: 0.7, fontFace: SANS, fontSize: 11.5, color: CREAM, lineSpacingMultiple: 1.25 });
+            e.addText(el.name, { x, y: y + h + 0.18, w, h: 0.7, fontFace: SANS, fontSize: 11.5, color: t.body, lineSpacingMultiple: 1.25 });
           });
         }
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
-          const o = newSlide();
-          o.addText("OPTIONS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
-          o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
+          const o = newSlide(true);
+          o.addText("OPTIONS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+          o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
           const m = Math.min(z.alts.length, 3), gut = 0.18;
           // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
           // cropped the option down to a detail you could no longer recognise as the element.
@@ -1181,23 +1212,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Flower story: prose left, one photograph right ──
     if (content.flowerStory) {
       const s = newSlide();
-      s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
-      s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: CREAM, italic: true });
+      s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+      s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
       rule(s, M, 2.7, 1.8);
       // shrinkText + a real height: the story ran past the bottom of the slide because the box was
       // sized for a shorter paragraph than the model tends to write.
-      s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: SLIDE_H - 3.05 - 0.7, fontFace: SANS, fontSize: 12, color: CREAM, lineSpacingMultiple: 1.35, shrinkText: true, valign: "top" });
+      s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: SLIDE_H - 3.05 - 0.7, fontFace: SANS, fontSize: 12, color: t.body, lineSpacingMultiple: 1.35, shrinkText: true, valign: "top" });
       card(s, content.functions[0]?.board?.[0] || content.cover, 6.4, 1.3, SLIDE_W - 6.4 - M, SLIDE_H - 2.6);
     }
 
     // ── Close ──
     {
       const s = newSlide();
-      s.addText("Thank You", { x: M - 0.06, y: 2.7, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: CREAM });
-      s.addText("We would love to bring this design to life for you.", { x: M, y: 4.05, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: GOLD, italic: true });
+      s.addText("Thank You", { x: M - 0.06, y: 2.7, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
+      s.addText("We would love to bring this design to life for you.", { x: M, y: 4.05, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.8, 2.2);
-      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 5.05, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 3 });
-      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 5.45, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: "8C8C86" });
+      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 5.05, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
+      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 5.45, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
     }
 
     return pptx;
