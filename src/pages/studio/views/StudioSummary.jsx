@@ -1055,7 +1055,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   //
   // INK is warm rather than pure black (a hint of brown in it), which stops the dark cards looking
   // like switched-off screens next to the ivory.
-  const INK = "1C1917", IVORY = "F2ECE3";
+  // Warm stone and warm sand, both a long way from black — the ground is a TEXTURE built on these
+  // (see makeGround), not a flat fill.
+  const INK = "2A2320", IVORY = "EFE7DA";
   const GOLD = "D2AC47";                                 // on the dark ground
   const GOLD_DK = "9C7A22";                              // on ivory, where D2AC47 is too pale to read
   const CREAM = "F5EFE6", BODY_DK = "3A342E", MUTE_D = "8C8C86", MUTE_L = "7A736A";
@@ -1084,8 +1086,64 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // the numbers below mean what they say.
     pptx.defineLayout({ name: "AMBRIA_16x9", width: SLIDE_W, height: SLIDE_H });
     pptx.layout = "AMBRIA_16x9";
-    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: { color: INK } });
-    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: { color: IVORY } });
+    // ═══ THE GROUND IS A TEXTURE, NOT A FILL ═══
+    // A flat colour behind everything is what made the deck read as a slab. This paints the ground on
+    // a canvas instead: the base tone, a few very soft mottled washes so the light moves across the
+    // card the way it does on paper or stone, and a fine grain over the top. Then a vignette, barely
+    // there, so the edges settle and the middle lifts.
+    //
+    // Deliberately restrained — at 6% opacity per wash and ±4 levels of grain this reads as "not
+    // flat" rather than as a pattern. Anything stronger competes with the photographs, which are the
+    // point of the deck.
+    //
+    // Generated once per deck and reused on every slide of that ground, as a JPEG: a full-bleed PNG
+    // per slide is what killed the Canva import with HTTP 546.
+    const makeGround = (hex, light) => {
+      try {
+        const W = 1400, H = 788;                       // 16:9, plenty for a projected slide
+        const cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext("2d");
+        const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(0, 0, W, H);
+
+        // Soft mottling — a handful of wide, very faint blooms, lighter and darker than the base.
+        const blooms = [[0.18, 0.22, 0.55], [0.78, 0.30, 0.48], [0.42, 0.80, 0.60], [0.90, 0.86, 0.40], [0.06, 0.72, 0.42]];
+        blooms.forEach(([bx, by, br], i) => {
+          const up = i % 2 === 0;
+          const d = light ? (up ? 16 : -12) : (up ? 14 : -10);
+          const grad = ctx.createRadialGradient(bx * W, by * H, 0, bx * W, by * H, br * W);
+          grad.addColorStop(0, `rgba(${r + d},${g + d},${b + d},0.06)`);
+          grad.addColorStop(1, `rgba(${r + d},${g + d},${b + d},0)`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, W, H);
+        });
+
+        // Grain. Per-pixel on the ImageData rather than thousands of tiny fills — same look, and it
+        // does not stall the export.
+        const img = ctx.getImageData(0, 0, W, H);
+        const px = img.data;
+        for (let i = 0; i < px.length; i += 4) {
+          const n = (Math.random() * 9 | 0) - 4;
+          px[i] += n; px[i + 1] += n; px[i + 2] += n;
+        }
+        ctx.putImageData(img, 0, 0);
+
+        const vig = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.78);
+        vig.addColorStop(0, "rgba(0,0,0,0)");
+        vig.addColorStop(1, light ? "rgba(120,100,74,0.10)" : "rgba(0,0,0,0.22)");
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, W, H);
+
+        return cv.toDataURL("image/jpeg", 0.82);
+      } catch { return null; }                          // no canvas — fall back to the flat colour
+    };
+    const groundDark = makeGround(INK, false);
+    const groundLight = makeGround(IVORY, true);
+
+    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: groundDark ? { data: groundDark } : { color: INK } });
+    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: groundLight ? { data: groundLight } : { color: IVORY } });
 
     // Slides carry their own palette so nothing has to remember which ground it is on. `t` is the one
     // that changes per slide; every colour below reads from it.
@@ -1151,6 +1209,25 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const seg = (x, y, ww, hh) => slide.addShape(pptx.ShapeType.rect, { x, y, w: ww, h: hh, fill: { color: c } });
       seg(x0, y0, len, w); seg(x0, y0, w, len);                          // top-left
       seg(x1 - len, y1 - w, len, w); seg(x1 - w, y1 - len, w, len);      // bottom-right
+    };
+
+    // A hairline rectangle just inside the card edge. On its own it would box the card in, which is
+    // why the corners exist — together they read as a plate: the frame holds the space, the corners
+    // weight two of its four sides. Gold at this width is a line, not a border.
+    const frame = (slide, inset = 0.30) =>
+      slide.addShape(pptx.ShapeType.rect, {
+        x: inset, y: inset, w: SLIDE_W - inset * 2, h: SLIDE_H - inset * 2,
+        fill: { type: "none" }, line: { color: t.accent, width: 0.5, transparency: 55 },
+      });
+
+    // Three diamonds on a rule — the divider the reference decks use between a title and what follows.
+    // Small enough to be an ornament rather than an element in its own right.
+    const flourish = (slide, cx, y) => {
+      const s = 0.075, gap = 0.16, armW = 0.5;
+      slide.addShape(pptx.ShapeType.rect, { x: cx - gap - armW - 0.06, y: y + s / 2 - 0.005, w: armW, h: 0.01, fill: { color: t.accent } });
+      slide.addShape(pptx.ShapeType.rect, { x: cx + gap + 0.06, y: y + s / 2 - 0.005, w: armW, h: 0.01, fill: { color: t.accent } });
+      [-gap, 0, gap].forEach((dx) =>
+        slide.addShape(pptx.ShapeType.diamond, { x: cx + dx - s / 2, y, w: s, h: s, fill: { color: t.accent } }));
     };
 
     let pageNo = 0;
@@ -1268,11 +1345,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Cover ──
     {
       const s = newSlide();
-      corners(s);
+      corners(s); frame(s);
       s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
       s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
       rule(s, M, 4.6, 2.4);
+      // Sits in the empty lower-left the cover deliberately leaves, so that space reads as composed
+      // rather than as a gap the layout failed to fill.
+      flourish(s, M + 1.2, 5.15);
       s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3, align: "right" });
       if (content.cover) card(s, content.cover, SLIDE_W - M - BOX.cover.w, 1.35, BOX.cover.w, BOX.cover.h);
     }
@@ -1281,7 +1361,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Function opening: title left, one photograph placed low-right ──
       {
         const s = newSlide();
-        corners(s);
+        corners(s); frame(s);
         s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
         s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
         s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
@@ -1360,7 +1440,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Flower story: prose left, one photograph right ──
     if (content.flowerStory) {
       const s = newSlide();
-      corners(s);
+      corners(s); frame(s);
       s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
       rule(s, M, 2.7, 1.8);
@@ -1375,12 +1455,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const s = newSlide();
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
-      corners(s);
+      corners(s); frame(s);
       s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
       s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.25, 2.2);
       s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
       s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 4.9, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
+      // Centred here rather than left, as a full stop for the deck.
+      flourish(s, SLIDE_W / 2, 6.15);
     }
 
     return pptx;
