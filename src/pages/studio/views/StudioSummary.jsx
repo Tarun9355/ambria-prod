@@ -1181,11 +1181,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // Slides carry their own palette so nothing has to remember which ground it is on. `t` is the one
     // that changes per slide; every colour below reads from it.
     const DARK = { head: CREAM, body: CREAM, accent: GOLD, mute: MUTE_D, shadow: "000000", shadowOpacity: 0.75 };
-    const LIGHT = { head: BODY_DK, body: BODY_DK, accent: GOLD_DK, mute: MUTE_L, shadow: "6B5F52", shadowOpacity: 0.42 };
-    let t = DARK;
-    const newSlide = (light = false) => {
-      t = light ? LIGHT : DARK;
-      return pptx.addSlide({ masterName: light ? "AMBRIA_LIGHT" : "AMBRIA_DARK" });
+    const LIGHT = { head: BODY_DK, body: BODY_DK, accent: GOLD_DK, mute: MUTE_L, shadow: "6B5F52", shadowOpacity: 0.62 };
+    // EVERY slide is light. The deck alternated dark chapter cards against light working ones for
+    // rhythm, but the dark ones are gone: on the warm sand ground the photographs carry the contrast
+    // by themselves, and a deck that never goes dark prints and projects more predictably.
+    //
+    // The dark master and palette stay defined — the alternation is a two-line change to bring back,
+    // and it has already been asked for once in each direction.
+    let t = LIGHT;
+    const newSlide = () => {
+      t = LIGHT;
+      return pptx.addSlide({ masterName: "AMBRIA_LIGHT" });
     };
 
     // A photograph is a CARD on the ground, never a full-bleed background — the thing that makes the
@@ -1209,15 +1215,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     const card = (slide, url, x, y, w, h) => {
       if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
       try {
-        // roundRect, not rect: the plate's corners have to follow the photograph's, or a square
+        // A MOUNT, not just a backing plate: it sits proud of the photograph on all four sides, so
+        // the white edge and its gold stroke read as a mat around the image the way a framed print
+        // does. The plate used to be exactly the image's size, which meant the stroke was hidden
+        // underneath it and only the shadow showed.
+        //
+        // roundRect, not rect: the mount's corners have to follow the photograph's, or a square
         // shadow shows through the rounded corner as four dark triangles.
+        const MAT = 0.075;
         slide.addShape(pptx.ShapeType.roundRect, {
-          x, y, w, h, rectRadius: 0.12,
-          fill: { color: t === LIGHT ? "FFFFFF" : "000000" },
-          line: { color: t === LIGHT ? "E2D9CB" : "2E2A26", width: 0.75 },
-          shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 14, offset: 5, angle: 90 },
+          x: x - MAT, y: y - MAT, w: w + MAT * 2, h: h + MAT * 2, rectRadius: 0.12,
+          fill: { color: "FFFFFF" },
+          line: { color: t.accent, width: 1.25, transparency: 35 },
+          // Heavier than it was: a deeper, softer drop so the photographs sit above the ground rather
+          // than on it. Dropped straight down (angle 90) so every plate on a card agrees.
+          shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 26, offset: 10, angle: 90 },
         });
-        const src = rounded.get(rkey(url, w, h, t === LIGHT ? IVORY : INK)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
+        const src = rounded.get(rkey(url, w, h, IVORY)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
         slide.addImage(src.startsWith("data:") ? { data: src, x, y, w, h } : { path: src, x, y, w, h });
         return true;
       } catch { return false; }
@@ -1343,21 +1357,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       flower: { w: SLIDE_W - 6.4 - M, h: SLIDE_H - 2.6 },
     };
     const boardBoxes = (n) => {
-      const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
+      const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.32;   // room for the mounts (see card)
       const bigW = n > 1 ? CONTENT_W * 0.56 : CONTENT_W;
       const rw = CONTENT_W - bigW - gut, rh = n > 2 ? (botH - gut) / 2 : botH;
       return { top, botH, gut, bigW, rw, rh };
     };
     const optionBoxes = (m) => {
-      const gut = 0.18, w = (CONTENT_W - gut * (m - 1)) / m;
+      const gut = 0.34, w = (CONTENT_W - gut * (m - 1)) / m;      // room for the mounts (see card)
       return { gut, w, h: w * 0.67 };
     };
 
     {
       const jobs = [];
-      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: INK });
+      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: IVORY });
       for (const fn of content.functions) {
-        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: INK });
+        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: IVORY });
         const bb = boardBoxes(Math.min(fn.board.length, 3));
         if (fn.board[0]) jobs.push({ url: fn.board[0], w: bb.bigW, h: bb.botH, ground: IVORY });
         if (fn.board[1]) jobs.push({ url: fn.board[1], w: bb.rw, h: bb.rh, ground: IVORY });
@@ -1371,7 +1385,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         }
       }
       const flowerPic = content.functions[0]?.board?.[0] || content.cover;
-      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower, ground: INK });
+      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower, ground: IVORY });
       await prepare(jobs);
     }
 
@@ -1404,7 +1418,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       // ── Mood board: photographs of different zones, placed as a considered set ──
       if (fn.board.length) {
-        const s = newSlide(true);
+        const s = newSlide();
         diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body });
         // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
@@ -1423,7 +1437,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Palette ──
       // Two colours minimum — one swatch stretched across the slide is not a palette, it is a wall.
       if (fn.palette.length >= 2) {
-        const s = newSlide(true);
+        const s = newSlide();
         diamond(s, M, 0.82); s.addText("THE PALETTE", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
         const n = fn.palette.length, gut = 0.2;
@@ -1438,7 +1452,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       // ── Element cards: the photograph placed right, its callouts read down the left ──
       for (const z of fn.zones) {
-        const s = newSlide(true);
+        const s = newSlide();
         s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body });
         rule(s, M, 2.25, 1.8);
         const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
@@ -1453,7 +1467,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
-          const o = newSlide(true);
+          const o = newSlide();
           diamond(o, M, 0.82); o.addText("OPTIONS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
           o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
           const m = Math.min(z.alts.length, 3);
