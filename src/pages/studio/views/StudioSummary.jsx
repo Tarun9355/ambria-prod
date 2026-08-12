@@ -16,7 +16,7 @@ import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
-import { deckImageUrl } from "../../../lib/studio/thumb";
+import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
@@ -772,6 +772,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   // zone carrying callouts, an "Options" card of alternate angles, and a flower story — closing on a
   // thank-you. Also the client's ask: "do not use any external inventory pictures". Warehouse product
   // shots are gone; every image here is a reference photograph of real work.
+
   const buildDeckContent = async (combined) => {
     const fmtDate = (iso) => {
       if (!iso) return "—";
@@ -815,7 +816,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             return venueHit + timeHit;
           };
           out = [...data].sort((a, b) => rank(b) - rank(a))
-            .map((r) => r.url).filter((u) => u && !String(u).startsWith("data:")).slice(0, limit);
+            .map((r) => r.url).filter((u) => u && !String(u).startsWith("data:") && !isInventoryPhoto(u)).slice(0, limit);
         }
       } catch { /* a deck without a matched photo is still a deck — never block the export */ }
       fnPhotoCache.set(key, out);
@@ -839,7 +840,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           .sort((a, b) => (String(b.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0)
                         - (String(a.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0))
           .map((r) => r.url)
-          .filter((u) => u && !String(u).startsWith("data:") && u !== chosenUrl)
+          .filter((u) => u && !String(u).startsWith("data:") && u !== chosenUrl && !isInventoryPhoto(u))
           .slice(0, limit);
       } catch { return []; }
     };
@@ -890,7 +891,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     const shots = [];
     const zonesByFn = new Map();
     for (const fnObj of combined.functions) {
-      const list = (fnObj.zones || []).filter((z) => z.photo && !String(z.photo).startsWith("data:"));
+      const list = (fnObj.zones || []).filter((z) => z.photo && !String(z.photo).startsWith("data:") && !isInventoryPhoto(z.photo));
       zonesByFn.set(fnObj, list);
       list.forEach((z, i) => shots.push({ id: `${fnObj.fnIdx ?? combined.functions.indexOf(fnObj)}-${i}`, label: `${fnObj.fnType || "Function"} · ${z.label}`, url: deckImageUrl(z.photo, 1200, 900), zone: z, fnObj }));
     }
@@ -1006,7 +1007,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // once, at the right shape, and nothing has to be re-cropped here.
     const PX = 150;                                        // render pixels per inch — sharp when projected
     const card = (slide, url, x, y, w, h) => {
-      if (!url) return false;
+      if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
+
       try {
         slide.addImage({ path: deckImageUrl(url, Math.round(w * PX), Math.round(h * PX)), x, y, w, h });
         return true;

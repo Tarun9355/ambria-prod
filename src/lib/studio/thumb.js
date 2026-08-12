@@ -16,6 +16,24 @@ const SB_PUBLIC = "/storage/v1/object/public/";
 const SB_RENDER = "/storage/v1/render/image/public/";
 
 /**
+ * Is this a warehouse product shot rather than a reference photograph?
+ *
+ * The client's instruction for the design presentation was explicit: "please do not use any external
+ * inventory pictures. Only use relevant reference images". Storage makes that checkable — inventory
+ * photos live under media/inventory/, while every reference photo sits under media/ambria-ref/,
+ * media/inhouse-venues/ or media/outside-venues/.
+ *
+ * It lives here, beside deckImageUrl, so the rule is a function the deck enforces rather than a
+ * convention that holds only while nobody wires inventory back in.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isInventoryPhoto(url) {
+  return /\/media\/inventory\//i.test(String(url || ""));
+}
+
+/**
  * A deck-ready copy of a Supabase Storage image: cropped to a fixed aspect ratio at presentation
  * resolution. Returns the original URL untouched if it is not Supabase Storage.
  *
