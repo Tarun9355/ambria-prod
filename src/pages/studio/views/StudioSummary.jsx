@@ -19,6 +19,7 @@ import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../..
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { deckImageUrl } from "../../../lib/studio/thumb";
 import { supabase } from "../../../lib/supabase";
+import { callClaudeStreaming } from "../../../lib/ai";
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
@@ -757,16 +758,22 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     }
   };
 
-  // Turns the same cost-sheet data buildPptx uses into a markdown outline for Gamma's Generate API.
-  // Sections are separated by "\n---\n" (Gamma's own card-break syntax with cardSplit:
-  // "inputTextBreaks" — one break = one extra card), and photos are dropped in as bare URLs for Gamma
-  // to fetch and re-host. textMode:"preserve" keeps our numbers and wording exact — Gamma is designing
-  // the layout, not rewriting the content.
+  // Builds the markdown outline Gamma designs from. Sections are separated by "\n---\n" (Gamma's card
+  // break, with cardSplit: "inputTextBreaks"), and photos are dropped in as bare URLs for Gamma to
+  // fetch and re-host.
   //
-  // Async because a card with no photo of its own goes looking for one in the library (see
-  // libraryPhotosForFunction); the alternative is Gamma dressing it in stock theme artwork.
+  // ═══ THIS IS A DESIGN PRESENTATION, NOT A COST SHEET ═══
+  // The client's own words: "why is the costing included? We don't need any costing in this décor
+  // design presentation." So no rates, no totals, no transport figures, no summary table — none of it
+  // reaches this deck. The cost sheet still exists untouched as the PDF/PPTX export next to it; the
+  // two documents simply have different jobs and different audiences.
+  //
+  // The structure follows Ambria's own reference decks (Gurmon, Raffles, Exotica): cover, an opening
+  // line, then per function a divider, a moodboard mixing zones, the palette, an element card per
+  // zone carrying callouts, an "Options" card of alternate angles, and a flower story — closing on a
+  // thank-you. Also the client's ask: "do not use any external inventory pictures". Warehouse product
+  // shots are gone; every image here is a reference photograph of real work.
   const buildGammaOutline = async (combined) => {
-    const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
     const fmtDate = (iso) => {
       if (!iso) return "—";
       try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
@@ -775,12 +782,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const parts = [fnObj.fnType || "Function", fmtDate(fnObj.fnDate), fnObj.fnVenue || "—"];
       if (fnObj.fnShift) parts.push(fnObj.fnShift);
       return parts.filter(Boolean).join(" · ");
-    };
-    // Looks up an inventory item's own photo by name — same name match buildPptx's itemPhotoFor
-    // uses, since the cost-sheet data only carries a name/qty/rate, not the inventory id.
-    const itemPhotoFor = (name) => {
-      const inv = (imsInventory || []).find((i) => (i.name || "").toLowerCase() === String(name || "").toLowerCase());
-      return inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || null;
     };
     // ═══ AMBRIA'S OWN PHOTOGRAPHY, MATCHED TO THE FUNCTION ═══
     // A card we hand no photo to gets dressed in Gamma's stock theme artwork — a black-and-gold
@@ -822,54 +823,154 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       return out;
     };
 
+    // ═══ DIFFERENT ANGLES OF THE SAME ELEMENT ═══
+    // "some different angles of same pictures as well". Library photos carry tags.areasElements — the
+    // same vocabulary the zones use (Stage, Entry Gate, Centre Lounge…) — so alternates for a zone are
+    // simply other photos tagged with that element. The zone's own chosen photo is excluded, since the
+    // point is to show it from somewhere else.
+    const alternatesForZone = async (zoneLabel, chosenUrl, venue, limit = 3) => {
+      const label = String(zoneLabel || "").trim();
+      if (!label) return [];
+      try {
+        const { data, error } = await supabase
+          .from("library").select("url,tags").contains("tags->areasElements", JSON.stringify([label])).limit(40);
+        if (error || !data?.length) return [];
+        const v = String(venue || "").trim().toLowerCase();
+        return [...data]
+          .sort((a, b) => (String(b.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0)
+                        - (String(a.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0))
+          .map((r) => r.url)
+          .filter((u) => u && !String(u).startsWith("data:") && u !== chosenUrl)
+          .slice(0, limit);
+      } catch { return []; }
+    };
+
+    // ═══ READ THE REFERENCE IMAGES ═══
+    // "Detailed callouts highlighting the key design elements visible within each reference image" and
+    // "a flower story that complements the selected references". Both have to come from what is
+    // actually IN the photograph, so the photographs are what gets sent — one batched vision call for
+    // the whole deck rather than one per card, which would multiply an already slow export.
+    //
+    // Everything here is best-effort. A failed or slow vision call must degrade to the designer's own
+    // zone note, never block the deck: a presentation without callouts still beats no presentation.
+    const readReferences = async (shots, paletteName) => {
+      const empty = { callouts: {}, flowerStory: "" };
+      if (!shots.length) return empty;
+      try {
+        const blocks = [];
+        shots.forEach((s) => {
+          blocks.push({ type: "text", text: `IMAGE ${s.id} — ${s.label}` });
+          blocks.push({ type: "image", source: { type: "url", url: s.url } });
+        });
+        blocks.push({ type: "text", text:
+          `You are a senior décor designer at Ambria writing a client presentation.\n\n` +
+          `For EACH image above, look at what is actually there and write 3 short callouts naming the ` +
+          `key design elements you can see — the structure, the florals, the fabric, the lighting, the ` +
+          `props. Name what is visible; never invent an element that is not in the frame. Each callout ` +
+          `is a fragment of at most 6 words, title case, no trailing full stop. For example ` +
+          `"Cascading orchid canopy", "Brushed gold frame", "Warm uplighting through drapes".\n\n` +
+          `Then write a FLOWER STORY: 2 or 3 sentences on the floral language running through these ` +
+          `references${paletteName ? `, sitting with the "${paletteName}" palette` : ""} — the varieties ` +
+          `visible, how they carry across the zones, the mood they build. Warm and confident, written ` +
+          `for the client, not a list.\n\n` +
+          `Reply with ONLY this JSON, no prose around it:\n` +
+          `{"callouts":{"<image id>":["...","...","..."]},"flowerStory":"..."}` });
+
+        const raw = await callClaudeStreaming({ contentBlocks: blocks, maxTokens: 1600 });
+        // The model is asked for bare JSON, but a stray ```json fence costs nothing to survive.
+        const m = String(raw || "").match(/\{[\s\S]*\}/);
+        if (!m) return empty;
+        const parsed = JSON.parse(m[0]);
+        return { callouts: parsed.callouts || {}, flowerStory: String(parsed.flowerStory || "") };
+      } catch { return empty; }
+    };
+
     const sections = [];
 
+    // ── Every reference photo in the deck, gathered FIRST ──
+    // The vision pass is one call for the whole deck, so the shots have to be known before any card is
+    // written. Ids are stable strings the model echoes back in its JSON.
+    const shots = [];
+    const zonesByFn = new Map();
+    for (const fnObj of combined.functions) {
+      const list = (fnObj.zones || []).filter((z) => z.photo && !String(z.photo).startsWith("data:"));
+      zonesByFn.set(fnObj, list);
+      list.forEach((z, i) => shots.push({ id: `${fnObj.fnIdx ?? combined.functions.indexOf(fnObj)}-${i}`, label: `${fnObj.fnType || "Function"} · ${z.label}`, url: deckImageUrl(z.photo), zone: z, fnObj }));
+    }
+    const paletteName = combined.functions.map((x) => x.palette).find(Boolean) || "";
+    const read = await readReferences(shots.slice(0, 12), paletteName);
+
+    // ── Cover ──
     const fnLines = combined.functions.map(fnLine).join("\n");
-    sections.push(`# Ambria Decorations — Cost Estimate\n\n**${combined.clientName || "Client"}**\n\n${fnLines}\n\nPushpanjali, Bijwasan, New Delhi`);
+    const [coverPic] = shots.length ? [shots[0].url]
+      : await libraryPhotosForFunction(combined.functions[0]?.fnType, combined.functions[0]?.fnVenue, combined.functions[0]?.fnShift, 1).then((a) => a.map((u) => deckImageUrl(u)));
+    sections.push([`# ${combined.clientName || "Your"} Wedding`, "DECOR PRESENTATION", "Ambria Design & Decor",
+      coverPic || "", fnLines].filter(Boolean).join("\n\n"));
+
+    sections.push(`# Design Your Wedding\n\nEach wedding is a unique chapter, and we are here to make sure the decor comes out exactly as you imagined it.\n\nAmbria Design & Decor`);
 
     for (const fnObj of combined.functions) {
-      if (fnObj.isEmpty) {
-        // An unbuilt function used to be a bare sentence on a blank card. It still has a type, a date
-        // and a venue, so it can at least show what that kind of function looks like in our hands.
-        const [pic] = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1);
-        sections.push([`# ${fnLine(fnObj)}`, pic ? deckImageUrl(pic) : "",
-          "Design pending — zones for this function have not been built yet."].filter(Boolean).join("\n\n"));
+      const zones = zonesByFn.get(fnObj) || [];
+
+      // ── Function divider ──
+      const [dividerPic] = zones.length ? [deckImageUrl(zones[0].photo)]
+        : (await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1)).map((u) => deckImageUrl(u));
+      sections.push([`# ${String(fnObj.fnType || "Function").toUpperCase()}`, dividerPic || "",
+        [fmtDate(fnObj.fnDate), fnObj.fnVenue, fnObj.fnShift].filter(Boolean).join(" · ")].filter(Boolean).join("\n\n"));
+
+      if (fnObj.isEmpty || !zones.length) {
+        const pics = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3);
+        sections.push([`# ${fnObj.fnType || "Function"} — References`, ...pics.map((u) => deckImageUrl(u)),
+          "Design in development — these references set the direction we are working towards."].filter(Boolean).join("\n\n"));
         continue;
       }
-      // Every photo goes to Gamma at ONE aspect ratio (see deckImageUrl). Handing it the raw uploads
-      // meant portrait and landscape phone shots on the same card, which Gamma can only place inset
-      // with white margins — the deck ended up looking like a contact sheet.
-      const built = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4);
-      // A moodboard with one photo on it is not a moodboard. Top up from the library, matched to this
-      // function's own type and venue, so the card reads as a board rather than a lone snapshot.
-      const topUp = built.length >= 3 ? [] : await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - built.length);
-      const zonePhotos = [...built, ...topUp.filter((u) => !built.includes(u))].map((p) => deckImageUrl(p));
-      sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
 
-      // TWO cards per zone, not one. A hero shot and four item tiles do not fit on a single 16:9 card:
-      // Gamma sized the hero to fill the card and the tiles fell off the bottom edge, half cut. Giving
-      // the pieces their own card lets the hero go full-bleed and the tiles sit at a readable size.
-      fnObj.zones.forEach((z) => {
-        if (!z.photo || z.photo.startsWith("data:")) return;
-        sections.push(`# ${fnLine(fnObj)} — ${z.label}\n\n${deckImageUrl(z.photo)}`);
+      // ── Moodboard: a curated mix across DIFFERENT zones ──
+      // "Mood boards with a curated mix of selected pictures from different zones" — so one photo per
+      // zone, taken across as many zones as there are, rather than several of the same zone.
+      const boardPics = zones.slice(0, 4).map((z) => deckImageUrl(z.photo));
+      const topUp = boardPics.length >= 3 ? []
+        : (await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - boardPics.length)).map((u) => deckImageUrl(u));
+      sections.push([`# ${fnObj.fnType || "Function"} — Mood Board`,
+        ...boardPics, ...topUp.filter((u) => !boardPics.includes(u)),
+        zones.slice(0, 4).map((z) => z.label).join("  ·  ")].filter(Boolean).join("\n\n"));
 
-        const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img && !it.img.startsWith("data:")).slice(0, 4);
-        if (!withPhoto.length) return;
-        // 4:3, not square. Item shots are wide — a rug, a run of fabric — and a square centre-crop cut
-        // them down to an unreadable patch of texture. Still one fixed ratio across every item, so the
-        // tiles stay a row of equal rectangles.
-        const itemLines = withPhoto.map((it) => `${it.name}\n${deckImageUrl(it.img, 1200, 900)}`).join("\n\n");
-        sections.push(`# ${fnLine(fnObj)} — ${z.label} — The Pieces\n\n${itemLines}`);
-      });
+      // ── The palette ──
+      // swatchHexFor turns the palette's colour names into hexes, so the card can show the actual
+      // colours rather than only naming them.
+      if (fnObj.palette) {
+        const names = String(fnObj.palette).split(/[,&/]+/).map((s) => s.trim()).filter(Boolean);
+        const swatchLines = names.map((n) => { const hex = swatchHexFor?.(n); return hex ? `${n} — ${hex}` : n; }).join("\n\n");
+        sections.push(`# The Palette\n\n${fnObj.palette}\n\n${swatchLines}\n\nThe colour story running through every zone of the ${fnObj.fnType || "function"}.`);
+      }
 
-      const rows = fnObj.zones.map((z) => `| ${z.label} | ${z.items.length} | ${f(z.structTotal)} | ${f(z.itemTotal)} | ${f(z.zoneTotal)} |`).join("\n");
-      const tbl = `| Zone | Items | Structure | Decor Items | Zone Total |\n|---|---|---|---|---|\n${rows}`;
-      const transportLine = fnObj.transport ? `\n\nTransport & Power: ${f(fnObj.transport.total || 0)} (${fnObj.transport.trucks || 0} trucks)` : "";
-      sections.push(`# ${fnLine(fnObj)} — Cost Breakdown\n\n${tbl}${transportLine}\n\n**Function Total: ${f(fnObj.grand)}**`);
+      // ── One element card per zone, carrying callouts read off the image ──
+      for (let i = 0; i < zones.length; i++) {
+        const z = zones[i];
+        const shot = shots.find((s) => s.zone === z);
+        const fromAi = (shot && read.callouts[shot.id]) || [];
+        // The designer's own note is the fallback, and outranks nothing — it is what a human wrote
+        // about this exact zone, so when it exists it goes on the card alongside the read.
+        const lines = (Array.isArray(fromAi) ? fromAi : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3);
+        const note = String(z.note || "").trim();
+        sections.push([`# ${z.label}`, deckImageUrl(z.photo),
+          lines.join("\n\n"), note].filter(Boolean).join("\n\n"));
+
+        // ── Options: the same element from other angles ──
+        const alts = await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 3);
+        if (alts.length >= 2) {
+          sections.push([`# Options for the ${z.label}`, ...alts.map((u) => deckImageUrl(u)),
+            "Alternate directions for this element."].filter(Boolean).join("\n\n"));
+        }
+      }
+
+      // ── The flower story ──
+      if (read.flowerStory) {
+        sections.push([`# The Flower Story`, boardPics[0] || "", read.flowerStory].filter(Boolean).join("\n\n"));
+      }
     }
 
-    const sumRows = combined.functions.map((fnObj) => `| ${fnObj.fnType || "—"} | ${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"} | ${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.grand)} |`).join("\n");
-    sections.push(`# Event Summary\n\n| Function | Date · Venue | Decor | Transport | Grand |\n|---|---|---|---|---|\n${sumRows}\n\n**EVENT GRAND TOTAL: ${f(combined.eventGrandTotal)}**\n\nAmbria Decorations · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com\n\n_This is an estimate. Final pricing may vary based on customization and availability._`);
+    sections.push(`# Thank You\n\nWe would love to bring this design to life for you.\n\nAmbria Design & Decor\n\nPushpanjali, Bijwasan, New Delhi · thefusiondecor.com`);
 
     return sections.join("\n---\n");
   };

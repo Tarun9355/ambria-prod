@@ -110,16 +110,25 @@ Deno.serve(async (req) => {
             "CARD TYPES:\n" +
             "- Title card: cinematic. Client name large and confident, function details small and quiet " +
             "beneath it, deep negative space. This is the first impression.\n" +
-            "- Moodboard cards: hero photography dominating the frame. The colour palette is a small refined " +
-            "accent — a discreet row of swatches in a corner — never the focal point.\n" +
-            "- Zone cards come in pairs. The first holds ONE photo and nothing else: run it full-bleed, with " +
-            "the zone name overlaid. The second is titled \"The Pieces\" and holds only item photos: lay them " +
-            "out as one row of equal tiles across the card, each with its name in small letter-spaced caps " +
-            "directly beneath, sized so every tile and every caption fits inside the card with room to spare.\n" +
-            "- Cost tables: a refined financial statement. Generous row height, hairline dividers only, " +
-            "figures right-aligned and vertically aligned, no heavy grid lines, no zebra striping, no " +
-            "cramped rows. Totals set apart in a heavier weight with space above.\n" +
-            "- Summary card: the grand total is the hero — set it large and let it own the card.\n\n" +
+            "- Function divider cards (a single word title over one photograph): run the photograph " +
+            "full-bleed and set the function name across it, large. A chapter opening.\n" +
+            "- Mood board cards: several photographs of DIFFERENT areas of the same function, arranged as " +
+            "one considered board. Vary the tile sizes so it composes rather than tiling, but keep every " +
+            "tile aligned to the same grid and never overlapping. The zone names run as one quiet line.\n" +
+            "- Palette cards: show the colours as actual swatches — a row of generous blocks or circles " +
+            "in the hex values given, each with its name small beneath. This card is about colour, so let " +
+            "the colour fill it; do not reduce the palette to a bulleted list of names.\n" +
+            "- Element cards (one photograph, a few short phrases): the photograph fills the card, and the " +
+            "phrases sit as CALLOUTS over or beside it — small text with a fine leader line or a discreet " +
+            "marker pointing into the image, the way a designer annotates a reference. Not a caption " +
+            "block stacked underneath.\n" +
+            "- \"Options for the …\" cards: the same element seen from other angles. Equal tiles in one " +
+            "row, numbered 1, 2, 3 in small gold numerals.\n" +
+            "- Flower story cards: one atmospheric photograph with the text set over it in a generous " +
+            "measure. This card is prose, so give it room to breathe and set it larger than a caption.\n" +
+            "- Closing card: quiet and confident. The studio name, contact line, deep space.\n\n" +
+            "THIS DECK CARRIES NO PRICING. There are no costs, totals or figures anywhere in the content, " +
+            "and none should be invented. It sells the design.\n\n" +
             "TYPOGRAPHY: set headings in a high-contrast display serif at a genuinely large size — a heading " +
             "should be several times the body size, not one notch bigger. Figures and captions in a clean " +
             "restrained sans, small and quiet, with wide letter-spacing on the small-caps labels. Never set a " +
