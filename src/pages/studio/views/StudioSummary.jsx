@@ -17,6 +17,7 @@ import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
+import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
@@ -977,16 +978,72 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     };
   };
 
-  // ═══ THE DESIGN DECK, LAID OUT HERE RATHER THAN GENERATED ═══
-  // Gamma was given five rounds of increasingly explicit art direction and kept returning the same
-  // shape: the photograph inset in a box with dead margins, the title stranded beneath it, callouts
-  // stacked below. That is what its layout engine does, and its pptx export flattens whatever it
-  // renders. Ambria's own reference decks are the opposite — photograph edge to edge, title set over
-  // it, callouts annotating the image — because a designer placed every element.
+  // ═══ WHICH ENGINE DESIGNS THE DECK ═══
+  // Gamma. The hand-built PptxGenJS deck below stays in the file and still works — flip this to false
+  // and it takes over — because the two answer different needs and the choice has gone back and forth
+  // once already:
   //
-  // So this places every element. Same PptxGenJS already loaded for the cost sheet, exact coordinates,
-  // no layout lottery: the deck comes out the same every time, it matches the references, and it
-  // arrives in seconds instead of the two to three minutes Gamma took to think about it.
+  //   Gamma      designs each deck fresh, so it can surprise you. Takes 2–3 minutes, and the result
+  //              differs run to run; matching Ambria's own reference layouts exactly is not something
+  //              it does, however specific the art direction.
+  //   Built-in   places every element at fixed coordinates. Identical every run, ready in seconds,
+  //              matches the reference decks — and only ever produces what it is told to.
+  const USE_GAMMA = true;
+
+  // ═══ THE OUTLINE GAMMA DESIGNS FROM ═══
+  // The same `content` the built-in deck uses — photos, callouts read off the references, palette,
+  // flower story — rendered as Gamma's markdown instead of placed on slides. Sections are separated
+  // by "\n---\n", which is its card break under cardSplit:"inputTextBreaks", and photos go in as bare
+  // URLs for it to fetch. Sized on the way out: Gamma lays out whatever shape it is handed, and raw
+  // camera uploads in mixed orientations are what made the earlier decks look like a contact sheet.
+  const buildGammaOutline = (content) => {
+    const img = (u, w = 1600, h = 900) => (u ? deckImageUrl(u, w, h) : "");
+    const S = [];
+
+    S.push([`# ${content.clientName || "Your"} Wedding`, "DECOR PRESENTATION", "Ambria Design & Decor",
+      img(content.cover), content.functions.map((f) => [f.name, f.dateLine].filter(Boolean).join(" · ")).join("\n")]
+      .filter(Boolean).join("\n\n"));
+
+    S.push("# Design Your Wedding\n\nEach wedding is a unique chapter, and we are here to make sure the decor comes out exactly as you imagined it.\n\nAmbria Design & Decor");
+
+    for (const f of content.functions) {
+      S.push([`# ${String(f.venueLine || f.name).toUpperCase()}`, img(f.hero), f.dateLine].filter(Boolean).join("\n\n"));
+
+      if (f.board.length) {
+        S.push([`# ${f.name} — Mood Board`, ...f.board.map((u) => img(u)),
+          f.zones.map((z) => z.label).filter(Boolean).join("  ·  ")].filter(Boolean).join("\n\n"));
+      }
+
+      if (f.palette.length >= 2) {
+        S.push([`# The Palette`, f.paletteName || "",
+          f.palette.map((c) => `${c.name} — #${c.hex}`).join("\n\n"),
+          `The colour story running through every zone of the ${f.name}.`].filter(Boolean).join("\n\n"));
+      }
+
+      for (const z of f.zones) {
+        // The callouts are the point of this card — they are what was read off this photograph.
+        const lines = (z.callouts || []).filter(Boolean).slice(0, 3).join("\n\n");
+        S.push([`# ${z.label}`, img(z.photo), lines, z.note].filter(Boolean).join("\n\n"));
+        if ((z.alts || []).length >= 2) {
+          S.push([`# Options for the ${z.label}`, ...z.alts.slice(0, 3).map((u) => img(u, 1200, 800)),
+            "Alternate directions for this element."].filter(Boolean).join("\n\n"));
+        }
+      }
+    }
+
+    if (content.flowerStory) {
+      S.push([`# The Flower Story`, img(content.functions[0]?.board?.[0] || content.cover), content.flowerStory]
+        .filter(Boolean).join("\n\n"));
+    }
+
+    S.push("# Thank You\n\nWe would love to bring this design to life for you.\n\nAmbria Design & Decor\n\nPushpanjali, Bijwasan, New Delhi · thefusiondecor.com");
+    return S.join("\n---\n");
+  };
+
+  // ═══ THE BUILT-IN DECK — kept, not deleted (see USE_GAMMA) ═══
+  // Places every element at fixed coordinates with the PptxGenJS already loaded for the cost sheet.
+  // Ambria's reference decks are photographs placed as cards on a dark ground with deep space around
+  // them, and this reproduces that exactly; it is the fallback if Gamma's output is not wanted again.
   const SLIDE_W = 13.333, SLIDE_H = 7.5;                 // 16:9 at 96dpi — see defineLayout below
   const SERIF = "Georgia", SANS = "Trebuchet MS";        // safe on Windows, Mac and Canva's importer
 
@@ -1351,9 +1408,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       }
       const content = await buildDeckContent(combined);
       const title = `${combined.clientName || "Ambria"} Design Presentation`;
-      const pptx = await buildDesignDeck(content);
-      // base64 straight out of PptxGenJS — the bytes go to Canva's import, never to disk.
-      const base64 = await pptx.write({ outputType: "base64" });
+
+      let base64 = null;
+      if (USE_GAMMA) {
+        // Gamma designs it. Two polls' worth of patience is the cost: generation takes minutes, not
+        // seconds, and the client waits on this screen while it runs.
+        const generationId = await gammaCreateGeneration(buildGammaOutline(content), title);
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 4000));
+          const res = await gammaPollGeneration(generationId);
+          if (res.status === "completed") { base64 = res.base64; break; }
+          if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Gamma design failed"); return; }
+        }
+        if (!base64) { setCanvaState("error"); setCanvaError("Timed out waiting for Gamma to finish designing — try again"); return; }
+      } else {
+        const pptx = await buildDesignDeck(content);
+        // base64 straight out of PptxGenJS — the bytes go to Canva's import, never to disk.
+        base64 = await pptx.write({ outputType: "base64" });
+      }
 
       // The deck is posted as one JSON body to an Edge Function, which decodes it in memory. Too big
       // and the worker is killed mid-decode and answers HTTP 546 — a bare status that tells the
