@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -70,5 +70,27 @@ describe("autoSaveWouldDestroy", () => {
 
   it("does not block on the very first save, with nothing to replace", () => {
     expect(autoSaveWouldDestroy({ fnSnapshots: {} }, null, true)).toBe(false);
+  });
+});
+
+// The duplicate-on-Load bug: re-hydrating state from a resumed session looks like an edit to the
+// auto-save effect (new object references), so its first auto-save must be told apart from a real
+// change before the new-visit boundary is allowed to fork a second, identical entry.
+describe("snapshotContentEqual", () => {
+  it("treats two snapshots with the same build content as equal, ignoring save metadata", () => {
+    const a = { id: "SES_1", savedAt: 100, savedBy: "Tarun", auto: true, fnSnapshots: { 0: withVideo }, total: 500 };
+    const b = { id: "SES_2", savedAt: 200, savedBy: "Tarun", auto: true, fnSnapshots: { 0: withVideo }, total: 500 };
+    expect(snapshotContentEqual(a, b)).toBe(true);
+  });
+
+  it("is false when the build content actually differs", () => {
+    const a = { id: "SES_1", fnSnapshots: { 0: withVideo } };
+    const b = { id: "SES_2", fnSnapshots: { 0: withZones } };
+    expect(snapshotContentEqual(a, b)).toBe(false);
+  });
+
+  it("is false when either side is missing", () => {
+    expect(snapshotContentEqual(null, { fnSnapshots: {} })).toBe(false);
+    expect(snapshotContentEqual({ fnSnapshots: {} }, null)).toBe(false);
   });
 });

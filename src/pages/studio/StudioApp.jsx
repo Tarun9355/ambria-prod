@@ -96,7 +96,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, autoSaveWouldDestroy } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -5051,7 +5051,14 @@ export default function StudioApp() {
     // Event Info stopped persisting whenever the build happened to be empty — trading a visible bug
     // for a silent one.
     const keepDraft = autoSaveWouldDestroy(snapshot, prevSessions[0] || null, !!opts.auto);
-    if (keepDraft) {
+    // A fresh Load re-populates every piece of build state from the resumed session — object
+    // references the auto-save effect's dependency list sees as "changed" even though nothing was
+    // actually edited. Left alone, the boundary below would fork a duplicate of the very session
+    // just resumed the moment that mechanical re-hydration triggered its own auto-save. So while the
+    // boundary is pending, a save whose content still matches what was just loaded is a no-op — wait
+    // for a save that actually differs before spending the boundary on a new entry.
+    const loadEchoNoop = sessionBoundaryRef.current && snapshotContentEqual(snapshot, prevSessions[0] || null);
+    if (keepDraft || loadEchoNoop) {
       client.sessions = prevSessions;
     } else {
       // Collapse consecutive auto-drafts into the same slot — UNLESS a Load just opened a new visit

@@ -49,3 +49,26 @@ export function autoSaveWouldDestroy(next, prev, isAuto) {
   if (sessionHasData(next)) return false;         // the new snapshot carries work of its own
   return sessionHasData(prev);                    // destructive only if the old one did
 }
+
+/**
+ * Do two session snapshots hold the same build, ignoring save metadata (id/savedAt/savedBy/auto)?
+ *
+ * Loading a client re-populates every piece of build state from the resumed session — that's a
+ * batch of setState calls, and several of the auto-save effect's dependencies (zoneElements,
+ * zoneConfig, etc.) are freshly-cloned objects, so React sees them as "changed" even though the
+ * content is identical to what was just loaded. Left unchecked, the very first auto-save after a
+ * Load would treat that mechanical re-hydration as a real edit and fork a duplicate of the session
+ * that was only just resumed. Comparing content lets the save path tell "the load re-set state"
+ * apart from "the salesperson actually changed something" before deciding whether to fork.
+ *
+ * @param {object|null} a
+ * @param {object|null} b
+ */
+export function snapshotContentEqual(a, b) {
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const strip = (s) => {
+    const { id, savedAt, savedBy, auto, ...rest } = s; // eslint-disable-line no-unused-vars
+    return rest;
+  };
+  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+}
