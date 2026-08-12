@@ -50,6 +50,45 @@ Deno.serve(async (req) => {
     if (action === "create_generation") {
       const { inputText, title } = body;
       if (!inputText) return json({ error: "inputText required" }, 400);
+
+      // Art direction. Gamma responds to CONCRETE layout instructions ("full-bleed", "aligned grid",
+      // "no bullet lists") far better than to adjectives like "elegant" — an earlier version of this
+      // was mostly adjectives and produced flat text-on-white cards.
+      //
+      // HARD LIMIT: Gamma rejects additionalInstructions over 5000 characters with a 400, which reaches
+      // the salesperson as "Gamma generation failed" and says nothing about what to change. It is kept
+      // well under, and sliced below as a backstop so a later edit cannot break the export outright.
+      const ART_DIRECTION = [
+        "AUDIENCE: an Indian luxury wedding client reviewing a décor proposal. This is a designer's pitch book, not a spreadsheet. THE DECK CARRIES NO PRICING — no costs, totals or figures appear anywhere in the content, and none may be invented. It sells the design.",
+        "",
+        "LAYOUT:",
+        "- Never centre a wall of text on a blank card. Every card needs one clear focal point and asymmetric weighting.",
+        "- Keep text sparse: large type for the few words that matter, generous margins. No bullet lists — short standalone lines with real space between them.",
+        "- Every photo supplied is REAL work by this studio. Where a card holds one photo and a line or two of text, run that photo full-bleed as the card's own background with the text over a soft dark scrim. Always prefer it to the theme's decorative artwork; a generic pattern says nothing about this event.",
+        "",
+        "IMAGES — absolute, break none of them:",
+        "- NEVER overlap images and never let one touch another. Each gets its own rectangle with clear space around it.",
+        "- NEVER let an image cross the card edge or run off the bottom. Even margins on all four sides.",
+        "- Keep the images in the ORDER they appear in the source text, left to right then top to bottom.",
+        "- Several images on one card go in an ALIGNED grid: shared baselines, identical gutters, consistent sizing. A calm ordered grid, never a scattered collage.",
+        "- Identical corner radius and identical framing on every image on a card.",
+        "",
+        "CARDS:",
+        "- Title: cinematic. Client name large and confident, details small and quiet beneath, deep negative space.",
+        "- Function divider: one photograph full-bleed with the function name set large across it. A chapter opening.",
+        "- Mood board: photographs of DIFFERENT areas of that function as one considered board. Vary tile sizes so it composes rather than tiles, but keep every tile on the same grid.",
+        "- Palette: real swatches — generous blocks or circles in the hex values given, each name small beneath. This card is about colour, so let colour fill it; never reduce it to a bulleted list of names.",
+        "- Element (one photograph, a few short phrases): the photograph fills the card and the phrases sit as CALLOUTS over or beside it, each with a fine leader line or discreet marker pointing into the image, the way a designer annotates a reference. Not a caption block stacked underneath.",
+        "- \"Options for the …\": the same element from other angles. Equal tiles in one row, numbered 1, 2, 3 in small gold numerals.",
+        "- Flower story: one atmospheric photograph with the prose set over it in a generous measure, larger than a caption.",
+        "- Closing: quiet and confident — studio name, contact line, deep space.",
+        "",
+        "TYPOGRAPHY: headings in a high-contrast display serif at several times the body size, not one notch bigger. Captions in a restrained sans, small, in wide letter-spaced caps. Never set a whole card at one uniform size — that contrast is what makes it look designed.",
+        "",
+        "COLOUR: lean into the theme's gold, metallic and deep dark grounds. Alternate dark and light cards through the deck so it has rhythm. Gold as thin rules and small ornament; let the photographs supply the colour.",
+        "",
+        "FINISH: hold the SAME margin on every card so the deck feels bound rather than assembled. Align everything to a shared grid — nothing at a slight angle or a random offset. One image treatment throughout. Fewer elements, larger, with more space between them, beats more elements packed in. If a card looks crowded, give the content more room rather than shrinking the type.",
+      ].join("\n");
       const resp = await fetch(`${GAMMA_API}/generations`, {
         method: "POST",
         headers: { "X-API-KEY": API_KEY, "content-type": "application/json" },
@@ -74,77 +113,8 @@ Deno.serve(async (req) => {
           // Overridable per request so a theme can be trialled without a deploy; ids come from
           // the list_themes action above.
           themeId: String(body.themeId || "aurum"),
-          // Art direction. Gamma responds to CONCRETE layout instructions ("full-bleed", "one number
-          // per card", "no bullet points") far better than to adjectives like "elegant" — the earlier
-          // version of this prompt was mostly adjectives and produced flat text-on-white cards.
-          additionalInstructions:
-            "AUDIENCE: an Indian luxury wedding client reviewing a décor proposal worth lakhs. This deck must " +
-            "feel like a designer's pitch book, not a spreadsheet export.\n\n" +
-            "LAYOUT RULES:\n" +
-            "- Never centre a wall of text on a blank card. Every card needs a clear focal point and " +
-            "asymmetric weighting — image on one side, text block on the other, or full-bleed image with " +
-            "an overlaid title.\n" +
-            "- A card with a SINGLE photo: the photo IS the card. Full-bleed or near full-bleed. Never a " +
-            "small inset thumbnail floating in empty space.\n" +
-            "- Every photo supplied is REAL work by this company at this kind of function. When a card has " +
-            "one photo and only a line or two of text, use that photograph as the card's own background, " +
-            "full-bleed, with the text laid over a soft dark scrim for legibility. Prefer it over the " +
-            "theme's decorative artwork every time — a generic pattern says nothing about this event.\n" +
-            "- Keep text sparse. Large type for the few words that matter, generous margins around them. " +
-            "Avoid bullet lists entirely; prefer short standalone lines with real space between them.\n\n" +
-            "IMAGE RULES — these are absolute, break none of them:\n" +
-            "- NEVER overlap images. No image may sit on top of, or touch, another. Every image gets its own " +
-            "rectangle with clear space around it.\n" +
-            "- NEVER let an image cross the edge of the card or run off the bottom. Everything sits inside " +
-            "the card with even margins on all four sides.\n" +
-            "- Keep the images in the ORDER they appear in the source text, reading left to right, then top " +
-            "to bottom. Do not shuffle them.\n" +
-            "- Multiple images on one card go in an ALIGNED grid: shared baselines, identical gutters, " +
-            "consistent sizing within each row. A calm ordered grid, never a scattered collage.\n" +
-            "- The first image on a zone card is the HERO: give it roughly half the card, on its own, larger " +
-            "than everything else. The remaining item photos sit together in one even row or a neat 2x2 " +
-            "beside or beneath it, all identical in size.\n" +
-            "- The short line of text immediately BEFORE each item photo is that photo's name. Keep it with " +
-            "its photo as a small caption directly underneath, never orphaned elsewhere on the card.\n" +
-            "- Identical corner radius and identical framing on every image on a card.\n\n" +
-            "CARD TYPES:\n" +
-            "- Title card: cinematic. Client name large and confident, function details small and quiet " +
-            "beneath it, deep negative space. This is the first impression.\n" +
-            "- Function divider cards (a single word title over one photograph): run the photograph " +
-            "full-bleed and set the function name across it, large. A chapter opening.\n" +
-            "- Mood board cards: several photographs of DIFFERENT areas of the same function, arranged as " +
-            "one considered board. Vary the tile sizes so it composes rather than tiling, but keep every " +
-            "tile aligned to the same grid and never overlapping. The zone names run as one quiet line.\n" +
-            "- Palette cards: show the colours as actual swatches — a row of generous blocks or circles " +
-            "in the hex values given, each with its name small beneath. This card is about colour, so let " +
-            "the colour fill it; do not reduce the palette to a bulleted list of names.\n" +
-            "- Element cards (one photograph, a few short phrases): the photograph fills the card, and the " +
-            "phrases sit as CALLOUTS over or beside it — small text with a fine leader line or a discreet " +
-            "marker pointing into the image, the way a designer annotates a reference. Not a caption " +
-            "block stacked underneath.\n" +
-            "- \"Options for the …\" cards: the same element seen from other angles. Equal tiles in one " +
-            "row, numbered 1, 2, 3 in small gold numerals.\n" +
-            "- Flower story cards: one atmospheric photograph with the text set over it in a generous " +
-            "measure. This card is prose, so give it room to breathe and set it larger than a caption.\n" +
-            "- Closing card: quiet and confident. The studio name, contact line, deep space.\n\n" +
-            "THIS DECK CARRIES NO PRICING. There are no costs, totals or figures anywhere in the content, " +
-            "and none should be invented. It sells the design.\n\n" +
-            "TYPOGRAPHY: set headings in a high-contrast display serif at a genuinely large size — a heading " +
-            "should be several times the body size, not one notch bigger. Figures and captions in a clean " +
-            "restrained sans, small and quiet, with wide letter-spacing on the small-caps labels. Never set a " +
-            "whole card at one uniform size; the contrast between the largest and smallest type on a card is " +
-            "what makes it look designed.\n\n" +
-            "COLOUR: lean into the theme's gold, metallic and deep dark grounds. Alternate dark and light " +
-            "cards through the deck so it has rhythm instead of page after page of the same ground. Gold as " +
-            "thin rules, hairlines and small ornament; let the photographs supply the colour.\n\n" +
-            "FINISH — what separates premium from merely tidy: hold the SAME margin on every card so the " +
-            "deck feels bound rather than assembled. Align everything to a shared grid; nothing sits at a " +
-            "slight angle or a random offset. Give each image a thin gold hairline or a quiet shadow, applied " +
-            "identically throughout. Set captions in small letter-spaced caps, well clear of the image edge. " +
-            "Fewer elements, larger, with more space between them, beats more elements packed in.\n\n" +
-            "Prioritise visual elegance and breathing room over information density. If a card looks crowded, " +
-            "give the content more room rather than shrinking the type. A card that feels empty but confident " +
-            "is better than a card that feels full.",
+          // Sliced as a backstop: Gamma 400s above 5000 characters (see ART_DIRECTION).
+          additionalInstructions: ART_DIRECTION.slice(0, 5000),
         }),
       });
       const data = await resp.json();
