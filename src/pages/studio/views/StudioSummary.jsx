@@ -892,32 +892,39 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     for (const fnObj of combined.functions) {
       const list = (fnObj.zones || []).filter((z) => z.photo && !String(z.photo).startsWith("data:"));
       zonesByFn.set(fnObj, list);
-      list.forEach((z, i) => shots.push({ id: `${fnObj.fnIdx ?? combined.functions.indexOf(fnObj)}-${i}`, label: `${fnObj.fnType || "Function"} · ${z.label}`, url: deckImageUrl(z.photo), zone: z, fnObj }));
+      list.forEach((z, i) => shots.push({ id: `${fnObj.fnIdx ?? combined.functions.indexOf(fnObj)}-${i}`, label: `${fnObj.fnType || "Function"} · ${z.label}`, url: deckImageUrl(z.photo, 1200, 900), zone: z, fnObj }));
     }
     const paletteName = combined.functions.map((x) => x.palette).find(Boolean) || "";
     const read = await readReferences(shots.slice(0, 12), paletteName);
 
-    const [fallbackPic] = shots.length ? [shots[0].url]
-      : (await libraryPhotosForFunction(combined.functions[0]?.fnType, combined.functions[0]?.fnVenue, combined.functions[0]?.fnShift, 1)).map((u) => deckImageUrl(u));
+    // shots[].url is the pre-sized copy the vision call was given; the RAW photo is what the deck
+    // needs, so it can be cropped to whichever box it lands in.
+    const [fallbackPic] = shots.length ? [shots[0].zone.photo]
+      : (await libraryPhotosForFunction(combined.functions[0]?.fnType, combined.functions[0]?.fnVenue, combined.functions[0]?.fnShift, 1));
 
     const fns = [];
     for (const fnObj of combined.functions) {
       const zones = zonesByFn.get(fnObj) || [];
-      const [libPic] = zones.length ? [deckImageUrl(zones[0].photo)]
-        : (await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1)).map((u) => deckImageUrl(u));
+      const [libPic] = zones.length ? [zones[0].photo]
+        : await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1);
 
       // Mood board: one photo per zone, across DIFFERENT zones, topped up from the library when the
       // build is thin — three photos is the minimum that reads as a board rather than a snapshot.
-      const board = zones.slice(0, 3).map((z) => deckImageUrl(z.photo));
+      const board = zones.slice(0, 3).map((z) => z.photo);
       if (board.length < 3) {
-        const extra = (await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - board.length)).map((u) => deckImageUrl(u));
+        const extra = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - board.length);
         extra.forEach((u) => { if (!board.includes(u)) board.push(u); });
       }
 
       // Palette: names to hexes. swatchHexFor is the same lookup Build uses, so the deck shows the
       // colours the designer actually picked rather than a re-interpretation.
+      //
+      // A name it cannot resolve is DROPPED, not defaulted. "PASTELS" is a family, not a colour, and
+      // defaulting it painted one unnamed slab across the card — worse than having no palette card at
+      // all, which is what an empty list now produces.
       const palette = String(fnObj.palette || "").split(/[,&/]+/).map((s) => s.trim()).filter(Boolean)
-        .map((n) => ({ name: n, hex: (swatchHexFor?.(n) || "").replace("#", "") || "C9A96E" })).slice(0, 5);
+        .map((n) => ({ name: n, hex: String(swatchHexFor?.(n) || "").replace("#", "").trim() }))
+        .filter((c) => /^[0-9a-fA-F]{6}$/.test(c.hex)).slice(0, 5);
 
       const zoneCards = [];
       for (const z of zones) {
@@ -925,7 +932,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         const ai = (shot && read.callouts[shot.id]) || [];
         const callouts = (Array.isArray(ai) ? ai : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3);
         const alts = await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 3);
-        zoneCards.push({ label: z.label, photo: deckImageUrl(z.photo), callouts, note: String(z.note || "").trim(), alts: alts.map((u) => deckImageUrl(u)) });
+        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts });
       }
 
       fns.push({
@@ -979,7 +986,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       });
     }
     const pptx = new window.PptxGenJS();
-    pptx.layout = "LAYOUT_16x9";
+    // NOT the built-in "LAYOUT_16x9" — that one is 10 x 5.625 INCHES, while every coordinate below is
+    // written against 13.333 x 7.5 (16:9 at 96dpi, what PowerPoint and Canva actually use). Setting
+    // the built-in put every element at 133% of the slide, so photographs ran off the right and bottom
+    // edges of almost every page and the palette became one giant slab. The layout is declared here so
+    // the numbers below mean what they say.
+    pptx.defineLayout({ name: "AMBRIA_16x9", width: SLIDE_W, height: SLIDE_H });
+    pptx.layout = "AMBRIA_16x9";
     pptx.defineSlideMaster({ title: "AMBRIA", background: { color: INK } });
     const newSlide = () => pptx.addSlide({ masterName: "AMBRIA" });
 
@@ -987,10 +1000,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // thing that makes the reference decks look the way they do: deep near-black space, a few
     // photographs placed within it, gold serif naming each one. Filling the slide edge to edge — my
     // first reading of them — produces something quite different and much louder.
+    // The crop is asked for at the EXACT proportions of the box it lands in, then placed 1:1. Cropping
+    // to 16:9 up front and then letting PptxGenJS "cover" it into a near-square box cropped twice: the
+    // photograph was enlarged and its subject cut away, which is the zoomed look. Supabase renders it
+    // once, at the right shape, and nothing has to be re-cropped here.
+    const PX = 150;                                        // render pixels per inch — sharp when projected
     const card = (slide, url, x, y, w, h) => {
       if (!url) return false;
       try {
-        slide.addImage({ path: url, x, y, w, h, sizing: { type: "cover", w, h } });
+        slide.addImage({ path: deckImageUrl(url, Math.round(w * PX), Math.round(h * PX)), x, y, w, h });
         return true;
       } catch { return false; }
     };
@@ -1071,7 +1089,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           s.addShape(pptx.ShapeType.rect, { x: M, y: y + 0.08, w: 0.16, h: 0.02, fill: { color: GOLD } });
           s.addText(c, { x: M + 0.32, y, w: 4.3, h: 0.6, fontFace: SANS, fontSize: 12.5, color: CREAM, lineSpacingMultiple: 1.3 });
         });
-        card(s, z.photo, 6.0, 1.15, SLIDE_W - 6.0 - M, SLIDE_H - 2.3);
+        // Landscape, and centred against the text column. A tall box meant a wide venue shot lost its
+        // sides to the crop — the room stopped being readable, which is the whole point of the plate.
+        card(s, z.photo, 6.35, 1.65, SLIDE_W - 6.35 - M, (SLIDE_W - 6.35 - M) * 0.68);
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
@@ -1079,11 +1099,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           o.addText("OPTIONS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
           o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
           const m = Math.min(z.alts.length, 3), gut = 0.18;
-          const w = (CONTENT_W - gut * (m - 1)) / m, h = SLIDE_H - 2.15 - 0.9;
+          // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
+          // cropped the option down to a detail you could no longer recognise as the element.
+          const w = (CONTENT_W - gut * (m - 1)) / m, h = w * 0.67;
+          const y = 2.15 + Math.max(0, (SLIDE_H - 2.15 - 0.9 - h) / 2);
           z.alts.slice(0, m).forEach((u, i) => {
             const x = M + i * (w + gut);
-            card(o, u, x, 2.15, w, h);
-            label(o, String(i + 1), x, 2.15 + h + 0.16, w, 14);
+            card(o, u, x, y, w, h);
+            label(o, String(i + 1), x, y + h + 0.16, w, 14);
           });
         }
       }
@@ -1095,7 +1118,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
       s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: CREAM, italic: true });
       rule(s, M, 2.7, 1.8);
-      s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: 3.4, fontFace: SANS, fontSize: 13, color: CREAM, lineSpacingMultiple: 1.55 });
+      // shrinkText + a real height: the story ran past the bottom of the slide because the box was
+      // sized for a shorter paragraph than the model tends to write.
+      s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: SLIDE_H - 3.05 - 0.7, fontFace: SANS, fontSize: 12, color: CREAM, lineSpacingMultiple: 1.35, shrinkText: true, valign: "top" });
       card(s, content.functions[0]?.board?.[0] || content.cover, 6.4, 1.3, SLIDE_W - 6.4 - M, SLIDE_H - 2.6);
     }
 
