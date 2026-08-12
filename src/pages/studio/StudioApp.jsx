@@ -2997,7 +2997,7 @@ export default function StudioApp() {
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const qty = el.qty || 0;
     const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
-    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
+    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey);
     if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
     const subKey = squeezeKey(pattern.sub);
     const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -3005,7 +3005,7 @@ export default function StudioApp() {
     const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
     const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
-  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory]);
+  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory, rcFactorByKey]);
 
   // Rate Card → IMS migration: price an element sourced directly from IMS inventory (Library
   // "+Add element" — no Rate Card lookup involved for these, by design, not as a fallback).
@@ -3057,7 +3057,7 @@ export default function StudioApp() {
       const recipeCost = (pattern, subKey, recipeQty = 1, override) => {
         if (!pattern) return 0;
         const szKey = override?.size || sizeKey;
-        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory);
+        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey);
         if (!rates) return 0;
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
@@ -3082,7 +3082,7 @@ export default function StudioApp() {
       const compDelta = kitFloralCompDelta({
         comps: effectiveSubItems, inventory: imsInventory, flowerPatterns: floralSrc.flowerPatterns || [],
         mandiCatalogue: floralSrc.mandiCatalogue || [], floralSettings: floralSrc,
-        rcFloralModeByKey, floralRatio, elSize: el.size,
+        rcFloralModeByKey, floralRatio, elSize: el.size, rcFactorByKey,
       });
       // compDelta alone is enough to take this branch — a kit can have floral components without
       // carrying a sub-category recipe or any add-on of its own.
@@ -3104,7 +3104,7 @@ export default function StudioApp() {
     if (isFloral && !isKit) {
       const pattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
-      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory) : null;
+      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey) : null;
       if (rates) {
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -3267,9 +3267,14 @@ export default function StudioApp() {
       const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
       if (ft === "real_only") return; // this flower has no artificial substitute
       if (ft === "mapping") {
-        // Artificial version is a SPECIFIC inventory item — its rental rate (snapshotted at map time)
-        // is already client-facing, so add it AFTER markup, not through the bunch × markup path.
-        mappedFinal += (Number(fl.qty) || 0) * (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
+        // Artificial version is a SPECIFIC inventory item — priced LIVE the same way every other
+        // inventory item in Studio is (item.price × its sub-category's scaling_factor), not the
+        // one-time artificialMapPrice/Cost snapshot taken when it was mapped (that's just the raw
+        // pre-factor price, captured once — stale the moment either number changes afterward).
+        // Falls back to the snapshot only if the mapped item can no longer be found.
+        const invItem = (imsInventory || []).find(i => i.id === parent?.artificialMapItemId);
+        const liveRate = invItem ? priceForInvItem(invItem, rcFactorByKey, imsInventory) : (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
+        mappedFinal += (Number(fl.qty) || 0) * liveRate;
         return;
       }
       const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
@@ -3277,7 +3282,7 @@ export default function StudioApp() {
       cost += bunches * (ft === "green" ? agRate / agBPK : afRate / afBPK);
     });
     return Math.round(cost * markup + mappedFinal);
-  }, [dealCheckData, studioFloralData]);
+  }, [dealCheckData, studioFloralData, imsInventory, rcFactorByKey]);
 
   // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).
   const patternExtra = useCallback((rc, size) => {

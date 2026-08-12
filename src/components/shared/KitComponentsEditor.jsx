@@ -103,7 +103,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // actually charged had drifted apart precisely because each computed it on its own.
   const floralCompDelta = kitFloralCompDelta({
     comps, inventory: imsInventory, flowerPatterns, mandiCatalogue,
-    floralSettings: _floralSettings, rcFloralModeByKey, floralRatio, elSize,
+    floralSettings: _floralSettings, rcFloralModeByKey, floralRatio, elSize, rcFactorByKey: _factorMap,
   });
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
   const rentalMarked = priceForInvItem(item, _factorMap, imsInventory, isEdited ? comps : undefined);

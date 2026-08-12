@@ -3,6 +3,7 @@ import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm } from "../../compon
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel } from "../../lib/ims/flowerHelpers";
+import { priceForInvItem } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor } from "../../lib/ims/constants";
 import ImsTransportPanel from "./ImsTransportPanel.jsx";
 import { INV_CATS } from "../../lib/inventory/constants";
@@ -301,13 +302,23 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const artFlowerPerBunch = artFlowerPerKg / artFlowerBPK;
   const artGreenPerBunch = artGreenPerKg / artGreenBPK;
   const artStudioMarkup = Number(settings.defaultStudioMarkup ?? 3) || 3;
+  // Same lowercased-label → scaling_factor map priceForInvItem reads everywhere else in Studio
+  // (StudioApp.jsx's rcFactorByKey) — built here too so a Mapping flower's inventory item prices
+  // through the identical factor, live, instead of a stale pre-factor snapshot.
+  const adminFactorByKey = {};
+  (rateCardCategories || []).forEach((r) => { if (r && r.id) adminFactorByKey[r.id] = Number(r.scaling_factor); });
   // Sourcing cost of replacing 1 unit of this real flower with artificial (before Studio markup).
   // null = not priceable yet (b/u blank, or a Mapping flower with no inventory item picked).
   const artUnitCost = (p) => {
     const t = p.flowerType || (p.isGreen ? "green" : "flower");
     if (t === "real_only") return { cost: null, kind: t };
     if (t === "mapping") {
-      const c = Number(p.artificialMapCost) || Number(p.artificialMapPrice) || 0;
+      // Live-resolved from the mapped inventory item (price × its sub-category's scaling factor —
+      // see priceForInvItem), not the artificialMapPrice/Cost snapshot: that snapshot is just the
+      // item's raw pre-factor price captured once when it was mapped, and goes stale the moment
+      // either number changes afterward. Falls back to the snapshot only if the item's gone.
+      const mappedItem = p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;
+      const c = mappedItem ? priceForInvItem(mappedItem, adminFactorByKey, inventory) : (Number(p.artificialMapCost) || Number(p.artificialMapPrice) || 0);
       return { cost: c > 0 ? c : null, kind: t };
     }
     const bpu = Number(p.artificialBunchesPerUnit) || 0;
@@ -1012,10 +1023,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           </span>
                         );
                         const perBunch = type === "green" ? artGreenPerBunch : artFlowerPerBunch;
+                        const mappedItem = type === "mapping" && p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;
                         return (
                           <span className="text-center text-xs font-semibold text-pink-700"
                             title={type === "mapping"
-                              ? `Mapped to "${p.artificialMapName || "inventory item"}" — cost ₹${(Number(p.artificialMapCost) || 0).toLocaleString("en-IN")} / unit, client rate ₹${(Number(p.artificialMapPrice) || 0).toLocaleString("en-IN")}.`
+                              ? `Mapped to "${p.artificialMapName || "inventory item"}" — live client rate ₹${cost.toLocaleString("en-IN")}/unit${mappedItem ? ` (₹${(Number(mappedItem.price ?? mappedItem.rentalCost) || 0).toLocaleString("en-IN")} base × ${(adminFactorByKey[String(mappedItem.subCat || mappedItem.subcategory || "").trim().toLowerCase()] || 1)}× sub-category factor)` : " — item no longer in inventory, showing last-known rate"}.`
                               : `${p.artificialBunchesPerUnit} bunch/${p.unit} × ₹${perBunch.toFixed(2)} = ₹${cost.toFixed(2)} sourcing cost per ${p.unit}.\nStudio client rate ≈ ₹${(cost * artStudioMarkup).toFixed(2)} (× ${artStudioMarkup} markup).\nReal mandi price today: ₹${(Number(p.currentPrice) || 0).toLocaleString("en-IN")}.`}>
                             ₹{cost < 10 ? cost.toFixed(2) : Math.round(cost).toLocaleString("en-IN")}
                           </span>
