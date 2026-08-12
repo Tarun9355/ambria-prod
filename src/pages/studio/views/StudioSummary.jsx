@@ -1122,6 +1122,39 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
         // Grain. Per-pixel on the ImageData rather than thousands of tiny fills — same look, and it
         // does not stall the export.
+        // ═══ JALI ═══
+        // The lattice screen Ambria builds arches and entry props out of — it is in half the
+        // reference photographs, so as a ground motif it belongs to this studio rather than being
+        // decoration borrowed from a template.
+        //
+        // Drawn large and faint: an ogee grid struck as two sets of 45° lines with a small diamond at
+        // each crossing. At 5% gold it is something you notice on the second look, which is the most
+        // a background may ask for when photographs are the subject.
+        const GOLD_RGB = light ? "150,120,52" : "210,172,71";
+        const step = 108;
+        ctx.save();
+        ctx.strokeStyle = `rgba(${GOLD_RGB},${light ? 0.055 : 0.05})`;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (let x = -H; x < W + H; x += step) {
+          ctx.moveTo(x, 0); ctx.lineTo(x + H, H);          // "/" run
+          ctx.moveTo(x, H); ctx.lineTo(x + H, 0);          // "\" run
+        }
+        ctx.stroke();
+        // A diamond at every crossing, which is what makes it read as jali rather than as graph paper.
+        ctx.fillStyle = `rgba(${GOLD_RGB},${light ? 0.07 : 0.06})`;
+        const d = 7;
+        for (let gy = 0; gy <= H + step; gy += step) {
+          for (let gx = -step; gx <= W + step; gx += step) {
+            const ox = ((gy / step) % 2) * (step / 2);     // offset alternate rows onto the crossings
+            ctx.beginPath();
+            ctx.moveTo(gx + ox, gy - d); ctx.lineTo(gx + ox + d, gy);
+            ctx.lineTo(gx + ox, gy + d); ctx.lineTo(gx + ox - d, gy);
+            ctx.closePath(); ctx.fill();
+          }
+        }
+        ctx.restore();
+
         const img = ctx.getImageData(0, 0, W, H);
         const px = img.data;
         for (let i = 0; i < px.length; i += 4) {
