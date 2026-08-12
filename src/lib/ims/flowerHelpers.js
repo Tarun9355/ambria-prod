@@ -112,16 +112,27 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   const agRate = Number(settings?.artificialGreenRatePerKg ?? 40);
   const agBPK = Number(settings?.artificialGreenBunchesPerKg ?? 23) || 23;
   const artMarkup = Number(settings?.defaultStudioMarkup ?? 3) || 3;
-  let artCost = 0;
+  let artCost = 0, mappedFinal = 0;
   (sizeData.flowers || []).forEach((fl) => {
     if (fl?.invItemId) return; // inventory-sourced ingredient — already priced directly, not a bunches-per-kg estimate
     const parent = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent || null;
     const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
     if (ft === "real_only") return;
+    if (ft === "mapping") {
+      // Artificial version is a SPECIFIC inventory item — its rental rate (snapshotted at map
+      // time into artificialMapPrice/Cost) is already client-facing, so add it AFTER markup, not
+      // through the bunches-per-unit × markup path below. Mirrors floralArtUnitRate (StudioApp.jsx)
+      // byte-for-byte — this function used to skip the mapping check entirely and fall through to
+      // artificialBunchesPerUnit (a field the UI hides, but never clears, once a flower is switched
+      // to Mapping type), which is why a mapped flower's artificial-side price used to come out as
+      // an unrelated leftover number instead of the inventory rate it was actually mapped to.
+      mappedFinal += (Number(fl?.qty) || 0) * (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
+      return;
+    }
     const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
     artCost += (Number(fl?.qty) || 0) * bpu * (ft === "green" ? agRate / agBPK : afRate / afBPK);
   });
-  const artRate = Math.round(artCost * artMarkup);
+  const artRate = Math.round(artCost * artMarkup) + Math.round(mappedFinal);
   return { realRate, artRate, extra: Number(sizeData.extraCost) || 0 };
 };
 
