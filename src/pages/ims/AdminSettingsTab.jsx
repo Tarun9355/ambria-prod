@@ -1372,7 +1372,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 </div>
               </div>
               {(() => {
-                const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue, inventory, adminFactorByKey);
+                const cost = computePatternSizeCost(sizeData, settings.mandiCatalogue, inventory);
                 if (cost === null) return <div className="mt-2 border-t border-dashed pt-2 text-[10px] text-gray-400 italic text-center">Empty — no cost</div>;
                 const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                 const markup = effectiveMarkup(pat, settings);

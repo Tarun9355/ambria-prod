@@ -255,11 +255,9 @@ export default function IMS() {
     const patterns = s.flowerPatterns || [];
     const recipeSubs = s.flowerRecipeSubcats || [];
     const mandi = s.mandiCatalogue || [];
-    const factorByKey = {};
-    (rateCardCategoriesRef.current || []).forEach((r) => { if (r && r.id) factorByKey[r.id] = Number(r.scaling_factor); });
     const rateFor = (pat, markup, sizeKey) => {
       const sd = pat.sizes?.[sizeKey];
-      const c = sd ? computePatternSizeCost(sd, mandi, itemsRef.current, factorByKey) : null;
+      const c = sd ? computePatternSizeCost(sd, mandi, itemsRef.current) : null;
       return c == null ? null : Math.round(c * markup);
     };
     // Full-artificial rate for a size: the recipe's totalPieces (whole arrangement) → kg via

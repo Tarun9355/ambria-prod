@@ -39,17 +39,24 @@ export const resolveMandiFlower = (id, mandi) => {
   return null;
 };
 
-// Σ(qty × mandi price) for one recipe size, plus Σ(qty × IMS rental, factored) for any inventory-
-// sourced ingredient rows ({invItemId, qty} — added via the "Artificial included?" toggle). null
-// when empty. rcFactorByKey is optional (older callers that don't have it yet fall back to factor
-// 1, i.e. the item's raw rate) — see priceForInvItem for what it does.
-export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory, rcFactorByKey) => {
+// Σ(qty × mandi price) for one recipe size, plus Σ(qty × RAW IMS rental — no sub-category scaling
+// factor) for any inventory-sourced ingredient rows ({invItemId, qty} — added via the "Artificial
+// included?" toggle, or picked directly as the recipe's own ingredient with no mandi-flower
+// counterpart). null when empty.
+//
+// Deliberately NOT priceForInvItem here: the recipe already has its OWN markup control (the
+// pattern's "Markup" field, applied once by the caller via effectiveMarkup) — running the raw rate
+// through the item's sub-category scaling_factor here as well would stack two independent markups
+// on the same rupee. A rate_card_categories factor is the general Studio-wide multiplier for
+// pricing an item on its own; a recipe ingredient is priced by the RECIPE's rules instead, which is
+// why this reads item.price/rentalCost raw rather than calling priceForInvItem.
+export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory) => {
   if (!sizeData?.flowers?.length) return null;
   let total = 0;
   for (const fl of sizeData.flowers) {
     if (fl?.invItemId) {
       const item = (inventory || []).find((i) => i.id === fl.invItemId);
-      const price = item ? priceForInvItem(item, rcFactorByKey, inventory) : 0;
+      const price = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
       total += (Number(fl?.qty) || 0) * price;
       continue;
     }
@@ -109,26 +116,27 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   const sizeData = sizes[resolveSizeKey(sizes, sizeKey)];
   if (!sizeData) return null;
   const markup = effectiveMarkup(pattern, settings);
-  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory, rcFactorByKey) || 0) * markup);
+  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory) || 0) * markup);
   const afRate = Number(settings?.artificialFlowerRatePerKg ?? 50);
   const afBPK = Number(settings?.artificialFlowerBunchesPerKg ?? 16) || 16;
   const agRate = Number(settings?.artificialGreenRatePerKg ?? 40);
   const agBPK = Number(settings?.artificialGreenBunchesPerKg ?? 23) || 23;
   const artMarkup = Number(settings?.defaultStudioMarkup ?? 3) || 3;
-  let artCost = 0, mappedFinal = 0;
+  let artCost = 0, mappedFinal = 0, invItemCost = 0;
   (sizeData.flowers || []).forEach((fl) => {
     if (fl?.invItemId) {
-      // A direct IMS Inventory ingredient (the "Artificial included?" toggle) has no "real flower"
-      // counterpart to speak of — it's a physical rented piece (e.g. a structural panel), not a
-      // perishable flower with an artificial substitute. It's always sourced from inventory, so its
-      // cost belongs on BOTH sides of the real/artificial blend identically — added here (post-
-      // markup, like a Mapping flower's rate) to match what computePatternSizeCost already added to
-      // realRate above, so `realPct/100×X + (100-realPct)/100×X = X` for any realPct: this
-      // ingredient's price is invariant to the slider instead of vanishing to ₹0 at 0% real (it used
-      // to be skipped here entirely, only ever counted on the real side).
+      // A direct IMS Inventory ingredient (the "Artificial included?" toggle, or picked directly as
+      // the recipe's own ingredient with no mandi-flower counterpart) has no "real flower" side to
+      // speak of — it's a physical rented piece, always sourced from inventory regardless of the
+      // slider. Priced RAW (no rate_card_categories scaling factor — see computePatternSizeCost's
+      // comment: the recipe's OWN markup field owns this ingredient's pricing, not the general
+      // Studio inventory-pricing rules) and marked up by that SAME pattern markup realRate uses
+      // (tracked separately so it isn't also run through artMarkup), so its contribution lands on
+      // BOTH sides of the blend at the identical value — `realPct/100×X + (100-realPct)/100×X = X`
+      // for any realPct, i.e. invariant to the slider instead of vanishing to ₹0 at 0% real.
       const item = (inventory || []).find((i) => i.id === fl.invItemId);
-      const liveRate = item ? priceForInvItem(item, rcFactorByKey, inventory) : 0;
-      mappedFinal += (Number(fl?.qty) || 0) * liveRate;
+      const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+      invItemCost += (Number(fl?.qty) || 0) * rawPrice;
       return;
     }
     const parent = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent || null;
@@ -150,7 +158,7 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
     const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
     artCost += (Number(fl?.qty) || 0) * bpu * (ft === "green" ? agRate / agBPK : afRate / afBPK);
   });
-  const artRate = Math.round(artCost * artMarkup) + Math.round(mappedFinal);
+  const artRate = Math.round(artCost * artMarkup) + Math.round(mappedFinal) + Math.round(invItemCost * markup);
   return { realRate, artRate, extra: Number(sizeData.extraCost) || 0 };
 };
 
