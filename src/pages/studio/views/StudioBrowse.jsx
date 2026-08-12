@@ -5,6 +5,7 @@ import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
 import { paletteNames } from "../../../lib/studio/colours";
 import { venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
+import { sessionHasData } from "../../../lib/studio/sessionData.js";
 
 export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
@@ -257,8 +258,28 @@ export default function StudioBrowse({ ctx }) {
       const out = [];
       for (const c of (clientLedger || [])) {
         for (const s of (c.sessions || [])) {
-          if (!fnSnapHasData(s.fnSnapshots?.[0] || s.fnSnapshots?.["0"] || s)) continue;
-          out.push({ client: c, session: s, savedAt: s.savedAt || 0 });
+          // ANY function, not just the first. This looked at fnSnapshots[0] alone, so a build that
+          // lives on Fn2 — the common case the moment anyone works on the second function — was
+          // invisible here. And this is the branch that runs when there is NO active client, which
+          // is exactly a fresh session: open the app again and the work looked gone.
+          // sessionHasData is the same predicate the banner and the save path use.
+          if (!sessionHasData(s)) continue;
+          // Title from the snapshot that HOLDS the data, not the session's flat fields — those
+          // describe whichever function was active when the autosave last ran, and are null whenever
+          // that function had no reference video, which showed the row as a bare "Build".
+          const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
+          let fnIdx = null, title = s.sourceVideoTitle || null;
+          if (snaps) {
+            const idxs = Object.keys(snaps).map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
+            for (const i of idxs) {
+              const snap = snaps[i] || snaps[String(i)];
+              if (!fnSnapHasData(snap)) continue;
+              fnIdx = i;
+              title = snap?.sourceVideo?.title || snap?.sourceVideoTitle || title;
+              break;
+            }
+          }
+          out.push({ client: c, session: s, savedAt: s.savedAt || 0, title, fnIdx });
         }
       }
       out.sort((a, b) => b.savedAt - a.savedAt);
@@ -642,13 +663,13 @@ export default function StudioBrowse({ ctx }) {
             <div style={{marginBottom:14,padding:"9px 12px",borderRadius:10,background:isDark?"rgba(148,163,184,0.07)":"rgba(100,116,139,0.05)",border:`1px solid ${isDark?"rgba(148,163,184,0.20)":"rgba(100,116,139,0.18)"}`}}>
               <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.9,textTransform:"uppercase",color:textS,marginBottom:7}}>Recent builds</div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {recentBuilds.map(({client,session}) => (
+                {recentBuilds.map(({client,session,title,fnIdx}) => (
                   <div key={client.id+"_"+session.savedAt} style={{display:"flex",alignItems:"center",gap:10}}>
                     <div style={{flexShrink:0,display:"flex",color:textS}}><IconSave size={13}/></div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:11.5,fontWeight:600,color:textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{client.name||"Client"}</div>
                       <div style={{fontSize:10,color:textS,marginTop:1}}>
-                        {session.sourceVideoTitle||"Build"} · saved {bannerFmtDate(session.savedAt)}{session.savedBy?` by ${session.savedBy}`:""}{typeof session.total==="number"?` · ${fmt(session.total)}`:""}
+                        {title||"Build"}{typeof fnIdx==="number"?` · Fn${fnIdx+1}`:""} · saved {bannerFmtDate(session.savedAt)}{session.savedBy?` by ${session.savedBy}`:""}{typeof session.total==="number"?` · ${fmt(session.total)}`:""}
                       </div>
                     </div>
                     <button onClick={(e)=>{e.stopPropagation();loadClientSession(client,session,2);}}

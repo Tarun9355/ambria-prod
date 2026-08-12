@@ -16,9 +16,9 @@ import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
-import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
-import { deckImageUrl } from "../../../lib/studio/thumb";
+import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
 import { supabase } from "../../../lib/supabase";
+import { callClaudeStreaming } from "../../../lib/ai";
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
@@ -757,16 +757,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     }
   };
 
-  // Turns the same cost-sheet data buildPptx uses into a markdown outline for Gamma's Generate API.
-  // Sections are separated by "\n---\n" (Gamma's own card-break syntax with cardSplit:
-  // "inputTextBreaks" — one break = one extra card), and photos are dropped in as bare URLs for Gamma
-  // to fetch and re-host. textMode:"preserve" keeps our numbers and wording exact — Gamma is designing
-  // the layout, not rewriting the content.
+  // Builds the markdown outline Gamma designs from. Sections are separated by "\n---\n" (Gamma's card
+  // break, with cardSplit: "inputTextBreaks"), and photos are dropped in as bare URLs for Gamma to
+  // fetch and re-host.
   //
-  // Async because a card with no photo of its own goes looking for one in the library (see
-  // libraryPhotosForFunction); the alternative is Gamma dressing it in stock theme artwork.
-  const buildGammaOutline = async (combined) => {
-    const f = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
+  // ═══ THIS IS A DESIGN PRESENTATION, NOT A COST SHEET ═══
+  // The client's own words: "why is the costing included? We don't need any costing in this décor
+  // design presentation." So no rates, no totals, no transport figures, no summary table — none of it
+  // reaches this deck. The cost sheet still exists untouched as the PDF/PPTX export next to it; the
+  // two documents simply have different jobs and different audiences.
+  //
+  // The structure follows Ambria's own reference decks (Gurmon, Raffles, Exotica): cover, an opening
+  // line, then per function a divider, a moodboard mixing zones, the palette, an element card per
+  // zone carrying callouts, an "Options" card of alternate angles, and a flower story — closing on a
+  // thank-you. Also the client's ask: "do not use any external inventory pictures". Warehouse product
+  // shots are gone; every image here is a reference photograph of real work.
+
+  const buildDeckContent = async (combined) => {
     const fmtDate = (iso) => {
       if (!iso) return "—";
       try { return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); } catch { return iso; }
@@ -775,12 +782,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const parts = [fnObj.fnType || "Function", fmtDate(fnObj.fnDate), fnObj.fnVenue || "—"];
       if (fnObj.fnShift) parts.push(fnObj.fnShift);
       return parts.filter(Boolean).join(" · ");
-    };
-    // Looks up an inventory item's own photo by name — same name match buildPptx's itemPhotoFor
-    // uses, since the cost-sheet data only carries a name/qty/rate, not the inventory id.
-    const itemPhotoFor = (name) => {
-      const inv = (imsInventory || []).find((i) => (i.name || "").toLowerCase() === String(name || "").toLowerCase());
-      return inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || null;
     };
     // ═══ AMBRIA'S OWN PHOTOGRAPHY, MATCHED TO THE FUNCTION ═══
     // A card we hand no photo to gets dressed in Gamma's stock theme artwork — a black-and-gold
@@ -815,71 +816,521 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             return venueHit + timeHit;
           };
           out = [...data].sort((a, b) => rank(b) - rank(a))
-            .map((r) => r.url).filter((u) => u && !String(u).startsWith("data:")).slice(0, limit);
+            .map((r) => r.url).filter((u) => u && !String(u).startsWith("data:") && !isInventoryPhoto(u)).slice(0, limit);
         }
       } catch { /* a deck without a matched photo is still a deck — never block the export */ }
       fnPhotoCache.set(key, out);
       return out;
     };
 
-    const sections = [];
+    // ═══ DIFFERENT ANGLES OF THE SAME ELEMENT ═══
+    // "some different angles of same pictures as well". Library photos carry tags.areasElements — the
+    // same vocabulary the zones use (Stage, Entry Gate, Centre Lounge…) — so alternates for a zone are
+    // simply other photos tagged with that element. The zone's own chosen photo is excluded, since the
+    // point is to show it from somewhere else.
+    const alternatesForZone = async (zoneLabel, chosenUrl, venue, limit = 3) => {
+      const label = String(zoneLabel || "").trim();
+      if (!label) return [];
+      try {
+        const { data, error } = await supabase
+          .from("library").select("url,tags").contains("tags->areasElements", JSON.stringify([label])).limit(40);
+        if (error || !data?.length) return [];
+        const v = String(venue || "").trim().toLowerCase();
+        return [...data]
+          .sort((a, b) => (String(b.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0)
+                        - (String(a.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0))
+          .map((r) => r.url)
+          .filter((u) => u && !String(u).startsWith("data:") && u !== chosenUrl && !isInventoryPhoto(u))
+          .slice(0, limit);
+      } catch { return []; }
+    };
 
-    const fnLines = combined.functions.map(fnLine).join("\n");
-    sections.push(`# Ambria Decorations — Cost Estimate\n\n**${combined.clientName || "Client"}**\n\n${fnLines}\n\nPushpanjali, Bijwasan, New Delhi`);
+    // ═══ READ THE REFERENCE IMAGES ═══
+    // "Detailed callouts highlighting the key design elements visible within each reference image" and
+    // "a flower story that complements the selected references". Both have to come from what is
+    // actually IN the photograph, so the photographs are what gets sent — one batched vision call for
+    // the whole deck rather than one per card, which would multiply an already slow export.
+    //
+    // Everything here is best-effort. A failed or slow vision call must degrade to the designer's own
+    // zone note, never block the deck: a presentation without callouts still beats no presentation.
+    const readReferences = async (shots, paletteName) => {
+      const empty = { callouts: {}, flowerStory: "" };
+      if (!shots.length) return empty;
+      try {
+        const blocks = [];
+        shots.forEach((s) => {
+          blocks.push({ type: "text", text: `IMAGE ${s.id} — ${s.label}` });
+          blocks.push({ type: "image", source: { type: "url", url: s.url } });
+        });
+        blocks.push({ type: "text", text:
+          `You are a senior décor designer at Ambria writing a client presentation.\n\n` +
+          `For EACH image above, look at what is actually there and write 3 short callouts naming the ` +
+          `key design elements you can see — the structure, the florals, the fabric, the lighting, the ` +
+          `props. Name what is visible; never invent an element that is not in the frame. Each callout ` +
+          `is a fragment of at most 6 words, title case, no trailing full stop. For example ` +
+          `"Cascading orchid canopy", "Brushed gold frame", "Warm uplighting through drapes".\n\n` +
+          `Then write a FLOWER STORY: 2 or 3 sentences on the floral language running through these ` +
+          `references${paletteName ? `, sitting with the "${paletteName}" palette` : ""} — the varieties ` +
+          `visible, how they carry across the zones, the mood they build. Warm and confident, written ` +
+          `for the client, not a list.\n\n` +
+          `Reply with ONLY this JSON, no prose around it:\n` +
+          `{"callouts":{"<image id>":["...","...","..."]},"flowerStory":"..."}` });
 
+        const raw = await callClaudeStreaming({ contentBlocks: blocks, maxTokens: 1600 });
+        // The model is asked for bare JSON, but a stray ```json fence costs nothing to survive.
+        const m = String(raw || "").match(/\{[\s\S]*\}/);
+        if (!m) return empty;
+        const parsed = JSON.parse(m[0]);
+        return { callouts: parsed.callouts || {}, flowerStory: String(parsed.flowerStory || "") };
+      } catch { return empty; }
+    };
+
+    // ── Every reference photo in the deck, gathered FIRST ──
+    // The vision pass is one call for the whole deck, so the shots have to be known before any card is
+    // written. Ids are stable strings the model echoes back in its JSON.
+    const shots = [];
+    const zonesByFn = new Map();
     for (const fnObj of combined.functions) {
-      if (fnObj.isEmpty) {
-        // An unbuilt function used to be a bare sentence on a blank card. It still has a type, a date
-        // and a venue, so it can at least show what that kind of function looks like in our hands.
-        const [pic] = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1);
-        sections.push([`# ${fnLine(fnObj)}`, pic ? deckImageUrl(pic) : "",
-          "Design pending — zones for this function have not been built yet."].filter(Boolean).join("\n\n"));
-        continue;
+      const list = (fnObj.zones || []).filter((z) => z.photo && !String(z.photo).startsWith("data:") && !isInventoryPhoto(z.photo));
+      zonesByFn.set(fnObj, list);
+      list.forEach((z, i) => shots.push({ id: `${fnObj.fnIdx ?? combined.functions.indexOf(fnObj)}-${i}`, label: `${fnObj.fnType || "Function"} · ${z.label}`, url: deckImageUrl(z.photo, 1200, 900), zone: z, fnObj }));
+    }
+    const paletteName = combined.functions.map((x) => x.palette).find(Boolean) || "";
+    const read = await readReferences(shots.slice(0, 12), paletteName);
+
+    // shots[].url is the pre-sized copy the vision call was given; the RAW photo is what the deck
+    // needs, so it can be cropped to whichever box it lands in.
+    const [fallbackPic] = shots.length ? [shots[0].zone.photo]
+      : (await libraryPhotosForFunction(combined.functions[0]?.fnType, combined.functions[0]?.fnVenue, combined.functions[0]?.fnShift, 1));
+
+    const fns = [];
+    for (const fnObj of combined.functions) {
+      const zones = zonesByFn.get(fnObj) || [];
+      const [libPic] = zones.length ? [zones[0].photo]
+        : await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1);
+
+      // Mood board: one photo per zone, across DIFFERENT zones, topped up from the library when the
+      // build is thin — three photos is the minimum that reads as a board rather than a snapshot.
+      const board = zones.slice(0, 3).map((z) => z.photo);
+      if (board.length < 3) {
+        const extra = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - board.length);
+        extra.forEach((u) => { if (!board.includes(u)) board.push(u); });
       }
-      // Every photo goes to Gamma at ONE aspect ratio (see deckImageUrl). Handing it the raw uploads
-      // meant portrait and landscape phone shots on the same card, which Gamma can only place inset
-      // with white margins — the deck ended up looking like a contact sheet.
-      const built = fnObj.zones.map((z) => z.photo).filter((p) => p && !p.startsWith("data:")).slice(0, 4);
-      // A moodboard with one photo on it is not a moodboard. Top up from the library, matched to this
-      // function's own type and venue, so the card reads as a board rather than a lone snapshot.
-      const topUp = built.length >= 3 ? [] : await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - built.length);
-      const zonePhotos = [...built, ...topUp.filter((u) => !built.includes(u))].map((p) => deckImageUrl(p));
-      sections.push([`# ${fnLine(fnObj)} — Moodboard`, fnObj.palette ? `Color palette: ${fnObj.palette}` : "", ...zonePhotos].filter(Boolean).join("\n\n"));
 
-      // TWO cards per zone, not one. A hero shot and four item tiles do not fit on a single 16:9 card:
-      // Gamma sized the hero to fill the card and the tiles fell off the bottom edge, half cut. Giving
-      // the pieces their own card lets the hero go full-bleed and the tiles sit at a readable size.
-      fnObj.zones.forEach((z) => {
-        if (!z.photo || z.photo.startsWith("data:")) return;
-        sections.push(`# ${fnLine(fnObj)} — ${z.label}\n\n${deckImageUrl(z.photo)}`);
+      // Palette. Two things were wrong here and both showed on the card.
+      //
+      // swatchHexFor's signature is (name, colourCatalogue, override) — called with the name alone it
+      // never sees the catalogue and falls through to its "#cccccc" sentinel. That is why the card
+      // read "Navy Blue" over a grey slab. buildPptx has always passed the catalogue; this now does
+      // the same.
+      //
+      // And a palette is not its NAME split on punctuation. "Navy Blue" is one palette whose anchor
+      // colours live in imsPaletteCatalogue — splitting the label gave one entry, so the card showed a
+      // single colour stretched across the slide. The anchors are what the designer actually chose.
+      const paletteObj = (imsPaletteCatalogue || []).find((p) => p.name === fnObj.palette);
+      const anchorNames = paletteObj?.anchorColours?.length ? paletteObj.anchorColours
+        : String(fnObj.palette || "").split(/[,&/]+/).map((s) => s.trim()).filter(Boolean);
+      // "#cccccc" IS the not-found sentinel, so anything landing on it is dropped rather than shown
+      // as a grey block captioned with a colour it isn't.
+      const palette = anchorNames.slice(0, 6)
+        .map((n) => ({ name: n, hex: String(swatchHexFor(n, imsColourCatalogue) || "").replace("#", "").trim().toLowerCase() }))
+        .filter((c) => /^[0-9a-f]{6}$/.test(c.hex) && c.hex !== "cccccc");
 
-        const withPhoto = z.items.map((it) => ({ name: it.name, img: itemPhotoFor(it.name) })).filter((it) => it.img && !it.img.startsWith("data:")).slice(0, 4);
-        if (!withPhoto.length) return;
-        // 4:3, not square. Item shots are wide — a rug, a run of fabric — and a square centre-crop cut
-        // them down to an unreadable patch of texture. Still one fixed ratio across every item, so the
-        // tiles stay a row of equal rectangles.
-        const itemLines = withPhoto.map((it) => `${it.name}\n${deckImageUrl(it.img, 1200, 900)}`).join("\n\n");
-        sections.push(`# ${fnLine(fnObj)} — ${z.label} — The Pieces\n\n${itemLines}`);
+      const zoneCards = [];
+      for (const z of zones) {
+        const shot = shots.find((s) => s.zone === z);
+        const ai = (shot && read.callouts[shot.id]) || [];
+        const callouts = (Array.isArray(ai) ? ai : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3);
+        // Excludes whatever the mood board already used, so Options is genuinely other angles rather
+        // than the same photograph a page later.
+        const seen = new Set([z.photo, ...board]);
+        const alts = (await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 6)).filter((u) => !seen.has(u)).slice(0, 3);
+        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts });
+      }
+
+      fns.push({
+        name: String(fnObj.fnType || "Function"),
+        // The references lead a function with the VENUE set large ("Gurmon Hotel") and the function
+        // itself as the italic line beneath it, so both are carried separately.
+        venueLine: String(fnObj.fnVenue || fnObj.fnType || "Function"),
+        dateLine: [String(fnObj.fnType || ""), fmtDate(fnObj.fnDate), fnObj.fnShift].filter(Boolean).join("  ·  "),
+        hero: libPic || fallbackPic || "",
+        board, palette, zones: zoneCards,
+        paletteName: String(fnObj.palette || ""),
       });
-
-      const rows = fnObj.zones.map((z) => `| ${z.label} | ${z.items.length} | ${f(z.structTotal)} | ${f(z.itemTotal)} | ${f(z.zoneTotal)} |`).join("\n");
-      const tbl = `| Zone | Items | Structure | Decor Items | Zone Total |\n|---|---|---|---|---|\n${rows}`;
-      const transportLine = fnObj.transport ? `\n\nTransport & Power: ${f(fnObj.transport.total || 0)} (${fnObj.transport.trucks || 0} trucks)` : "";
-      sections.push(`# ${fnLine(fnObj)} — Cost Breakdown\n\n${tbl}${transportLine}\n\n**Function Total: ${f(fnObj.grand)}**`);
     }
 
-    const sumRows = combined.functions.map((fnObj) => `| ${fnObj.fnType || "—"} | ${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"} | ${fnObj.isEmpty ? "—" : f(fnObj.decorTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.transportTotal)} | ${fnObj.isEmpty ? "—" : f(fnObj.grand)} |`).join("\n");
-    sections.push(`# Event Summary\n\n| Function | Date · Venue | Decor | Transport | Grand |\n|---|---|---|---|---|\n${sumRows}\n\n**EVENT GRAND TOTAL: ${f(combined.eventGrandTotal)}**\n\nAmbria Decorations · Pushpanjali, Bijwasan, New Delhi · thefusiondecor.com\n\n_This is an estimate. Final pricing may vary based on customization and availability._`);
-
-    return sections.join("\n---\n");
+    return {
+      clientName: combined.clientName || "",
+      cover: fallbackPic || "",
+      functions: fns,
+      flowerStory: read.flowerStory || "",
+    };
   };
 
-  // "🎨 Canva" — the cost-sheet content goes to Gamma first so its AI actually designs the deck
-  // (rather than our own hand-coded PptxGenJS layout), then the pptx Gamma exports is uploaded to
-  // Canva as a Design Import job, same as before, so the salesperson still gets back an editable
-  // Canva draft. Everything polls client-side (each poll is one fast GET via an edge function)
-  // rather than blocking one long edge-function call, since both steps can take a while and edge
-  // functions have a short execution ceiling.
+  // ═══ THE DESIGN DECK, LAID OUT HERE RATHER THAN GENERATED ═══
+  // Gamma was given five rounds of increasingly explicit art direction and kept returning the same
+  // shape: the photograph inset in a box with dead margins, the title stranded beneath it, callouts
+  // stacked below. That is what its layout engine does, and its pptx export flattens whatever it
+  // renders. Ambria's own reference decks are the opposite — photograph edge to edge, title set over
+  // it, callouts annotating the image — because a designer placed every element.
+  //
+  // So this places every element. Same PptxGenJS already loaded for the cost sheet, exact coordinates,
+  // no layout lottery: the deck comes out the same every time, it matches the references, and it
+  // arrives in seconds instead of the two to three minutes Gamma took to think about it.
+  const SLIDE_W = 13.333, SLIDE_H = 7.5;                 // 16:9 at 96dpi — see defineLayout below
+  const SERIF = "Georgia", SANS = "Trebuchet MS";        // safe on Windows, Mac and Canva's importer
+
+  // ═══ TWO GROUNDS, ALTERNATING ═══
+  // Every card on one near-black ground made the deck oppressive by the third page — the photographs
+  // had nothing to sit against and the whole thing read as a single dark block. The chapter cards
+  // (cover, function opening, flower story, close) stay dark, and the working cards (mood board,
+  // palette, elements, options) sit on a warm ivory. The alternation is what gives a deck rhythm.
+  //
+  // INK is warm rather than pure black (a hint of brown in it), which stops the dark cards looking
+  // like switched-off screens next to the ivory.
+  const INK = "1C1917", IVORY = "F2ECE3";
+  const GOLD = "D2AC47";                                 // on the dark ground
+  const GOLD_DK = "9C7A22";                              // on ivory, where D2AC47 is too pale to read
+  const CREAM = "F5EFE6", BODY_DK = "3A342E", MUTE_D = "8C8C86", MUTE_L = "7A736A";
+
+  const buildDesignDeck = async (content) => {
+    if (!window.PptxGenJS) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js";
+        s.onload = resolve;
+        s.onerror = () => {
+          const s2 = document.createElement("script");
+          s2.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js";
+          s2.onload = resolve;
+          s2.onerror = () => reject(new Error("Presentation library unavailable — try again"));
+          document.head.appendChild(s2);
+        };
+        document.head.appendChild(s);
+      });
+    }
+    const pptx = new window.PptxGenJS();
+    // NOT the built-in "LAYOUT_16x9" — that one is 10 x 5.625 INCHES, while every coordinate below is
+    // written against 13.333 x 7.5 (16:9 at 96dpi, what PowerPoint and Canva actually use). Setting
+    // the built-in put every element at 133% of the slide, so photographs ran off the right and bottom
+    // edges of almost every page and the palette became one giant slab. The layout is declared here so
+    // the numbers below mean what they say.
+    pptx.defineLayout({ name: "AMBRIA_16x9", width: SLIDE_W, height: SLIDE_H });
+    pptx.layout = "AMBRIA_16x9";
+    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: { color: INK } });
+    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: { color: IVORY } });
+
+    // Slides carry their own palette so nothing has to remember which ground it is on. `t` is the one
+    // that changes per slide; every colour below reads from it.
+    const DARK = { head: CREAM, body: CREAM, accent: GOLD, mute: MUTE_D, shadow: "000000", shadowOpacity: 0.75 };
+    const LIGHT = { head: BODY_DK, body: BODY_DK, accent: GOLD_DK, mute: MUTE_L, shadow: "6B5F52", shadowOpacity: 0.42 };
+    let t = DARK;
+    const newSlide = (light = false) => {
+      t = light ? LIGHT : DARK;
+      return pptx.addSlide({ masterName: light ? "AMBRIA_LIGHT" : "AMBRIA_DARK" });
+    };
+
+    // A photograph is a CARD on the ground, never a full-bleed background — the thing that makes the
+    // reference decks read the way they do: space, a few photographs placed in it, gold serif naming
+    // them. Filling the slide edge to edge produces something much louder and quite unlike them.
+    //
+    // The crop is asked for at the EXACT proportions of the box, then placed 1:1. Cropping to 16:9 up
+    // front and letting PptxGenJS "cover" it into a taller box cropped twice, which enlarged the photo
+    // and cut its subject away — the zoomed look. Supabase renders it once, at the right shape.
+    //
+    // The lift is a shape sitting directly behind the photograph, carrying the shadow. PptxGenJS
+    // renders shadows reliably on SHAPES; putting one on an image is far less dependable across
+    // PowerPoint, Keynote and Canva's importer. A plate behind it works everywhere, and doubles as a
+    // hairline edge where the photograph meets the ground.
+    const PX = 150;                                        // render pixels per inch — sharp when projected
+    // Keyed by URL *and* box, because the same photograph appears in boxes of different shapes (the
+    // mood board plate is wide, the flower-story plate is tall). A single entry per URL would hand
+    // PptxGenJS a data URI of the wrong aspect and it would stretch it to fit.
+    const rounded = new Map();
+    const rkey = (url, w, h, g) => url + "|" + w.toFixed(2) + "x" + h.toFixed(2) + "|" + g;
+    const card = (slide, url, x, y, w, h) => {
+      if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
+      try {
+        // roundRect, not rect: the plate's corners have to follow the photograph's, or a square
+        // shadow shows through the rounded corner as four dark triangles.
+        slide.addShape(pptx.ShapeType.roundRect, {
+          x, y, w, h, rectRadius: 0.12,
+          fill: { color: t === LIGHT ? "FFFFFF" : "000000" },
+          line: { color: t === LIGHT ? "E2D9CB" : "2E2A26", width: 0.75 },
+          shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 14, offset: 5, angle: 90 },
+        });
+        const src = rounded.get(rkey(url, w, h, t === LIGHT ? IVORY : INK)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
+        slide.addImage(src.startsWith("data:") ? { data: src, x, y, w, h } : { path: src, x, y, w, h });
+        return true;
+      } catch { return false; }
+    };
+    // The gold italic serif that labels each photograph in the references.
+    const label = (slide, text, x, y, w, size = 13) =>
+      slide.addText(text, { x, y, w, h: 0.34, fontFace: SERIF, fontSize: size, color: t.accent, italic: true });
+    const rule = (slide, x, y, w) =>
+      slide.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.02, fill: { color: t.accent } });
+
+    // ═══ DECORATIVE MARKS ═══
+    // Small gold detailing, used sparingly. The references carry almost none, so this stays to a
+    // diamond marking a title, corner brackets framing a chapter card, and a numeral in the corner.
+    const diamond = (slide, x, y, size = 0.11) =>
+      slide.addShape(pptx.ShapeType.diamond, { x, y, w: size, h: size, fill: { color: t.accent } });
+
+    // Brackets rather than a full border: a complete frame boxes the card in and fights the
+    // photograph, while four corners suggest one and leave the space open.
+    const corners = (slide, inset = 0.42, len = 0.62) => {
+      const w = 0.014, c = t.accent, x0 = inset, y0 = inset;
+      const x1 = SLIDE_W - inset, y1 = SLIDE_H - inset;
+      const seg = (x, y, ww, hh) => slide.addShape(pptx.ShapeType.rect, { x, y, w: ww, h: hh, fill: { color: c } });
+      seg(x0, y0, len, w); seg(x0, y0, w, len);                          // top-left
+      seg(x1 - len, y1 - w, len, w); seg(x1 - w, y1 - len, w, len);      // bottom-right
+    };
+
+    let pageNo = 0;
+    const folio = (slide) => {
+      pageNo += 1;
+      slide.addText(String(pageNo).padStart(2, "0"), {
+        x: SLIDE_W - 1.05, y: SLIDE_H - 0.68, w: 0.5, h: 0.3,
+        fontFace: SANS, fontSize: 9, color: t.mute, align: "right", charSpacing: 1,
+      });
+    };
+
+    const M = 0.85;                    // the margin every card and title block sits on
+    const CONTENT_W = SLIDE_W - M * 2;
+
+    // ═══ ROUNDED CORNERS ═══
+    // PowerPoint has no border-radius for a picture, and PptxGenJS's `rounding` option crops to a
+    // full CIRCLE, not a rounded rectangle. So the corners are cut into the pixels: the photograph is
+    // drawn onto a canvas through a rounded-rect clip and handed to the deck as a data URI.
+    //
+    // This works because Supabase Storage answers with Access-Control-Allow-Origin: *, so the canvas
+    // is not tainted and toDataURL is allowed. PNG, because JPEG cannot carry the transparent corners
+    // and would fill them white — which on the dark cards would show as four bright notches.
+    //
+    // Every photograph is rounded ONCE, up front, keyed by URL, so a photo used on two cards is not
+    // fetched and redrawn twice.
+    // JPEG on the slide's own ground colour — NOT a transparent PNG.
+    //
+    // PNG was the obvious way to carry rounded corners, and it is what killed the export: a PNG of a
+    // photograph runs to several megabytes where the JPEG is a couple of hundred kilobytes, so a deck
+    // of a dozen plates grew large enough that the canva Edge Function was killed decoding it and
+    // returned HTTP 546, Supabase's resource-limit status.
+    //
+    // The transparency was never actually needed. Each photograph sits on a known ground, so painting
+    // the corners in that exact colour is indistinguishable from cutting them out — and it lets the
+    // canvas be flattened to JPEG. The ground travels with the job for that reason.
+    const roundCorners = (url, wIn, hIn, ground) => new Promise((resolve) => {
+      const px = { w: Math.round(wIn * PX), h: Math.round(hIn * PX) };
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = px.w; cv.height = px.h;
+          const ctx = cv.getContext("2d");
+          ctx.fillStyle = "#" + (ground || INK);
+          ctx.fillRect(0, 0, px.w, px.h);
+          const r = Math.round(Math.min(px.w, px.h) * 0.045);
+          ctx.beginPath();
+          ctx.moveTo(r, 0);
+          ctx.lineTo(px.w - r, 0); ctx.quadraticCurveTo(px.w, 0, px.w, r);
+          ctx.lineTo(px.w, px.h - r); ctx.quadraticCurveTo(px.w, px.h, px.w - r, px.h);
+          ctx.lineTo(r, px.h); ctx.quadraticCurveTo(0, px.h, 0, px.h - r);
+          ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+          ctx.closePath();
+          ctx.clip();
+          ctx.drawImage(img, 0, 0, px.w, px.h);
+          resolve(cv.toDataURL("image/jpeg", 0.82));
+        } catch { resolve(null); }                              // tainted or out of memory — use the URL
+      };
+      img.onerror = () => resolve(null);
+      img.src = deckImageUrl(url, px.w, px.h);
+    });
+
+    // The box a photograph lands in decides its crop, so rounding has to know the size in advance.
+    // Anything not listed here still renders, just with square corners.
+    const prepare = async (jobs) => {
+      const seen = new Set();
+      const work = jobs.filter((j) => j.url && !seen.has(rkey(j.url, j.w, j.h, j.ground)) && seen.add(rkey(j.url, j.w, j.h, j.ground)));
+      const done = await Promise.all(work.map((j) => roundCorners(j.url, j.w, j.h, j.ground).catch(() => null)));
+      work.forEach((j, i) => { if (done[i]) rounded.set(rkey(j.url, j.w, j.h, j.ground), done[i]); });
+    };
+
+    // ── Box geometry, named once ──
+    // The rounding pass has to cut each photograph to the exact box it will land in, so the sizes
+    // live here rather than inline, and both the pass and the slides read the same numbers.
+    const BOX = {
+      cover: { w: 4.05, h: 3.0 },
+      hero: { w: 4.75, h: 3.55 },
+      element: { w: SLIDE_W - 6.35 - M, h: (SLIDE_W - 6.35 - M) * 0.68 },
+      flower: { w: SLIDE_W - 6.4 - M, h: SLIDE_H - 2.6 },
+    };
+    const boardBoxes = (n) => {
+      const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
+      const bigW = n > 1 ? CONTENT_W * 0.56 : CONTENT_W;
+      const rw = CONTENT_W - bigW - gut, rh = n > 2 ? (botH - gut) / 2 : botH;
+      return { top, botH, gut, bigW, rw, rh };
+    };
+    const optionBoxes = (m) => {
+      const gut = 0.18, w = (CONTENT_W - gut * (m - 1)) / m;
+      return { gut, w, h: w * 0.67 };
+    };
+
+    {
+      const jobs = [];
+      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: INK });
+      for (const fn of content.functions) {
+        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: INK });
+        const bb = boardBoxes(Math.min(fn.board.length, 3));
+        if (fn.board[0]) jobs.push({ url: fn.board[0], w: bb.bigW, h: bb.botH, ground: IVORY });
+        if (fn.board[1]) jobs.push({ url: fn.board[1], w: bb.rw, h: bb.rh, ground: IVORY });
+        if (fn.board[2]) jobs.push({ url: fn.board[2], w: bb.rw, h: bb.rh, ground: IVORY });
+        for (const z of fn.zones) {
+          if (z.photo) jobs.push({ url: z.photo, ...BOX.element, ground: IVORY });
+          if (z.alts?.length >= 2) {
+            const ob = optionBoxes(Math.min(z.alts.length, 3));
+            z.alts.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h, ground: IVORY }));
+          }
+        }
+      }
+      const flowerPic = content.functions[0]?.board?.[0] || content.cover;
+      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower, ground: INK });
+      await prepare(jobs);
+    }
+
+    // ── Cover ──
+    {
+      const s = newSlide();
+      corners(s);
+      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
+      s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
+      rule(s, M, 4.6, 2.4);
+      s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3, align: "right" });
+      if (content.cover) card(s, content.cover, SLIDE_W - M - BOX.cover.w, 1.35, BOX.cover.w, BOX.cover.h);
+    }
+
+    for (const fn of content.functions) {
+      // ── Function opening: title left, one photograph placed low-right ──
+      {
+        const s = newSlide();
+        corners(s);
+        s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
+        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
+        s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
+        rule(s, M, 4.05, 2.2);
+        card(s, fn.hero, SLIDE_W - M - BOX.hero.w, 2.5, BOX.hero.w, BOX.hero.h);
+      }
+
+      // ── Mood board: photographs of different zones, placed as a considered set ──
+      if (fn.board.length) {
+        const s = newSlide(true);
+        diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body });
+        // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
+        // shared grid so it composes rather than scatters.
+        const { top, botH, gut, bigW, rw: rwS, rh: rhS } = boardBoxes(Math.min(fn.board.length, 3));
+        card(s, fn.board[0], M, top, bigW, botH);
+        if (fn.board[1]) {
+          const rx = M + bigW + gut, rw = rwS, rh = rhS;
+          card(s, fn.board[1], rx, top, rw, rh);
+          if (fn.board[2]) card(s, fn.board[2], rx, top + rh + gut, rw, rh);
+        }
+        const names = fn.zones.slice(0, 3).map((z) => z.label).filter(Boolean).join("   ·   ");
+        if (names) label(s, names, M, SLIDE_H - 0.72, CONTENT_W, 12);
+      }
+
+      // ── Palette ──
+      // Two colours minimum — one swatch stretched across the slide is not a palette, it is a wall.
+      if (fn.palette.length >= 2) {
+        const s = newSlide(true);
+        diamond(s, M, 0.82); s.addText("THE PALETTE", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
+        const n = fn.palette.length, gut = 0.2;
+        const w = (CONTENT_W - gut * (n - 1)) / n, h = 2.9;
+        fn.palette.forEach((c, i) => {
+          const x = M + i * (w + gut);
+          s.addShape(pptx.ShapeType.rect, { x, y: 2.5, w, h, fill: { color: c.hex } });
+          s.addText(c.name.toUpperCase(), { x, y: 2.5 + h + 0.22, w, h: 0.32, fontFace: SANS, fontSize: 10, color: t.body, charSpacing: 2 });
+          s.addText("#" + c.hex, { x, y: 2.5 + h + 0.55, w, h: 0.3, fontFace: SANS, fontSize: 9, color: t.mute });
+        });
+      }
+
+      // ── Element cards: the photograph placed right, its callouts read down the left ──
+      for (const z of fn.zones) {
+        const s = newSlide(true);
+        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body });
+        rule(s, M, 2.25, 1.8);
+        const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
+        outs.slice(0, 3).forEach((c, i) => {
+          const y = 2.65 + i * 0.72;
+          s.addShape(pptx.ShapeType.rect, { x: M, y: y + 0.08, w: 0.16, h: 0.02, fill: { color: t.accent } });
+          s.addText(c, { x: M + 0.32, y, w: 4.3, h: 0.6, fontFace: SANS, fontSize: 12.5, color: t.body, lineSpacingMultiple: 1.3 });
+        });
+        // Landscape, and centred against the text column. A tall box meant a wide venue shot lost its
+        // sides to the crop — the room stopped being readable, which is the whole point of the plate.
+        card(s, z.photo, 6.35, 1.65, BOX.element.w, BOX.element.h);
+
+        // ── Options: the same element from other angles ──
+        if (z.alts.length >= 2) {
+          const o = newSlide(true);
+          diamond(o, M, 0.82); o.addText("OPTIONS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+          o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
+          const m = Math.min(z.alts.length, 3);
+          // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
+          // cropped the option down to a detail you could no longer recognise as the element.
+          const { gut, w, h } = optionBoxes(m);
+          const y = 2.15 + Math.max(0, (SLIDE_H - 2.15 - 0.9 - h) / 2);
+          z.alts.slice(0, m).forEach((u, i) => {
+            const x = M + i * (w + gut);
+            card(o, u, x, y, w, h);
+            label(o, String(i + 1), x, y + h + 0.16, w, 14);
+          });
+        }
+      }
+    }
+
+    // ── Flower story: prose left, one photograph right ──
+    if (content.flowerStory) {
+      const s = newSlide();
+      corners(s);
+      s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+      s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
+      rule(s, M, 2.7, 1.8);
+      // shrinkText + a real height: the story ran past the bottom of the slide because the box was
+      // sized for a shorter paragraph than the model tends to write.
+      s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: SLIDE_H - 3.05 - 0.7, fontFace: SANS, fontSize: 12, color: t.body, lineSpacingMultiple: 1.35, shrinkText: true, valign: "top" });
+      card(s, content.functions[0]?.board?.[0] || content.cover, 6.4, 1.3, BOX.flower.w, BOX.flower.h);
+    }
+
+    // ── Close ──
+    {
+      const s = newSlide();
+      // Sat low and left with dead space above and below it. The block is now centred vertically as
+      // one unit, so the card reads as composed rather than as text that slid down the page.
+      corners(s);
+      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
+      s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
+      rule(s, M, 4.25, 2.2);
+      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
+      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 4.9, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
+    }
+
+    return pptx;
+  };
+
+  // "🎨 Canva" — the design deck is laid out here (buildDesignDeck) and uploaded to Canva as a Design
+  // Import job, so the salesperson gets back an editable Canva draft.
+  //
+  // Gamma is no longer in this path. It was given five rounds of progressively explicit art direction
+  // and kept returning the same shape — photo inset with dead margins, title beneath it, callouts
+  // stacked below — which is simply what its layout engine does. Placing the elements ourselves also
+  // removes the two-to-three minute wait its generation took, and makes the deck identical every run.
+  // The gamma edge function stays deployed; nothing calls it from here.
+  //
+  // The Canva import still polls client-side (each poll one fast GET through an edge function) rather
+  // than blocking a single long edge-function call, which would hit the execution ceiling.
   const sendToCanva = async (combined) => {
     setCanvaState("designing"); setCanvaEditUrl(""); setCanvaError("");
     try {
@@ -889,17 +1340,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         setCanvaError('Canva isn\'t connected — ask an admin to connect it in IMS → Admin → Settings.');
         return;
       }
-      const outline = await buildGammaOutline(combined);
-      const title = `${combined.clientName || "Ambria"} Cost Estimate`;
-      const generationId = await gammaCreateGeneration(outline, title);
-      let base64 = null;
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 4000));
-        const res = await gammaPollGeneration(generationId);
-        if (res.status === "completed") { base64 = res.base64; break; }
-        if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Gamma design failed"); return; }
+      const content = await buildDeckContent(combined);
+      const title = `${combined.clientName || "Ambria"} Design Presentation`;
+      const pptx = await buildDesignDeck(content);
+      // base64 straight out of PptxGenJS — the bytes go to Canva's import, never to disk.
+      const base64 = await pptx.write({ outputType: "base64" });
+
+      // The deck is posted as one JSON body to an Edge Function, which decodes it in memory. Too big
+      // and the worker is killed mid-decode and answers HTTP 546 — a bare status that tells the
+      // salesperson nothing. Checked here instead, where the cause and the remedy are both known.
+      const mb = base64.length / 1.37e6;                       // base64 → rough megabytes
+      if (mb > 18) {
+        setCanvaState("error");
+        setCanvaError(`This deck is ${mb.toFixed(0)} MB — too large for Canva import. Trim the zones with photos, or use the PDF export.`);
+        return;
       }
-      if (!base64) { setCanvaState("error"); setCanvaError("Timed out waiting for Gamma to finish designing — try again"); return; }
       setCanvaState("uploading");
       const jobId = await canvaCreateImport(base64, title);
       setCanvaState("processing");
