@@ -1048,7 +1048,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // mood board plate is wide, the flower-story plate is tall). A single entry per URL would hand
     // PptxGenJS a data URI of the wrong aspect and it would stretch it to fit.
     const rounded = new Map();
-    const rkey = (url, w, h) => url + "|" + w.toFixed(2) + "x" + h.toFixed(2);
+    const rkey = (url, w, h, g) => url + "|" + w.toFixed(2) + "x" + h.toFixed(2) + "|" + g;
     const card = (slide, url, x, y, w, h) => {
       if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
       try {
@@ -1060,7 +1060,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           line: { color: t === LIGHT ? "E2D9CB" : "2E2A26", width: 0.75 },
           shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 14, offset: 5, angle: 90 },
         });
-        const src = rounded.get(rkey(url, w, h)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
+        const src = rounded.get(rkey(url, w, h, t === LIGHT ? IVORY : INK)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
         slide.addImage(src.startsWith("data:") ? { data: src, x, y, w, h } : { path: src, x, y, w, h });
         return true;
       } catch { return false; }
@@ -1110,7 +1110,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     //
     // Every photograph is rounded ONCE, up front, keyed by URL, so a photo used on two cards is not
     // fetched and redrawn twice.
-    const roundCorners = (url, wIn, hIn) => new Promise((resolve) => {
+    // JPEG on the slide's own ground colour — NOT a transparent PNG.
+    //
+    // PNG was the obvious way to carry rounded corners, and it is what killed the export: a PNG of a
+    // photograph runs to several megabytes where the JPEG is a couple of hundred kilobytes, so a deck
+    // of a dozen plates grew large enough that the canva Edge Function was killed decoding it and
+    // returned HTTP 546, Supabase's resource-limit status.
+    //
+    // The transparency was never actually needed. Each photograph sits on a known ground, so painting
+    // the corners in that exact colour is indistinguishable from cutting them out — and it lets the
+    // canvas be flattened to JPEG. The ground travels with the job for that reason.
+    const roundCorners = (url, wIn, hIn, ground) => new Promise((resolve) => {
       const px = { w: Math.round(wIn * PX), h: Math.round(hIn * PX) };
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -1119,7 +1129,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           const cv = document.createElement("canvas");
           cv.width = px.w; cv.height = px.h;
           const ctx = cv.getContext("2d");
-          const r = Math.round(Math.min(px.w, px.h) * 0.045);   // ~0.12in at these sizes
+          ctx.fillStyle = "#" + (ground || INK);
+          ctx.fillRect(0, 0, px.w, px.h);
+          const r = Math.round(Math.min(px.w, px.h) * 0.045);
           ctx.beginPath();
           ctx.moveTo(r, 0);
           ctx.lineTo(px.w - r, 0); ctx.quadraticCurveTo(px.w, 0, px.w, r);
@@ -1129,7 +1141,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           ctx.closePath();
           ctx.clip();
           ctx.drawImage(img, 0, 0, px.w, px.h);
-          resolve(cv.toDataURL("image/png"));
+          resolve(cv.toDataURL("image/jpeg", 0.82));
         } catch { resolve(null); }                              // tainted or out of memory — use the URL
       };
       img.onerror = () => resolve(null);
@@ -1140,9 +1152,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // Anything not listed here still renders, just with square corners.
     const prepare = async (jobs) => {
       const seen = new Set();
-      const work = jobs.filter((j) => j.url && !seen.has(rkey(j.url, j.w, j.h)) && seen.add(rkey(j.url, j.w, j.h)));
-      const done = await Promise.all(work.map((j) => roundCorners(j.url, j.w, j.h).catch(() => null)));
-      work.forEach((j, i) => { if (done[i]) rounded.set(rkey(j.url, j.w, j.h), done[i]); });
+      const work = jobs.filter((j) => j.url && !seen.has(rkey(j.url, j.w, j.h, j.ground)) && seen.add(rkey(j.url, j.w, j.h, j.ground)));
+      const done = await Promise.all(work.map((j) => roundCorners(j.url, j.w, j.h, j.ground).catch(() => null)));
+      work.forEach((j, i) => { if (done[i]) rounded.set(rkey(j.url, j.w, j.h, j.ground), done[i]); });
     };
 
     // ── Box geometry, named once ──
@@ -1167,23 +1179,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
     {
       const jobs = [];
-      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover });
+      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: INK });
       for (const fn of content.functions) {
-        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero });
+        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: INK });
         const bb = boardBoxes(Math.min(fn.board.length, 3));
-        if (fn.board[0]) jobs.push({ url: fn.board[0], w: bb.bigW, h: bb.botH });
-        if (fn.board[1]) jobs.push({ url: fn.board[1], w: bb.rw, h: bb.rh });
-        if (fn.board[2]) jobs.push({ url: fn.board[2], w: bb.rw, h: bb.rh });
+        if (fn.board[0]) jobs.push({ url: fn.board[0], w: bb.bigW, h: bb.botH, ground: IVORY });
+        if (fn.board[1]) jobs.push({ url: fn.board[1], w: bb.rw, h: bb.rh, ground: IVORY });
+        if (fn.board[2]) jobs.push({ url: fn.board[2], w: bb.rw, h: bb.rh, ground: IVORY });
         for (const z of fn.zones) {
-          if (z.photo) jobs.push({ url: z.photo, ...BOX.element });
+          if (z.photo) jobs.push({ url: z.photo, ...BOX.element, ground: IVORY });
           if (z.alts?.length >= 2) {
             const ob = optionBoxes(Math.min(z.alts.length, 3));
-            z.alts.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h }));
+            z.alts.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h, ground: IVORY }));
           }
         }
       }
       const flowerPic = content.functions[0]?.board?.[0] || content.cover;
-      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower });
+      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower, ground: INK });
       await prepare(jobs);
     }
 
@@ -1333,6 +1345,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const pptx = await buildDesignDeck(content);
       // base64 straight out of PptxGenJS — the bytes go to Canva's import, never to disk.
       const base64 = await pptx.write({ outputType: "base64" });
+
+      // The deck is posted as one JSON body to an Edge Function, which decodes it in memory. Too big
+      // and the worker is killed mid-decode and answers HTTP 546 — a bare status that tells the
+      // salesperson nothing. Checked here instead, where the cause and the remedy are both known.
+      const mb = base64.length / 1.37e6;                       // base64 → rough megabytes
+      if (mb > 18) {
+        setCanvaState("error");
+        setCanvaError(`This deck is ${mb.toFixed(0)} MB — too large for Canva import. Trim the zones with photos, or use the PDF export.`);
+        return;
+      }
       setCanvaState("uploading");
       const jobId = await canvaCreateImport(base64, title);
       setCanvaState("processing");
