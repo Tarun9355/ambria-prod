@@ -39,15 +39,17 @@ export const resolveMandiFlower = (id, mandi) => {
   return null;
 };
 
-// Σ(qty × mandi price) for one recipe size, plus Σ(qty × IMS rental) for any inventory-sourced
-// ingredient rows ({invItemId, qty} — added via the "Artificial included?" toggle). null when empty.
-export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory) => {
+// Σ(qty × mandi price) for one recipe size, plus Σ(qty × IMS rental, factored) for any inventory-
+// sourced ingredient rows ({invItemId, qty} — added via the "Artificial included?" toggle). null
+// when empty. rcFactorByKey is optional (older callers that don't have it yet fall back to factor
+// 1, i.e. the item's raw rate) — see priceForInvItem for what it does.
+export const computePatternSizeCost = (sizeData, mandiCatalogue, inventory, rcFactorByKey) => {
   if (!sizeData?.flowers?.length) return null;
   let total = 0;
   for (const fl of sizeData.flowers) {
     if (fl?.invItemId) {
       const item = (inventory || []).find((i) => i.id === fl.invItemId);
-      const price = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+      const price = item ? priceForInvItem(item, rcFactorByKey, inventory) : 0;
       total += (Number(fl?.qty) || 0) * price;
       continue;
     }
@@ -107,7 +109,7 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   const sizeData = sizes[resolveSizeKey(sizes, sizeKey)];
   if (!sizeData) return null;
   const markup = effectiveMarkup(pattern, settings);
-  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory) || 0) * markup);
+  const realRate = Math.round((computePatternSizeCost(sizeData, mandiCatalogue, inventory, rcFactorByKey) || 0) * markup);
   const afRate = Number(settings?.artificialFlowerRatePerKg ?? 50);
   const afBPK = Number(settings?.artificialFlowerBunchesPerKg ?? 16) || 16;
   const agRate = Number(settings?.artificialGreenRatePerKg ?? 40);
@@ -115,7 +117,20 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   const artMarkup = Number(settings?.defaultStudioMarkup ?? 3) || 3;
   let artCost = 0, mappedFinal = 0;
   (sizeData.flowers || []).forEach((fl) => {
-    if (fl?.invItemId) return; // inventory-sourced ingredient — already priced directly, not a bunches-per-kg estimate
+    if (fl?.invItemId) {
+      // A direct IMS Inventory ingredient (the "Artificial included?" toggle) has no "real flower"
+      // counterpart to speak of — it's a physical rented piece (e.g. a structural panel), not a
+      // perishable flower with an artificial substitute. It's always sourced from inventory, so its
+      // cost belongs on BOTH sides of the real/artificial blend identically — added here (post-
+      // markup, like a Mapping flower's rate) to match what computePatternSizeCost already added to
+      // realRate above, so `realPct/100×X + (100-realPct)/100×X = X` for any realPct: this
+      // ingredient's price is invariant to the slider instead of vanishing to ₹0 at 0% real (it used
+      // to be skipped here entirely, only ever counted on the real side).
+      const item = (inventory || []).find((i) => i.id === fl.invItemId);
+      const liveRate = item ? priceForInvItem(item, rcFactorByKey, inventory) : 0;
+      mappedFinal += (Number(fl?.qty) || 0) * liveRate;
+      return;
+    }
     const parent = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent || null;
     const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
     if (ft === "real_only") return;
