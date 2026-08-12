@@ -96,6 +96,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
+import { fnSnapHasData as fnSnapHasDataPure, autoSaveWouldDestroy } from "../../lib/studio/sessionData.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -1723,14 +1724,10 @@ export default function StudioApp() {
     customGensets, customTripRate,
     floralOverrides,
   });
+  // Lives in lib/studio/sessionData now, so the SAVE path and Browse's banner cannot drift apart on
+  // what counts as "has data" — they disagreeing is what let an empty auto-save erase a visible card.
   const fnSnapHasData = (snap) => {
-    if (!snap || typeof snap !== "object") return false;
-    if (Object.keys(snap.elSelectedPhoto || {}).length > 0) return true;
-    if (Object.keys(snap.zoneElements || {}).length > 0) return true;
-    if (Object.values(snap.enabledEls || {}).some(v => v)) return true;
-    if (snap.sourceVideo?.id || snap.sourceVideoId) return true;
-    if (snap.sourceEvent?.id || snap.sourceEventId) return true;
-    return false;
+    return fnSnapHasDataPure(snap);
   };
   const restoreBuildState = (s) => {
     if (!s) {
@@ -5008,9 +5005,26 @@ export default function StudioApp() {
     // Auto-drafts update the rolling draft IN PLACE (replace a leading auto session) so the background
     // save doesn't spam the 20-session history; a manual Save Draft always prepends a fresh entry.
     const prevSessions = client.sessions || [];
-    client.sessions = (opts.auto && prevSessions[0]?.auto)
-      ? [snapshot, ...prevSessions.slice(1)].slice(0, 20)
-      : [snapshot, ...prevSessions].slice(0, 20);
+
+    // …but replacing in place means an EMPTY auto-save destroys the draft it lands on. The autosave
+    // fires every 15s and its guard is satisfied by activeClientId alone, so a committed deal keeps
+    // saving while the build is empty — sitting on Browse, or on a function pill nothing has been
+    // built for yet. Browse then drops the row (it lists only sessions whose snapshot has data) and
+    // the card the salesperson was about to click disappears, returning when they next touch the
+    // build. That is the flicker: the work was never lost, the newest draft was simply blank.
+    //
+    // A manual Save Draft is never blocked — it prepends rather than replaces, and it is asked for.
+    //
+    // Only the SESSIONS are held back, not the whole save: this function also writes the deal's own
+    // details (name, date, venue, shift, pax, functions), and returning early here would mean editing
+    // Event Info stopped persisting whenever the build happened to be empty — trading a visible bug
+    // for a silent one.
+    const keepDraft = autoSaveWouldDestroy(snapshot, prevSessions[0] || null, !!opts.auto);
+    client.sessions = keepDraft
+      ? prevSessions
+      : (opts.auto && prevSessions[0]?.auto)
+        ? [snapshot, ...prevSessions.slice(1)].slice(0, 20)
+        : [snapshot, ...prevSessions].slice(0, 20);
     setActiveClientId(client.id);
     const finalLedger = updated.slice(0, 200);
     saveClientLedger(finalLedger);
