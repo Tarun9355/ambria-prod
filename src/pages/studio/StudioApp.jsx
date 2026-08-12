@@ -2537,10 +2537,16 @@ export default function StudioApp() {
         // remote change isn't mistaken for a local edit (or the reverse) on the next save.
         if (payload.eventType === "DELETE") {
           const id = payload.old?.id; if (!id) return;
+          // Tombstone it here too. A client deleted in ANOTHER tab or by another user has to survive
+          // this tab's stale ledger writes exactly as a local delete does — see deletedClientIdsRef.
+          deletedClientIdsRef.current.add(id);
           if (clientJsonRef.current) delete clientJsonRef.current[id];
           setClientLedger((prev) => prev.filter((c) => c.id !== id));
         } else if (payload.new) {
           const c = rowToClient(payload.new); if (!c?.id) return;
+          // Our own stale upsert, echoed back before the delete landed, would otherwise re-add the
+          // row to the list this tab is showing.
+          if (deletedClientIdsRef.current.has(c.id)) return;
           if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(c);
           setClientLedger((prev) => { const i = prev.findIndex((x) => x.id === c.id); return i >= 0 ? prev.map((x) => (x.id === c.id ? c : x)) : [...prev, c]; });
         }
@@ -2693,29 +2699,50 @@ export default function StudioApp() {
   // created and then never updated again: sessions and edited details went nowhere.
   // Strings can't be mutated behind our back, so comparing against these is sound.
   const clientJsonRef = useRef(null);
+  // ═══ A DELETED CLIENT STAYS DELETED ═══
+  // Writers here hand over a WHOLE ledger array built from their own closure — the Event Info form,
+  // the booking path, the LMS lead link, the Deal Check overlay. Deleting a client removes the row
+  // from the DB and from state, but those closures captured the ledger BEFORE it went, and the next
+  // write hands the stale array straight back. (saveSession itself reads clientLedgerRef.current
+  // since the duplicate-session fix, so it is no longer one of them — the rest still are.)
+  //
+  // The dirty check below is what turns that into a resurrection. Deleting clears the client's
+  // baseline from clientJsonRef, so when the stale array arrives its id has no entry — the row
+  // reads as BRAND NEW and gets upserted, details and all. Deleting again just repeats the cycle.
+  //
+  // Ids are minted from a timestamp ("CLI_" + Date.now()) and never reused, so remembering the
+  // deleted ones for the life of the page is enough: a tombstoned id is dropped from the upsert,
+  // from the baseline and from state, whoever sends it and however stale their copy is.
+  const deletedClientIdsRef = useRef(new Set());
   const saveClientLedger = useCallback(async (nl, deletedIds) => {
+    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    dels.forEach((id) => deletedClientIdsRef.current.add(id));
+    const gone = deletedClientIdsRef.current;
+    // Filter FIRST, so a tombstoned client can reach neither the upsert, the baseline, nor the list
+    // the tracker renders — otherwise it returns to the screen even when the DB row stays gone.
+    const list = (nl || []).filter((c) => c && c.id && !gone.has(c.id));
     // No baseline yet (a save landing before the load effect seeded one) means we cannot tell what
     // is dirty — upsert everything rather than risk dropping a write. The load effect seeds it, so
     // this is the rare path, not the normal one.
     const prevJson = clientJsonRef.current || {};
     const nextJson = {};
     const changed = [];
-    for (const c of (nl || [])) {
-      if (!c || !c.id) continue;
+    for (const c of list) {
       const j = JSON.stringify(c);
       nextJson[c.id] = j;
       if (prevJson[c.id] !== j) changed.push(c);
     }
     clientJsonRef.current = nextJson;
-    clientLedgerRef.current = nl; setClientLedger(nl);
-    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
+    clientLedgerRef.current = list; setClientLedger(list);
     try {
+      // Delete BEFORE upserting. Both run in one call when the tracker deletes a client, and an
+      // upsert landing after its own delete would put the row straight back.
+      for (const id of dels) await deleteRow("client_ledger", id);
       if (changed.length) {
         const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
         const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
         if (error) throw error;
       }
-      for (const id of dels) await deleteRow("client_ledger", id);
     } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
@@ -5349,6 +5376,23 @@ export default function StudioApp() {
     showMsg("Loaded session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
   }, [events, allVideos, ytVideoTags]);
 
+  // ── Close the open deal: back to a blank builder ──
+  // Lived inline in StudioSummary, where "Start New" and the Summary's own delete link both used it.
+  // The Client Tracker's delete could not reach it and cleared only activeClientId, which is a
+  // resurrection: the background auto-save runs off clientName plus whatever build is loaded, so
+  // with the id gone saveSession stops finding a client and MINTS A NEW ONE — same name, same
+  // details, same build, fresh CLI_ id — within fifteen seconds of the delete. Deleting the deal you
+  // have open has to clear the deal you have open, so the reset lives here and both call sites take
+  // it from ctx rather than keeping a copy each.
+  //
+  // The moved copy also drops a setNewCzName("") call. No such state exists — ctx handed the old
+  // inline version `undefined` for it, so the reset THREW there and the ten setters after it never
+  // ran: bride/groom, shift, pax, the other venue, the extra functions, the function index and its
+  // builds, floral overrides and the palette all survived "Start New" into the next deal.
+  const startNewDeal = useCallback(() => {
+    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");
+  }, [userVenueScope]);
+
   // ── Restore the active deal on mount (refresh / Studio↔IMS switch) ──
   // The build lives in the client's rolling auto-session; sessionStorage remembers which deal + screen.
   // Runs once, only when nothing is loaded yet, so it never clobbers a deal already being edited.
@@ -7141,7 +7185,7 @@ export default function StudioApp() {
     activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames, leafInhouseVenues,
     allVenueData, outdoorVenueList, browseVideos, allVideos,
     // handlers
-    loadClientSession, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
+    loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, loadEvent,
     buildZonesForFn, buildCombinedCostSheetData, logActivity, saveTR,

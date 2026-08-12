@@ -28,7 +28,7 @@ export default function ManageSettings({ ctx }) {
     newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, allVenueData,
     // clients
-    clientLedger, saveClientLedger, activeClientId, setActiveClientId, eventOrders,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, startNewDeal, eventOrders,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
     ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
     clientSearch, setClientSearch,
@@ -679,6 +679,9 @@ export default function ManageSettings({ ctx }) {
         // Summary footer so the two entry points cannot drift apart.
         const deleteClient = makeDeleteClient({
           clientLedger, saveClientLedger, eventOrders, activeClientId, setActiveClientId, askConfirm, showMsg,
+          // Deleting the deal that is currently open from HERE has to close it too — without this
+          // the auto-save re-created the client a few seconds later. See clientDelete.js.
+          startNewDeal,
         });
         const setClientStatus = (c, next) => {
           if (!c || c.status === next) return;
