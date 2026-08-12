@@ -930,7 +930,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       fns.push({
         name: String(fnObj.fnType || "Function"),
-        dateLine: [fmtDate(fnObj.fnDate), fnObj.fnVenue, fnObj.fnShift].filter(Boolean).join("  ·  "),
+        // The references lead a function with the VENUE set large ("Gurmon Hotel") and the function
+        // itself as the italic line beneath it, so both are carried separately.
+        venueLine: String(fnObj.fnVenue || fnObj.fnType || "Function"),
+        dateLine: [String(fnObj.fnType || ""), fmtDate(fnObj.fnDate), fnObj.fnShift].filter(Boolean).join("  ·  "),
         hero: libPic || fallbackPic || "",
         board, palette, zones: zoneCards,
         paletteName: String(fnObj.palette || ""),
@@ -980,126 +983,130 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     pptx.defineSlideMaster({ title: "AMBRIA", background: { color: INK } });
     const newSlide = () => pptx.addSlide({ masterName: "AMBRIA" });
 
-    // Full-bleed: cover-sized so the photo fills the card and crops, rather than letterboxing into it.
-    const bleed = (slide, url) => {
+    // A photograph is a CARD on the dark ground, never a full-bleed background. This is the single
+    // thing that makes the reference decks look the way they do: deep near-black space, a few
+    // photographs placed within it, gold serif naming each one. Filling the slide edge to edge — my
+    // first reading of them — produces something quite different and much louder.
+    const card = (slide, url, x, y, w, h) => {
       if (!url) return false;
       try {
-        slide.addImage({ path: url, x: 0, y: 0, w: SLIDE_W, h: SLIDE_H, sizing: { type: "cover", w: SLIDE_W, h: SLIDE_H } });
+        slide.addImage({ path: url, x, y, w, h, sizing: { type: "cover", w, h } });
         return true;
       } catch { return false; }
     };
-    // A scrim, not a wash: type over a photograph is unreadable without one, and a band at the foot
-    // keeps the image itself clear.
-    const scrim = (slide, y, h, transparency = 35) =>
-      slide.addShape(pptx.ShapeType.rect, { x: 0, y, w: SLIDE_W, h, fill: { color: "000000", transparency } });
+    // The gold italic serif that labels each photograph in the references.
+    const label = (slide, text, x, y, w, size = 13) =>
+      slide.addText(text, { x, y, w, h: 0.34, fontFace: SERIF, fontSize: size, color: GOLD, italic: true });
     const rule = (slide, x, y, w) =>
       slide.addShape(pptx.ShapeType.rect, { x, y, w, h: 0.02, fill: { color: GOLD } });
+
+    const M = 0.85;                    // the margin every card and title block sits on
+    const CONTENT_W = SLIDE_W - M * 2;
 
     // ── Cover ──
     {
       const s = newSlide();
-      const has = bleed(s, content.cover);
-      scrim(s, has ? SLIDE_H - 3.2 : 0, has ? 3.2 : SLIDE_H, has ? 30 : 0);
-      s.addText("DECOR PRESENTATION", { x: 0.9, y: SLIDE_H - 2.6, w: 8, h: 0.3, fontFace: SANS, fontSize: 12, color: CREAM, charSpacing: 4 });
-      s.addText(content.clientName || "Your Wedding", { x: 0.9, y: SLIDE_H - 2.2, w: 11.5, h: 1.2, fontFace: SERIF, fontSize: 46, color: GOLD, bold: true });
-      rule(s, 0.9, SLIDE_H - 0.95, 2.2);
-      s.addText("AMBRIA DESIGN & DECOR", { x: 0.9, y: SLIDE_H - 0.8, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: CREAM, charSpacing: 3 });
-    }
-
-    // ── Opening line ──
-    {
-      const s = newSlide();
-      const has = bleed(s, content.functions[0]?.hero || content.cover);
-      scrim(s, 0, SLIDE_H, has ? 55 : 0);
-      s.addText("Design Your Wedding", { x: 1.1, y: 2.1, w: 8.6, h: 1.5, fontFace: SERIF, fontSize: 44, color: GOLD });
-      rule(s, 1.1, 3.8, 2.2);
-      s.addText("Each wedding is a unique chapter, and we are here to make sure the decor comes out exactly as you imagined it.",
-        { x: 1.1, y: 4.1, w: 8.2, h: 1.2, fontFace: SANS, fontSize: 15, color: CREAM, lineSpacingMultiple: 1.4 });
+      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
+      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: CREAM });
+      s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: CREAM, italic: true });
+      rule(s, M, 4.6, 2.4);
+      s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 3, align: "right" });
+      if (content.cover) card(s, content.cover, SLIDE_W - 4.9, 1.35, 4.05, 3.0);
     }
 
     for (const fn of content.functions) {
-      // ── Function divider ──
+      // ── Function opening: title left, one photograph placed low-right ──
       {
         const s = newSlide();
-        const has = bleed(s, fn.hero);
-        scrim(s, 0, SLIDE_H, has ? 40 : 0);
-        s.addText(fn.name.toUpperCase(), { x: 0.9, y: 3.0, w: 11.5, h: 1.4, fontFace: SERIF, fontSize: 54, color: GOLD, charSpacing: 6 });
-        rule(s, 0.95, 4.45, 2.4);
-        if (fn.dateLine) s.addText(fn.dateLine, { x: 0.95, y: 4.6, w: 9, h: 0.4, fontFace: SANS, fontSize: 13, color: CREAM, charSpacing: 2 });
+        s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: GOLD, charSpacing: 5 });
+        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: CREAM });
+        s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: GOLD, italic: true });
+        rule(s, M, 4.05, 2.2);
+        card(s, fn.hero, SLIDE_W - 5.6, 2.5, 4.75, 3.55);
       }
 
-      // ── Mood board: full-height columns, hairline gutters, no dead margin ──
+      // ── Mood board: photographs of different zones, placed as a considered set ──
       if (fn.board.length) {
         const s = newSlide();
-        const n = Math.min(fn.board.length, 3);
-        const gut = 0.06, colW = (SLIDE_W - gut * (n - 1)) / n;
-        fn.board.slice(0, n).forEach((u, i) => {
-          try { s.addImage({ path: u, x: i * (colW + gut), y: 0, w: colW, h: SLIDE_H, sizing: { type: "cover", w: colW, h: SLIDE_H } }); } catch {}
-        });
-        scrim(s, 0, 1.5, 30);
-        s.addText("MOOD BOARD", { x: 0.7, y: 0.42, w: 6, h: 0.4, fontFace: SANS, fontSize: 12, color: CREAM, charSpacing: 5 });
-        s.addText(fn.name, { x: 0.7, y: 0.72, w: 8, h: 0.6, fontFace: SERIF, fontSize: 26, color: GOLD });
+        s.addText("MOOD BOARD", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
+        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: CREAM });
+        // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
+        // shared grid so it composes rather than scatters.
+        const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
+        const bigW = fn.board.length > 1 ? CONTENT_W * 0.56 : CONTENT_W;
+        card(s, fn.board[0], M, top, bigW, botH);
+        if (fn.board[1]) {
+          const rx = M + bigW + gut, rw = CONTENT_W - bigW - gut;
+          const rh = fn.board[2] ? (botH - gut) / 2 : botH;
+          card(s, fn.board[1], rx, top, rw, rh);
+          if (fn.board[2]) card(s, fn.board[2], rx, top + rh + gut, rw, rh);
+        }
+        const names = fn.zones.slice(0, 3).map((z) => z.label).filter(Boolean).join("   ·   ");
+        if (names) label(s, names, M, SLIDE_H - 0.72, CONTENT_W, 12);
       }
 
-      // ── Palette: the colours fill the card, as colour ──
+      // ── Palette ──
       if (fn.palette.length) {
         const s = newSlide();
-        const n = fn.palette.length, colW = SLIDE_W / n;
+        s.addText("THE PALETTE", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
+        s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
+        const n = fn.palette.length, gut = 0.2;
+        const w = (CONTENT_W - gut * (n - 1)) / n, h = 2.9;
         fn.palette.forEach((c, i) => {
-          s.addShape(pptx.ShapeType.rect, { x: i * colW, y: 1.75, w: colW, h: SLIDE_H - 1.75, fill: { color: c.hex } });
-          s.addText(c.name.toUpperCase(), { x: i * colW + 0.25, y: SLIDE_H - 1.15, w: colW - 0.5, h: 0.4, fontFace: SANS, fontSize: 11, color: INK, charSpacing: 2, bold: true });
-          s.addText("#" + c.hex, { x: i * colW + 0.25, y: SLIDE_H - 0.78, w: colW - 0.5, h: 0.3, fontFace: SANS, fontSize: 9, color: INK });
+          const x = M + i * (w + gut);
+          s.addShape(pptx.ShapeType.rect, { x, y: 2.5, w, h, fill: { color: c.hex } });
+          s.addText(c.name.toUpperCase(), { x, y: 2.5 + h + 0.22, w, h: 0.32, fontFace: SANS, fontSize: 10, color: CREAM, charSpacing: 2 });
+          s.addText("#" + c.hex, { x, y: 2.5 + h + 0.55, w, h: 0.3, fontFace: SANS, fontSize: 9, color: "8C8C86" });
         });
-        s.addText("The Palette", { x: 0.7, y: 0.5, w: 8, h: 0.8, fontFace: SERIF, fontSize: 34, color: GOLD });
-        if (fn.paletteName) s.addText(fn.paletteName, { x: 0.75, y: 1.25, w: 9, h: 0.35, fontFace: SANS, fontSize: 12, color: CREAM, charSpacing: 2 });
       }
 
-      // ── Element cards: photo full-bleed, callouts annotating it ──
+      // ── Element cards: the photograph placed right, its callouts read down the left ──
       for (const z of fn.zones) {
         const s = newSlide();
-        const has = bleed(s, z.photo);
-        scrim(s, SLIDE_H - 2.5, 2.5, has ? 25 : 0);
-        s.addText(z.label, { x: 0.8, y: SLIDE_H - 2.25, w: 11.5, h: 0.8, fontFace: SERIF, fontSize: 34, color: GOLD });
+        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: CREAM });
+        rule(s, M, 2.25, 1.8);
         const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
-        const n = Math.max(outs.length, 1), cw = (SLIDE_W - 1.6) / n;
-        outs.forEach((c, i) => {
-          const x = 0.8 + i * cw;
-          s.addShape(pptx.ShapeType.rect, { x, y: SLIDE_H - 1.25, w: 0.035, h: 0.34, fill: { color: GOLD } });
-          s.addText(c, { x: x + 0.16, y: SLIDE_H - 1.28, w: cw - 0.45, h: 0.45, fontFace: SANS, fontSize: 12, color: CREAM });
+        outs.slice(0, 3).forEach((c, i) => {
+          const y = 2.65 + i * 0.72;
+          s.addShape(pptx.ShapeType.rect, { x: M, y: y + 0.08, w: 0.16, h: 0.02, fill: { color: GOLD } });
+          s.addText(c, { x: M + 0.32, y, w: 4.3, h: 0.6, fontFace: SANS, fontSize: 12.5, color: CREAM, lineSpacingMultiple: 1.3 });
         });
+        card(s, z.photo, 6.0, 1.15, SLIDE_W - 6.0 - M, SLIDE_H - 2.3);
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
           const o = newSlide();
-          const m = Math.min(z.alts.length, 3), gut = 0.06, colW = (SLIDE_W - gut * (m - 1)) / m;
+          o.addText("OPTIONS", { x: M, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
+          o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: CREAM, italic: true });
+          const m = Math.min(z.alts.length, 3), gut = 0.18;
+          const w = (CONTENT_W - gut * (m - 1)) / m, h = SLIDE_H - 2.15 - 0.9;
           z.alts.slice(0, m).forEach((u, i) => {
-            const x = i * (colW + gut);
-            try { o.addImage({ path: u, x, y: 1.5, w: colW, h: SLIDE_H - 1.5, sizing: { type: "cover", w: colW, h: SLIDE_H - 1.5 } }); } catch {}
-            o.addText(String(i + 1), { x: x + 0.2, y: 1.65, w: 0.6, h: 0.5, fontFace: SERIF, fontSize: 22, color: GOLD, bold: true });
+            const x = M + i * (w + gut);
+            card(o, u, x, 2.15, w, h);
+            label(o, String(i + 1), x, 2.15 + h + 0.16, w, 14);
           });
-          o.addText(`Options for the ${z.label}`, { x: 0.7, y: 0.45, w: 11, h: 0.8, fontFace: SERIF, fontSize: 30, color: GOLD });
         }
       }
     }
 
-    // ── Flower story ──
+    // ── Flower story: prose left, one photograph right ──
     if (content.flowerStory) {
       const s = newSlide();
-      const has = bleed(s, content.functions[0]?.board?.[0] || content.cover);
-      scrim(s, 0, SLIDE_H, has ? 58 : 0);
-      s.addText("The Flower Story", { x: 1.0, y: 1.2, w: 8, h: 0.9, fontFace: SERIF, fontSize: 38, color: GOLD });
-      rule(s, 1.05, 2.25, 2.2);
-      s.addText(content.flowerStory, { x: 1.05, y: 2.55, w: 7.6, h: 3.6, fontFace: SANS, fontSize: 14, color: CREAM, lineSpacingMultiple: 1.5 });
+      s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 5 });
+      s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: CREAM, italic: true });
+      rule(s, M, 2.7, 1.8);
+      s.addText(content.flowerStory, { x: M, y: 3.05, w: 4.9, h: 3.4, fontFace: SANS, fontSize: 13, color: CREAM, lineSpacingMultiple: 1.55 });
+      card(s, content.functions[0]?.board?.[0] || content.cover, 6.4, 1.3, SLIDE_W - 6.4 - M, SLIDE_H - 2.6);
     }
 
     // ── Close ──
     {
       const s = newSlide();
-      s.addText("Thank You", { x: 1.1, y: 2.4, w: 8, h: 1.2, fontFace: SERIF, fontSize: 48, color: GOLD });
-      s.addText("We would love to bring this design to life for you.", { x: 1.15, y: 3.6, w: 8, h: 0.5, fontFace: SANS, fontSize: 15, color: CREAM });
-      rule(s, 1.15, 4.3, 2.2);
-      s.addText("AMBRIA DESIGN & DECOR", { x: 1.15, y: 4.55, w: 8, h: 0.4, fontFace: SANS, fontSize: 12, color: CREAM, charSpacing: 3 });
-      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: 1.15, y: 4.95, w: 9, h: 0.4, fontFace: SANS, fontSize: 11, color: "9A9A94" });
+      s.addText("Thank You", { x: M - 0.06, y: 2.7, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: CREAM });
+      s.addText("We would love to bring this design to life for you.", { x: M, y: 4.05, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: GOLD, italic: true });
+      rule(s, M, 4.8, 2.2);
+      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 5.05, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: GOLD, charSpacing: 3 });
+      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 5.45, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: "8C8C86" });
     }
 
     return pptx;
