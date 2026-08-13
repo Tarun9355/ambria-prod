@@ -1248,6 +1248,21 @@ export default function StudioApp() {
   const [clientLedger, setClientLedger] = useState([]);
   const [activeClientId, setActiveClientId] = useState(null);
   const [clientSearch, setClientSearch] = useState("");
+  // The identity (name/phone) an ACTIVE client last loaded with, or was confirmed-renamed to.
+  // Guards Event Info's Guest Name/Phone fields from silently autosaving over the active deal:
+  // typing something different is not treated as a deliberate rename until confirmClientRename
+  // is called (see saveSession's pendingUnconfirmedRename and the inline confirm UI in
+  // StudioEventInfo). Without this, glancing back at Event Info mid-deal and typing anything —
+  // even just to see what shows up — got captured by the very next autosave and silently
+  // overwrote the client's real name/phone with whatever partial text was sitting in the box.
+  const loadedClientIdentityRef = useRef({ name: "", phone: "" });
+  const confirmClientRename = useCallback(() => {
+    loadedClientIdentityRef.current = { name: clientName.trim(), phone: clientPhone.trim() };
+  }, [clientName, clientPhone]);
+  const revertClientNameEdit = useCallback(() => {
+    setClientName(loadedClientIdentityRef.current.name);
+    setClientPhone(loadedClientIdentityRef.current.phone);
+  }, []);
   // Remember the active deal pointer + screen across a refresh / Studio↔IMS route switch (per-tab). The
   // build data itself lives in the client's rolling auto-session; these just say WHICH deal + WHERE to
   // restore on mount (see the restore effect after loadClientSession).
@@ -5126,6 +5141,11 @@ export default function StudioApp() {
     // of the state update, so every save — even one racing right behind another — sees it.
     let updated = [...(clientLedgerRef.current || clientLedger)];
     let client = updated.find(c => c.id === activeClientId);
+    // Captured BEFORE the mint/byPhone fallback below can reassign `client` — true only when this
+    // save is continuing a deal that was ALREADY active a moment ago (as opposed to just now
+    // attaching to/minting a client), which is the one case worth protecting from an unconfirmed
+    // name/phone edit (see pendingUnconfirmedIdentity below).
+    const wasActiveClient = !!client;
     if (!client) {
       // Before minting a fresh client, check whether one with this exact phone number already
       // exists — same digit-stripped match loadLmsLead already uses to avoid re-creating a
@@ -5149,9 +5169,23 @@ export default function StudioApp() {
         client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
         updated.push(client);
       }
+      // This save is what's establishing/attaching this client for the first time this session —
+      // whatever's currently typed IS the deliberate identity (there's no prior loaded value to
+      // protect yet). Record it now so THIS deal is protected against unconfirmed drift from here on.
+      loadedClientIdentityRef.current = { name: clientName.trim(), phone: clientPhone.trim() };
     }
-    client.name = clientName.trim();
-    client.phone = clientPhone.trim();
+    // Typing something different into Guest Name/Phone for a deal that was ALREADY active does
+    // NOT count as a deliberate rename until confirmClientRename says so (see the inline
+    // confirm/revert prompt on Event Info) — otherwise glancing back at this screen mid-deal and
+    // typing anything, even just to look something up, got captured by the very next autosave and
+    // silently overwrote the client's real name/phone with whatever partial text was in the box.
+    // Every other field on `client` still updates normally below — only identity is held back.
+    const pendingUnconfirmedIdentity = wasActiveClient && loadedClientIdentityRef.current.name
+      && (clientName.trim() !== loadedClientIdentityRef.current.name || clientPhone.trim() !== loadedClientIdentityRef.current.phone);
+    if (!pendingUnconfirmedIdentity) {
+      client.name = clientName.trim();
+      client.phone = clientPhone.trim();
+    }
     client.lastContactAt = Date.now();
     client.eventDate = clientDate || client.eventDate || "";
     client.venue = venue || client.venue || "";
@@ -5395,6 +5429,9 @@ export default function StudioApp() {
     setClientName(client.name);
     setClientPhone(client.phone || "");
     setActiveClientId(client.id);
+    // This IS the client's real identity as of this load — future edits away from it need an
+    // explicit confirm (see loadedClientIdentityRef) before they're allowed to autosave.
+    loadedClientIdentityRef.current = { name: client.name || "", phone: client.phone || "" };
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
     setFn(client.fn || "");
@@ -5496,6 +5533,7 @@ export default function StudioApp() {
   // builds, floral overrides and the palette all survived "Start New" into the next deal.
   const startNewDeal = useCallback(() => {
     setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");
+    loadedClientIdentityRef.current = { name: "", phone: "" };
   }, [userVenueScope]);
 
   // ── Restore the active deal on mount (refresh / Studio↔IMS switch) ──
@@ -5639,6 +5677,10 @@ export default function StudioApp() {
       saveClientLedger([client, ...clientLedger]);
     }
     setActiveClientId(client.id);
+    // loadClientSession below re-sets this to the same values when there's a session to restore;
+    // set it here too so the no-session branch (which never calls loadClientSession) still marks
+    // this client's identity as "just loaded" and protected from unconfirmed drift.
+    loadedClientIdentityRef.current = { name: client.name || "", phone: client.phone || "" };
     setLmsLeads([]);
     setLmsError(false);
     const latestSession = (client.sessions && client.sessions.length > 0) ? client.sessions[0] : null;
@@ -7341,6 +7383,7 @@ export default function StudioApp() {
     allVenueData, outdoorVenueList, browseVideos, allVideos,
     // handlers
     loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
+    loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, loadEvent,
     buildZonesForFn, buildCombinedCostSheetData, logActivity, saveTR,

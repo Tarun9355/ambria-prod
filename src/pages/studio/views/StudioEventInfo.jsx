@@ -87,6 +87,7 @@ export default function StudioEventInfo({ ctx }) {
     activeFnIdx, setActiveFnIdx,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
     activeClient, loadClientSession,
+    loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
     refreshLmsSync, lmsSyncing,
@@ -442,6 +443,19 @@ export default function StudioEventInfo({ ctx }) {
                 maxLength={10} placeholder="10-digit mobile" style={S.input}/>
             </div>
           </div>
+          {/* Guards the ACTIVE deal's name/phone from a silent autosave overwrite — see
+              loadedClientIdentityRef / confirmClientRename in StudioApp.jsx. Editing either field
+              away from what this client loaded with does not save until explicitly confirmed here;
+              every other field on Event Info keeps autosaving normally the whole time. */}
+          {activeClientId && loadedClientIdentityRef?.current?.name && (clientName.trim() !== loadedClientIdentityRef.current.name || clientPhone.trim() !== loadedClientIdentityRef.current.phone) && (
+            <div style={{marginBottom:18,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(245,158,11,0.08)":"rgba(245,158,11,0.06)",border:`1px solid ${isDark?"rgba(245,158,11,0.3)":"rgba(245,158,11,0.25)"}`,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,fontWeight:600,color:C.amberDeep,flex:1,minWidth:200}}>
+                ✏️ This is the ACTIVE deal (was "{loadedClientIdentityRef.current.name}"{loadedClientIdentityRef.current.phone?` · ${loadedClientIdentityRef.current.phone}`:""}) — this edit won't be saved until you confirm.
+              </span>
+              <button className="ei-btn ei-solid" onClick={confirmClientRename} style={{padding:"5px 12px",borderRadius:6,border:"none",background:C.amberDeep,color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>✓ Confirm rename</button>
+              <button className="ei-btn ei-tint" onClick={revertClientNameEdit} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textM,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>↺ Revert</button>
+            </div>
+          )}
           {/* ═══ §25 TYPEAHEAD — STRICT LMS-FIRST (29 May 2026) ═══ */}
           {/* LMS Venue+Decor search is queried first (debounced 400ms, in-memory cache).             */}
           {/* Studio clientLedger fallback shows ONLY when LMS returns 0 results OR errors out.       */}
