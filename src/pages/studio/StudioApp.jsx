@@ -5135,8 +5135,13 @@ export default function StudioApp() {
       // orphaned client record for the same real person/phone instead of continuing their history.
       // A client already marked "booked" is a closed, past deal — don't silently reattach a new
       // one to it (see loadLmsLead's matching `existing.status !== "booked"` guard, same reason).
+      // And if MORE THAN ONE open client already shares this phone (a stray duplicate that
+      // predates this guard), don't guess which one is "right" — that's exactly how one client's
+      // name got silently overwritten by another's typed text. Only auto-attach when the phone
+      // resolves to exactly one unambiguous candidate.
       const phoneKey = clientPhone.trim().replace(/\D/g, "");
-      const byPhone = phoneKey.length >= 10 ? updated.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey && c.status !== "booked") : null;
+      const phoneCandidates = phoneKey.length >= 10 ? updated.filter(c => (c.phone || "").replace(/\D/g, "") === phoneKey && c.status !== "booked") : [];
+      const byPhone = phoneCandidates.length === 1 ? phoneCandidates[0] : null;
       if (byPhone) {
         client = byPhone;
         setActiveClientId(byPhone.id);
@@ -5581,9 +5586,18 @@ export default function StudioApp() {
     });
     setExtraFunctions(extras);
     const phoneKey = (lead.phone || "").replace(/\D/g, "");
-    const phoneMatch = phoneKey
-      ? clientLedger.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey)
-      : null;
+    const phoneMatches = phoneKey
+      ? clientLedger.filter(c => (c.phone || "").replace(/\D/g, "") === phoneKey)
+      : [];
+    // More than one Studio client can already share a phone number (a stray duplicate from
+    // before this lead was ever linked, or two genuinely separate past deals). Phone alone can't
+    // tell them apart, and picking "whichever comes first" — the old behaviour — meant clicking
+    // one specific LMS lead could silently attach to a COMPLETELY unrelated client, then have its
+    // name overwritten by whatever this lead's guestName/typed text happened to be. Prefer the
+    // client THIS exact lead is already linked to (the "LMS #01234" tag on its card); with no
+    // definitive link and 2+ candidates, don't guess — mint a fresh client instead.
+    const linkedMatch = phoneMatches.find(c => c.lmsLeadId === lead.entryNo);
+    const phoneMatch = linkedMatch || (phoneMatches.length === 1 ? phoneMatches[0] : null);
     // A BOOKED match is a closed, past deal — a new inbound lead on the same number is a repeat
     // guest booking something ELSE, not a revision of the old one. Reusing it would silently
     // overwrite the old booking's venue/date/functions and interleave the new meeting history
