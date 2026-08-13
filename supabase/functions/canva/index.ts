@@ -14,7 +14,11 @@
 //
 // Client POSTs { action, ...params }. action ∈
 //   status {} · oauth_exchange { code, codeVerifier } · create_import { fileBase64, title }
-//   · poll_import { jobId }
+//   · poll_import { jobId } · create_export { designId } · poll_export { jobId }
+//
+// Export needs the design:content:read scope, which the connect flow did not originally ask for.
+// A token minted before that was added exports nothing — Canva answers 403 — and the fix is to
+// reconnect from IMS Admin → Settings, since scopes are fixed at the moment consent is given.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -217,6 +221,47 @@ Deno.serve(async (req) => {
         status: job.status,
         editUrl: design?.urls?.edit_url || null,
         thumbnailUrl: design?.thumbnail?.url || null,
+        error: job.error ? (job.error.message || job.error.code) : null,
+      });
+    }
+
+    // ── Export a design to PDF ──────────────────────────────────────────────────────────────────
+    // The deck is BUILT here and edited in Canva, so Canva holds the current version — including
+    // anything the salesperson changed after the import. Rendering our own PDF from the local build
+    // would quietly hand the client the pre-edit deck, so the export is asked of Canva instead.
+    if (action === "create_export") {
+      const { designId } = body;
+      if (!designId) return json({ error: "designId required" }, 400);
+      const accessToken = await getValidAccessToken();
+      const resp = await fetch(`${CANVA_API}/exports`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ design_id: designId, format: { type: "pdf" } }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.job?.id) {
+        // 403 here is the missing scope, not a broken design — say so, because "export failed" sends
+        // someone hunting through the deck for a fault that is in the connection.
+        const hint = resp.status === 403
+          ? "Canva refused the export — this connection was made before the design:content:read scope existed. Reconnect Canva from IMS Admin → Settings."
+          : "Canva export failed: " + JSON.stringify(data);
+        return json({ error: hint }, resp.status || 502);
+      }
+      return json({ jobId: data.job.id });
+    }
+
+    if (action === "poll_export") {
+      const { jobId } = body;
+      if (!jobId) return json({ error: "jobId required" }, 400);
+      const accessToken = await getValidAccessToken();
+      const resp = await fetch(`${CANVA_API}/exports/${jobId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const data = await resp.json();
+      if (!resp.ok) return json({ error: "Canva export poll failed: " + JSON.stringify(data) }, resp.status || 502);
+      const job = data.job || {};
+      return json({
+        status: job.status,
+        // One URL per exported file. A PDF export is a single file holding every page.
+        urls: job.result?.urls || [],
         error: job.error ? (job.error.message || job.error.code) : null,
       });
     }

@@ -48,7 +48,12 @@ export async function canvaAuthUrl() {
   sessionStorage.setItem(STATE_KEY, state);
   const redirectUri = window.location.origin + import.meta.env.BASE_URL;
   const params = new URLSearchParams({
-    code_challenge: codeChallenge, code_challenge_method: "s256", scope: "design:content:write",
+    // write imports the deck; read exports it back out as a PDF for the preview and the download.
+    // Scopes are fixed when consent is given, so a connection made before read was added keeps
+    // working for imports and 403s on export until someone reconnects. Both must also be ticked on
+    // the integration in Canva's Developer Portal, or Canva refuses the authorize URL outright.
+    code_challenge: codeChallenge, code_challenge_method: "s256",
+    scope: "design:content:write design:content:read",
     response_type: "code", client_id: CANVA_CLIENT_ID, state, redirect_uri: redirectUri,
   });
   return `https://www.canva.com/api/oauth/authorize?${params.toString()}`;
@@ -95,3 +100,38 @@ export async function canvaHandleOAuthRedirect(showMsg) {
 export const canvaConnectionStatus = () => callCanvaFn("status").then((d) => !!d.connected);
 export const canvaCreateImport = (fileBase64, title) => callCanvaFn("create_import", { fileBase64, title }).then((d) => d.jobId);
 export const canvaPollImport = (jobId) => callCanvaFn("poll_import", { jobId });
+
+/**
+ * The design id inside a Canva edit URL: canva.com/design/<ID>/<token>/edit
+ *
+ * Only the URL is remembered against a deal, and the export API wants the id — so rather than
+ * making every deck already out there un-exportable, the id is read back out of the link.
+ */
+export const canvaDesignId = (editUrl) => (String(editUrl || "").match(/\/design\/([^/]+)/) || [])[1] || "";
+
+export const canvaCreateExport = (designId) => callCanvaFn("create_export", { designId }).then((d) => d.jobId);
+export const canvaPollExport = (jobId) => callCanvaFn("poll_export", { jobId });
+
+/**
+ * A finished PDF export of a design, as a URL — polling until Canva has rendered it.
+ *
+ * Canva renders asynchronously and gives no completion callback, so polling is the only option.
+ * Roughly a minute of patience at 2s: a long deck takes a while, and failing early would leave the
+ * salesperson with a spinner that stopped for no visible reason.
+ */
+export async function canvaExportPdfUrl(editUrl, { tries = 30, waitMs = 2000 } = {}) {
+  const designId = canvaDesignId(editUrl);
+  if (!designId) throw new Error("Could not read the design id from the Canva link");
+  const jobId = await canvaCreateExport(designId);
+  for (let i = 0; i < tries; i++) {
+    const res = await canvaPollExport(jobId);
+    if (res.status === "success") {
+      const url = (res.urls || [])[0];
+      if (!url) throw new Error("Canva finished the export but returned no file");
+      return url;
+    }
+    if (res.status === "failed") throw new Error(res.error || "Canva could not export this design");
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  throw new Error("Timed out waiting for Canva to export the deck — try again");
+}
