@@ -112,6 +112,11 @@ function normalizeRow(raw: any, dept: string) {
     totalAmt: isVenue ? (raw.fisc_total_amt || 0) : (raw.dhc_total_amt || 0),
     balance: isVenue ? (raw.fisc_balance || 0) : (raw.dhc_balance || 0),
     priority: isVenue ? (raw.fisc_priority || "") : (raw.dhc_priority || ""),
+    // Who this contract is assigned to in LMS — same raw fields the client-side sync path
+    // (src/lib/ims/lms.js normalizeLmsRow) already reads, just never carried into THIS table
+    // before. entryById is an LMS-internal numeric id; resolving it to a Studio salesperson name
+    // is a client-side lookup (LMS_ENTRY_BY_NAMES in src/lib/ims/lms.js), not this function's job.
+    entryById: isVenue ? (raw.fisc_entryby || "") : (raw.dhc_decor_entryby || ""),
     cancelled,
   };
   return { header, fnDetail };
