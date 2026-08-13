@@ -17,6 +17,7 @@ import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
+import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
@@ -977,16 +978,72 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     };
   };
 
-  // ═══ THE DESIGN DECK, LAID OUT HERE RATHER THAN GENERATED ═══
-  // Gamma was given five rounds of increasingly explicit art direction and kept returning the same
-  // shape: the photograph inset in a box with dead margins, the title stranded beneath it, callouts
-  // stacked below. That is what its layout engine does, and its pptx export flattens whatever it
-  // renders. Ambria's own reference decks are the opposite — photograph edge to edge, title set over
-  // it, callouts annotating the image — because a designer placed every element.
+  // ═══ WHICH ENGINE DESIGNS THE DECK ═══
+  // Gamma. The hand-built PptxGenJS deck below stays in the file and still works — flip this to false
+  // and it takes over — because the two answer different needs and the choice has gone back and forth
+  // once already:
   //
-  // So this places every element. Same PptxGenJS already loaded for the cost sheet, exact coordinates,
-  // no layout lottery: the deck comes out the same every time, it matches the references, and it
-  // arrives in seconds instead of the two to three minutes Gamma took to think about it.
+  //   Gamma      designs each deck fresh, so it can surprise you. Takes 2–3 minutes, and the result
+  //              differs run to run; matching Ambria's own reference layouts exactly is not something
+  //              it does, however specific the art direction.
+  //   Built-in   places every element at fixed coordinates. Identical every run, ready in seconds,
+  //              matches the reference decks — and only ever produces what it is told to.
+  const USE_GAMMA = true;
+
+  // ═══ THE OUTLINE GAMMA DESIGNS FROM ═══
+  // The same `content` the built-in deck uses — photos, callouts read off the references, palette,
+  // flower story — rendered as Gamma's markdown instead of placed on slides. Sections are separated
+  // by "\n---\n", which is its card break under cardSplit:"inputTextBreaks", and photos go in as bare
+  // URLs for it to fetch. Sized on the way out: Gamma lays out whatever shape it is handed, and raw
+  // camera uploads in mixed orientations are what made the earlier decks look like a contact sheet.
+  const buildGammaOutline = (content) => {
+    const img = (u, w = 1600, h = 900) => (u ? deckImageUrl(u, w, h) : "");
+    const S = [];
+
+    S.push([`# ${content.clientName || "Your"} Wedding`, "DECOR PRESENTATION", "Ambria Design & Decor",
+      img(content.cover), content.functions.map((f) => [f.name, f.dateLine].filter(Boolean).join(" · ")).join("\n")]
+      .filter(Boolean).join("\n\n"));
+
+    S.push("# Design Your Wedding\n\nEach wedding is a unique chapter, and we are here to make sure the decor comes out exactly as you imagined it.\n\nAmbria Design & Decor");
+
+    for (const f of content.functions) {
+      S.push([`# ${String(f.venueLine || f.name).toUpperCase()}`, img(f.hero), f.dateLine].filter(Boolean).join("\n\n"));
+
+      if (f.board.length) {
+        S.push([`# ${f.name} — Mood Board`, ...f.board.map((u) => img(u)),
+          f.zones.map((z) => z.label).filter(Boolean).join("  ·  ")].filter(Boolean).join("\n\n"));
+      }
+
+      if (f.palette.length >= 2) {
+        S.push([`# The Palette`, f.paletteName || "",
+          f.palette.map((c) => `${c.name} — #${c.hex}`).join("\n\n"),
+          `The colour story running through every zone of the ${f.name}.`].filter(Boolean).join("\n\n"));
+      }
+
+      for (const z of f.zones) {
+        // The callouts are the point of this card — they are what was read off this photograph.
+        const lines = (z.callouts || []).filter(Boolean).slice(0, 3).join("\n\n");
+        S.push([`# ${z.label}`, img(z.photo), lines, z.note].filter(Boolean).join("\n\n"));
+        if ((z.alts || []).length >= 2) {
+          S.push([`# Options for the ${z.label}`, ...z.alts.slice(0, 3).map((u) => img(u, 1200, 800)),
+            "Alternate directions for this element."].filter(Boolean).join("\n\n"));
+        }
+      }
+    }
+
+    if (content.flowerStory) {
+      S.push([`# The Flower Story`, img(content.functions[0]?.board?.[0] || content.cover), content.flowerStory]
+        .filter(Boolean).join("\n\n"));
+    }
+
+    S.push("# Thank You\n\nWe would love to bring this design to life for you.\n\nAmbria Design & Decor\n\nPushpanjali, Bijwasan, New Delhi · thefusiondecor.com");
+    return S.join("\n---\n");
+  };
+
+  // ═══ THE BUILT-IN DECK — kept, not deleted (see USE_GAMMA) ═══
+  // Places every element at fixed coordinates with the PptxGenJS already loaded for the cost sheet.
+  // Ambria's reference decks are photographs placed as cards on a dark ground with deep space around
+  // them, and this reproduces that exactly; it is the fallback if Gamma's output is not wanted again.
   const SLIDE_W = 13.333, SLIDE_H = 7.5;                 // 16:9 at 96dpi — see defineLayout below
   const SERIF = "Georgia", SANS = "Trebuchet MS";        // safe on Windows, Mac and Canva's importer
 
@@ -998,7 +1055,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   //
   // INK is warm rather than pure black (a hint of brown in it), which stops the dark cards looking
   // like switched-off screens next to the ivory.
-  const INK = "1C1917", IVORY = "F2ECE3";
+  // Warm stone and warm sand, both a long way from black — the ground is a TEXTURE built on these
+  // (see makeGround), not a flat fill.
+  const INK = "2A2320", IVORY = "EFE7DA";
   const GOLD = "D2AC47";                                 // on the dark ground
   const GOLD_DK = "9C7A22";                              // on ivory, where D2AC47 is too pale to read
   const CREAM = "F5EFE6", BODY_DK = "3A342E", MUTE_D = "8C8C86", MUTE_L = "7A736A";
@@ -1027,17 +1086,112 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // the numbers below mean what they say.
     pptx.defineLayout({ name: "AMBRIA_16x9", width: SLIDE_W, height: SLIDE_H });
     pptx.layout = "AMBRIA_16x9";
-    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: { color: INK } });
-    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: { color: IVORY } });
+    // ═══ THE GROUND IS A TEXTURE, NOT A FILL ═══
+    // A flat colour behind everything is what made the deck read as a slab. This paints the ground on
+    // a canvas instead: the base tone, a few very soft mottled washes so the light moves across the
+    // card the way it does on paper or stone, and a fine grain over the top. Then a vignette, barely
+    // there, so the edges settle and the middle lifts.
+    //
+    // Deliberately restrained — at 6% opacity per wash and ±4 levels of grain this reads as "not
+    // flat" rather than as a pattern. Anything stronger competes with the photographs, which are the
+    // point of the deck.
+    //
+    // Generated once per deck and reused on every slide of that ground, as a JPEG: a full-bleed PNG
+    // per slide is what killed the Canva import with HTTP 546.
+    const makeGround = (hex, light) => {
+      try {
+        const W = 1400, H = 788;                       // 16:9, plenty for a projected slide
+        const cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext("2d");
+        const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(0, 0, W, H);
+
+        // Soft mottling — a handful of wide, very faint blooms, lighter and darker than the base.
+        const blooms = [[0.18, 0.22, 0.55], [0.78, 0.30, 0.48], [0.42, 0.80, 0.60], [0.90, 0.86, 0.40], [0.06, 0.72, 0.42]];
+        blooms.forEach(([bx, by, br], i) => {
+          const up = i % 2 === 0;
+          const d = light ? (up ? 16 : -12) : (up ? 14 : -10);
+          const grad = ctx.createRadialGradient(bx * W, by * H, 0, bx * W, by * H, br * W);
+          grad.addColorStop(0, `rgba(${r + d},${g + d},${b + d},0.06)`);
+          grad.addColorStop(1, `rgba(${r + d},${g + d},${b + d},0)`);
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, W, H);
+        });
+
+        // Grain. Per-pixel on the ImageData rather than thousands of tiny fills — same look, and it
+        // does not stall the export.
+        // ═══ JALI ═══
+        // The lattice screen Ambria builds arches and entry props out of — it is in half the
+        // reference photographs, so as a ground motif it belongs to this studio rather than being
+        // decoration borrowed from a template.
+        //
+        // Drawn large and faint: an ogee grid struck as two sets of 45° lines with a small diamond at
+        // each crossing. At 5% gold it is something you notice on the second look, which is the most
+        // a background may ask for when photographs are the subject.
+        const GOLD_RGB = light ? "150,120,52" : "210,172,71";
+        const step = 108;
+        ctx.save();
+        ctx.strokeStyle = `rgba(${GOLD_RGB},${light ? 0.055 : 0.05})`;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (let x = -H; x < W + H; x += step) {
+          ctx.moveTo(x, 0); ctx.lineTo(x + H, H);          // "/" run
+          ctx.moveTo(x, H); ctx.lineTo(x + H, 0);          // "\" run
+        }
+        ctx.stroke();
+        // A diamond at every crossing, which is what makes it read as jali rather than as graph paper.
+        ctx.fillStyle = `rgba(${GOLD_RGB},${light ? 0.07 : 0.06})`;
+        const d = 7;
+        for (let gy = 0; gy <= H + step; gy += step) {
+          for (let gx = -step; gx <= W + step; gx += step) {
+            const ox = ((gy / step) % 2) * (step / 2);     // offset alternate rows onto the crossings
+            ctx.beginPath();
+            ctx.moveTo(gx + ox, gy - d); ctx.lineTo(gx + ox + d, gy);
+            ctx.lineTo(gx + ox, gy + d); ctx.lineTo(gx + ox - d, gy);
+            ctx.closePath(); ctx.fill();
+          }
+        }
+        ctx.restore();
+
+        const img = ctx.getImageData(0, 0, W, H);
+        const px = img.data;
+        for (let i = 0; i < px.length; i += 4) {
+          const n = (Math.random() * 9 | 0) - 4;
+          px[i] += n; px[i + 1] += n; px[i + 2] += n;
+        }
+        ctx.putImageData(img, 0, 0);
+
+        const vig = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.78);
+        vig.addColorStop(0, "rgba(0,0,0,0)");
+        vig.addColorStop(1, light ? "rgba(120,100,74,0.10)" : "rgba(0,0,0,0.22)");
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, W, H);
+
+        return cv.toDataURL("image/jpeg", 0.82);
+      } catch { return null; }                          // no canvas — fall back to the flat colour
+    };
+    const groundDark = makeGround(INK, false);
+    const groundLight = makeGround(IVORY, true);
+
+    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: groundDark ? { data: groundDark } : { color: INK } });
+    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: groundLight ? { data: groundLight } : { color: IVORY } });
 
     // Slides carry their own palette so nothing has to remember which ground it is on. `t` is the one
     // that changes per slide; every colour below reads from it.
     const DARK = { head: CREAM, body: CREAM, accent: GOLD, mute: MUTE_D, shadow: "000000", shadowOpacity: 0.75 };
-    const LIGHT = { head: BODY_DK, body: BODY_DK, accent: GOLD_DK, mute: MUTE_L, shadow: "6B5F52", shadowOpacity: 0.42 };
-    let t = DARK;
-    const newSlide = (light = false) => {
-      t = light ? LIGHT : DARK;
-      return pptx.addSlide({ masterName: light ? "AMBRIA_LIGHT" : "AMBRIA_DARK" });
+    const LIGHT = { head: BODY_DK, body: BODY_DK, accent: GOLD_DK, mute: MUTE_L, shadow: "6B5F52", shadowOpacity: 0.62 };
+    // EVERY slide is light. The deck alternated dark chapter cards against light working ones for
+    // rhythm, but the dark ones are gone: on the warm sand ground the photographs carry the contrast
+    // by themselves, and a deck that never goes dark prints and projects more predictably.
+    //
+    // The dark master and palette stay defined — the alternation is a two-line change to bring back,
+    // and it has already been asked for once in each direction.
+    let t = LIGHT;
+    const newSlide = () => {
+      t = LIGHT;
+      return pptx.addSlide({ masterName: "AMBRIA_LIGHT" });
     };
 
     // A photograph is a CARD on the ground, never a full-bleed background — the thing that makes the
@@ -1061,15 +1215,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     const card = (slide, url, x, y, w, h) => {
       if (!url || isInventoryPhoto(url)) return false;      // see isInventoryPhoto — the client's rule, enforced
       try {
-        // roundRect, not rect: the plate's corners have to follow the photograph's, or a square
+        // A MOUNT, not just a backing plate: it sits proud of the photograph on all four sides, so
+        // the white edge and its gold stroke read as a mat around the image the way a framed print
+        // does. The plate used to be exactly the image's size, which meant the stroke was hidden
+        // underneath it and only the shadow showed.
+        //
+        // roundRect, not rect: the mount's corners have to follow the photograph's, or a square
         // shadow shows through the rounded corner as four dark triangles.
+        const MAT = 0.075;
         slide.addShape(pptx.ShapeType.roundRect, {
-          x, y, w, h, rectRadius: 0.12,
-          fill: { color: t === LIGHT ? "FFFFFF" : "000000" },
-          line: { color: t === LIGHT ? "E2D9CB" : "2E2A26", width: 0.75 },
-          shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 14, offset: 5, angle: 90 },
+          x: x - MAT, y: y - MAT, w: w + MAT * 2, h: h + MAT * 2, rectRadius: 0.12,
+          fill: { color: "FFFFFF" },
+          line: { color: t.accent, width: 1.25, transparency: 35 },
+          // Heavier than it was: a deeper, softer drop so the photographs sit above the ground rather
+          // than on it. Dropped straight down (angle 90) so every plate on a card agrees.
+          shadow: { type: "outer", color: t.shadow, opacity: t.shadowOpacity, blur: 26, offset: 10, angle: 90 },
         });
-        const src = rounded.get(rkey(url, w, h, t === LIGHT ? IVORY : INK)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
+        const src = rounded.get(rkey(url, w, h, IVORY)) || deckImageUrl(url, Math.round(w * PX), Math.round(h * PX));
         slide.addImage(src.startsWith("data:") ? { data: src, x, y, w, h } : { path: src, x, y, w, h });
         return true;
       } catch { return false; }
@@ -1094,6 +1256,25 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const seg = (x, y, ww, hh) => slide.addShape(pptx.ShapeType.rect, { x, y, w: ww, h: hh, fill: { color: c } });
       seg(x0, y0, len, w); seg(x0, y0, w, len);                          // top-left
       seg(x1 - len, y1 - w, len, w); seg(x1 - w, y1 - len, w, len);      // bottom-right
+    };
+
+    // A hairline rectangle just inside the card edge. On its own it would box the card in, which is
+    // why the corners exist — together they read as a plate: the frame holds the space, the corners
+    // weight two of its four sides. Gold at this width is a line, not a border.
+    const frame = (slide, inset = 0.30) =>
+      slide.addShape(pptx.ShapeType.rect, {
+        x: inset, y: inset, w: SLIDE_W - inset * 2, h: SLIDE_H - inset * 2,
+        fill: { type: "none" }, line: { color: t.accent, width: 0.5, transparency: 55 },
+      });
+
+    // Three diamonds on a rule — the divider the reference decks use between a title and what follows.
+    // Small enough to be an ornament rather than an element in its own right.
+    const flourish = (slide, cx, y) => {
+      const s = 0.075, gap = 0.16, armW = 0.5;
+      slide.addShape(pptx.ShapeType.rect, { x: cx - gap - armW - 0.06, y: y + s / 2 - 0.005, w: armW, h: 0.01, fill: { color: t.accent } });
+      slide.addShape(pptx.ShapeType.rect, { x: cx + gap + 0.06, y: y + s / 2 - 0.005, w: armW, h: 0.01, fill: { color: t.accent } });
+      [-gap, 0, gap].forEach((dx) =>
+        slide.addShape(pptx.ShapeType.diamond, { x: cx + dx - s / 2, y, w: s, h: s, fill: { color: t.accent } }));
     };
 
     let pageNo = 0;
@@ -1176,21 +1357,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       flower: { w: SLIDE_W - 6.4 - M, h: SLIDE_H - 2.6 },
     };
     const boardBoxes = (n) => {
-      const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.16;
+      const top = 2.15, botH = SLIDE_H - top - 0.9, gut = 0.32;   // room for the mounts (see card)
       const bigW = n > 1 ? CONTENT_W * 0.56 : CONTENT_W;
       const rw = CONTENT_W - bigW - gut, rh = n > 2 ? (botH - gut) / 2 : botH;
       return { top, botH, gut, bigW, rw, rh };
     };
     const optionBoxes = (m) => {
-      const gut = 0.18, w = (CONTENT_W - gut * (m - 1)) / m;
+      const gut = 0.34, w = (CONTENT_W - gut * (m - 1)) / m;      // room for the mounts (see card)
       return { gut, w, h: w * 0.67 };
     };
 
     {
       const jobs = [];
-      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: INK });
+      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: IVORY });
       for (const fn of content.functions) {
-        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: INK });
+        if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: IVORY });
         const bb = boardBoxes(Math.min(fn.board.length, 3));
         if (fn.board[0]) jobs.push({ url: fn.board[0], w: bb.bigW, h: bb.botH, ground: IVORY });
         if (fn.board[1]) jobs.push({ url: fn.board[1], w: bb.rw, h: bb.rh, ground: IVORY });
@@ -1204,18 +1385,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         }
       }
       const flowerPic = content.functions[0]?.board?.[0] || content.cover;
-      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower, ground: INK });
+      if (content.flowerStory && flowerPic) jobs.push({ url: flowerPic, ...BOX.flower, ground: IVORY });
       await prepare(jobs);
     }
 
     // ── Cover ──
     {
       const s = newSlide();
-      corners(s);
+      corners(s); frame(s);
       s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
       s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
       rule(s, M, 4.6, 2.4);
+      // Sits in the empty lower-left the cover deliberately leaves, so that space reads as composed
+      // rather than as a gap the layout failed to fill.
+      flourish(s, M + 1.2, 5.15);
       s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3, align: "right" });
       if (content.cover) card(s, content.cover, SLIDE_W - M - BOX.cover.w, 1.35, BOX.cover.w, BOX.cover.h);
     }
@@ -1224,7 +1408,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Function opening: title left, one photograph placed low-right ──
       {
         const s = newSlide();
-        corners(s);
+        corners(s); frame(s);
         s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
         s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
         s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
@@ -1234,7 +1418,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       // ── Mood board: photographs of different zones, placed as a considered set ──
       if (fn.board.length) {
-        const s = newSlide(true);
+        const s = newSlide();
         diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body });
         // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
@@ -1253,7 +1437,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Palette ──
       // Two colours minimum — one swatch stretched across the slide is not a palette, it is a wall.
       if (fn.palette.length >= 2) {
-        const s = newSlide(true);
+        const s = newSlide();
         diamond(s, M, 0.82); s.addText("THE PALETTE", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
         s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
         const n = fn.palette.length, gut = 0.2;
@@ -1268,7 +1452,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       // ── Element cards: the photograph placed right, its callouts read down the left ──
       for (const z of fn.zones) {
-        const s = newSlide(true);
+        const s = newSlide();
         s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body });
         rule(s, M, 2.25, 1.8);
         const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
@@ -1283,7 +1467,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
         // ── Options: the same element from other angles ──
         if (z.alts.length >= 2) {
-          const o = newSlide(true);
+          const o = newSlide();
           diamond(o, M, 0.82); o.addText("OPTIONS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
           o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
           const m = Math.min(z.alts.length, 3);
@@ -1303,7 +1487,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Flower story: prose left, one photograph right ──
     if (content.flowerStory) {
       const s = newSlide();
-      corners(s);
+      corners(s); frame(s);
       s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
       rule(s, M, 2.7, 1.8);
@@ -1318,12 +1502,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const s = newSlide();
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
-      corners(s);
+      corners(s); frame(s);
       s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
       s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.25, 2.2);
       s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
       s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 4.9, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
+      // Centred here rather than left, as a full stop for the deck.
+      flourish(s, SLIDE_W / 2, 6.15);
     }
 
     return pptx;
@@ -1351,9 +1537,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       }
       const content = await buildDeckContent(combined);
       const title = `${combined.clientName || "Ambria"} Design Presentation`;
-      const pptx = await buildDesignDeck(content);
-      // base64 straight out of PptxGenJS — the bytes go to Canva's import, never to disk.
-      const base64 = await pptx.write({ outputType: "base64" });
+
+      let base64 = null;
+      if (USE_GAMMA) {
+        // Gamma designs it. Two polls' worth of patience is the cost: generation takes minutes, not
+        // seconds, and the client waits on this screen while it runs.
+        const generationId = await gammaCreateGeneration(buildGammaOutline(content), title);
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 4000));
+          const res = await gammaPollGeneration(generationId);
+          if (res.status === "completed") { base64 = res.base64; break; }
+          if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Gamma design failed"); return; }
+        }
+        if (!base64) { setCanvaState("error"); setCanvaError("Timed out waiting for Gamma to finish designing — try again"); return; }
+      } else {
+        const pptx = await buildDesignDeck(content);
+        // base64 straight out of PptxGenJS — the bytes go to Canva's import, never to disk.
+        base64 = await pptx.write({ outputType: "base64" });
+      }
 
       // The deck is posted as one JSON body to an Edge Function, which decodes it in memory. Too big
       // and the worker is killed mid-decode and answers HTTP 546 — a bare status that tells the
