@@ -5127,8 +5127,21 @@ export default function StudioApp() {
     let updated = [...(clientLedgerRef.current || clientLedger)];
     let client = updated.find(c => c.id === activeClientId);
     if (!client) {
-      client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
-      updated.push(client);
+      // Before minting a fresh client, check whether one with this exact phone number already
+      // exists — same digit-stripped match loadLmsLead already uses to avoid re-creating a
+      // client it's seen before. Without this, typing a client's details by hand (e.g. copied
+      // straight off an LMS lead) instead of clicking the suggested "Load →" card meant
+      // activeClientId was never set, so the very first autosave silently forked a second,
+      // orphaned client record for the same real person/phone instead of continuing their history.
+      const phoneKey = clientPhone.trim().replace(/\D/g, "");
+      const byPhone = phoneKey.length >= 10 ? updated.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey) : null;
+      if (byPhone) {
+        client = byPhone;
+        setActiveClientId(byPhone.id);
+      } else {
+        client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
+        updated.push(client);
+      }
     }
     client.name = clientName.trim();
     client.phone = clientPhone.trim();
