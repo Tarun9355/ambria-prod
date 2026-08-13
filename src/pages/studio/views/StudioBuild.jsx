@@ -1340,8 +1340,11 @@ export default function StudioBuild({ ctx }) {
       .map(k=>{
         const cz = customZones.find(c=>c.id===k);
         return { k, label: (cz ? cz.name : (zoneLabelsD[k]||{}).label) || k, amt: zoneTotal(k) };
-      })
-      .sort((a,b)=>b.amt-a.amt);
+      });
+    // Left in the order the zones are laid out below, NOT ranked by amount. Ranking meant the
+    // estimate and the page disagreed about where a zone was, so checking a figure against its
+    // zone was a hunt down a list that reshuffled itself whenever a price changed. The build order
+    // is the order the salesperson is thinking in.
     const zonesSum = rows.reduce((a,r)=>a+r.amt,0);
     const line = (label, value, opts={}) => (
       <div style={{display:"flex",alignItems:"baseline",gap:8,padding:"5px 0",fontSize:11.5,color:opts.strong?textP:textS}}>
