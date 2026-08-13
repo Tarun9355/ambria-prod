@@ -1922,7 +1922,26 @@ undefined
                 always acts on the FULL current membership, not a blank slate — ticking more adds,
                 unticking a pinned one removes, both auto-saved. Leaving the grid hides the ticks, so
                 drop the (already-saved) selection with them — nothing left to act on unseen. */}
-            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{const on=!g[k];if(on)setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));else hideGrpPick(k);return {...g,[k]:on};});}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{
+              const on=!g[k];
+              if(on){
+                // Whatever's actually driving this zone's build right now shouldn't have to be
+                // re-found and re-ticked by hand — it starts in the group already, same as if it
+                // had been pinned earlier. Untick it here and it's simply excluded from now on.
+                const initial=new Set(grpSaved);
+                if(isMultiPhotoZone(el.label)){
+                  (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId) initial.add(p.eventId); });
+                } else {
+                  const selP=elSelectedPhoto[k];
+                  if(selP?.eventId) initial.add(selP.eventId);
+                }
+                setGrpSel(p=>({...p,[k]:initial}));
+                // Only save if the currently-selected photo(s) actually added something new — no
+                // point re-writing an identical group every time someone opens the grid.
+                if(initial.size!==grpSaved.length) scheduleGroupSave(k,srcType,el.label,initial);
+              } else hideGrpPick(k);
+              return {...g,[k]:on};
+            });}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
             {/* Clear every tick in this zone in one click — with the auto-save above, this also
                 empties the saved group, same as unticking each photo would. */}
             {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
@@ -2123,6 +2142,24 @@ undefined
                   }}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
+                    {/* Favourite marker — bottom-right, a small dot, deliberately subtle (same
+                        reasoning as Browse's tier-pill ring: this can be on screen in front of a
+                        guest). Shown in both grid and strip view, ticked or not — it never competes
+                        with the grouping tick (top-left) or the price badge (shares this corner, so
+                        it shifts up when that's also showing). Keyed by the photo's own id/src, not
+                        a (photo, zone) pair, so re-tagging this photo to a different zone later
+                        doesn't lose the favourite — see FAV_PHOTO_SK. */}
+                    {(()=>{
+                      const fKey=ph.eventId||ph.src;
+                      const isFav=!!favPhotos[fKey]?.[authUser?.id];
+                      const priceShown=showCosts&&!isCollapsed(k)&&photoFullCost>0;
+                      return <div onClick={e=>{e.stopPropagation();saveFavPhotos({[fKey]:{[authUser?.id]:isFav?null:true}});}}
+                        title={isFav?"Favourited for this zone — click to remove":"Favourite this photo for this zone"}
+                        style={{position:"absolute",bottom:priceShown?(gridZones[k]?24:30):6,right:6,width:14,height:14,borderRadius:"50%",zIndex:3,cursor:"pointer",
+                          border:`2px solid ${isFav?"#EF4444":"rgba(255,255,255,0.55)"}`,
+                          background:isFav?"#EF4444":"rgba(0,0,0,0.15)",
+                          boxShadow:isFav?"0 0 0 2px rgba(239,68,68,0.35)":"none"}}/>;
+                    })()}
                     {(()=>{
                       // Verified only. An unverified photo shows nothing here, so the tick means
                       // something — same rule the Library grid uses, minus its AI/untagged states.
@@ -2139,22 +2176,6 @@ undefined
                         boxShadow:"0 2px 7px rgba(0,0,0,0.4)"}}>
                         <IconStar size={11} filled/>
                       </div>;
-                    })()}
-                    {/* Favourite marker — a small dot, deliberately subtle (same reasoning as
-                        Browse's tier-pill ring: this can be on screen in front of a guest). Sits
-                        where the grouping tick would, so it only shows outside grouping mode — the
-                        tick there already owns that corner. Keyed by the photo's own id/src, not a
-                        (photo, zone) pair, so re-tagging this photo to a different zone later
-                        doesn't lose the favourite — see FAV_PHOTO_SK. */}
-                    {!grpOn&&(()=>{
-                      const fKey=ph.eventId||ph.src;
-                      const isFav=!!favPhotos[fKey]?.[authUser?.id];
-                      return <div onClick={e=>{e.stopPropagation();saveFavPhotos({[fKey]:{[authUser?.id]:isFav?null:true}});}}
-                        title={isFav?"Favourited for this zone — click to remove":"Favourite this photo for this zone"}
-                        style={{position:"absolute",top:7,left:7,width:14,height:14,borderRadius:"50%",zIndex:2,cursor:"pointer",
-                          border:`2px solid ${isFav?"#EF4444":"rgba(255,255,255,0.55)"}`,
-                          background:isFav?"#EF4444":"rgba(0,0,0,0.15)",
-                          boxShadow:isFav?"0 0 0 2px rgba(239,68,68,0.35)":"none"}}/>;
                     })()}
                     {/* ── Grouping tick ── Only library photos can be grouped: a group stores library
                         ids, and an event photo has none. stopPropagation because the tile itself
