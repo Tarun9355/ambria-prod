@@ -998,6 +998,22 @@ export default function StudioBuild({ ctx }) {
     return { ...el, qty: nextQty, baseQty: s > 1 ? nextQty / s : nextQty };
   };
 
+  // ── What is in the Scale box WHILE it is being typed in ──────────────────────────────────────
+  // The box cannot be driven straight off the committed scale. That value is clamped to at least 1,
+  // so clearing the field to type a new number put a 1 back under the cursor before the second
+  // keystroke arrived — and every one of those keystrokes rewrote every element qty in the zone.
+  // Typing 12 meant passing through 1, and backspacing meant watching the zone collapse to its base
+  // counts. So the raw text lives here, per zone, and the scale is applied once on blur or Enter.
+  const [scaleDraft, setScaleDraft] = useState({});
+  const commitScale = (k) => {
+    setScaleDraft(p => { const n = { ...p }; delete n[k]; return n; });
+    const raw = scaleDraft[k];
+    // Left empty, or scribbled over and abandoned — keep what the zone already had rather than
+    // reading "" as 1 and silently unscaling the whole zone.
+    if (raw === undefined || String(raw).trim() === "") return;
+    setZoneScale(k, raw);
+  };
+
   // ── Per-element stock availability browser (Build) ───────────────────────────────────────────
   // A discreet 📦 on each element opens a modal listing that element's IMS sub-category items (alias-aware)
   // with the FREE count on the event date (owned − blocked). Picking one + Save pins it on the element
@@ -1911,7 +1927,7 @@ undefined
                 or five matching lounges need it exactly as much as ten guest tables did. */}
             {isOn&&<span onClick={e=>e.stopPropagation()} title="Scale the whole zone — multiplies every element count below (e.g. set 10 and each element's quantity becomes 10×). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
-              <input type="number" min="1" step="1" value={zoneScaleVal(k)} onClick={e=>e.stopPropagation()} onChange={e=>setZoneScale(k, e.target.value)} onFocus={e=>e.target.select()} style={{width:40,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
+              <input type="number" min="1" step="1" value={scaleDraft[k] ?? String(zoneScaleVal(k))} onClick={e=>e.stopPropagation()} onChange={e=>{const v=e.target.value;setScaleDraft(p=>({...p,[k]:v}));}} onBlur={()=>commitScale(k)} onKeyDown={e=>{e.stopPropagation();if(e.key==="Enter")e.currentTarget.blur();if(e.key==="Escape"){setScaleDraft(p=>{const n={...p};delete n[k];return n;});e.currentTarget.blur();}}} onFocus={e=>e.target.select()} style={{width:52,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
             </span>}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{isRepeat(k)?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{isRepeat(k)?"Repeat":"Fresh"}</span></span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
