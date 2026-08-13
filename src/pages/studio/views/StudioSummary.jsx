@@ -17,7 +17,8 @@ import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
-import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
+import { detailShots } from "../../../lib/studio/detailShots";
+import { gammaCreateGeneration, gammaPollGeneration, gammaThemes } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
@@ -82,6 +83,26 @@ export default function StudioSummary({ ctx }) {
   const [canvaState, setCanvaState] = useState("idle");
   const [canvaEditUrl, setCanvaEditUrl] = useState("");
   const [canvaError, setCanvaError] = useState("");
+  // ═══ WHICH GAMMA THEME THIS DECK WEARS ═══
+  // A deck is one Gamma generation and a generation takes ONE theme, so this is per deal rather than
+  // per function — a Haldi and a Reception in the same deck cannot wear different looks.
+  //
+  // Empty means "whatever the edge function defaults to", which is the right behaviour when the list
+  // has not loaded or the call failed: the deck still generates, just in the standard theme.
+  const [deckThemes, setDeckThemes] = useState([]);
+  const [deckThemeId, setDeckThemeId] = useState(() => {
+    // Remembered across decks — a studio settles on one look and re-picking it every time is friction.
+    try { return localStorage.getItem("ambria-deck-theme") || ""; } catch { return ""; }
+  });
+  useEffect(() => {
+    let dead = false;
+    gammaThemes().then((list) => { if (!dead) setDeckThemes(list); }).catch(() => { /* picker just stays hidden */ });
+    return () => { dead = true; };
+  }, []);
+  const pickDeckTheme = (id) => {
+    setDeckThemeId(id);
+    try { if (id) localStorage.setItem("ambria-deck-theme", id); else localStorage.removeItem("ambria-deck-theme"); } catch { /* private mode */ }
+  };
   const {
     // theme / chrome
     S, isDark, accent, border, textS, textP, accentBg, accentText, fmt,
@@ -670,7 +691,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         fnObj.zones.forEach(z => {
           addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
           addTableHeaderRow(ws);
-          z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
+          z.structItems.forEach(si => addItemRow(ws, [si.name, "—", "—", "—", "—", si.total], { italic: true }));
           z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
           addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
           if (z.note) {
@@ -685,28 +706,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
           const row = ws.addRow(["Item", "Details", "", "", "", "Amount"]);
           row.eachCell((c, idx) => { if ([1, 2, 6].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 6 ? "right" : "left" }; } });
-          {
-            // One row for the whole trip count — the per-subcategory truck breakdown (truss/carpet/
-            // buffer, each a fraction of a truck's capacity) is sourcing-side detail, not something a
-            // client cost sheet needs; fnObj.transport.trucks is already the rounded-up total trip
-            // count, and truckTotal is its full round-trip cost.
-            const trips = fnObj.transport.trucks || 0;
-            const r = ws.addRow(["Transport", `${trips} trip${trips !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2 (round trip)`, "", "", "", fnObj.transport.truckTotal || 0]);
+          (fnObj.transport.breakdown || []).forEach(bd => {
+            const r = ws.addRow([bd.label, `${bd.trucks || 0} truck${(bd.trucks || 0) !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2`, "", "", "", (bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2]);
             r.getCell(6).numFmt = money.numFmt; r.getCell(6).alignment = { horizontal: "right" };
-          }
-          {
-            // One row per genset SIZE actually in use — a genset is a whole physical unit, never a
-            // fraction of one, so this lists each size's own count, rate and cost rather than a
-            // single blended number. A venue needing no genset at all shows neither row.
-            const gensetLines = [
-              { label: "Genset (125 KVA)", count: fnObj.transport.gensets || 0, rate: fnObj.transport.gensetRate || 0 },
-              { label: "Genset (62 KVA)", count: fnObj.transport.genset62 || 0, rate: fnObj.transport.gensetRate62 || 0 },
-            ].filter((g) => g.count > 0);
-            gensetLines.forEach((g) => {
-              const gRow = ws.addRow([g.label, `${g.count} unit${g.count !== 1 ? "s" : ""} × ${f(g.rate)}`, "", "", "", g.count * g.rate]);
-              gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
-            });
-          }
+          });
+          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
+          gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
           const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
           tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
@@ -833,28 +838,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       return out;
     };
 
-    // ═══ DIFFERENT ANGLES OF THE SAME ELEMENT ═══
-    // "some different angles of same pictures as well". Library photos carry tags.areasElements — the
-    // same vocabulary the zones use (Stage, Entry Gate, Centre Lounge…) — so alternates for a zone are
-    // simply other photos tagged with that element. The zone's own chosen photo is excluded, since the
-    // point is to show it from somewhere else.
-    const alternatesForZone = async (zoneLabel, chosenUrl, venue, limit = 3) => {
-      const label = String(zoneLabel || "").trim();
-      if (!label) return [];
-      try {
-        const { data, error } = await supabase
-          .from("library").select("url,tags").contains("tags->areasElements", JSON.stringify([label])).limit(40);
-        if (error || !data?.length) return [];
-        const v = String(venue || "").trim().toLowerCase();
-        return [...data]
-          .sort((a, b) => (String(b.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0)
-                        - (String(a.tags?.venue || "").trim().toLowerCase() === v ? 1 : 0))
-          .map((r) => r.url)
-          .filter((u) => u && !String(u).startsWith("data:") && u !== chosenUrl && !isInventoryPhoto(u))
-          .slice(0, limit);
-      } catch { return []; }
-    };
-
     // ═══ READ THE REFERENCE IMAGES ═══
     // "Detailed callouts highlighting the key design elements visible within each reference image" and
     // "a flower story that complements the selected references". Both have to come from what is
@@ -864,7 +847,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // Everything here is best-effort. A failed or slow vision call must degrade to the designer's own
     // zone note, never block the deck: a presentation without callouts still beats no presentation.
     const readReferences = async (shots, paletteName) => {
-      const empty = { callouts: {}, flowerStory: "" };
+      const empty = { callouts: {}, flowerStory: "", score: {} };
       if (!shots.length) return empty;
       try {
         const blocks = [];
@@ -883,15 +866,25 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           `references${paletteName ? `, sitting with the "${paletteName}" palette` : ""} — the varieties ` +
           `visible, how they carry across the zones, the mood they build. Warm and confident, written ` +
           `for the client, not a list.\n\n` +
+          // Which photographs are worth putting in front of a client. The library holds work of very
+          // uneven quality — phone snaps, half-lit rooms, and a number carrying ANOTHER studio's
+          // watermark — and the deck was taking them in whatever order the zones happened to be in.
+          // One bad photograph on the cover undoes the whole document, so the same pass that reads
+          // them also grades them, and the best ones get the positions that matter.
+          `Finally, SCORE each image 1-5 on how well it would sell this work to a client — ` +
+          `composition, lighting, how finished the décor looks, and whether the frame is clean. ` +
+          `Score 1 if it carries a visible watermark or logo belonging to another company, is badly ` +
+          `lit or blurred, or shows an unfinished setup with crew, boxes or cabling in frame. ` +
+          `Score 5 only for a photograph you would put on the cover.\n\n` +
           `Reply with ONLY this JSON, no prose around it:\n` +
-          `{"callouts":{"<image id>":["...","...","..."]},"flowerStory":"..."}` });
+          `{"callouts":{"<image id>":["...","...","..."]},"flowerStory":"...","score":{"<image id>":4}}` });
 
-        const raw = await callClaudeStreaming({ contentBlocks: blocks, maxTokens: 1600 });
+        const raw = await callClaudeStreaming({ contentBlocks: blocks, maxTokens: 1800 });
         // The model is asked for bare JSON, but a stray ```json fence costs nothing to survive.
         const m = String(raw || "").match(/\{[\s\S]*\}/);
         if (!m) return empty;
         const parsed = JSON.parse(m[0]);
-        return { callouts: parsed.callouts || {}, flowerStory: String(parsed.flowerStory || "") };
+        return { callouts: parsed.callouts || {}, flowerStory: String(parsed.flowerStory || ""), score: parsed.score || {} };
       } catch { return empty; }
     };
 
@@ -908,20 +901,36 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     const paletteName = combined.functions.map((x) => x.palette).find(Boolean) || "";
     const read = await readReferences(shots.slice(0, 12), paletteName);
 
+    // ── BEST PHOTOGRAPH FIRST ──
+    // The deck used to take zone photos in whatever order the zones were built, so the cover was
+    // decided by which zone someone happened to configure first. The vision pass grades every
+    // reference (see readReferences), and those grades now decide the positions that carry the
+    // deck: the cover, each function's divider, and the mood boards. Ungraded photos sit at 3, a
+    // neutral middle, so a failed vision call changes the order but never empties the deck.
+    const scoreOf = (photoUrl) => {
+      const shot = shots.find((x) => x.zone?.photo === photoUrl);
+      const raw = shot ? Number(read.score?.[shot.id]) : NaN;
+      return Number.isFinite(raw) ? raw : 3;
+    };
+    const bestFirst = (urls) => [...urls].sort((a, b) => scoreOf(b) - scoreOf(a));
+
     // shots[].url is the pre-sized copy the vision call was given; the RAW photo is what the deck
     // needs, so it can be cropped to whichever box it lands in.
-    const [fallbackPic] = shots.length ? [shots[0].zone.photo]
+    const rankedAll = bestFirst(shots.map((x) => x.zone.photo));
+    const [fallbackPic] = rankedAll.length ? [rankedAll[0]]
       : (await libraryPhotosForFunction(combined.functions[0]?.fnType, combined.functions[0]?.fnVenue, combined.functions[0]?.fnShift, 1));
 
     const fns = [];
     for (const fnObj of combined.functions) {
       const zones = zonesByFn.get(fnObj) || [];
-      const [libPic] = zones.length ? [zones[0].photo]
+      const rankedFn = bestFirst(zones.map((z) => z.photo));
+      const [libPic] = rankedFn.length ? [rankedFn[0]]
         : await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 1);
 
       // Mood board: one photo per zone, across DIFFERENT zones, topped up from the library when the
       // build is thin — three photos is the minimum that reads as a board rather than a snapshot.
-      const board = zones.slice(0, 3).map((z) => z.photo);
+      // Best three, not first three.
+      const board = rankedFn.slice(0, 3);
       if (board.length < 3) {
         const extra = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - board.length);
         extra.forEach((u) => { if (!board.includes(u)) board.push(u); });
@@ -951,11 +960,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         const shot = shots.find((s) => s.zone === z);
         const ai = (shot && read.callouts[shot.id]) || [];
         const callouts = (Array.isArray(ai) ? ai : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 3);
-        // Excludes whatever the mood board already used, so Options is genuinely other angles rather
-        // than the same photograph a page later.
-        const seen = new Set([z.photo, ...board]);
-        const alts = (await alternatesForZone(z.label, z.photo, fnObj.fnVenue, 6)).filter((u) => !seen.has(u)).slice(0, 3);
-        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), alts });
+        // Two or three close details cut out of THIS zone's own photograph and hosted, to sit beside
+        // it — see detailShots. Not other photographs of the same element: those were the Options
+        // cards, and a detail of the very picture beside it reads as a designer's study rather than
+        // as more stock. Best-effort: an empty list just leaves the card as the photograph alone.
+        const details = await detailShots(z.photo, 3);
+        zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), details });
       }
 
       fns.push({
@@ -997,7 +1007,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   // URLs for it to fetch. Sized on the way out: Gamma lays out whatever shape it is handed, and raw
   // camera uploads in mixed orientations are what made the earlier decks look like a contact sheet.
   const buildGammaOutline = (content) => {
-    const img = (u, w = 1600, h = 900) => (u ? deckImageUrl(u, w, h) : "");
+    // 2200 wide at quality 92. Gamma FETCHES these by URL and re-hosts them, so a larger render
+    // costs nothing at the Canva end — unlike the built-in deck, where the bytes travel inside the
+    // file. 1600 at q85 went visibly soft whenever Gamma scaled a photo up to fill a card.
+    const img = (u, w = 2200, h = 1238) => (u ? deckImageUrl(u, w, h, 92) : "");
     const S = [];
 
     S.push([`# ${content.clientName || "Your"} Wedding`, "DECOR PRESENTATION", "Ambria Design & Decor",
@@ -1021,13 +1034,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       }
 
       for (const z of f.zones) {
-        // The callouts are the point of this card — they are what was read off this photograph.
+        // The whole photograph first, then its details — Gamma is told to keep source order, so the
+        // hero leads and the details follow it into the column beside. The callouts are the point of
+        // this card: they are what was read off this photograph.
         const lines = (z.callouts || []).filter(Boolean).slice(0, 3).join("\n\n");
-        S.push([`# ${z.label}`, img(z.photo), lines, z.note].filter(Boolean).join("\n\n"));
-        if ((z.alts || []).length >= 2) {
-          S.push([`# Options for the ${z.label}`, ...z.alts.slice(0, 3).map((u) => img(u, 1200, 800)),
-            "Alternate directions for this element."].filter(Boolean).join("\n\n"));
-        }
+        const detail = (z.details || []).slice(0, 3).map((u) => img(u, 900, 1200)).join("\n\n");
+        S.push([`# ${z.label}`, img(z.photo), detail, lines, z.note].filter(Boolean).join("\n\n"));
       }
     }
 
@@ -1378,9 +1390,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         if (fn.board[2]) jobs.push({ url: fn.board[2], w: bb.rw, h: bb.rh, ground: IVORY });
         for (const z of fn.zones) {
           if (z.photo) jobs.push({ url: z.photo, ...BOX.element, ground: IVORY });
-          if (z.alts?.length >= 2) {
-            const ob = optionBoxes(Math.min(z.alts.length, 3));
-            z.alts.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h, ground: IVORY }));
+          if ((z.details || []).length >= 2) {
+            const ob = optionBoxes(Math.min(z.details.length, 3));
+            z.details.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h, ground: IVORY }));
           }
         }
       }
@@ -1465,17 +1477,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // sides to the crop — the room stopped being readable, which is the whole point of the plate.
         card(s, z.photo, 6.35, 1.65, BOX.element.w, BOX.element.h);
 
-        // ── Options: the same element from other angles ──
-        if (z.alts.length >= 2) {
+        // ── The details cut from this zone's own photograph (see detailShots) ──
+        if ((z.details || []).length >= 2) {
           const o = newSlide();
-          diamond(o, M, 0.82); o.addText("OPTIONS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+          diamond(o, M, 0.82); o.addText("DETAILS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
           o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
-          const m = Math.min(z.alts.length, 3);
+          const m = Math.min(z.details.length, 3);
           // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
           // cropped the option down to a detail you could no longer recognise as the element.
           const { gut, w, h } = optionBoxes(m);
           const y = 2.15 + Math.max(0, (SLIDE_H - 2.15 - 0.9 - h) / 2);
-          z.alts.slice(0, m).forEach((u, i) => {
+          z.details.slice(0, m).forEach((u, i) => {
             const x = M + i * (w + gut);
             card(o, u, x, y, w, h);
             label(o, String(i + 1), x, y + h + 0.16, w, 14);
@@ -1542,7 +1554,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       if (USE_GAMMA) {
         // Gamma designs it. Two polls' worth of patience is the cost: generation takes minutes, not
         // seconds, and the client waits on this screen while it runs.
-        const generationId = await gammaCreateGeneration(buildGammaOutline(content), title);
+        const generationId = await gammaCreateGeneration(buildGammaOutline(content), title, deckThemeId);
         for (let i = 0; i < 40; i++) {
           await new Promise((r) => setTimeout(r, 4000));
           const res = await gammaPollGeneration(generationId);
@@ -1986,6 +1998,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
             <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
             <button onClick={csExportExcel} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} Excel</button>
+            {/* Theme picker — sits with the Canva button because it only affects that deck. Hidden
+                until the list loads, and while a deck is generating, since changing it mid-run would
+                say nothing about the deck actually being made. */}
+            {deckThemes.length > 0 && canvaState !== "ready" && (
+              <select value={deckThemeId} onChange={(e) => pickDeckTheme(e.target.value)}
+                disabled={canvaState === "designing" || canvaState === "uploading" || canvaState === "processing"}
+                title="Which Gamma theme this deck is designed in"
+                style={{padding:"8px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:12,fontWeight:600,maxWidth:190,cursor:"pointer"}}>
+                <option value="" style={{color:"#111"}}>Default theme</option>
+                {/* Ambria's own themes first — see gammaThemes(). Fifty standard ones follow. */}
+                {deckThemes.map((t) => (
+                  <option key={t.id} value={t.id} style={{color:"#111"}}>{t.custom ? `★ ${t.name}` : t.name}</option>
+                ))}
+              </select>
+            )}
             {(() => {
               const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
               const busyLabel = canvaState === "designing" ? "Designing…" : canvaState === "uploading" ? "Uploading…" : "Finalizing…";

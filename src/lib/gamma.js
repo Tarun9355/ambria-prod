@@ -20,8 +20,25 @@ async function callGammaFn(action, params = {}) {
   return data;
 }
 
-export const gammaCreateGeneration = (inputText, title) =>
-  callGammaFn("create_generation", { inputText, title }).then((d) => d.generationId);
+// themeId decides how the deck LOOKS — it outranks anything the art-direction prompt says about
+// grounds or fonts, so this is the control that matters. Omitted, the edge function falls back to
+// its own default.
+export const gammaCreateGeneration = (inputText, title, themeId) =>
+  callGammaFn("create_generation", { inputText, title, ...(themeId ? { themeId } : {}) }).then((d) => d.generationId);
+
+// The workspace's themes, custom ones first — those are Ambria's own, and what a salesperson is
+// actually looking for in a list of fifty. Cached for the tab: the list changes when someone builds
+// a theme in Gamma, which is not something worth re-fetching on every visit to Summary.
+let themeCache = null;
+export async function gammaThemes() {
+  if (themeCache) return themeCache;
+  const d = await callGammaFn("list_themes");
+  const all = Array.isArray(d?.data) ? d.data : [];
+  themeCache = all
+    .map((t) => ({ id: t.id, name: t.name || t.id, custom: t.type !== "standard" }))
+    .sort((a, b) => (b.custom - a.custom) || a.name.localeCompare(b.name));
+  return themeCache;
+}
 
 // Returns { status, gammaUrl, base64, error } — base64 (the exported pptx) is only present once
 // status === "completed".
