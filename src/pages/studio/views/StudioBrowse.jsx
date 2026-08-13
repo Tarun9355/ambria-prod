@@ -31,6 +31,10 @@ export default function StudioBrowse({ ctx }) {
   // Palette filter search. Lives here rather than inside the Section so it survives the panel's
   // re-renders — the section subtree is rebuilt on every filter change.
   const [paletteQ, setPaletteQ] = useState("");
+  // "Last 5 sessions" history under the most-recent-session card — collapsed by default so it
+  // doesn't compete with the filters/videos for space; per-client is enough (doesn't need to
+  // persist across clients), so plain local state rather than anything ctx-level.
+  const [bannerHistoryOpen, setBannerHistoryOpen] = useState(false);
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
@@ -57,6 +61,7 @@ export default function StudioBrowse({ ctx }) {
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES,
+    clientLedger, saveClientLedger, askConfirm,
   } = ctx;
   // The sticky offset clears the header, plus the function tab strip when there is more than one
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
@@ -202,6 +207,8 @@ export default function StudioBrowse({ ctx }) {
     // saved has fnSnapshots {"0"} and nothing else, so switching to Fn2 made the whole banner
     // vanish and there was no way to reach the saved build at all. Now the row stays and says
     // "Fn1", and Resume jumps to that function instead of blanking the pill you're standing on.
+    // Only the single most recent one gets the full "continue" card — history beyond that lives in
+    // the collapsed "Last 5 sessions" list below (bannerHistory), which isn't pill-filtered at all.
     const bannerSaved = (() => {
       if (!activeClient) return [];
       const withFn = [];
@@ -241,7 +248,7 @@ export default function StudioBrowse({ ctx }) {
         if (seenIds.has(s.id)) continue;
         seenIds.add(s.id);
         out.push(s);
-        if (out.length >= 3) break;
+        if (out.length >= 1) break;
       }
       return out;
     })();
@@ -258,6 +265,29 @@ export default function StudioBrowse({ ctx }) {
     }) : false;
     const bannerShowCurrent = !!bannerCurrentId && !bannerCurrentInSaved;
     const bannerFmtDate = (ts) => { try { return new Date(ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); } catch { return ""; } };
+    // Last 5 sessions for this client, most-recent first — the raw history, not the pill-aware
+    // dedup bannerSaved does. Collapsed by default (bannerHistoryOpen) since it's a "just in case"
+    // list, not something needed on every visit.
+    const bannerHistory = (activeClient?.sessions || []).slice(0, 5);
+    // Same "which pill actually has data" logic bannerSaved uses above, applied per history row
+    // (which — unlike bannerSaved's entries — never got a _fnIdx computed for it) so Resume lands
+    // on the function this particular past session holds, not blindly on whichever pill is active now.
+    const bestFnIdxForSession = (s) => {
+      const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
+      if (!snaps || !Object.keys(snaps).length) return fnSnapHasData(s) ? 0 : null;
+      if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) return activeFnIdx;
+      const idxs = Object.keys(snaps).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+      for (const i of idxs) { if (fnSnapHasData(snaps[i] || snaps[String(i)] || null)) return i; }
+      return null;
+    };
+    const deleteSession = (sessionId) => {
+      if (!activeClient) return;
+      askConfirm("Delete this saved session?", () => {
+        const nextSessions = (activeClient.sessions || []).filter(sess => sess.id !== sessionId);
+        saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
+        showMsg("Session deleted", "green");
+      }, { yesLabel: "Delete", note: "This can't be undone." });
+    };
 
     // ═══ FILTER PANEL PRESENTATION ═══
     // Now sourced from components/studio/filterUI.jsx so Browse and Build share one panel
@@ -414,8 +444,10 @@ export default function StudioBrowse({ ctx }) {
                 const videoTitle = s.sourceVideoTitle || vid?.title || "Video";
                 const unavailable = !vid && !s.sourceVideoTitle;
                 return (
-                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
-                    <div style={{display:"flex",alignItems:"flex-start",gap:9}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
+                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+                    {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
+                      style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
+                    <div style={{display:"flex",alignItems:"flex-start",gap:9,paddingRight:16}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:11.5,fontWeight:600,color:textP,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                         {videoTitle}
@@ -461,6 +493,30 @@ export default function StudioBrowse({ ctx }) {
                   </div>
                 );
               })()}
+              {/* Collapsed history — the raw last-5, not the pill-aware single "continue" card above.
+                  A safety net for "I want an older save back", not something needed on every visit. */}
+              {bannerHistory.length > 0 && (
+                <div style={{borderRadius:9,border:`1px solid ${border}`,overflow:"hidden",background:cardBg}}>
+                  <button type="button" onClick={()=>setBannerHistoryOpen(v=>!v)} aria-expanded={bannerHistoryOpen}
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"7px 10px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
+                    <span style={{display:"inline-flex",transform:bannerHistoryOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
+                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Last {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
+                  </button>
+                  {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
+                    {bannerHistory.map((s,i) => (
+                      <div key={s.id||i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 7px",borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#FAFAFB"}}>
+                        <span style={{fontSize:10,color:textS,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{typeof s.total==="number"?` · ${fmt(s.total)}`:""}{s.tier?` ${s.tier}`:""}
+                        </span>
+                        <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                          <span onClick={()=>resumeSavedSession(s, bestFnIdxForSession(s) ?? undefined)} style={{fontSize:9.5,fontWeight:700,color:accent,cursor:"pointer",whiteSpace:"nowrap"}}>↻ Resume</span>
+                          {s.id && <span onClick={()=>deleteSession(s.id)} title="Delete this session" style={{fontSize:11,color:textS,cursor:"pointer",lineHeight:1}}>✕</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>}
+                </div>
+              )}
             </div>
           )}
           {/* The filter card takes what is left after the banner, and keeps its own scrollport, so a
