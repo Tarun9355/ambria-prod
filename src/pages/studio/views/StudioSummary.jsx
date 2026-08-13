@@ -22,16 +22,33 @@ import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
-// ═══ AMBRIA'S OWN SLIDE BACKGROUND (optional) ═══
-// Drop an image at src/assets/wedding-bg.(png|jpg|webp) and every slide is drawn on it, in place of
-// the generated texture — see customGround() in buildDesignDeck.
+// ═══ AMBRIA'S OWN SLIDE BACKGROUNDS (optional, one per event type) ═══
+// Drop an image at src/assets/<event>-bg.(png|jpg|webp) — wedding-bg.jpg, birthday-bg.jpg — and a
+// deck for that kind of event is drawn on it, in place of the generated texture. Adding a new one
+// is a file, not a code change: the name before "-bg" IS the event type it answers to.
 //
 // import.meta.glob, not a plain import: a direct import of a file that is not there fails the BUILD,
 // which would mean nobody can deploy until the asset exists. A glob resolves to {} instead, so the
-// deck simply keeps its generated ground until the file appears, and needs no code change when it
-// does.
-const BG_ASSETS = import.meta.glob("../../../assets/wedding-bg.{png,jpg,jpeg,webp}", { eager: true, query: "?url", import: "default" });
-const CUSTOM_BG_URL = Object.values(BG_ASSETS)[0] || null;
+// deck simply keeps its generated ground until the file appears.
+const BG_ASSETS = import.meta.glob("../../../assets/*-bg.{png,jpg,jpeg,webp}", { eager: true, query: "?url", import: "default" });
+const BG_BY_EVENT = Object.fromEntries(
+  Object.entries(BG_ASSETS).map(([path, url]) => [(path.match(/([^/]+)-bg\.\w+$/) || [, ""])[1].toLowerCase(), url])
+);
+
+/**
+ * The artwork a deck should be drawn on, matched against its function types.
+ *
+ * Wedding is the fallback rather than "no artwork", because the bulk of the work is weddings and
+ * their functions are named Reception, Sangeet, Mehendi — none of which spell "wedding". A birthday
+ * says so in its own name, so it is the named types that need matching and the rest that need a
+ * sensible default.
+ */
+function customBgFor(content) {
+  const hay = (content?.functions || []).map((f) => f.name).join(" ").toLowerCase();
+  // Longest key first, so a two-word type can never be beaten by a shorter one it contains.
+  const hit = Object.keys(BG_BY_EVENT).sort((a, b) => b.length - a.length).find((k) => hay.includes(k));
+  return BG_BY_EVENT[hit] || BG_BY_EVENT.wedding || null;
+}
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
@@ -1227,9 +1244,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // because PptxGenJS needs the bytes rather than a URL for a slide background, and the same data
     // is shared by every slide rather than embedded per card.
     const customGround = await (async () => {
-      if (!CUSTOM_BG_URL) return null;
+      const bgUrl = customBgFor(content);
+      if (!bgUrl) return null;
       try {
-        const resp = await fetch(CUSTOM_BG_URL);
+        const resp = await fetch(bgUrl);
         if (!resp.ok) return null;
         const blob = await resp.blob();
         return await new Promise((res) => {
