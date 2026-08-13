@@ -5,7 +5,6 @@ import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
 import { paletteNames } from "../../../lib/studio/colours";
 import { venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
-import { sessionHasData } from "../../../lib/studio/sessionData.js";
 
 export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
@@ -58,7 +57,6 @@ export default function StudioBrowse({ ctx }) {
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES,
-    clientLedger, loadClientSession,
   } = ctx;
   // The sticky offset clears the header, plus the function tab strip when there is more than one
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
@@ -247,45 +245,6 @@ export default function StudioBrowse({ ctx }) {
       }
       return out;
     })();
-    // ═══ RECENT BUILDS (across clients) ═══
-    // Continuing from Event Info mints a brand-new client with `sessions: []` whenever no client is
-    // already active, so a fresh flow lands on Browse with an empty banner and no route back into
-    // anything built earlier — the saved work belongs to the previous client record, not this one.
-    // Shown only when the active client has nothing of its own, so it never competes with the
-    // client's own sessions above.
-    const recentBuilds = (() => {
-      if (bannerSaved.length > 0) return [];
-      const out = [];
-      for (const c of (clientLedger || [])) {
-        for (const s of (c.sessions || [])) {
-          // ANY function, not just the first. This looked at fnSnapshots[0] alone, so a build that
-          // lives on Fn2 — the common case the moment anyone works on the second function — was
-          // invisible here. And this is the branch that runs when there is NO active client, which
-          // is exactly a fresh session: open the app again and the work looked gone.
-          // sessionHasData is the same predicate the banner and the save path use.
-          if (!sessionHasData(s)) continue;
-          // Title from the snapshot that HOLDS the data, not the session's flat fields — those
-          // describe whichever function was active when the autosave last ran, and are null whenever
-          // that function had no reference video, which showed the row as a bare "Build".
-          const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
-          let fnIdx = null, title = s.sourceVideoTitle || null;
-          if (snaps) {
-            const idxs = Object.keys(snaps).map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
-            for (const i of idxs) {
-              const snap = snaps[i] || snaps[String(i)];
-              if (!fnSnapHasData(snap)) continue;
-              fnIdx = i;
-              title = snap?.sourceVideo?.title || snap?.sourceVideoTitle || title;
-              break;
-            }
-          }
-          out.push({ client: c, session: s, savedAt: s.savedAt || 0, title, fnIdx });
-        }
-      }
-      out.sort((a, b) => b.savedAt - a.savedAt);
-      return out.slice(0, 3);
-    })();
-
     const bannerCurrentId = sourceVideo?.id || null;
     // "Continue build" (vs "Resume") if the current pill's video matches one of the saved session's
     // snapshot for this pill. Walk fnSnapshots[activeFnIdx].sourceVideo.id, else legacy session.sourceVideoId.
@@ -656,32 +615,6 @@ export default function StudioBrowse({ ctx }) {
         {/* ═══ MAIN CONTENT — VIDEO CARDS ═══ */}
         <div style={{flex:1,minWidth:0}}>
           {/* Session banner — per-pill Resume/Continue entry points. Hidden entirely when pill has no saved sessions and no current selection. */}
-          {/* Recent builds from other clients — the only way back in once Event Info has minted a
-              fresh client record. Resume goes through loadClientSession so the client's own name,
-              date, venue and functions come back with the build, not just the zones. */}
-          {recentBuilds.length > 0 && (
-            <div style={{marginBottom:14,padding:"9px 12px",borderRadius:10,background:isDark?"rgba(148,163,184,0.07)":"rgba(100,116,139,0.05)",border:`1px solid ${isDark?"rgba(148,163,184,0.20)":"rgba(100,116,139,0.18)"}`}}>
-              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.9,textTransform:"uppercase",color:textS,marginBottom:7}}>Recent builds</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {recentBuilds.map(({client,session,title,fnIdx}) => (
-                  <div key={client.id+"_"+session.savedAt} style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{flexShrink:0,display:"flex",color:textS}}><IconSave size={13}/></div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:11.5,fontWeight:600,color:textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{client.name||"Client"}</div>
-                      <div style={{fontSize:10,color:textS,marginTop:1}}>
-                        {title||"Build"}{typeof fnIdx==="number"?` · Fn${fnIdx+1}`:""} · saved {bannerFmtDate(session.savedAt)}{session.savedBy?` by ${session.savedBy}`:""}{typeof session.total==="number"?` · ${fmt(session.total)}`:""}
-                      </div>
-                    </div>
-                    <button onClick={(e)=>{e.stopPropagation();loadClientSession(client,session,2);}}
-                      title={`Switch to ${client.name||"this client"} and open their saved build`}
-                      style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${isDark?"rgba(148,163,184,0.45)":"rgba(100,116,139,0.4)"}`,background:"transparent",color:textP,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-                      Open {"→"}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
             <div style={{position:"relative",flex:1,maxWidth:360}}>
               <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",display:"flex",color:textM,pointerEvents:"none"}}><IconSearch size={13}/></span>
