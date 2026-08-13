@@ -767,6 +767,16 @@ export default function StudioBuild({ ctx }) {
     scheduleGroupSave(k, srcType, label, cur);
     return { ...prev, [k]: cur };
   });
+  // Add-only, never removes — used when picking a photo for the actual build (not ticking the
+  // checkbox) while grid mode is already open. Whatever gets chosen to build with should already
+  // be a group member, same as the grid-view-open pre-tick; a no-op (and no re-save) if it already is.
+  const ensureGrpPick = (k, id, srcType, label) => setGrpSel(prev => {
+    const cur = new Set(prev[k] || []);
+    if (cur.has(id)) return prev;
+    cur.add(id);
+    scheduleGroupSave(k, srcType, label, cur);
+    return { ...prev, [k]: cur };
+  });
   // Hide the ticks locally WITHOUT touching the saved group — used when leaving grid view, where
   // the ticks just stop being visible/actionable, same as the group being untouched always meant.
   const hideGrpPick = (k) => setGrpSel(prev => ({ ...prev, [k]: new Set() }));
@@ -2204,7 +2214,14 @@ undefined
                   </div>
                   {/* The whole strip under the photo selects, not just the two lines of text —
                       flex:1 claims the leftover height and the padding widens the target. */}
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{
+                    if(phSwipedJustNow())return;
+                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}
+                    // Same rule as opening the grid: whatever you actually pick to build with belongs
+                    // in the group already, not just whatever happened to be ticked before. Add-only —
+                    // never un-ticks anything the checkbox itself didn't touch.
+                    if(grpOn&&ph.isLibrary&&ph.eventId)ensureGrpPick(k,ph.eventId,srcType,el.label);
+                  }}>
                     {/* No filename. For a library photo eventName is whatever the file was called in
                         storage — "fnq8zuwlfxtductgq4ov" — which tells a salesperson nothing and reads
                         as a bug on screen. What is useful is what the photo CONTAINS, which is the
