@@ -43,6 +43,49 @@ const REGIONS = [
 ];
 
 /**
+ * A line drawing of the crop: Sobel edge magnitude, inverted onto ivory and tinted gold.
+ *
+ * Sits on the blank half of a zone card, where a second photograph would compete with the first.
+ * A sketch of the same décor reads as annotation — the designer's hand next to the photograph —
+ * rather than as more evidence.
+ *
+ * Edges are thresholded and softened: raw Sobel on a busy floral photograph is noise, and what
+ * carries at this size is the strong structure — the arch, the drape line, the table edge.
+ */
+function sketch(ctx, w, h) {
+  const src = ctx.getImageData(0, 0, w, h);
+  const d = src.data;
+  // Luminance first, so the gradient is measured on brightness rather than three channels.
+  const lum = new Float32Array(w * h);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    lum[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  }
+  const out = ctx.createImageData(w, h);
+  const o = out.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      let mag = 0;
+      if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {
+        const gx = -lum[p - w - 1] - 2 * lum[p - 1] - lum[p + w - 1]
+                 + lum[p - w + 1] + 2 * lum[p + 1] + lum[p + w + 1];
+        const gy = -lum[p - w - 1] - 2 * lum[p - w] - lum[p - w + 1]
+                 + lum[p + w - 1] + 2 * lum[p + w] + lum[p + w + 1];
+        mag = Math.sqrt(gx * gx + gy * gy);
+      }
+      // Below the threshold is paper; above it, ink whose weight follows the edge strength.
+      const ink = mag < 34 ? 0 : Math.min(1, (mag - 34) / 120);
+      const k = p * 4;
+      o[k]     = Math.round(250 - ink * (250 - 150));   // toward #96 6E 3E — the deck's gold
+      o[k + 1] = Math.round(246 - ink * (246 - 110));
+      o[k + 2] = Math.round(238 - ink * (238 - 62));
+      o[k + 3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+/**
  * A soft pastel wash: pull the saturation back, lift the blacks, warm it very slightly.
  *
  * The point is that a detail sitting beside its own full photograph should read as a study of it,
@@ -88,7 +131,7 @@ async function uploadBlob(blob, name) {
  * @param {number} [count=3]
  * @returns {Promise<string[]>} public URLs
  */
-export async function detailShots(srcUrl, count = 3) {
+export async function detailShots(srcUrl, count = 3, style = "pastel") {
   if (!srcUrl || typeof document === "undefined") return [];
   // A crop is uploaded to media/deck-details/, so its URL passes isInventoryPhoto by construction —
   // cropping a warehouse product shot would launder it straight past the guard the deck relies on.
@@ -113,10 +156,10 @@ export async function detailShots(srcUrl, count = 3) {
       const ctx = cv.getContext("2d");
       ctx.drawImage(img, Math.round(img.naturalWidth * r.x), Math.round(img.naturalHeight * r.y),
         sw, sh, 0, 0, cv.width, cv.height);
-      pastel(ctx, cv.width, cv.height);
+      if (style === "sketch") sketch(ctx, cv.width, cv.height); else pastel(ctx, cv.width, cv.height);
       const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.88));
       if (!blob) continue;
-      out.push(await uploadBlob(blob, keyFor(srcUrl, r.tag)));
+      out.push(await uploadBlob(blob, keyFor(srcUrl, style === "sketch" ? r.tag + "s" : r.tag)));
     }
     return out;
   } catch {

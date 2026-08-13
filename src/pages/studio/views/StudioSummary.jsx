@@ -22,16 +22,33 @@ import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
-// ═══ AMBRIA'S OWN SLIDE BACKGROUND (optional) ═══
-// Drop an image at src/assets/wedding-bg.(png|jpg|webp) and every slide is drawn on it, in place of
-// the generated texture — see customGround() in buildDesignDeck.
+// ═══ AMBRIA'S OWN SLIDE BACKGROUNDS (optional, one per event type) ═══
+// Drop an image at src/assets/<event>-bg.(png|jpg|webp) — wedding-bg.jpg, birthday-bg.jpg — and a
+// deck for that kind of event is drawn on it, in place of the generated texture. Adding a new one
+// is a file, not a code change: the name before "-bg" IS the event type it answers to.
 //
 // import.meta.glob, not a plain import: a direct import of a file that is not there fails the BUILD,
 // which would mean nobody can deploy until the asset exists. A glob resolves to {} instead, so the
-// deck simply keeps its generated ground until the file appears, and needs no code change when it
-// does.
-const BG_ASSETS = import.meta.glob("../../../assets/wedding-bg.{png,jpg,jpeg,webp}", { eager: true, query: "?url", import: "default" });
-const CUSTOM_BG_URL = Object.values(BG_ASSETS)[0] || null;
+// deck simply keeps its generated ground until the file appears.
+const BG_ASSETS = import.meta.glob("../../../assets/*-bg.{png,jpg,jpeg,webp}", { eager: true, query: "?url", import: "default" });
+const BG_BY_EVENT = Object.fromEntries(
+  Object.entries(BG_ASSETS).map(([path, url]) => [(path.match(/([^/]+)-bg\.\w+$/) || [, ""])[1].toLowerCase(), url])
+);
+
+/**
+ * The artwork a deck should be drawn on, matched against its function types.
+ *
+ * Wedding is the fallback rather than "no artwork", because the bulk of the work is weddings and
+ * their functions are named Reception, Sangeet, Mehendi — none of which spell "wedding". A birthday
+ * says so in its own name, so it is the named types that need matching and the rest that need a
+ * sensible default.
+ */
+function customBgFor(content) {
+  const hay = (content?.functions || []).map((f) => f.name).join(" ").toLowerCase();
+  // Longest key first, so a two-word type can never be beaten by a shorter one it contains.
+  const hit = Object.keys(BG_BY_EVENT).sort((a, b) => b.length - a.length).find((k) => hay.includes(k));
+  return BG_BY_EVENT[hit] || BG_BY_EVENT.wedding || null;
+}
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
@@ -999,7 +1016,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // it — see detailShots. Not other photographs of the same element: those were the Options
         // cards, and a detail of the very picture beside it reads as a designer's study rather than
         // as more stock. Best-effort: an empty list just leaves the card as the photograph alone.
-        const details = await detailShots(z.photo, 3);
+        // Two, as line drawings: they sit in the empty half of the zone card, where a second
+        // photograph would compete with the first. A sketch of the same décor reads as the
+        // designer's hand beside the photograph rather than as more evidence.
+        const details = await detailShots(z.photo, 2, "sketch");
         zoneCards.push({ label: z.label, photo: z.photo, callouts, note: String(z.note || "").trim(), details });
       }
 
@@ -1224,9 +1244,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // because PptxGenJS needs the bytes rather than a URL for a slide background, and the same data
     // is shared by every slide rather than embedded per card.
     const customGround = await (async () => {
-      if (!CUSTOM_BG_URL) return null;
+      const bgUrl = customBgFor(content);
+      if (!bgUrl) return null;
       try {
-        const resp = await fetch(CUSTOM_BG_URL);
+        const resp = await fetch(bgUrl);
         if (!resp.ok) return null;
         const blob = await resp.blob();
         return await new Promise((res) => {
@@ -1448,9 +1469,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         if (fn.board[2]) jobs.push({ url: fn.board[2], w: bb.rw, h: bb.rh, ground: IVORY });
         for (const z of fn.zones) {
           if (z.photo) jobs.push({ url: z.photo, ...BOX.element, ground: IVORY });
-          if ((z.details || []).length >= 2) {
-            const ob = optionBoxes(Math.min(z.details.length, 3));
-            z.details.slice(0, 3).forEach((u) => jobs.push({ url: u, w: ob.w, h: ob.h, ground: IVORY }));
+          // Same box the element card gives them, or the rounding misses and the sketches land
+          // square-cornered inside a rounded mount.
+          const sk = (z.details || []).slice(0, 2);
+          if (sk.length) {
+            const gap = 0.22, wS = (4.9 - gap * (sk.length - 1)) / sk.length;
+            sk.forEach((u) => jobs.push({ url: u, w: wS, h: wS * 0.78, ground: IVORY }));
           }
         }
       }
@@ -1535,22 +1559,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // sides to the crop — the room stopped being readable, which is the whole point of the plate.
         card(s, z.photo, 6.35, 1.65, BOX.element.w, BOX.element.h);
 
-        // ── The details cut from this zone's own photograph (see detailShots) ──
-        if ((z.details || []).length >= 2) {
-          const o = newSlide();
-          diamond(o, M, 0.82); o.addText("DETAILS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
-          o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
-          const m = Math.min(z.details.length, 3);
-          // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
-          // cropped the option down to a detail you could no longer recognise as the element.
-          const { gut, w, h } = optionBoxes(m);
-          const y = 2.15 + Math.max(0, (SLIDE_H - 2.15 - 0.9 - h) / 2);
-          z.details.slice(0, m).forEach((u, i) => {
-            const x = M + i * (w + gut);
-            card(o, u, x, y, w, h);
-            label(o, String(i + 1), x, y + h + 0.16, w, 14);
-          });
+        // The sketches fill the empty lower-left, under whatever callouts there are — and that space
+        // is empty far too often, because the callouts come from a vision pass that can return
+        // nothing. A card carrying a title and a rule and nothing else looks unfinished; two line
+        // drawings of the same décor make it read as designed either way.
+        const sk = (z.details || []).slice(0, 2);
+        if (sk.length) {
+          const top = 2.65 + Math.max(outs.length, 1) * 0.72 + 0.25;
+          const gap = 0.22, wS = (4.9 - gap * (sk.length - 1)) / sk.length, hS = wS * 0.78;
+          // Only if there is genuinely room left under the callouts — three long callouts and two
+          // sketches do not both fit, and the sketches are the part that can go.
+          if (top + hS < SLIDE_H - 0.7) {
+            sk.forEach((u, i) => card(s, u, M + i * (wS + gap), top, wS, hS));
+          }
         }
+
       }
     }
 
