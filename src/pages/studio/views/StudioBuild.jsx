@@ -535,6 +535,7 @@ export default function StudioBuild({ ctx }) {
     showMsg, askConfirm, saveLib, authUser, logVerificationEvent,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
+    favPhotos, saveFavPhotos,
   } = ctx;
   // Details & pricing are always shown now (the old global toggle is gone). Each zone is instead
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
@@ -1849,6 +1850,19 @@ undefined
         inGroup.sort((a, b) => (a.groupRank ?? Infinity) - (b.groupRank ?? Infinity));
         matchedPhotos = [...inGroup, ...rest];
       }
+      // My own favourites (per salesperson — see saveFavPhotos) lead everything above except the
+      // hand-picked group, which stays a stronger signal. Keyed by the photo's own id/src, never a
+      // (photo, zone) pair, so re-tagging a photo to a different zone doesn't orphan its favourite —
+      // it just keeps applying wherever the photo currently matches. Respects whatever the Photo
+      // Filters already narrowed matchedPhotos to; it only reorders, it doesn't pull in anything
+      // the filters excluded.
+      const favKey = (ph) => ph.eventId || ph.src;
+      const isMyFavPhoto = (ph) => !!favPhotos[favKey(ph)]?.[authUser?.id];
+      if (matchedPhotos.some(isMyFavPhoto)) {
+        const favd = [], rest = [];
+        for (const ph of matchedPhotos) (isMyFavPhoto(ph) ? favd : rest).push(ph);
+        matchedPhotos = [...favd, ...rest];
+      }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
       // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/
@@ -2125,6 +2139,22 @@ undefined
                         boxShadow:"0 2px 7px rgba(0,0,0,0.4)"}}>
                         <IconStar size={11} filled/>
                       </div>;
+                    })()}
+                    {/* Favourite marker — a small dot, deliberately subtle (same reasoning as
+                        Browse's tier-pill ring: this can be on screen in front of a guest). Sits
+                        where the grouping tick would, so it only shows outside grouping mode — the
+                        tick there already owns that corner. Keyed by the photo's own id/src, not a
+                        (photo, zone) pair, so re-tagging this photo to a different zone later
+                        doesn't lose the favourite — see FAV_PHOTO_SK. */}
+                    {!grpOn&&(()=>{
+                      const fKey=ph.eventId||ph.src;
+                      const isFav=!!favPhotos[fKey]?.[authUser?.id];
+                      return <div onClick={e=>{e.stopPropagation();saveFavPhotos({[fKey]:{[authUser?.id]:isFav?null:true}});}}
+                        title={isFav?"Favourited for this zone — click to remove":"Favourite this photo for this zone"}
+                        style={{position:"absolute",top:7,left:7,width:14,height:14,borderRadius:"50%",zIndex:2,cursor:"pointer",
+                          border:`2px solid ${isFav?"#EF4444":"rgba(255,255,255,0.55)"}`,
+                          background:isFav?"#EF4444":"rgba(0,0,0,0.15)",
+                          boxShadow:isFav?"0 0 0 2px rgba(239,68,68,0.35)":"none"}}/>;
                     })()}
                     {/* ── Grouping tick ── Only library photos can be grouped: a group stores library
                         ids, and an event photo has none. stopPropagation because the tile itself

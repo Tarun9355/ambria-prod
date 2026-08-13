@@ -22,6 +22,11 @@ export const HIDDEN_VID_SK = "ambria-hidden-videos-v1";
 // {id: true} patch / {id: null} unset contract as HIDDEN_VID_SK, deliberately subtle client-side
 // only (a coloured ring on the tier pill) so it never reaches an export or a client-facing view.
 export const FAV_VID_SK = "ambria-fav-videos-v1";
+// Same {photoId: {userId: true}} shape and reasoning as FAV_VID_SK, for Build's zone photo strips.
+// Keyed by the Library photo's own id (or src for a non-library photo) — NOT by (photo, zone) —
+// so a photo's favourite survives its own zone/taxonomy being re-tagged later: there's no stale
+// zoneKey to go stale, the flag just keeps applying to the photo wherever it currently matches.
+export const FAV_PHOTO_SK = "ambria-fav-photos-v1";
 export const PIN_SK = "ambria-pin-cache-v1";
 
 // ═══ RETIRED KEYS ═══

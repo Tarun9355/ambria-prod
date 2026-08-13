@@ -78,7 +78,7 @@ import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
-  YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK,
+  YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK, FAV_PHOTO_SK,
   NOTIF_SK, DT_SK, PIMAP_SK, SCAN_HIST_SK,
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
@@ -2070,6 +2070,7 @@ export default function StudioApp() {
   const [hiddenVideos, setHiddenVideos] = useState({});
   const [showHidden, setShowHidden] = useState(false);
   const [favVideos, setFavVideos] = useState({});
+  const [favPhotos, setFavPhotos] = useState({});
   const [lastVisitTs, setLastVisitTs] = useState(0);
 
   // ═══ CLOUDINARY PHOTO BROWSER STATE (reference ~3580) ═══
@@ -2294,6 +2295,8 @@ export default function StudioApp() {
       try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {}
       // Favourite videos
       try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {}
+      // Favourite zone photos
+      try { const v = await kvGet(FAV_PHOTO_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavPhotos(fp); } } catch {}
       // Filter priority
       try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {}
       // Tagging-hidden sub-categories (Pricing flags)
@@ -2429,6 +2432,7 @@ export default function StudioApp() {
           // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
           else if (key === HIDDEN_VID_SK) { const hv = pj(await kvGet(HIDDEN_VID_SK)); if (hv && typeof hv === "object") setHiddenVideos(hv); }
           else if (key === FAV_VID_SK) { const fv = pj(await kvGet(FAV_VID_SK)); if (fv && typeof fv === "object") setFavVideos(fv); }
+          else if (key === FAV_PHOTO_SK) { const fp = pj(await kvGet(FAV_PHOTO_SK)); if (fp && typeof fp === "object") setFavPhotos(fp); }
           else if (key === ZONE_GROUPS_SK) { const zg = normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK))); zoneGroupsRef.current = zg; setZoneGroups(zg); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
@@ -4529,6 +4533,39 @@ export default function StudioApp() {
     setFavVideos(merged);
     const saved = await reliableSave(FAV_VID_SK, JSON.stringify(merged), "Favourite videos");
     if (!saved?.ok) setSaveError({ label: "Favourite videos", error: saved?.error || "Save failed" });
+    return { ok: !!saved?.ok, error: saved?.error || null };
+  }, []);
+
+  // Same shape, same per-(id, userId) merge, same reasoning as saveFavVideos above — one shared row,
+  // one salesperson's toggle never touches another's flag on the same photo. `id` here is the
+  // Library photo's own id (or its src for a non-library photo), never a (photo, zone) pair — see
+  // FAV_PHOTO_SK's comment for why that's what makes a re-tagged photo keep its favourite.
+  const saveFavPhotos = useCallback(async (patch) => {
+    const res = await kvTryGet(FAV_PHOTO_SK);
+    if (!res.ok) {
+      setSaveError({ label: "Favourite photos", error: `Couldn't read the current favourites (${res.error}). Nothing was saved. Check your connection and try again.` });
+      return { ok: false, error: res.error };
+    }
+    let fresh = {};
+    if (res.value != null) {
+      try {
+        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
+        fresh = p;
+      } catch (e) {
+        setSaveError({ label: "Favourite photos", error: `The saved favourites could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
+        return { ok: false, error: "unreadable" };
+      }
+    }
+    const merged = { ...fresh };
+    Object.entries(patch || {}).forEach(([photoId, userPatch]) => {
+      const cur = { ...(merged[photoId] || {}) };
+      Object.entries(userPatch || {}).forEach(([uid, val]) => { if (!val) delete cur[uid]; else cur[uid] = val; });
+      if (Object.keys(cur).length) merged[photoId] = cur; else delete merged[photoId];
+    });
+    setFavPhotos(merged);
+    const saved = await reliableSave(FAV_PHOTO_SK, JSON.stringify(merged), "Favourite photos");
+    if (!saved?.ok) setSaveError({ label: "Favourite photos", error: saved?.error || "Save failed" });
     return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
@@ -7561,7 +7598,7 @@ export default function StudioApp() {
     ytFilterStyle, setYtFilterStyle, ytFilterColor, setYtFilterColor, ytFilterIO, setYtFilterIO, ytPhotoUrl, setYtPhotoUrl,
     manualVideos, setManualVideos, hiddenVideos, setHiddenVideos, showHidden, setShowHidden, lastVisitTs, setLastVisitTs,
     saveManualVideos, saveHiddenVideos, aiTagVideo, aiTagVideoSave, getPhotos, ZONE_ICONS,
-    favVideos, saveFavVideos,
+    favVideos, saveFavVideos, favPhotos, saveFavPhotos,
     // cloudinary photo browser
     cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading, setCldLoading,
     cldUploading, setCldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
