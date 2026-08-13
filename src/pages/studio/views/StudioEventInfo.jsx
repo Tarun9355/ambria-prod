@@ -525,7 +525,13 @@ export default function StudioEventInfo({ ctx }) {
               if (!c.name) return false;
               const nameMatch = qName.length >= 2 && c.name.toLowerCase().includes(qName);
               const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
-              return nameMatch || phoneMatch;
+              if (!(nameMatch || phoneMatch)) return false;
+              // Already shown above as its own LMS lead card (same entry, already linked) — two
+              // near-identical cards for the same deal is exactly the confusing redundancy this
+              // was. Only suppress when that LMS card is actually on screen right now; if LMS
+              // didn't return it (sync lag, filtered out), this Studio card is still the only way in.
+              if (c.lmsLeadId && (lmsLeads || []).some(l => l.entryNo === c.lmsLeadId && l.dept === c.lmsDept)) return false;
+              return true;
             }).slice(0, 5);
             if (!lmsBlock && matches.length === 0) {
               // Nothing from LMS or Studio — show only an explanatory note if a search was attempted.
