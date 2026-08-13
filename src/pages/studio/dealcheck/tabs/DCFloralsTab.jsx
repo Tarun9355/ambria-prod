@@ -8,7 +8,7 @@
 // inline styles preserved.
 // ═══════════════════════════════════════════════════════════════
 import { Fragment, useState } from "react";
-import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../../../../lib/ims/flowerHelpers";
 
 export default function DCFloralsTab({ ctx }) {
   const [artFlowerSearch, setArtFlowerSearch] = useState(""); // search-by-name for the artificial flower colour picker (long list)
@@ -110,30 +110,54 @@ export default function DCFloralsTab({ ctx }) {
                       // to decide purely from the rate-card category, so an element priced as flowers
                       // in the build but missing from the rate card vanished here entirely.
                       const elPattern = el.patternId ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
-                      const isFloral = !!el.patternId || String(rc?.cat || "").toLowerCase() === "florals";
+                      // el.invId is Build's THIRD identity source (getElPrice/getElPriceForFn check
+                      // invId before patternId before falling back to the Rate Card by name — Rate
+                      // Card is never even consulted for an invId element, "by design, not as a
+                      // fallback"). This tab had no branch for it at all: an IMS-inventory-sourced
+                      // floral element (the common case for a real physical product like "Flower
+                      // Reet" — patternId is reserved for PURE recipe-only elements with no inventory
+                      // backing) fell through to the name-based rc/pattern lookups below, which have
+                      // no reason to agree with an unrelated Rate Card row's sub-category — so a
+                      // genuinely-priced, genuinely-linked recipe showed "No IMS pattern found".
+                      const invItem = el.invId ? (dcInventoryCache || []).find(i => i.id === el.invId) : null;
+                      const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
+                      const isFloral = !!el.patternId || invIsFloral || String(rc?.cat || "").toLowerCase() === "florals";
                       if (!isFloral) return;                 // lighting, structure, furniture — not this tab's business
                       if (elQty <= 0) return;
                       // Floral, but nothing to price it by. Record rather than drop: the header used
                       // to read "1 ELEMENT" while others were silently on the floor.
-                      if (!rc && !elPattern) {
+                      if (!rc && !elPattern && !invItem) {
                         uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "No rate-card entry or recipe" });
                         return;
                       }
                       const realPct = resolveRealPct(el, rc);
                       const realFrac = realPct / 100;
                       const artFrac = 1 - realFrac;
-                      // Prefer the recipe the BUILD actually priced this element with. Re-deriving it
-                      // from the name could land on a different recipe than the salesperson chose —
-                      // or on none at all — so the two screens disagreed on the same element.
-                      // Falls back to matchFlowerPattern (flowerHelpers.js) for elements with no
-                      // patternId — the SAME sub-category-first matcher Build itself prices from.
-                      // This used to be a hand-rolled name-only lookup (exact, then substring), which
-                      // is exactly backwards from how recipes are actually organised: a recipe is
-                      // created PER SUB-CATEGORY and applies to every differently-named product in it
-                      // ("Flower Reet"/"Greens Reet" priced products, not literally named that in the
-                      // rate card) — a pure name comparison would never find it. The substring fallback
-                      // compounded this by risking false positives on short/generic names.
-                      let pattern = elPattern || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
+                      // Prefer the recipe the BUILD actually priced this element with, checked in
+                      // Build's own priority order (invId, then patternId, then Rate Card by name).
+                      // Re-deriving it a different way could land on a different recipe than the
+                      // salesperson/Build actually used — or on none at all — so the two screens
+                      // disagreed on the same element. matchFlowerPattern (flowerHelpers.js) is the
+                      // SAME sub-category-first matcher Build itself prices from — for an invId
+                      // element it's fed the real IMS inventory item (matching getElPriceFromInventory
+                      // exactly); the Rate Card row is a coincidental name-match at best and was never
+                      // the thing Build actually priced from. This used to be a hand-rolled name-only
+                      // lookup (exact, then substring) against the Rate Card alone, which is exactly
+                      // backwards from how recipes are organised: a recipe is created PER SUB-CATEGORY
+                      // and applies to every differently-named product in it — a pure name comparison
+                      // would never find it, and risks false positives on short/generic names besides.
+                      let pattern = elPattern
+                        || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
+                        || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
+                      // Build sizes an invId floral element the same way regardless of any Rate Card
+                      // "smb" mode (sizeClassToPatternKey/normalizeSizeClass, getElPriceFromInventory)
+                      // — sizeFromMode below requires rc.inhouseMode==="smb" to honour el.size at all,
+                      // which an invId element (no rc, or an unrelated coincidental rc match) would
+                      // never have, silently always pricing it at "medium" regardless of the S/M/B
+                      // toggle actually picked on Build.
+                      const sizeKey = invItem
+                        ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B"))
+                        : sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       let realCostPerUnit = 0;
                       let realLines = [];
                       // Fixed extra cost (pot/base/frame) per unit — a real cost regardless of the
@@ -142,7 +166,6 @@ export default function DCFloralsTab({ ctx }) {
                       // didn't, so it ran lower than the rollup for any pattern with a nonzero extraCost.
                       let patternExtraCost = 0;
                       if (pattern) {
-                        const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
                         if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -227,7 +250,6 @@ export default function DCFloralsTab({ ctx }) {
                       const artLines = []; // breakdown for "how" panel
                       let artBunchesFlower = 0, artBunchesGreen = 0;
                       if (artFrac > 0 && pattern) {
-                        const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                         const sizes = pattern.sizes || {};
                         let comp = sizes[sizeKey] || sizes.medium;
                         if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -301,7 +323,7 @@ export default function DCFloralsTab({ ctx }) {
                       }
                       totalReal += realCost;
                       totalArtificial += artCost;
-                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size), artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate });
+                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate });
                     });
                   });
                   if (elementBreakdown.length === 0) {
