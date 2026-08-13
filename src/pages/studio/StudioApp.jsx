@@ -4907,8 +4907,11 @@ export default function StudioApp() {
     return Object.values(venueMap).sort((a, b) => a.name.localeCompare(b.name));
   }, [events, allOutdoorDB, allInhouseVenues]);
 
-  // ── Browse videos (tagged-video inspiration catalog) — VERBATIM ──
-  const browseVideos = useMemo(() => {
+  // ── Browse videos base list: mapped + hidden-videos dropped + permission scope applied ──
+  // Factored out so a search can read it directly (browseVideosAll below) instead of the fully
+  // filtered browseVideos — permission scope is the one boundary a search still has to respect,
+  // but nothing past it (venue/tier/style/palette/function) should narrow a search's results.
+  const browseVideosBase = useMemo(() => {
     // Hiding a video in Manage → Library promises it "won't show in the app", but Browse was built
     // straight off ytVideoTags and never consulted hiddenVideos — so hidden references still filled
     // the grid and were counted in the "N videos" headline. Drop them at the source, before any
@@ -4939,21 +4942,34 @@ export default function StudioApp() {
         source: vid?.source || "youtube"
       };
     });
-    let out = list;
     // allInhouseVenueOrParentNames also covers a video stored at the ambiguous PROPERTY level
     // (e.g. "Restro" itself, when a description named the property but not one of its rooms) —
     // plain allInhouseVenues (rooms only) would otherwise misfile such a video as "outside".
     // A video with NO venue tag belongs to neither group — 191 of 428 are in that state, which is
     // why a group pill hides so much.
     const groupOf = (v) => (!v.venue ? "none" : allInhouseVenueOrParentNames.includes(v.venue) ? "inhouse" : "outside");
-
     // ── Permission scope: the ONLY hard boundary here ──────────────────────────────────────────
     // A user restricted to inhouse must never be shown outside venues, whatever they click. This
     // used to be conflated with the venueGroup pill, which meant the pill could not be relaxed
     // without also breaking the restriction.
     const scope = isAdmin ? "all" : (userVenueScope || "all");
-    if (scope === "inhouse" || scope === "outside") out = out.filter(v => groupOf(v) === scope);
+    return (scope === "inhouse" || scope === "outside") ? list.filter(v => groupOf(v) === scope) : list;
+  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, allInhouseVenueOrParentNames, isAdmin, userVenueScope]);
 
+  // Same favourite-first ordering browseVideos applies, with none of the optional filters — the
+  // list a search reads from (see Browse's shownVideos), so favourites still lead but nothing else
+  // narrows it.
+  const browseVideosAll = useMemo(() => {
+    const isMyFav = (v) => !!favVideos[v.id]?.[authUser?.id];
+    const favs = [], rest = [];
+    for (const v of browseVideosBase) (isMyFav(v) ? favs : rest).push(v);
+    return favs.length ? [...favs, ...rest] : browseVideosBase;
+  }, [browseVideosBase, favVideos, authUser]);
+
+  // ── Browse videos (tagged-video inspiration catalog) — VERBATIM ──
+  const browseVideos = useMemo(() => {
+    let out = browseVideosBase;
+    const groupOf = (v) => (!v.venue ? "none" : allInhouseVenueOrParentNames.includes(v.venue) ? "inhouse" : "outside");
     // ── The Inhouse/Outside pill: a filter only until you pick a venue ─────────────────────────
     // Once a specific venue is chosen, the venue IS the preference and the pill was merely how you
     // navigated to it — so the references BELOW that venue's own videos should be every other
@@ -5025,7 +5041,7 @@ export default function StudioApp() {
       out = favFirst(out);
     }
     return out;
-  }, [ytVideoTags, hiddenVideos, favVideos, authUser, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
+  }, [browseVideosBase, favVideos, authUser, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
 
   // ── Active client + meeting number ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
@@ -7438,7 +7454,7 @@ export default function StudioApp() {
     taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, PAINT_TOKENS_FALLBACK,
     // derived memos
     activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames, leafInhouseVenues,
-    allVenueData, outdoorVenueList, browseVideos, allVideos,
+    allVenueData, outdoorVenueList, browseVideos, browseVideosAll, allVideos,
     // handlers
     loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,

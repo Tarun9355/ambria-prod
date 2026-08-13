@@ -58,7 +58,7 @@ export default function StudioBrowse({ ctx }) {
     // build / session
     sourceVideo, venue, showMsg,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
-    ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
+    ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, browseVideosAll, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES,
     clientLedger, saveClientLedger, askConfirm,
@@ -72,12 +72,16 @@ export default function StudioBrowse({ ctx }) {
   // panel header, and a slim tab on the edge to bring it back.
   const [filtersOpen, setFiltersOpen] = useState(true);
   const railMaxH = useRailMaxHeight(railRef, railTop);
-  // Search narrows what the filters already produced, so the two compose instead of competing.
+  // With nothing typed, search narrows what the left-rail filters already produced. The moment
+  // something IS typed, the relationship flips: the search stands on its own, over the full
+  // (permission-scoped) catalog, ignoring every filter chip rather than compounding with them —
+  // the filters stay exactly as selected on screen, they just stop narrowing while there's a query,
+  // and go straight back to applying the instant the search box is cleared.
   // Token-AND over the fields a card actually shows, so word order does not matter.
   const shownVideos = (() => {
     const tokens = vq.toLowerCase().split(/\s+/).filter(Boolean);
     if (!tokens.length) return browseVideos;
-    return browseVideos.filter((v) => {
+    return browseVideosAll.filter((v) => {
       const hay = [v.title, v.venue, v.fn, ...(v.fns || []), v.space, v.tier, ...(v.styles || []), ...(v.colors || [])]
         .filter(Boolean).join(" ").toLowerCase();
       return tokens.every((t) => hay.includes(t));
@@ -694,7 +698,10 @@ export default function StudioBrowse({ ctx }) {
                 Aura", which was false — 130 was the whole Inhouse group while only 12 are tagged
                 Aura. No venue clause here any more: the section headings below carry the per-venue
                 counts, and repeating them next to the total is what made the two look contradictory. */}
-            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideos.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideos.length}</span>}</div>
+            {/* While searching, shownVideos comes from browseVideosAll (filters ignored), so the
+                "of N" comparison has to be against that same full catalog, not the filtered count —
+                otherwise a search matching more than the filters currently allow read as broken. */}
+            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideosAll.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideosAll.length}</span>}</div>
             <div style={{fontSize:12,color:textM}}>{browseVenues.length===0&&venueGroup!=="all"?`(${venueGroup})`:""}</div>
             {activeTotal>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:11,color:textM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
