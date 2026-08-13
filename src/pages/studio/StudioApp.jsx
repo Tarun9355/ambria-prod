@@ -1669,6 +1669,11 @@ export default function StudioApp() {
   const [libElSearch, setLibElSearch] = useState("");
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
+  // Flips true once the RC_SK_TR settings row has actually been fetched (found data or confirmed
+  // there's none) — trVenues/truckCap start out holding TR_DV/TR_DTC seed defaults until then, and
+  // a write gated on trVenues alone (below, the genset migration) would fire on THAT seed state
+  // during the async fetch's window and persist the seed truckCap over whatever was really saved.
+  const trSettingsLoadedRef = useRef(false);
   const [floralPerTruck, setFloralPerTruck] = useState(50000);
   // Two genset sizes are hired, and an event can need BOTH — a big unit plus a smaller one — so
   // each size carries its own count. 125 KVA keeps the original `gensetRate` key and the existing
@@ -2183,6 +2188,7 @@ export default function StudioApp() {
         const v = await kvGet(RC_SK_TR);
         if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } }
       } catch {}
+      if (!cancelled) trSettingsLoadedRef.current = true;
       // Templates
       try { const v = await kvGet(TPL_SK); if (v != null) { const tp = parse(v); if (Array.isArray(tp) && tp.length && !cancelled) setTemplates(tp); } } catch {}
       // Zone definitions
@@ -2389,7 +2395,7 @@ export default function StudioApp() {
         if (!key) return;
         try {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
-          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } }
+          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); } trSettingsLoadedRef.current = true; }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "printMaterials") { const pm = pj(await kvGet("printMaterials")); if (Array.isArray(pm)) setImsPrintMaterials(pm); }
           else if (key === "carpetMaterials") { const cm = pj(await kvGet("carpetMaterials")); if (Array.isArray(cm)) setImsCarpetMaterials(cm); }
@@ -4111,6 +4117,11 @@ export default function StudioApp() {
   const gensetMigrationRef = useRef(false);
   useEffect(() => {
     if (gensetMigrationRef.current) return;
+    // Wait for the real settings fetch — trVenues/truckCap read TR_DV/TR_DTC seed defaults until
+    // then, and this effect firing on THAT seed state would persist the seed truckCap (mostly
+    // zeros) over whatever was actually saved. This was a real bug that shipped and overwrote
+    // truck-capacity data; do not remove this guard.
+    if (!trSettingsLoadedRef.current) return;
     if (!Array.isArray(trVenues) || trVenues.length === 0) return;
     const needsMigration = trVenues.some((v) => v && typeof v.genset125 !== "number" && typeof v.genset62 !== "number");
     gensetMigrationRef.current = true;
