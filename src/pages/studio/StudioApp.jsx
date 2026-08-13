@@ -3269,11 +3269,20 @@ export default function StudioApp() {
     let comp = sizes[sk] || sizes.medium; if (!comp && sk === "big" && sizes.large) comp = sizes.large;
     if (!comp && Object.keys(sizes).length) comp = sizes[Object.keys(sizes)[0]];
     if (!comp || !Array.isArray(comp.flowers)) return null;
-    let cost = 0, mappedFinal = 0;
+    let cost = 0, mappedFinal = 0, realOnlyCost = 0;
     comp.flowers.forEach(fl => {
-      const parent = resolveMandiFlower(fl.flowerId, mc)?.parent || null;
+      const res = resolveMandiFlower(fl.flowerId, mc);
+      const parent = res?.parent || null;
       const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
-      if (ft === "real_only") return; // this flower has no artificial substitute
+      if (ft === "real_only") {
+        // No artificial substitute exists — this flower is bought at mandi rate regardless of the
+        // element's real/artificial slider, so its cost must land identically on both sides of the
+        // blend (mirrors flowerHelpers.js's floralPatternUnitRates) instead of vanishing to ₹0 as
+        // real% drops. Marked up by the SAME `markup` the real side uses, tracked separately from
+        // `cost` so it isn't also run through the bunches-per-kg artificial rate.
+        realOnlyCost += (Number(fl.qty) || 0) * (res?.price || 0);
+        return;
+      }
       if (ft === "mapping") {
         // Artificial version is a SPECIFIC inventory item — priced LIVE the same way every other
         // inventory item in Studio is (item.price × its sub-category's scaling_factor), not the
@@ -3289,7 +3298,7 @@ export default function StudioApp() {
       const bunches = (Number(fl.qty) || 0) * bpu;
       cost += bunches * (ft === "green" ? agRate / agBPK : afRate / afBPK);
     });
-    return Math.round(cost * markup + mappedFinal);
+    return Math.round(cost * markup + mappedFinal + realOnlyCost * markup);
   }, [dealCheckData, studioFloralData, imsInventory, rcFactorByKey]);
 
   // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).

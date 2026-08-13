@@ -139,9 +139,19 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
       invItemCost += (Number(fl?.qty) || 0) * rawPrice;
       return;
     }
-    const parent = resolveMandiFlower(fl?.flowerId, mandiCatalogue)?.parent || null;
+    const res = resolveMandiFlower(fl?.flowerId, mandiCatalogue);
+    const parent = res?.parent || null;
     const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
-    if (ft === "real_only") return;
+    if (ft === "real_only") {
+      // No artificial substitute exists for this flower at all — it's bought at mandi rate
+      // regardless of the element's real/artificial slider. computePatternSizeCost already counts
+      // it on the real side (qty × mandi price); folding the SAME amount into invItemCost (marked
+      // up by this SAME pattern markup, not artMarkup) lands it identically on both sides of the
+      // blend — invariant to the slider — instead of scaling down to ₹0 as real% drops, which is
+      // what returning here with no contribution used to do.
+      invItemCost += (Number(fl?.qty) || 0) * (res?.price || 0);
+      return;
+    }
     if (ft === "mapping") {
       // Artificial version is a SPECIFIC inventory item — priced LIVE the same way every other
       // inventory item in Studio is (priceForInvItem: item.price × its sub-category's
