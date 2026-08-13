@@ -51,43 +51,49 @@ Deno.serve(async (req) => {
       const { inputText, title } = body;
       if (!inputText) return json({ error: "inputText required" }, 400);
 
-      // Art direction. Gamma responds to CONCRETE layout instructions ("full-bleed", "aligned grid",
-      // "no bullet lists") far better than to adjectives like "elegant" — an earlier version of this
-      // was mostly adjectives and produced flat text-on-white cards.
+      // Art direction, supplied by Ambria. Gamma responds to concrete instruction far better than
+      // to adjectives, and the previous version's insistence on consistency was read as licence to
+      // repeat one safe layout — hence "consistent SYSTEM, varied compositions" stated explicitly,
+      // and a per-slide brief so each card has a job of its own.
       //
-      // HARD LIMIT: Gamma rejects additionalInstructions over 5000 characters with a 400, which reaches
-      // the salesperson as "Gamma generation failed" and says nothing about what to change. It is kept
-      // well under, and sliced below as a backstop so a later edit cannot break the export outright.
+      // HARD LIMIT: Gamma rejects additionalInstructions over 5000 characters with a 400, which
+      // reaches the salesperson as "Gamma generation failed" and says nothing about what to change.
+      // This is 4980. Anything added here has to come out somewhere else; the slice below is only a
+      // backstop, and a truncated prompt loses whichever rule happens to sit last.
       const ART_DIRECTION = [
-        "AUDIENCE: an Indian luxury wedding client reviewing a décor proposal. This is a designer's pitch book, not a spreadsheet. THE DECK CARRIES NO PRICING — no costs, totals or figures appear anywhere in the content, and none may be invented. It sells the design.",
+        "Create a premium Indian luxury wedding décor proposal deck that feels like a bespoke event designer's lookbook / Vogue India / Architectural Digest editorial, NOT a corporate presentation or generic Gamma template. It contains NO PRICING, COSTS, TOTALS, QUANTITIES or commercial figures. Never invent any.",
         "",
-        "LAYOUT:",
-        "- Never centre a wall of text on a blank card. Every card needs one clear focal point and asymmetric weighting.",
-        "- Keep text sparse: large type for the few words that matter, generous margins. No bullet lists — short standalone lines with real space between them.",
-        "- Every photo supplied is REAL work by this studio. Where a card holds one photo and a line or two of text, run that photo full-bleed as the card's own background with the text over a soft dark scrim. Always prefer it to the theme's decorative artwork; a generic pattern says nothing about this event.",
+        "VISUAL DIRECTION",
+        "ONE cohesive luxury visual identity across the deck, but every slide a different editorial composition. Consistency comes from typography, spacing, colour palette, image treatment and grid — NOT from repeating the same card layout. The deck should feel: LIGHT · WARM · EDITORIAL · BESPOKE · CINEMATIC · INDIAN LUXURY · PREMIUM.",
         "",
-        "IMAGES — absolute, break none of them:",
-        "- NEVER overlap images and never let one touch another. Each gets its own rectangle with clear space around it.",
-        "- NEVER let an image cross the card edge or run off the bottom. Even margins on all four sides.",
-        "- Keep the images in the ORDER they appear in the source text, left to right then top to bottom.",
-        "- Several images on one card go in an ALIGNED grid: shared baselines, identical gutters, consistent sizing. A calm ordered grid, never a scattered collage.",
-        "- Identical corner radius and identical framing on every image on a card.",
+        "BACKGROUND — CRITICAL",
+        "A light warm ivory / cream / champagne / pale sand textured ground on EVERY slide, including cover, dividers, mood boards, flower story and closing. Suggested base: #F7F2E8 / #F2E8D8 / #EDE1CF. NEVER use black, near-black, dark brown, navy, purple, blue, green or any dark/full-colour slide background. Do not alternate dark and light slides. Dark espresso/charcoal only for typography. Muted antique gold #B89A63 / #C2A46D only for thin rules, numerals and delicate accents. The photographs provide the strong colour.",
         "",
-        "CARDS:",
-        "- Title: cinematic. Client name large and confident, details small and quiet beneath, deep negative space.",
-        "- Function divider: one photograph full-bleed with the function name set large across it. A chapter opening.",
-        "- Mood board: photographs of DIFFERENT areas of that function as one considered board. Vary tile sizes so it composes rather than tiles, but keep every tile on the same grid.",
-        "- Palette: real swatches — generous blocks or circles in the hex values given, each name small beneath. This card is about colour, so let colour fill it; never reduce it to a bulleted list of names.",
-        "- Element (one photograph, a few short phrases): the photograph fills the card and the phrases sit as CALLOUTS over or beside it, each with a fine leader line or discreet marker pointing into the image, the way a designer annotates a reference. Not a caption block stacked underneath.",
-        "- \"Options for the …\": the same element from other angles. Equal tiles in one row, numbered 1, 2, 3 in small gold numerals.",
-        "- Flower story: one atmospheric photograph with the prose set over it in a generous measure, larger than a caption.",
-        "- Closing: quiet and confident — studio name, contact line, deep space.",
+        "TYPOGRAPHY",
+        "A high-contrast luxury display serif similar to Didot, Bodoni, Cormorant Garamond or Canela for major headings; a refined modern sans-serif for captions and small labels. Strong hierarchy: very large elegant serif headlines + tiny letter-spaced uppercase labels + restrained body copy. Never make every text element the same size. Never use heavy corporate sans-serif headings.",
         "",
-        "TYPOGRAPHY: headings in a high-contrast display serif at several times the body size, not one notch bigger. Captions in a restrained sans, small, in wide letter-spaced caps. Never set a whole card at one uniform size — that contrast is what makes it look designed.",
+        "IMAGES",
+        "Every supplied photograph is REAL work by the studio and is the hero. Do NOT replace, invent, distort or generate substitute images. Never overlap photographs or let one touch another. Never let images cross the slide edge. Maintain equal margins and intentional whitespace. Use the photographs in the exact order supplied: left-to-right, then top-to-bottom. Identical corner radius/framing when several appear on one slide. When one photograph is the hero, make it large and cinematic; it may be full-bleed within the slide's intentional composition, with text over a subtle warm translucent scrim where necessary. Prefer real photography over decorative artwork or generic patterns.",
         "",
-        "COLOUR: lean into the theme's gold, metallic and deep dark grounds. Alternate dark and light cards through the deck so it has rhythm. Gold as thin rules and small ornament; let the photographs supply the colour.",
+        "LAYOUT PHILOSOPHY",
+        "Do NOT repeat a basic \"text left + image right\" template. Use varied editorial compositions on one grid: cinematic hero; asymmetric image + typography; large image with generous negative space; editorial photo grid; annotated designer reference; clean triptych; oversized typography; atmospheric photographic story; minimal closing page. Every slide needs one clear focal point. Never centre a wall of text on an empty card. If a slide feels crowded, remove elements and increase whitespace rather than shrinking typography.",
         "",
-        "FINISH: hold the SAME margin on every card so the deck feels bound rather than assembled. Align everything to a shared grid — nothing at a slight angle or a random offset. One image treatment throughout. Fewer elements, larger, with more space between them, beats more elements packed in. If a card looks crowded, give the content more room rather than shrinking the type.",
+        "SLIDE STRUCTURE",
+        "COVER — Client/event name large and confident, one strongest photograph as cinematic hero, small quiet details beneath, deep negative space. The opening page of a luxury design book, NOT a centred PowerPoint title slide.",
+        "FUNCTION DIVIDER — One powerful photograph from that function, the function name large and elegant across/alongside it, a tiny editorial label. Dramatic but still light and warm.",
+        "MOOD BOARD — Different areas/details of the function in an asymmetric editorial grid: one dominant photograph plus smaller supporting ones, aligned to the invisible grid with generous cream gutters. Not a contact sheet.",
+        "PALETTE — The exact supplied HEX colours as large elegant swatches/circles/architectural blocks, colour occupying the slide, small refined names beneath each. No bullets or tables. Do not invent colours.",
+        "DESIGN ELEMENT — One prominent photograph with 3–4 very short annotations placed around/over it, each on a fine gold leader line pointing to the detail: \"SCULPTURAL FLORALS\", \"SOFT CANDLELIGHT\", \"TEXTURED LINEN\". An architect/designer annotation board, not a caption block.",
+        "OPTIONS FOR THE… — The same element from different supplied angles: three equal tiles in one aligned row, numbered subtly 01 / 02 / 03 in muted gold, identical framing and gutters.",
+        "FLOWER STORY — One atmospheric floral photograph, a large elegant serif statement, a short supporting narrative in generous space. Emotional and editorial, not descriptive.",
+        "CLOSING — Quiet and confident. Warm textured ivory ground, studio name large in serif, small contact line, a fine gold rule, deep negative space.",
+        "",
+        "PREMIUM DETAILS",
+        "Subtle paper texture, fine gold rules, tiny uppercase labels, delicate numerals, refined cropping.",
+        "Avoid: generic Gamma cards, random colours, gradients, bullet lists, clipart, stock images, busy patterns, cheap gold effects, excessive borders, scattered collages.",
+        "",
+        "FINAL RULE",
+        "The deck must read as ONE beautifully art-directed document, while each slide has its own visual rhythm. CONSISTENT SYSTEM ≠ IDENTICAL LAYOUT. The result should make the client think: \"This feels bespoke, sophisticated and worthy of our celebration.\"",
       ].join("\n");
       const resp = await fetch(`${GAMMA_API}/generations`, {
         method: "POST",
@@ -106,13 +112,18 @@ Deno.serve(async (req) => {
           // happened (that would be aiGenerated, and a fake venue shot in a real quote is not on).
           imageOptions: { source: "themeAccent" },
           cardOptions: { dimensions: "16x9" },
-          // Aurum, not Gold Leaf. Both are luxury gold themes, but Gamma's own tone keywords give the
-          // game away: Gold Leaf is "Minimalist, Clean, Subtle, Soft" and was doing exactly that, while
-          // Aurum is "Bold, Loud, Complex, Luxury, Deluxe, Expensive" over gold/metallic/black. No
-          // amount of prompt wording turns a theme built to be subtle into a vibrant one.
-          // Overridable per request so a theme can be trialled without a deploy; ids come from
-          // the list_themes action above.
-          themeId: String(body.themeId || "aurum"),
+          // Dune: a warm sandy TEXTURE, not a flat ground, and no black anywhere.
+          //
+          // Aurum was picked for being loud where Gold Leaf was too quiet, but its ground is
+          // gold/metallic/black and black is not wanted. Gold Leaf is the other extreme — its own tone
+          // keywords are "Minimalist, Clean, Subtle, Soft", which is why that deck read as plain.
+          // Dune sits between them: light, beige, cream and gold over sandy, earthy texture, with
+          // "classy, elegant, luxury, deluxe" as its tone. Warm paper rather than a black slab.
+          //
+          // Overridable per request so a theme can be trialled without a deploy; ids come from the
+          // list_themes action above. Other textured, non-dark options if this one is not right:
+          // "creme" (cream/sand, a shade cooler), "finesse" (beige/olive), "flax" (almond/tan).
+          themeId: String(body.themeId || "dune"),
           // Sliced as a backstop: Gamma 400s above 5000 characters (see ART_DIRECTION).
           additionalInstructions: ART_DIRECTION.slice(0, 5000),
         }),
