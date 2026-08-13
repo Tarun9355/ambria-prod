@@ -8,6 +8,7 @@
 // inline styles preserved.
 // ═══════════════════════════════════════════════════════════════
 import { Fragment, useState } from "react";
+import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 
 export default function DCFloralsTab({ ctx }) {
   const [artFlowerSearch, setArtFlowerSearch] = useState(""); // search-by-name for the artificial flower colour picker (long list)
@@ -89,14 +90,19 @@ export default function DCFloralsTab({ ctx }) {
                       const elName = (el.name || "").toLowerCase().trim();
                       const elQty = el.qty || 0;
                       let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elName);
-                      if (!rc) {
+                      if (!rc && elName.length >= 4) {
                         // Same leniency the pattern lookup uses. Exact-only meant "Blue Pottery Pot
                         // Big" never found the "Blue Pottery Pot" row. Restricted to FLORALS rows so
-                        // a loose substring cannot drag a lighting or structure element in here.
+                        // a loose substring cannot drag a lighting or structure element in here — but
+                        // that guard alone wasn't enough: a short element name like "T" is a substring
+                        // of nearly any florals product name ("Mari**g**old Ree**t**", "Table Runner"…),
+                        // so it spuriously matched and pulled a plain non-floral inventory item into
+                        // this tab. Both sides now need at least 4 characters before substring
+                        // matching is attempted at all — short names must match exactly or not at all.
                         rc = rcItems.find(i => {
                           if (String(i.cat || "").toLowerCase() !== "florals") return false;
                           const n = (i.name || "").toLowerCase().trim();
-                          return n && (elName.includes(n) || n.includes(elName));
+                          return n && n.length >= 4 && (elName.includes(n) || n.includes(elName));
                         });
                       }
                       // el.patternId is what BUILD prices this element from (getElPriceFromPattern),
@@ -119,18 +125,15 @@ export default function DCFloralsTab({ ctx }) {
                       // Prefer the recipe the BUILD actually priced this element with. Re-deriving it
                       // from the name could land on a different recipe than the salesperson chose —
                       // or on none at all — so the two screens disagreed on the same element.
-                      // Name matching stays as the fallback for elements with no patternId.
-                      let pattern = elPattern;
-                      if (!pattern) {
-                        const targetName = (rc?.name || el.name || "").toLowerCase().trim();
-                        pattern = flowerPatterns.find(p => (p.name||"").toLowerCase().trim() === targetName);
-                        if (!pattern) {
-                          pattern = flowerPatterns.find(p => {
-                            const n = (p.name||"").toLowerCase().trim();
-                            return n && targetName && (n.includes(targetName) || targetName.includes(n));
-                          });
-                        }
-                      }
+                      // Falls back to matchFlowerPattern (flowerHelpers.js) for elements with no
+                      // patternId — the SAME sub-category-first matcher Build itself prices from.
+                      // This used to be a hand-rolled name-only lookup (exact, then substring), which
+                      // is exactly backwards from how recipes are actually organised: a recipe is
+                      // created PER SUB-CATEGORY and applies to every differently-named product in it
+                      // ("Flower Reet"/"Greens Reet" priced products, not literally named that in the
+                      // rate card) — a pure name comparison would never find it. The substring fallback
+                      // compounded this by risking false positives on short/generic names.
+                      let pattern = elPattern || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, flowerPatterns);
                       let realCostPerUnit = 0;
                       let realLines = [];
                       // Fixed extra cost (pot/base/frame) per unit — a real cost regardless of the
