@@ -18,6 +18,7 @@ export function makeDeleteClient({
   eventOrders,
   activeClientId,
   setActiveClientId,
+  startNewDeal,
   askConfirm,
   showMsg,
   onDeleted,
@@ -34,9 +35,17 @@ export function makeDeleteClient({
     askConfirm(
       `Delete "${c.name}" permanently?`,
       () => {
-        // Clear the selection before the row goes: deleting the client the builder is sitting on
-        // would otherwise leave every downstream lookup resolving to nothing.
-        if (activeClientId === c.id) setActiveClientId?.(null);
+        // Deleting the client the builder is sitting on has to close the DEAL, not merely drop the
+        // id. Clearing activeClientId alone was a resurrection: the background auto-save runs off
+        // clientName plus the loaded build, and with no id to find, saveSession treats it as a
+        // brand-new deal and mints a fresh CLI_ row carrying the same name, details and build —
+        // fifteen seconds later the client is back in the tracker, which is what it looked like.
+        //
+        // The reset lives on ctx (startNewDeal) so both call sites share one copy. The bare
+        // setActiveClientId is the fallback for a caller that has not been given it.
+        if (activeClientId === c.id) {
+          if (startNewDeal) startNewDeal(); else setActiveClientId?.(null);
+        }
         saveClientLedger((clientLedger || []).filter((x) => x.id !== c.id), [c.id]);
         showMsg?.(`Deleted ${c.name}`, "green");
         onDeleted?.(c);

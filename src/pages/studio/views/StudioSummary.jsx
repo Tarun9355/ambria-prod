@@ -104,24 +104,17 @@ export default function StudioSummary({ ctx }) {
     sourceEvent, dcCustomItems, elNotes, fnBuilds, activeFnIdx, zoneLabelsD,
     // sold flow
     showSoldConfetti, markSold,
-    // step + reset chain
-    setStep, setEnabledEls, setElTiers, setCustomMode, setItemQty, setItemGrades,
-    setSelectedMoods, setSelectedPalettes, setVenue, setFn, setClientName,
-    setClientDate, setClientPhone, setActiveClientId, setClientSearch, setSavedInsps,
-    setFilterCat, setFilterFn, setFilterSpace, setFilterVenue, setElSelectedPhoto,
-    setElInspo, setSourceEvent, setSourceVideo, setBrowseVenues, setVenueGroup,
-    userVenueScope, setOutsideSub, setShowMoreOutside, setElNotes, setElGallery,
-    setZoneConfig, setActiveZones, setShowCosts, setZoneElements, setCustomTripRate,
-    setVenueCustom, setCustomGensets, setCustomZones, setNewCzName, setClientBrideGroom,
-    setClientShift, setClientPax, setClientVenueOther, setExtraFunctions,
-    setExpandedFnIdx, setActiveFnIdx, setFnBuilds, setFloralOverrides, setClientPalette,
+    // step + reset. The 48 individual setters that used to be listed here existed only to feed the
+    // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
+    setStep, setActiveClientId, startNewDeal,
   } = ctx;
-  // Full reset back to a blank deal. Named so both "Start New" and the admin delete can use it —
-  // after deleting the client you are viewing, its summary has to go with it.
-  const startNew = () => {setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setNewCzName("");setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");};
+  // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
+  // the Client Tracker's delete needs the same reset and could not reach a function declared here —
+  // it cleared only activeClientId, and the auto-save then re-created the client it had just
+  // deleted. One copy on ctx, both call sites use it.
+  const startNew = startNewDeal;
   const deleteClient = makeDeleteClient({
-    clientLedger, saveClientLedger, eventOrders, activeClientId, setActiveClientId, askConfirm, showMsg,
-    onDeleted: () => startNew(),
+    clientLedger, saveClientLedger, eventOrders, activeClientId, setActiveClientId, startNewDeal, askConfirm, showMsg,
   });
 
   const exportPDF = (combined) => {
