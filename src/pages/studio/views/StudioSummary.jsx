@@ -1081,7 +1081,19 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   // Ambria's reference decks are photographs placed as cards on a dark ground with deep space around
   // them, and this reproduces that exactly; it is the fallback if Gamma's output is not wanted again.
   const SLIDE_W = 13.333, SLIDE_H = 7.5;                 // 16:9 at 96dpi — see defineLayout below
-  const SERIF = "Georgia", SANS = "Trebuchet MS";        // safe on Windows, Mac and Canva's importer
+  // ═══ TYPE ═══
+  // A .pptx stores font NAMES, not fonts — whatever opens it substitutes anything it does not have.
+  // This deck's destination is Canva, and Canva carries both of these, so that is what they are
+  // chosen against. Georgia and Trebuchet were the safe pair; safe is not the same as good.
+  //
+  // Playfair Display: a high-contrast display serif, thick-to-thin, the register the reference decks
+  // are set in. Montserrat: a geometric sans that holds up at 10pt in letter-spaced caps, which is
+  // what the small labels are.
+  //
+  // The fallbacks matter for anyone opening the file in PowerPoint rather than Canva. PptxGenJS takes
+  // one name per run, so the fallback is stated here rather than in a CSS-style stack: Georgia and
+  // Trebuchet remain the substitutes a Windows machine will land on by itself.
+  const SERIF = "Playfair Display", SANS = "Montserrat";
 
   // ═══ TWO GROUNDS, ALTERNATING ═══
   // Every card on one near-black ground made the deck oppressive by the third page — the photographs
@@ -1451,8 +1463,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     {
       const s = newSlide();
       if (ornament) { corners(s); frame(s); }
-      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
-      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
+      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
+      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body, bold: true });
       s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
       rule(s, M, 4.6, 2.4);
       // Sits in the empty lower-left the cover deliberately leaves, so that space reads as composed
@@ -1468,7 +1480,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         const s = newSlide();
         if (ornament) { corners(s); frame(s); }
         s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
-        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
+        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body, bold: true });
         s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
         rule(s, M, 4.05, 2.2);
         card(s, fn.hero, SLIDE_W - M - BOX.hero.w, 2.5, BOX.hero.w, BOX.hero.h);
@@ -1477,8 +1489,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Mood board: photographs of different zones, placed as a considered set ──
       if (fn.board.length) {
         const s = newSlide();
-        diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
-        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body });
+        diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
+        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body, bold: true });
         // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
         // shared grid so it composes rather than scatters.
         const { top, botH, gut, bigW, rw: rwS, rh: rhS } = boardBoxes(Math.min(fn.board.length, 3));
@@ -1496,7 +1508,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // Two colours minimum — one swatch stretched across the slide is not a palette, it is a wall.
       if (fn.palette.length >= 2) {
         const s = newSlide();
-        diamond(s, M, 0.82); s.addText("THE PALETTE", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+        diamond(s, M, 0.82); s.addText("THE PALETTE", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
         s.addText(fn.paletteName || "Colour Story", { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
         const n = fn.palette.length, gut = 0.2;
         const w = (CONTENT_W - gut * (n - 1)) / n, h = 2.9;
@@ -1511,7 +1523,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Element cards: the photograph placed right, its callouts read down the left ──
       for (const z of fn.zones) {
         const s = newSlide();
-        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body });
+        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body, bold: true });
         rule(s, M, 2.25, 1.8);
         const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
         outs.slice(0, 3).forEach((c, i) => {
@@ -1526,7 +1538,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         // ── The details cut from this zone's own photograph (see detailShots) ──
         if ((z.details || []).length >= 2) {
           const o = newSlide();
-          diamond(o, M, 0.82); o.addText("DETAILS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+          diamond(o, M, 0.82); o.addText("DETAILS", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
           o.addText(z.label, { x: M - 0.05, y: 1.12, w: 9, h: 0.8, fontFace: SERIF, fontSize: 30, color: t.body, italic: true });
           const m = Math.min(z.details.length, 3);
           // 3:2 tiles rather than full-height portraits — these are wide shots, and a portrait box
@@ -1546,7 +1558,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     if (content.flowerStory) {
       const s = newSlide();
       if (ornament) { corners(s); frame(s); }
-      s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
+      s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
       s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
       rule(s, M, 2.7, 1.8);
       // shrinkText + a real height: the story ran past the bottom of the slide because the box was
@@ -1561,7 +1573,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
       if (ornament) { corners(s); frame(s); }
-      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
+      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body, bold: true });
       s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.25, 2.2);
       s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
