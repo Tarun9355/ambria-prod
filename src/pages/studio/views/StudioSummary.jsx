@@ -15,7 +15,7 @@ import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor } from "../../../lib/studio/colours";
-import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
+import { canvaConnectionStatus, canvaCreateImport, canvaPollImport, canvaExportPdfUrl } from "../../../lib/canva";
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
 import { detailShots } from "../../../lib/studio/detailShots";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
@@ -180,6 +180,27 @@ export default function StudioSummary({ ctx }) {
   };
   const forgetDeck = () => {
     try { if (activeClientId) localStorage.removeItem(canvaKey(activeClientId)); } catch { /* private mode */ }
+  };
+
+  // ═══ THE DECK, SHOWN AND HANDED OVER AS A PDF ═══
+  // Canva holds the live version once the deck is imported — anything the salesperson retouches
+  // there is in Canva and nowhere else — so the preview is an EXPORT of that design rather than a
+  // second rendering of the local build, which would quietly show the client the pre-edit deck.
+  //
+  // Not fetched on open: an export is a render job Canva bills time for, and the cost sheet is
+  // opened constantly for the figures alone. It runs when someone asks to see the deck, and the one
+  // export then serves both the preview and the download.
+  const [deckPdf, setDeckPdf] = useState({ state: "idle", url: "", error: "" });
+  useEffect(() => { setDeckPdf({ state: "idle", url: "", error: "" }); }, [canvaEditUrl]);
+  const showDeckPdf = async () => {
+    if (deckPdf.state === "loading") return;
+    setDeckPdf({ state: "loading", url: "", error: "" });
+    try {
+      const url = await canvaExportPdfUrl(canvaEditUrl);
+      setDeckPdf({ state: "ready", url, error: "" });
+    } catch (e) {
+      setDeckPdf({ state: "error", url: "", error: e.message || "Could not export the deck" });
+    }
   };
   useEffect(() => {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
@@ -2107,6 +2128,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               // deliberately plain so the link stays the obvious one.
               if (canvaState === "ready") return (
                 <>
+                  <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
+                    title="Show the design deck as it stands in Canva, and hand it over as a PDF"
+                    style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Exporting…":"👁 Deck PDF"}</button>
                   <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>
                   <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
                     title="Design a fresh deck — the current link stays open in Canva either way"
@@ -2119,6 +2143,26 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           </div>
         </div>
         {canvaState==="error"&&canvaError&&<div style={{padding:"6px 20px",background:"rgba(239,68,68,0.15)",color:"#FCA5A5",fontSize:11,flexShrink:0}}>{canvaError}</div>}
+        {deckPdf.state==="error"&&<div style={{padding:"6px 20px",background:"rgba(239,68,68,0.15)",color:"#FCA5A5",fontSize:11,flexShrink:0}}>{deckPdf.error}</div>}
+        {/* ── The design deck, in the browser's own PDF viewer ──
+            An <iframe> rather than a strip of page images: the viewer that comes with the browser
+            already pages, zooms and prints, and the export is a single PDF anyway. Sits above the
+            cost sheet instead of replacing it, so the deck and its figures stay one screen apart. */}
+        {deckPdf.state==="ready"&&deckPdf.url&&(
+          <div style={{flexShrink:0,borderBottom:"1px solid rgba(255,255,255,0.12)",background:"#111827"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 20px"}}>
+              <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"#a5b4fc"}}>Design deck</span>
+              {/* A plain link, not a fetch-then-save: the export URL is signed and cross-origin, so
+                  reading it into a blob is at the mercy of Canva's CORS headers, while letting the
+                  browser follow the link is not. */}
+              <a href={deckPdf.url} target="_blank" rel="noreferrer" download
+                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:7,background:"#E11D48",color:"#fff",fontSize:11,fontWeight:600,textDecoration:"none"}}>{"⬇"} Download PDF</a>
+              <button onClick={()=>setDeckPdf({state:"idle",url:"",error:""})}
+                style={{padding:"5px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11}}>{"✕"}</button>
+            </div>
+            <iframe title="Design deck preview" src={deckPdf.url} style={{width:"100%",height:"52vh",border:"none",background:"#1f2937"}} />
+          </div>
+        )}
         {/* Scrollable body */}
         <div style={{flex:1,overflowY:"auto",padding:"20px 24px",maxWidth:960,margin:"0 auto",width:"100%"}}>
           {/* Stacked function lines (mirrors PPT cover) */}
