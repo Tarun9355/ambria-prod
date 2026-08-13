@@ -78,7 +78,7 @@ import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
-  YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK,
+  YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK,
   NOTIF_SK, DT_SK, PIMAP_SK, SCAN_HIST_SK,
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
@@ -2069,6 +2069,7 @@ export default function StudioApp() {
   const [manualVideos, setManualVideos] = useState([]);
   const [hiddenVideos, setHiddenVideos] = useState({});
   const [showHidden, setShowHidden] = useState(false);
+  const [favVideos, setFavVideos] = useState({});
   const [lastVisitTs, setLastVisitTs] = useState(0);
 
   // ═══ CLOUDINARY PHOTO BROWSER STATE (reference ~3580) ═══
@@ -2291,6 +2292,8 @@ export default function StudioApp() {
       try { const v = await kvGet(MANUAL_VID_SK); if (v != null) { const mp = parse(v); if (Array.isArray(mp) && !cancelled) setManualVideos(mp); } } catch {}
       // Hidden videos
       try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {}
+      // Favourite videos
+      try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {}
       // Filter priority
       try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {}
       // Tagging-hidden sub-categories (Pricing flags)
@@ -2425,6 +2428,7 @@ export default function StudioApp() {
           // hid what goes stale for as long as it stays open, and the folder counts silently disagree
           // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
           else if (key === HIDDEN_VID_SK) { const hv = pj(await kvGet(HIDDEN_VID_SK)); if (hv && typeof hv === "object") setHiddenVideos(hv); }
+          else if (key === FAV_VID_SK) { const fv = pj(await kvGet(FAV_VID_SK)); if (fv && typeof fv === "object") setFavVideos(fv); }
           else if (key === ZONE_GROUPS_SK) { const zg = normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK))); zoneGroupsRef.current = zg; setZoneGroups(zg); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
@@ -4491,6 +4495,33 @@ export default function StudioApp() {
     return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
+  // Same read-merge-write contract as saveHiddenVideos, same reason — a video's "favourite for its
+  // own venue" flag toggled before the async load lands must not stomp everyone else's favourites.
+  const saveFavVideos = useCallback(async (patch) => {
+    const res = await kvTryGet(FAV_VID_SK);
+    if (!res.ok) {
+      setSaveError({ label: "Favourite videos", error: `Couldn't read the current favourites (${res.error}). Nothing was saved. Check your connection and try again.` });
+      return { ok: false, error: res.error };
+    }
+    let fresh = {};
+    if (res.value != null) {
+      try {
+        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
+        fresh = p;
+      } catch (e) {
+        setSaveError({ label: "Favourite videos", error: `The saved favourites could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
+        return { ok: false, error: "unreadable" };
+      }
+    }
+    const merged = { ...fresh };
+    Object.entries(patch || {}).forEach(([id, val]) => { if (!val) delete merged[id]; else merged[id] = val; });
+    setFavVideos(merged);
+    const saved = await reliableSave(FAV_VID_SK, JSON.stringify(merged), "Favourite videos");
+    if (!saved?.ok) setSaveError({ label: "Favourite videos", error: saved?.error || "Save failed" });
+    return { ok: !!saved?.ok, error: saved?.error || null };
+  }, []);
+
   // ═══ STORAGE VIDEO BROWSER (was Cloudinary) ═══
   // Same bucket and same folder tree as the photo browser — only the type filter differs.
   const storageVideos = useCallback(async (path) => {
@@ -4940,13 +4971,25 @@ export default function StudioApp() {
       preferredVenues = new Set(browseVenues);
       browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => preferredVenues.add(sv)); });
     }
+    // Function type is the one filter a favourited video still has to clear — every other filter
+    // below exempts it. Favouriting a video is a deliberate "always show this for its venue" pin;
+    // the whole point is not having to remember to clear the tier/style/palette filters just to
+    // pull it back up mid-meeting.
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
-    if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
-    if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
-    if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
+    if (filterCat.length > 0) out = out.filter(v => favVideos[v.id] || (v.tierCat && filterCat.includes(v.tierCat)));
+    if (filterSpace.length > 0) out = out.filter(v => favVideos[v.id] || (v.space && filterSpace.includes(v.space)));
+    if (filterMood.length > 0) out = out.filter(v => favVideos[v.id] || v.styles.some(s => filterMood.includes(s)));
     // Whitespace/case-insensitive: the pill says "Brown" (trimmed by paletteNames) while the video
     // may be tagged "Brown " — an exact includes() matched neither half of the library reliably.
-    if (filterPalette.length > 0) out = out.filter(v => (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    if (filterPalette.length > 0) out = out.filter(v => favVideos[v.id] || (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    // Favourited videos lead whichever group they land in (below) rather than jumping across group
+    // boundaries — a favourite tagged to a DIFFERENT venue must not outrank the venue you actually
+    // selected, it just leads once it's already in the right bucket.
+    const favFirst = (arr) => {
+      const favs = [], rest = [];
+      for (const v of arr) (favVideos[v.id] ? favs : rest).push(v);
+      return favs.length ? [...favs, ...rest] : arr;
+    };
     // Applied last, so the chosen venue floats to the top of whatever the other filters left. A
     // stable partition, not a sort — order within each group is untouched. `_venueMatch` lets
     // Browse draw the divider; without one this reads as the venue filter having stopped working.
@@ -4964,10 +5007,12 @@ export default function StudioApp() {
         else if (venueGroup !== "all" && groupOf(v) === venueGroup) sameGroup.push(rec);
         else rest.push(rec);
       }
-      out = [...atVenue, ...sameGroup, ...rest];
+      out = [...favFirst(atVenue), ...favFirst(sameGroup), ...favFirst(rest)];
+    } else {
+      out = favFirst(out);
     }
     return out;
-  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
+  }, [ytVideoTags, hiddenVideos, favVideos, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
 
   // ── Active client + meeting number ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
@@ -7487,6 +7532,7 @@ export default function StudioApp() {
     ytFilterStyle, setYtFilterStyle, ytFilterColor, setYtFilterColor, ytFilterIO, setYtFilterIO, ytPhotoUrl, setYtPhotoUrl,
     manualVideos, setManualVideos, hiddenVideos, setHiddenVideos, showHidden, setShowHidden, lastVisitTs, setLastVisitTs,
     saveManualVideos, saveHiddenVideos, aiTagVideo, aiTagVideoSave, getPhotos, ZONE_ICONS,
+    favVideos, saveFavVideos,
     // cloudinary photo browser
     cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading, setCldLoading,
     cldUploading, setCldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
