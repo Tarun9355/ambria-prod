@@ -5133,8 +5133,10 @@ export default function StudioApp() {
       // straight off an LMS lead) instead of clicking the suggested "Load →" card meant
       // activeClientId was never set, so the very first autosave silently forked a second,
       // orphaned client record for the same real person/phone instead of continuing their history.
+      // A client already marked "booked" is a closed, past deal — don't silently reattach a new
+      // one to it (see loadLmsLead's matching `existing.status !== "booked"` guard, same reason).
       const phoneKey = clientPhone.trim().replace(/\D/g, "");
-      const byPhone = phoneKey.length >= 10 ? updated.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey) : null;
+      const byPhone = phoneKey.length >= 10 ? updated.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey && c.status !== "booked") : null;
       if (byPhone) {
         client = byPhone;
         setActiveClientId(byPhone.id);
@@ -5579,9 +5581,15 @@ export default function StudioApp() {
     });
     setExtraFunctions(extras);
     const phoneKey = (lead.phone || "").replace(/\D/g, "");
-    const existing = phoneKey
+    const phoneMatch = phoneKey
       ? clientLedger.find(c => (c.phone || "").replace(/\D/g, "") === phoneKey)
       : null;
+    // A BOOKED match is a closed, past deal — a new inbound lead on the same number is a repeat
+    // guest booking something ELSE, not a revision of the old one. Reusing it would silently
+    // overwrite the old booking's venue/date/functions and interleave the new meeting history
+    // into the old deal's `sessions`. Only reuse an open (not-yet-booked) match; a booked one
+    // just gets a heads-up note below and a brand new client record for this deal.
+    const existing = phoneMatch && phoneMatch.status !== "booked" ? phoneMatch : null;
     let client;
     if (existing) {
       client = {
@@ -5623,6 +5631,9 @@ export default function StudioApp() {
     if (latestSession) {
       loadClientSession(client, latestSession, 3);
       showMsg(`Loaded LMS lead #${lead.entryNo} + restored last session`, "green");
+    } else if (phoneMatch && phoneMatch.status === "booked") {
+      const when = phoneMatch.eventDate ? new Date(phoneMatch.eventDate + "T00:00:00").toLocaleDateString("en-IN") : "an earlier deal";
+      showMsg(`Loaded LMS lead #${lead.entryNo} — ℹ️ this phone already booked with us (${when}); starting a fresh deal for this one`, "green");
     } else {
       showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
     }
