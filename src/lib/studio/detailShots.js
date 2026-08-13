@@ -15,6 +15,8 @@
 // same photograph re-used on a later deck resolves to the file already uploaded rather than a new
 // one (the function answers duplicate:true and hands back the same URL).
 
+import { isInventoryPhoto } from "./thumb";
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -88,6 +90,10 @@ async function uploadBlob(blob, name) {
  */
 export async function detailShots(srcUrl, count = 3) {
   if (!srcUrl || typeof document === "undefined") return [];
+  // A crop is uploaded to media/deck-details/, so its URL passes isInventoryPhoto by construction —
+  // cropping a warehouse product shot would launder it straight past the guard the deck relies on.
+  // Checked at the SOURCE so the client's "no inventory pictures" rule cannot be lost by a caller.
+  if (isInventoryPhoto(srcUrl)) return [];
   try {
     const img = await new Promise((resolve, reject) => {
       const i = new Image();

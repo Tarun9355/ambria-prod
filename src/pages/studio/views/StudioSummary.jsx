@@ -22,6 +22,17 @@ import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
+// ═══ AMBRIA'S OWN SLIDE BACKGROUND (optional) ═══
+// Drop an image at src/assets/wedding-bg.(png|jpg|webp) and every slide is drawn on it, in place of
+// the generated texture — see customGround() in buildDesignDeck.
+//
+// import.meta.glob, not a plain import: a direct import of a file that is not there fails the BUILD,
+// which would mean nobody can deploy until the asset exists. A glob resolves to {} instead, so the
+// deck simply keeps its generated ground until the file appears, and needs no code change when it
+// does.
+const BG_ASSETS = import.meta.glob("../../../assets/wedding-bg.{png,jpg,jpeg,webp}", { eager: true, query: "?url", import: "default" });
+const CUSTOM_BG_URL = Object.values(BG_ASSETS)[0] || null;
+
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
 // re-price reads as movement instead of a silent swap. Interrupting mid-roll resumes from the
 // displayed value (fromRef tracks every frame), and reduced-motion snaps straight to the target.
@@ -947,8 +958,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       // Mood board: one photo per zone, across DIFFERENT zones, topped up from the library when the
       // build is thin — three photos is the minimum that reads as a board rather than a snapshot.
-      // Best three, not first three.
-      const board = rankedFn.slice(0, 3);
+      //
+      // ZONE ORDER, not score order. These photos were ranked best-first, while the caption beneath
+      // listed the zone labels in the order the zones were built — so the labels described the wrong
+      // pictures. Order is the zones' own order wherever order is VISIBLE; the grading still decides
+      // the single picks where order does not exist (the cover, the function's hero).
+      const boardZones = zones.slice(0, 3);
+      const board = boardZones.map((z) => z.photo);
+      const boardLabels = boardZones.map((z) => z.label).filter(Boolean);
       if (board.length < 3) {
         const extra = await libraryPhotosForFunction(fnObj.fnType, fnObj.fnVenue, fnObj.fnShift, 3 - board.length);
         extra.forEach((u) => { if (!board.includes(u)) board.push(u); });
@@ -993,7 +1010,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         venueLine: String(fnObj.fnVenue || fnObj.fnType || "Function"),
         dateLine: [String(fnObj.fnType || ""), fmtDate(fnObj.fnDate), fnObj.fnShift].filter(Boolean).join("  ·  "),
         hero: libPic || fallbackPic || "",
-        board, palette, zones: zoneCards,
+        board, boardLabels, palette, zones: zoneCards,
         paletteName: String(fnObj.palette || ""),
       });
     }
@@ -1031,7 +1048,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
       if (f.board.length) {
         S.push([`# ${f.name} — Mood Board`, ...f.board.map((u) => img(u)),
-          f.zones.map((z) => z.label).filter(Boolean).join("  ·  ")].filter(Boolean).join("\n\n"));
+          (f.boardLabels || []).join("  ·  ")].filter(Boolean).join("\n\n"));
       }
 
       if (f.palette.length >= 2) {
@@ -1191,11 +1208,33 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         return cv.toDataURL("image/jpeg", 0.82);
       } catch { return null; }                          // no canvas — fall back to the flat colour
     };
+    // Ambria's artwork wins over the generated texture when it exists. Fetched once and inlined,
+    // because PptxGenJS needs the bytes rather than a URL for a slide background, and the same data
+    // is shared by every slide rather than embedded per card.
+    const customGround = await (async () => {
+      if (!CUSTOM_BG_URL) return null;
+      try {
+        const resp = await fetch(CUSTOM_BG_URL);
+        if (!resp.ok) return null;
+        const blob = await resp.blob();
+        return await new Promise((res) => {
+          const fr = new FileReader();
+          fr.onload = () => res(String(fr.result || "") || null);
+          fr.onerror = () => res(null);
+          fr.readAsDataURL(blob);
+        });
+      } catch { return null; }
+    })();
+    // The artwork carries its own bracket corners, so ours would double up and read as a mistake.
+    const ornament = !customGround;
+
     const groundDark = makeGround(INK, false);
     const groundLight = makeGround(IVORY, true);
 
-    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: groundDark ? { data: groundDark } : { color: INK } });
-    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: groundLight ? { data: groundLight } : { color: IVORY } });
+    // One background for both masters when the artwork is supplied: it is a single designed sheet, and
+    // alternating it with anything else would break the thing that makes a deck feel bound.
+    pptx.defineSlideMaster({ title: "AMBRIA_DARK", background: customGround ? { data: customGround } : groundDark ? { data: groundDark } : { color: INK } });
+    pptx.defineSlideMaster({ title: "AMBRIA_LIGHT", background: customGround ? { data: customGround } : groundLight ? { data: groundLight } : { color: IVORY } });
 
     // Slides carry their own palette so nothing has to remember which ground it is on. `t` is the one
     // that changes per slide; every colour below reads from it.
@@ -1411,7 +1450,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Cover ──
     {
       const s = newSlide();
-      corners(s); frame(s);
+      if (ornament) { corners(s); frame(s); }
       s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body });
       s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
@@ -1427,7 +1466,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Function opening: title left, one photograph placed low-right ──
       {
         const s = newSlide();
-        corners(s); frame(s);
+        if (ornament) { corners(s); frame(s); }
         s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
         s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body });
         s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
@@ -1506,7 +1545,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // ── Flower story: prose left, one photograph right ──
     if (content.flowerStory) {
       const s = newSlide();
-      corners(s); frame(s);
+      if (ornament) { corners(s); frame(s); }
       s.addText("THE FLOWER STORY", { x: M, y: 1.3, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5 });
       s.addText("Florals", { x: M - 0.05, y: 1.72, w: 5.4, h: 0.9, fontFace: SERIF, fontSize: 36, color: t.body, italic: true });
       rule(s, M, 2.7, 1.8);
@@ -1521,7 +1560,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const s = newSlide();
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
-      corners(s); frame(s);
+      if (ornament) { corners(s); frame(s); }
       s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body });
       s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.25, 2.2);
