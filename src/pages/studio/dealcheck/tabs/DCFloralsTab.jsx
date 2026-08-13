@@ -152,6 +152,22 @@ export default function DCFloralsTab({ ctx }) {
                           const season = seasonMap[activeFn.fnDate] || "non_saya";
                           const seasonMult = mandiMults[season] || 1;
                           comp.flowers.forEach(fl => {
+                            // A direct IMS Inventory ingredient — no mandi-flower counterpart at all
+                            // (fl.flowerId is unset), so resolveMandiFlower(undefined, ...) would
+                            // return null and this priced at ₹0 silently. It's a physical rented
+                            // piece, always sourced the same way regardless of the real/artificial
+                            // slider — same reasoning as real_only just below — so it counts in FULL
+                            // here and the artificial loop skips it entirely (contributes nothing
+                            // there), rather than being scaled by realFrac.
+                            if (fl.invItemId) {
+                              const item = (dcInventoryCache || []).find(i => i.id === fl.invItemId);
+                              const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+                              const totalQty = (fl.qty || 0) * elQty;
+                              const lineCost = totalQty * rawPrice;
+                              realCostPerUnit += (fl.qty || 0) * rawPrice;
+                              realLines.push({ flowerId: fl.invItemId, name: item?.name || "Inventory item", perPattern: fl.qty || 0, qty: totalQty, unit: item?.unit || "pc", unitPrice: rawPrice, lineCost, realOnly: true, invItem: true });
+                              return;
+                            }
                             // Tier 2.1 — resolve via parent-with-variants helper. Recipe may reference
                             // a legacy variant ID (e.g. F002 "Rose White") OR a parent ID (e.g. F001 "Rose").
                             // Either way we collapse to the PARENT and use parent.currentPrice (= lowest
@@ -218,6 +234,19 @@ export default function DCFloralsTab({ ctx }) {
                         if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
                         if (comp && Array.isArray(comp.flowers)) {
                           comp.flowers.forEach(fl => {
+                            // Direct IMS Inventory ingredient — already counted in FULL on the real
+                            // side above (see that block's comment); no artificial substitute exists
+                            // for a physical rented piece, so it contributes nothing here.
+                            if (fl.invItemId) {
+                              const item = (dcInventoryCache || []).find(i => i.id === fl.invItemId);
+                              artLines.push({
+                                flowerId: fl.invItemId, name: item?.name || "Inventory item",
+                                realUnitsReplaced: 0, unit: item?.unit || "pc",
+                                bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: 0, lineCost: 0,
+                                missingRatio: false, realOnly: true, invItem: true
+                              });
+                              return;
+                            }
                             // Tier 2.1 — resolve through parent (same as real-cost block above)
                             const resolved = resolveMandiFlower(fl.flowerId, mandiCatalogue);
                             const parent = resolved?.parent || null;
