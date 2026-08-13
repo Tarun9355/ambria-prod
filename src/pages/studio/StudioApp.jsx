@@ -6449,6 +6449,11 @@ export default function StudioApp() {
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? ["L", "W", "H"].map(d => `${dims[d] || 0}ft`).join(" × ") : "";
+      // Footprint used by platform/carpet — a separate figure from the truss's own L×W×H (a platform
+      // can be a different shape from the truss standing on it), same fallback calcStructCost uses.
+      const floorDims = zc.floorDims || dims;
+      const floorArea = (floorDims.L || floorDims.S || 0) * (floorDims.W || (floorDims.S || 0));
+      const floorDimLabel = `${floorDims.L || floorDims.S || 0}×${floorDims.W || floorDims.S || 0}ft`;
       if (zl.truss > 0) {
         const _tShape = zc.trT === "box" ? "box" : "singleU";
         const _tRate = trussRateFor(_tShape, zc.trussMaterial, zc.drapeDensity, imsTrussRates);
@@ -6456,14 +6461,37 @@ export default function StudioApp() {
         const _tEffRate = _tHasCustomCeiling ? Math.max(0, _tRate.rate - _tRate.ceilingRate) : _tRate.rate;
         const _tMatLabel = (TRUSS_MATERIALS.find((m) => m.key === (zc.trussMaterial || "iron"))?.label) || "Pole";
         const _tCeilingItem = _tHasCustomCeiling ? (imsInventory || []).find((i) => i.id === zc.customCeilingItemId) : null;
-        structItems.push({ name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""), total: zl.truss });
+        // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
+        // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U charges
+        // width×height. Doesn't account for the front-extension add-on (shown in the name text only) —
+        // that's a second, smaller area on top, not part of this base sqft.
+        const _tBase = trussBaseArea({ dims: zc.dims, trT: zc.trT });
+        structItems.push({
+          name: "Truss (" + (_tShape === "box" ? "Box" : "Single U") + " · " + _tMatLabel + " ₹" + _tEffRate + "/sqft)" + (_tCeilingItem ? ` · custom ceiling: ${_tCeilingItem.name}` : "") + (zc.trT === "box" && (Number(zc.trussFrontExt) || 0) > 0 ? ` + 2× Single-U front ext ${zc.trussFrontExt}×${Number(zc.trussFrontExtH) || dims.H || 0}ft` : "") + ((zc.trussQty || 1) > 1 ? " ×" + zc.trussQty : ""),
+          size: `${_tBase.a || 0}×${_tBase.b || 0}ft`, qty: Math.round((_tBase.area || 0) * Math.max(1, zc.trussQty || 1) * 100) / 100, rate: _tEffRate, unit: "sqft",
+          total: zl.truss,
+        });
       }
       if (zl.masking > 0) {
         const _mCustomItem = zc.customMaskingItemId ? (imsInventory || []).find((i) => i.id === zc.customMaskingItemId) : null;
         structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
       }
-      if (zl.platform > 0) structItems.push({ name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + ")", total: zl.platform });
-      if (zl.carpet > 0) { const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials); structItems.push({ name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)", total: zl.carpet }); }
+      if (zl.platform > 0) {
+        const _pRate = platformRateFor(zc.plH, structRates.platformRates);
+        structItems.push({
+          name: "Platform (" + (zc.plH === "4in" ? "4 inch" : zc.plH === "1ft" ? "1ft–3ft" : zc.plH || "") + " ₹" + _pRate + "/sqft)",
+          size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: _pRate, unit: "sqft",
+          total: zl.platform,
+        });
+      }
+      if (zl.carpet > 0) {
+        const cp = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+        structItems.push({
+          name: "Carpet (" + cp.label + " ₹" + cp.rate + "/sqft)",
+          size: floorDimLabel, qty: Math.round(floorArea * 100) / 100, rate: cp.rate, unit: "sqft",
+          total: zl.carpet,
+        });
+      }
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
       if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
       if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });

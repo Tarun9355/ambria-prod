@@ -669,7 +669,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         fnObj.zones.forEach(z => {
           addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
           addTableHeaderRow(ws);
-          z.structItems.forEach(si => addItemRow(ws, [si.name, "—", "—", "—", "—", si.total], { italic: true }));
+          z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
           z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
           addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
           if (z.note) {
@@ -684,10 +684,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
           const row = ws.addRow(["Item", "Details", "", "", "", "Amount"]);
           row.eachCell((c, idx) => { if ([1, 2, 6].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 6 ? "right" : "left" }; } });
-          (fnObj.transport.breakdown || []).forEach(bd => {
-            const r = ws.addRow([bd.label, `${bd.trucks || 0} truck${(bd.trucks || 0) !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2`, "", "", "", (bd.trucks || 0) * (fnObj.transport.tripRate || 0) * 2]);
+          {
+            // One row for the whole trip count — the per-subcategory truck breakdown (truss/carpet/
+            // buffer, each a fraction of a truck's capacity) is sourcing-side detail, not something a
+            // client cost sheet needs; fnObj.transport.trucks is already the rounded-up total trip
+            // count, and truckTotal is its full round-trip cost.
+            const trips = fnObj.transport.trucks || 0;
+            const r = ws.addRow(["Transport", `${trips} trip${trips !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2 (round trip)`, "", "", "", fnObj.transport.truckTotal || 0]);
             r.getCell(6).numFmt = money.numFmt; r.getCell(6).alignment = { horizontal: "right" };
-          });
+          }
           const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
           gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
           const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
