@@ -6360,6 +6360,10 @@ export default function StudioApp() {
     if (currentSel && currentSel.src === photo.src) {
       setElSelectedPhoto(p => { const n = { ...p }; delete n[elKey]; return n; });
       setZoneElements(p => { const n = { ...p }; delete n[elKey]; return n; });
+      // Full deselect means "nothing in this zone" — clear the truss/platform/carpet config too,
+      // since it came from this same photo pick. Otherwise the zone reads as empty (no elements,
+      // no photo selected) while still silently charging for a structure nobody can see is configured.
+      setZoneConfig(p => { const n = { ...p }; delete n[elKey]; return n; });
       return;
     }
     setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
