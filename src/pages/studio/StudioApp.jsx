@@ -4495,8 +4495,14 @@ export default function StudioApp() {
     return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
-  // Same read-merge-write contract as saveHiddenVideos, same reason — a video's "favourite for its
-  // own venue" flag toggled before the async load lands must not stomp everyone else's favourites.
+  // Same read-merge-write contract as saveHiddenVideos, same reason — a video's favourite flag
+  // toggled before the async load lands must not stomp anyone else's.
+  //
+  // Shape is { [videoId]: { [userId]: true } } — favouriting is PER SALESPERSON. Tarun and Krati
+  // favouriting the same video are two independent flags, not one shared one; the one settings row
+  // holds everyone's, so the merge here has to happen at the (videoId, userId) pair, not just the
+  // videoId — merging at the videoId level alone would let one person's toggle silently overwrite
+  // every other salesperson's flag on that same video. Callers pass `{ [videoId]: { [userId]: val } }`.
   const saveFavVideos = useCallback(async (patch) => {
     const res = await kvTryGet(FAV_VID_SK);
     if (!res.ok) {
@@ -4515,7 +4521,11 @@ export default function StudioApp() {
       }
     }
     const merged = { ...fresh };
-    Object.entries(patch || {}).forEach(([id, val]) => { if (!val) delete merged[id]; else merged[id] = val; });
+    Object.entries(patch || {}).forEach(([videoId, userPatch]) => {
+      const cur = { ...(merged[videoId] || {}) };
+      Object.entries(userPatch || {}).forEach(([uid, val]) => { if (!val) delete cur[uid]; else cur[uid] = val; });
+      if (Object.keys(cur).length) merged[videoId] = cur; else delete merged[videoId];
+    });
     setFavVideos(merged);
     const saved = await reliableSave(FAV_VID_SK, JSON.stringify(merged), "Favourite videos");
     if (!saved?.ok) setSaveError({ label: "Favourite videos", error: saved?.error || "Save failed" });
@@ -4975,19 +4985,22 @@ export default function StudioApp() {
     // below exempts it. Favouriting a video is a deliberate "always show this for its venue" pin;
     // the whole point is not having to remember to clear the tier/style/palette filters just to
     // pull it back up mid-meeting.
+    // Favouriting is per salesperson (see saveFavVideos) — Tarun's picks for a venue are independent
+    // of Krati's, so every check below is against MY OWN flag on the video, never anyone else's.
+    const isMyFav = (v) => !!favVideos[v.id]?.[authUser?.id];
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
-    if (filterCat.length > 0) out = out.filter(v => favVideos[v.id] || (v.tierCat && filterCat.includes(v.tierCat)));
-    if (filterSpace.length > 0) out = out.filter(v => favVideos[v.id] || (v.space && filterSpace.includes(v.space)));
-    if (filterMood.length > 0) out = out.filter(v => favVideos[v.id] || v.styles.some(s => filterMood.includes(s)));
+    if (filterCat.length > 0) out = out.filter(v => isMyFav(v) || (v.tierCat && filterCat.includes(v.tierCat)));
+    if (filterSpace.length > 0) out = out.filter(v => isMyFav(v) || (v.space && filterSpace.includes(v.space)));
+    if (filterMood.length > 0) out = out.filter(v => isMyFav(v) || v.styles.some(s => filterMood.includes(s)));
     // Whitespace/case-insensitive: the pill says "Brown" (trimmed by paletteNames) while the video
     // may be tagged "Brown " — an exact includes() matched neither half of the library reliably.
-    if (filterPalette.length > 0) out = out.filter(v => favVideos[v.id] || (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    if (filterPalette.length > 0) out = out.filter(v => isMyFav(v) || (v.colors || []).some(c => paletteInList(filterPalette, c)));
     // Favourited videos lead whichever group they land in (below) rather than jumping across group
     // boundaries — a favourite tagged to a DIFFERENT venue must not outrank the venue you actually
     // selected, it just leads once it's already in the right bucket.
     const favFirst = (arr) => {
       const favs = [], rest = [];
-      for (const v of arr) (favVideos[v.id] ? favs : rest).push(v);
+      for (const v of arr) (isMyFav(v) ? favs : rest).push(v);
       return favs.length ? [...favs, ...rest] : arr;
     };
     // Applied last, so the chosen venue floats to the top of whatever the other filters left. A
@@ -5012,7 +5025,7 @@ export default function StudioApp() {
       out = favFirst(out);
     }
     return out;
-  }, [ytVideoTags, hiddenVideos, favVideos, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
+  }, [ytVideoTags, hiddenVideos, favVideos, authUser, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
 
   // ── Active client + meeting number ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);

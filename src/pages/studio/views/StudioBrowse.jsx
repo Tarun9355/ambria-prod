@@ -126,11 +126,14 @@ export default function StudioBrowse({ ctx }) {
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
                 favFirst) — it then leads that venue's results ahead of every filter except function
-                type. Deliberately subtle (a thin red ring, no icon/label change): this can be on
-                screen in front of a guest, and the point is the salesperson recognising it, not them. */}
-            {v.tierCat&&<div onClick={(e)=>{e.stopPropagation();saveFavVideos({[v.id]:favVideos[v.id]?null:true});}}
-              title={favVideos[v.id]?"Favourited for this venue — click to remove":"Favourite for this venue (ranks first here, past every filter but function type)"}
-              style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3,cursor:"pointer",boxShadow:favVideos[v.id]?"0 0 0 2px #EF4444":"none"}}>{v.tierCat}</div>}
+                type. Per salesperson (favVideos[id][myUserId]) — my favourites and a colleague's are
+                independent. Deliberately subtle (a thin red ring, no icon/label change): this can be
+                on screen in front of a guest, and the point is the salesperson recognising it, not them. */}
+            {v.tierCat&&(()=>{ const isFav = !!favVideos[v.id]?.[authUser?.id]; return (
+              <div onClick={(e)=>{e.stopPropagation();saveFavVideos({[v.id]:{[authUser?.id]:isFav?null:true}});}}
+                title={isFav?"Favourited for this venue — click to remove":"Favourite for this venue (ranks first here, past every filter but function type)"}
+                style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3,cursor:"pointer",boxShadow:isFav?"0 0 0 2px #EF4444":"none"}}>{v.tierCat}</div>
+            ); })()}
             {/* Fix tags takes the corner the AI badge used to hold. Below the fold it had a row to
                 itself holding one small control, which was mostly empty space; up here it costs
                 nothing. Dark translucent pill so it stays legible over any thumbnail, and it stops
