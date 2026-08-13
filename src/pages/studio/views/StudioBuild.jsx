@@ -970,12 +970,48 @@ export default function StudioBuild({ ctx }) {
     setZoneElements(p => ({ ...p, [k]: (p[k] || []).map(e => {
       // Per-unit base: use the stored baseQty, else derive it from the current (possibly already-scaled)
       // qty. Effective qty = base × scale — always from a fixed base, so it never drifts across changes.
+      // Derived bases are NOT rounded. Rounding here made 5-at-scale-2 a base of 3, so going to
+      // scale 3 gave 9 where 7 or 8 was owed — the error compounded every time the scale moved.
+      // Only the qty the salesperson actually sees is a whole number.
       const base = (e.baseQty != null && Number.isFinite(Number(e.baseQty)))
         ? Number(e.baseQty)
-        : (oldS > 1 ? Math.round((Number(e.qty) || 0) / oldS) : (Number(e.qty) || 0));
+        : (Number(e.qty) || 0) / oldS;
       return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * newS)) };
     }) }));
     setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), scale: newS } }));
+  };
+
+  /**
+   * An element with a hand-typed qty, and its per-set base kept in step.
+   *
+   * Every qty control has to go through this. Writing qty alone leaves baseQty describing the qty
+   * the element had BEFORE the edit, and the next scale change recomputes from that stale base —
+   * so a salesperson who scaled a zone to 2, then bumped an element from 10 to 12, watched the 12
+   * turn into 15 rather than 18 the moment they touched the scale again. The edit was not adjusted,
+   * it was discarded.
+   *
+   * The base is left fractional on purpose: 5 pieces across a set of 2 IS 2.5 per set, and forcing
+   * it to a whole number is what made the qty drift on every subsequent change.
+   */
+  const applyQty = (k, el, nextQty) => {
+    const s = zoneScaleVal(k);
+    return { ...el, qty: nextQty, baseQty: s > 1 ? nextQty / s : nextQty };
+  };
+
+  // ── What is in the Scale box WHILE it is being typed in ──────────────────────────────────────
+  // The box cannot be driven straight off the committed scale. That value is clamped to at least 1,
+  // so clearing the field to type a new number put a 1 back under the cursor before the second
+  // keystroke arrived — and every one of those keystrokes rewrote every element qty in the zone.
+  // Typing 12 meant passing through 1, and backspacing meant watching the zone collapse to its base
+  // counts. So the raw text lives here, per zone, and the scale is applied once on blur or Enter.
+  const [scaleDraft, setScaleDraft] = useState({});
+  const commitScale = (k) => {
+    setScaleDraft(p => { const n = { ...p }; delete n[k]; return n; });
+    const raw = scaleDraft[k];
+    // Left empty, or scribbled over and abandoned — keep what the zone already had rather than
+    // reading "" as 1 and silently unscaling the whole zone.
+    if (raw === undefined || String(raw).trim() === "") return;
+    setZoneScale(k, raw);
   };
 
   // ── Per-element stock availability browser (Build) ───────────────────────────────────────────
@@ -1891,7 +1927,7 @@ undefined
                 or five matching lounges need it exactly as much as ten guest tables did. */}
             {isOn&&<span onClick={e=>e.stopPropagation()} title="Scale the whole zone — multiplies every element count below (e.g. set 10 and each element's quantity becomes 10×). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
-              <input type="number" min="1" step="1" value={zoneScaleVal(k)} onClick={e=>e.stopPropagation()} onChange={e=>setZoneScale(k, e.target.value)} onFocus={e=>e.target.select()} style={{width:40,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
+              <input type="number" min="1" step="1" value={scaleDraft[k] ?? String(zoneScaleVal(k))} onClick={e=>e.stopPropagation()} onChange={e=>{const v=e.target.value;setScaleDraft(p=>({...p,[k]:v}));}} onBlur={()=>commitScale(k)} onKeyDown={e=>{e.stopPropagation();if(e.key==="Enter")e.currentTarget.blur();if(e.key==="Escape"){setScaleDraft(p=>{const n={...p};delete n[k];return n;});e.currentTarget.blur();}}} onFocus={e=>e.target.select()} style={{width:52,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
             </span>}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{isRepeat(k)?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{isRepeat(k)?"Repeat":"Fresh"}</span></span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
@@ -2323,7 +2359,7 @@ undefined
                       <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
                         {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
                         {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
-                        {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,{...el,size:ns,qty:1});setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
+                        {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,applyQty(k,{...el,size:ns},1));setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:11,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
                         {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
                         {/* §23 Phase 2.9 → Paint Allocation Ops (05 Jun 2026) — item-level paintability */}
                         {(()=>{
@@ -2404,7 +2440,7 @@ undefined
                               showMsg(`Cannot reduce qty below ${allocTotal} — paint allocation is set. Open the paint picker to adjust the allocation first.`, "red");
                               return;
                             }
-                            elems[idx]={...elems[idx],qty:nextQty};
+                            elems[idx]=applyQty(k,elems[idx],nextQty);
                             setZoneElements(p=>({...p,[k]:elems}));
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
                           <input type="number" min="0" value={el.qty||0} onChange={e=>{
@@ -2419,10 +2455,10 @@ undefined
                               showMsg(`Cannot set qty below ${allocTotal} — paint allocation is set. Open the paint picker first.`, "red");
                               return;
                             }
-                            elems[idx]={...elems[idx],qty:nextQty};
+                            elems[idx]=applyQty(k,elems[idx],nextQty);
                             setZoneElements(p=>({...p,[k]:elems}));
                           }} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                          <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],qty:(el.qty||0)+1};setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                          <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],(el.qty||0)+1);setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                         </>
                       )}
                       </div>
@@ -2789,7 +2825,7 @@ undefined
                     <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2}}>
                       {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
                       {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
-                      {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,{...el,size:ns,qty:1});setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:9,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
+                      {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,applyQty(k,{...el,size:ns},1));setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:9,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
                       {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
                     </div>
                   </div>
@@ -2799,9 +2835,9 @@ undefined
                       <div style={{fontSize:11,fontWeight:600,color:textS,padding:"3px 8px",borderRadius:6,background:isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)",minWidth:64,textAlign:"center"}}>{priceInfo.area>0?`× ${priceInfo.area} sqft`:"× — sqft"}</div>
                     ) : (
                       <>
-                        <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],qty:Math.max(0,(el.qty||0)-1)};setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
-                        <input type="number" min="0" value={el.qty||0} onChange={e=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],qty:Math.max(0,parseInt(e.target.value)||0)};setZoneElements(p=>({...p,[k]:elems}));}} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                        <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],qty:(el.qty||0)+1};setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                        <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],Math.max(0,(el.qty||0)-1));setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
+                        <input type="number" min="0" value={el.qty||0} onChange={e=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],Math.max(0,parseInt(e.target.value)||0));setZoneElements(p=>({...p,[k]:elems}));}} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
+                        <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],(el.qty||0)+1);setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                       </>
                     )}
                       </div>
