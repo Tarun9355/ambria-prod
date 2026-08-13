@@ -35,19 +35,32 @@ const BG_BY_EVENT = Object.fromEntries(
   Object.entries(BG_ASSETS).map(([path, url]) => [(path.match(/([^/]+)-bg\.\w+$/) || [, ""])[1].toLowerCase(), url])
 );
 
+// Functions that only ever happen INSIDE a wedding. The deck cannot ask what kind of event it is —
+// there is no such field, only a list of function types, and the admin can add any type they like
+// (Birthday is not in the built-in taxonomy). So the rituals are what get named, and a deal holding
+// any of them is a wedding however its other functions are labelled.
+const WEDDING_FUNCTIONS = new Set([
+  "wedding", "reception", "sangeet", "cocktail", "haldi", "mehendi", "mehndi",
+  "baraat", "phera", "pheras", "varmala", "roka", "tilak",
+]);
+
 /**
- * The artwork a deck should be drawn on, matched against its function types.
+ * What kind of event this deck is for, as a display word: "Wedding", "Birthday", "Corporate".
  *
- * Wedding is the fallback rather than "no artwork", because the bulk of the work is weddings and
- * their functions are named Reception, Sangeet, Mehendi — none of which spell "wedding". A birthday
- * says so in its own name, so it is the named types that need matching and the rest that need a
- * sensible default.
+ * Any wedding ritual in the list means the whole deal is a wedding — a wedding's functions are named
+ * Reception and Sangeet, never "Wedding", so matching on the word alone would miss nearly all of
+ * them. Otherwise the first function names the event, which is what makes a standalone Birthday or
+ * Anniversary come out under its own name without anyone configuring anything.
  */
-function customBgFor(content) {
-  const hay = (content?.functions || []).map((f) => f.name).join(" ").toLowerCase();
-  // Longest key first, so a two-word type can never be beaten by a shorter one it contains.
-  const hit = Object.keys(BG_BY_EVENT).sort((a, b) => b.length - a.length).find((k) => hay.includes(k));
-  return BG_BY_EVENT[hit] || BG_BY_EVENT.wedding || null;
+function eventKindOf(content) {
+  const names = (content?.functions || []).map((f) => String(f.name || "").trim()).filter(Boolean);
+  if (names.some((n) => WEDDING_FUNCTIONS.has(n.toLowerCase()))) return "Wedding";
+  return names[0] || "Wedding";
+}
+
+/** The artwork this deck is drawn on: src/assets/<kind>-bg.jpg, falling back to the wedding sheet. */
+function customBgFor(kind) {
+  return BG_BY_EVENT[String(kind || "").toLowerCase()] || BG_BY_EVENT.wedding || null;
 }
 
 // ═══ COUNT-UP ═══ Rolls the grand total from wherever it currently sits to the new figure, so a
@@ -1057,11 +1070,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     const img = (u, w = 2200, h = 1238) => (u ? deckImageUrl(u, w, h, 92) : "");
     const S = [];
 
-    S.push([`# ${content.clientName || "Your"} Wedding`, "DECOR PRESENTATION", "Ambria Design & Decor",
+    const kind = eventKindOf(content);
+
+    S.push([`# ${content.clientName || "Your"} ${kind}`, "DECOR PRESENTATION", "Ambria Design & Decor",
       img(content.cover), content.functions.map((f) => [f.name, f.dateLine].filter(Boolean).join(" · ")).join("\n")]
       .filter(Boolean).join("\n\n"));
 
-    S.push("# Design Your Wedding\n\nEach wedding is a unique chapter, and we are here to make sure the decor comes out exactly as you imagined it.\n\nAmbria Design & Decor");
+    S.push(`# Design Your ${kind}\n\nEvery ${kind.toLowerCase()} is a unique chapter, and we are here to make sure the decor comes out exactly as you imagined it.\n\nAmbria Design & Decor`);
 
     for (const f of content.functions) {
       S.push([`# ${String(f.venueLine || f.name).toUpperCase()}`, img(f.hero), f.dateLine].filter(Boolean).join("\n\n"));
@@ -1131,6 +1146,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   const CREAM = "F5EFE6", BODY_DK = "3A342E", MUTE_D = "8C8C86", MUTE_L = "7A736A";
 
   const buildDesignDeck = async (content) => {
+    // Decided once: it picks both the artwork and the words on the cover, and the two disagreeing
+    // would be worse than either being wrong — pink balloons under "DESIGN YOUR WEDDING".
+    const kind = eventKindOf(content);
     if (!window.PptxGenJS) {
       await new Promise((resolve, reject) => {
         const s = document.createElement("script");
@@ -1244,7 +1262,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // because PptxGenJS needs the bytes rather than a URL for a slide background, and the same data
     // is shared by every slide rather than embedded per card.
     const customGround = await (async () => {
-      const bgUrl = customBgFor(content);
+      const bgUrl = customBgFor(kind);
       if (!bgUrl) return null;
       try {
         const resp = await fetch(bgUrl);
@@ -1487,8 +1505,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     {
       const s = newSlide();
       if (ornament) { corners(s); frame(s); }
-      s.addText("DESIGN YOUR WEDDING", { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
-      s.addText(content.clientName || "Wedding", { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body, bold: true });
+      s.addText(`DESIGN YOUR ${kind.toUpperCase()}`, { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
+      s.addText(content.clientName || kind, { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body, bold: true });
       s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
       rule(s, M, 4.6, 2.4);
       // Sits in the empty lower-left the cover deliberately leaves, so that space reads as composed
