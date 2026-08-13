@@ -3296,8 +3296,21 @@ export default function StudioApp() {
     let comp = sizes[sk] || sizes.medium; if (!comp && sk === "big" && sizes.large) comp = sizes.large;
     if (!comp && Object.keys(sizes).length) comp = sizes[Object.keys(sizes)[0]];
     if (!comp || !Array.isArray(comp.flowers)) return null;
-    let cost = 0, mappedFinal = 0, realOnlyCost = 0;
+    let cost = 0, mappedFinal = 0, realOnlyCost = 0, invItemCost = 0;
     comp.flowers.forEach(fl => {
+      if (fl.invItemId) {
+        // A direct IMS Inventory ingredient (no mandi-flower counterpart at all) — mirrors
+        // flowerHelpers.js's floralPatternUnitRates: priced raw (no rate_card_categories scaling
+        // factor — the recipe's own Markup field owns this, not the general Studio pricing rules)
+        // and marked up by the same `markup` this function's real callers use, so it contributes
+        // its full cost here instead of silently dropping out (resolveMandiFlower(undefined) would
+        // return null, `ft` would default to "flower", and it would be priced as an artificial
+        // bunch estimate of ₹0 — this was the same class of bug the Real Only fix above closes).
+        const item = (imsInventory || []).find(i => i.id === fl.invItemId);
+        const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+        invItemCost += (Number(fl.qty) || 0) * rawPrice;
+        return;
+      }
       const res = resolveMandiFlower(fl.flowerId, mc);
       const parent = res?.parent || null;
       const ft = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
@@ -3325,7 +3338,7 @@ export default function StudioApp() {
       const bunches = (Number(fl.qty) || 0) * bpu;
       cost += bunches * (ft === "green" ? agRate / agBPK : afRate / afBPK);
     });
-    return Math.round(cost * markup + mappedFinal + realOnlyCost * markup);
+    return Math.round(cost * markup + mappedFinal + realOnlyCost * markup + invItemCost * markup);
   }, [dealCheckData, studioFloralData, imsInventory, rcFactorByKey]);
 
   // Fixed extra cost (pot / base / frame) for a floral recipe element+size, added AFTER markup (flat ₹).
