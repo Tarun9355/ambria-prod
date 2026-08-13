@@ -3,6 +3,7 @@
 // the reference AdminRates transport tab (App_latest.jsx ~7645), driven off ctx.
 // Edits the transport blob (RC_SK_TR) via ctx.saveTR (per-slice persistence).
 import { useState } from "react";
+import { resolveVenueGensets } from "../../lib/studio/taxonomy";
 
 export default function TransportEditor({ ctx }) {
   const [openCats, setOpenCats] = useState({}); // collapsible truck-capacity category groups
@@ -17,10 +18,26 @@ export default function TransportEditor({ ctx }) {
   const venueByName = (name) => (trVenues || []).find((v) => String(v.name || "").toLowerCase().trim() === String(name || "").toLowerCase().trim());
   const upsertVenue = (name, field, val) => {
     const existing = venueByName(name);
-    const conv = (f, v) => (f === "rate" || f === "gensets" ? (Number(v) || 0) : v);
+    // Genset count is a whole-unit count PER SIZE now, not one fractional "gensets" multiplier (0.5
+    // used to mean "half a 125 KVA genset", which isn't a real, rentable thing). Editing either size
+    // writes BOTH fields together — resolveVenueGensets fills in whichever one isn't being touched
+    // (falling back to the legacy `gensets` value for a venue that hasn't been migrated yet) — so the
+    // venue is fully migrated to explicit counts the moment either number is edited, rather than
+    // half-migrating and silently zeroing the other size.
+    if (field === "genset125" || field === "genset62") {
+      const cur = resolveVenueGensets(existing);
+      const genset125 = field === "genset125" ? (Number(val) || 0) : cur.genset125;
+      const genset62 = field === "genset62" ? (Number(val) || 0) : cur.genset62;
+      let next;
+      if (existing) next = (trVenues || []).map((v) => (v === existing ? { ...v, genset125, genset62 } : v));
+      else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: "", rate: 0, genset125, genset62 }];
+      saveTR(next);
+      return;
+    }
+    const conv = (f, v) => (f === "rate" ? (Number(v) || 0) : v);
     let next;
     if (existing) next = (trVenues || []).map((v) => (v === existing ? { ...v, [field]: conv(field, val) } : v));
-    else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: field === "tier" ? val : "", rate: field === "rate" ? Number(val) || 0 : 0, gensets: field === "gensets" ? Number(val) || 1 : 1 }];
+    else next = [...(trVenues || []), { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), name, tier: field === "tier" ? val : "", rate: field === "rate" ? Number(val) || 0 : 0, genset125: 1, genset62: 0 }];
     saveTR(next);
   };
   // Per-sub-category truck capacity, keyed by sub-category name (truckCap[].item === sub).
@@ -78,7 +95,7 @@ export default function TransportEditor({ ctx }) {
       </div>
       <div style={{ fontSize: 11, color: textS, marginBottom: 16 }}>Venues come from <b>Settings → Venues</b>. Set the tier, trip rate &amp; genset count per venue here. New venues appear automatically.</div>
       {centralVenues.length === 0 && <div style={{ fontSize: 12, color: textS, fontStyle: "italic", padding: "8px 0" }}>No venues yet — add them in Settings → Venues.</div>}
-      {centralVenues.map((name) => { const v = venueByName(name) || {}; return (
+      {centralVenues.map((name) => { const v = venueByName(name) || {}; const g = resolveVenueGensets(v); return (
         <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${border}`, flexWrap: "wrap", gap: 8 }}>
           <span style={{ fontSize: 14, color: textP, flex: 1, minWidth: 120 }}>{name}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -90,9 +107,13 @@ export default function TransportEditor({ ctx }) {
             <input type="number" value={v.rate || ""} placeholder="0" onChange={(e) => upsertVenue(name, "rate", e.target.value)} style={{ ...numInput, width: 70, color: (v.rate || 0) === 0 ? "#F59E0B" : (isDark ? "#fff" : "#000") }} />
             <span style={{ fontSize: 11, color: textS }}>/trip</span>
             <div style={{ width: 1, height: 20, background: border, margin: "0 4px" }} />
+            {/* Whole units per size — no more one fractional "gensets" number standing in for a
+                physically-impossible "half a 125 KVA genset". */}
             <span style={{ fontSize: 11, color: "#F59E0B" }}>⚡</span>
-            <input type="number" step="0.5" min="0" value={v.gensets ?? 1} onChange={(e) => upsertVenue(name, "gensets", e.target.value)} style={{ ...numInput, width: 50, color: "#F59E0B", textAlign: "center" }} />
-            <span style={{ fontSize: 10, color: textS }}>genset</span>
+            <input type="number" step="1" min="0" title="125 KVA gensets" value={g.genset125} onChange={(e) => upsertVenue(name, "genset125", e.target.value)} style={{ ...numInput, width: 36, color: "#F59E0B", textAlign: "center" }} />
+            <span style={{ fontSize: 9, color: textS }}>×125</span>
+            <input type="number" step="1" min="0" title="62 KVA gensets" value={g.genset62} onChange={(e) => upsertVenue(name, "genset62", e.target.value)} style={{ ...numInput, width: 36, color: "#F59E0B", textAlign: "center" }} />
+            <span style={{ fontSize: 9, color: textS }}>×62</span>
           </div>
         </div>
       ); })}

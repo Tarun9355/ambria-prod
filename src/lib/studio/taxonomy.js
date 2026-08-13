@@ -113,6 +113,24 @@ export function platformOptions(platformRates) {
 export const ARCH_OPTS=[{id:"2d",l:"2D (Flat)",r:60},{id:"3d",l:"3D (Built-out)",r:100}];
 export const GLASS_OPTS=[{id:"2d",l:"2D (Flat)",r:120},{id:"3d",l:"3D (Built-out)",r:180}];
 
+// A venue's genset need used to be one fractional number (e.g. 0.5), multiplied straight against the
+// 125 KVA rate — "half a 125 KVA genset" isn't a real, rentable thing, and it's why cost sheets showed
+// nonsense like "0.5 units × ₹28,000". Venues now carry the actual whole-unit counts directly:
+// genset125 (count of 125 KVA units) + genset62 (count of the smaller 62 KVA units).
+//
+// This only derives counts for a venue that hasn't been migrated to the new fields yet — 1 → one
+// 125 KVA unit, 0.5 → one 62 KVA unit (the two values the old field was ever actually set to in
+// practice), generalising to any 0.5 step in between (1.5 → one of each, 2 → two 125s, …). Once a
+// venue is saved through the new per-type inputs it carries genset125/genset62 directly and this
+// fallback never runs for it again.
+export function resolveVenueGensets(v) {
+  if (v && (typeof v.genset125 === "number" || typeof v.genset62 === "number")) {
+    return { genset125: Number(v.genset125) || 0, genset62: Number(v.genset62) || 0 };
+  }
+  const legacy = typeof v?.gensets === "number" ? v.gensets : 1; // unset venues defaulted to 1 genset
+  return { genset125: Math.floor(legacy), genset62: (legacy % 1 >= 0.5) ? 1 : 0 };
+}
+
 // Truss and masking rates used to be the fixed numbers in BASE_RATES above. They're now editable
 // live from IMS Admin → Settings → 🏗️ Truss & Masking Rates — unlike Print Materials (a free-form
 // list), truss shape/material and masking material are a FIXED small set tied to the geometry/

@@ -53,6 +53,7 @@ import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
   carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  resolveVenueGensets,
 } from "../../lib/studio/taxonomy";
 
 import { RC_D, RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -320,6 +321,18 @@ function calcStructCost(zk, zc, rates) {
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
   if (zc.glassOn && zc.glassT) { const gq = zc.glassQty || 0, gw = zc.glassW || 0, gh = zc.glassH || 0; r.glass = gq * gw * gh * (BASE_RATES.glass[zc.glassT] || 120); }
   r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass; return r;
+}
+// Resolves a deal's actual genset units + cost from the matched venue's own counts (resolveVenueGensets
+// — handles un-migrated legacy venues too) unless the deal explicitly overrides either size. null/undefined
+// on an override means "follow the venue"; an explicit number, including 0, pins that size regardless of
+// what the venue says. One shared function so the same resolution can't drift across its several call
+// sites (totalCost, transportCalc, per-function breakdown, custom-venue auto-persist).
+function resolveGensetPlan(match, customGenset125, customGenset62, gensetRate, gensetRate62) {
+  const venue = resolveVenueGensets(match);
+  const genset125 = (customGenset125 !== null && customGenset125 !== undefined) ? customGenset125 : venue.genset125;
+  const genset62 = (customGenset62 !== null && customGenset62 !== undefined) ? customGenset62 : venue.genset62;
+  const gensetCost = (Number(genset125) || 0) * (Number(gensetRate) || 0) + (Number(genset62) || 0) * (Number(gensetRate62) || 0);
+  return { venueGenset125: venue.genset125, venueGenset62: venue.genset62, genset125, genset62, gensetCost };
 }
 function initZP(zk, size) {
   const p = ZONE_PRESETS[zk]?.[size]; const zm = ZONE_META[zk]; if (!p || !zm) return null;
@@ -1659,10 +1672,11 @@ export default function StudioApp() {
   const [floralPerTruck, setFloralPerTruck] = useState(50000);
   // Two genset sizes are hired, and an event can need BOTH — a big unit plus a smaller one — so
   // each size carries its own count. 125 KVA keeps the original `gensetRate` key and the existing
-  // customGensets count, and 62 KVA starts at zero, so no saved quote re-prices.
+  // customGensets override; 62 KVA mirrors it with its own override — null means "follow the
+  // venue's own 62 KVA count" (resolveVenueGensets), an explicit number (0 included) pins it.
   const [gensetRate, setGensetRate] = useState(28000);      // 125 KVA
   const [gensetRate62, setGensetRate62] = useState(18000);  // 62 KVA
-  const [genset62, setGenset62] = useState(0);              // count of the smaller unit, per deal
+  const [genset62, setGenset62] = useState(null);           // override for the smaller unit, per deal — null = follow venue
   const [bufferTiers, setBufferTiers] = useState(TR_DBT);
   const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
   const [newTC, setNewTC] = useState({ item: "", perTruck: 0, unit: "pc" });
@@ -1721,7 +1735,7 @@ export default function StudioApp() {
     elSelectedPhoto, elInspo, elNotes, elCostOpen,
     sourceVideo, sourceEvent,
     savedInsps, selectedMoods, selectedPalettes, floralRatio,
-    customGensets, customTripRate,
+    customGensets, genset62, customTripRate,
     floralOverrides,
   });
   // Lives in lib/studio/sessionData now, so the SAVE path and Browse's banner cannot drift apart on
@@ -1736,7 +1750,7 @@ export default function StudioApp() {
       setCustomZones([]); setElSelectedPhoto({}); setElInspo({}); setElNotes({});
       setElCostOpen({}); setSourceVideo(null); setSourceEvent(null);
       setSavedInsps([]); setSelectedMoods([]); setSelectedPalettes([]); setFloralRatio(70);
-      setCustomGensets(null); setCustomTripRate(0);
+      setCustomGensets(null); setGenset62(null); setCustomTripRate(0);
       setFloralOverrides({ note: "", rows: [] });
       return;
     }
@@ -1760,6 +1774,7 @@ export default function StudioApp() {
     setSelectedPalettes(s.selectedPalettes || []);
     setFloralRatio(typeof s.floralRatio === "number" ? s.floralRatio : 70);
     setCustomGensets(typeof s.customGensets === "number" ? s.customGensets : null);
+    setGenset62(typeof s.genset62 === "number" ? s.genset62 : null);
     setCustomTripRate(typeof s.customTripRate === "number" ? s.customTripRate : 0);
     setFloralOverrides(
       s.floralOverrides && typeof s.floralOverrides === "object"
@@ -3516,8 +3531,9 @@ export default function StudioApp() {
     if (decorCost <= 0) return decorCost;
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
     const truckTotal = allTrucks * tripRate * 2;
-    const gensets = match ? (match.gensets || 1) : 1;
-    const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
+    // 125 KVA count follows the venue only (no customGensets here, matching this function's prior
+    // behaviour — this is a Browse-card estimate, not the live deal's own priced total).
+    const gensetCost = resolveGensetPlan(match, null, genset62, gensetRate, gensetRate62).gensetCost;
     return decorCost + truckTotal + gensetCost;
   }, [ytVideoTags, libItems, rcItems, getElPrice, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, structRates]);
 
@@ -3584,7 +3600,10 @@ export default function StudioApp() {
     // calcFunctionCost/calcFunctionBreakdown, which already skip transport entirely when a
     // function's decor total is 0 — this was the one place still charging it unconditionally
     // as soon as a venue was picked, even with every zone toggled off.
-    if (decor <= 0) return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: match ? (match.gensets || 1) : 1, gensetCost: 0, gensetRate, gensetRate62, genset62: Number(genset62) || 0, truckTotal: 0 };
+    if (decor <= 0) {
+      const venueOnly = resolveVenueGensets(match);
+      return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: venueOnly.genset125, venueGenset62: venueOnly.genset62, gensetCost: 0, gensetRate, gensetRate62, genset62: 0, truckTotal: 0 };
+    }
     const breakdown = [];
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
     itemBd.forEach(b => breakdown.push(b));
@@ -3593,12 +3612,10 @@ export default function StudioApp() {
     const bufTrucks = bt ? bt.bufferTrucks : 0;
     if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
     const allTrucks = itemTrucks + floralTrucks + bufTrucks;
-    const venueGensets = match ? (match.gensets || 1) : 1;
-    const gensets = customGensets !== null ? customGensets : venueGensets;
-    const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
+    const plan = resolveGensetPlan(match, customGensets, genset62, gensetRate, gensetRate62);
     const truckTotal = allTrucks * tripRate * 2;
-    const total = truckTotal + gensetCost;
-    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets, venueGensets, gensetCost, gensetRate, gensetRate62, genset62: Number(genset62) || 0, truckTotal };
+    const total = truckTotal + plan.gensetCost;
+    return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal };
   }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig]);
 
   const grandTotal = useMemo(() => totalCost() + transportCalc.total, [totalCost, transportCalc]);
@@ -3633,7 +3650,7 @@ export default function StudioApp() {
         elTiers: snap.elTiers || {},
         floralRatio: typeof snap.floralRatio === "number" ? snap.floralRatio : floralRatio,
         customGensets: typeof snap.customGensets === "number" ? snap.customGensets : null,
-        genset62: typeof snap.genset62 === "number" ? snap.genset62 : 0,
+        genset62: typeof snap.genset62 === "number" ? snap.genset62 : null,
         customTripRate: typeof snap.customTripRate === "number" ? snap.customTripRate : 0,
         elNotes: snap.elNotes || {},
         floralOverrides: snap.floralOverrides && typeof snap.floralOverrides === "object"
@@ -3679,6 +3696,7 @@ export default function StudioApp() {
       const match = trVenues.find(v => v.name.toLowerCase() === fVenue.toLowerCase());
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
+      const fCustomGenset62 = typeof fnData.genset62 === "number" ? fnData.genset62 : null;
       const tripRate = match ? match.rate : fCustomTripRate;
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {};
@@ -3708,13 +3726,11 @@ export default function StudioApp() {
       const bufTrucks = bt ? bt.bufferTrucks : 0;
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
       const truckTotal = allTrucks * tripRate * 2;
-      const venueGensets = match ? (match.gensets || 1) : 1;
-      const gensets = fCustomGensets !== null ? fCustomGensets : venueGensets;
-      const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
+      const gensetCost = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62).gensetCost;
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, dcCustomItems, structRates, activeFnIdx]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, activeFnIdx]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -4015,6 +4031,7 @@ export default function StudioApp() {
       const isNew = !match;
       const fCustomTripRate = typeof fnData.customTripRate === "number" ? fnData.customTripRate : 0;
       const fCustomGensets = typeof fnData.customGensets === "number" ? fnData.customGensets : null;
+      const fCustomGenset62 = typeof fnData.genset62 === "number" ? fnData.genset62 : null;
       const tripRate = match ? match.rate : fCustomTripRate;
       const tierId = match ? match.tier : "new";
       const tierLabel = match ? (TR_TIERS.find(t => t.id === match.tier)?.label || match.tier) : "New venue";
@@ -4047,17 +4064,16 @@ export default function StudioApp() {
       const bufTrucks = bt ? bt.bufferTrucks : 0;
       if (bufTrucks > 0) breakdown.push({ label: "Buffer", qty: 0, perTruck: 0, unit: "", trucks: bufTrucks, isBuffer: true, tierLabel: bt?.label || "" });
       const allTrucks = itemTrucks + floralTrucks + bufTrucks;
-      const venueGensets = match ? (match.gensets || 1) : 1;
-      const gensets = fCustomGensets !== null ? fCustomGensets : venueGensets;
-      const gensetCost = gensets * gensetRate + (Number(genset62) || 0) * gensetRate62;
+      const plan = resolveGensetPlan(match, fCustomGensets, fCustomGenset62, gensetRate, gensetRate62);
       const truckTotal = allTrucks * tripRate * 2;
-      transportTotal = truckTotal + gensetCost;
+      transportTotal = truckTotal + plan.gensetCost;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost,
-        gensets, venueGensets, gensetCost, gensetRate, truckTotal };
+        gensets: plan.genset125, venueGensets: plan.venueGenset125, genset62: plan.genset62, venueGenset62: plan.venueGenset62,
+        gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, genset62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
 
   const cat = getCat(grandTotal);
 
@@ -4084,6 +4100,28 @@ export default function StudioApp() {
     const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr, gensetRate62: sgr62 };
     await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
   }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62]);
+
+  // ── One-time backfill: fractional "gensets" → explicit genset125/genset62 ──
+  // Pre-migration venues only ever had one fractional number (0.5 meaning "half a 125 KVA
+  // genset", which isn't a real, rentable thing). resolveVenueGensets already reads the right
+  // value for an un-migrated venue on the fly, so nothing is ever WRONG while this hasn't run —
+  // but whichever tab loads the venue list first after this ships persists the migrated counts,
+  // so the legacy field stops being re-derived from indefinitely. Runs once per mount; skips
+  // straight past once every venue already carries the new fields.
+  const gensetMigrationRef = useRef(false);
+  useEffect(() => {
+    if (gensetMigrationRef.current) return;
+    if (!Array.isArray(trVenues) || trVenues.length === 0) return;
+    const needsMigration = trVenues.some((v) => v && typeof v.genset125 !== "number" && typeof v.genset62 !== "number");
+    gensetMigrationRef.current = true;
+    if (!needsMigration) return;
+    const migrated = trVenues.map((v) => {
+      if (!v || typeof v.genset125 === "number" || typeof v.genset62 === "number") return v;
+      const g = resolveVenueGensets(v);
+      return { ...v, genset125: g.genset125, genset62: g.genset62 };
+    });
+    saveTR(migrated);
+  }, [trVenues, saveTR]);
 
   // ── Library photos for a zone ──
   // Async: fetches the zone-tagged candidate pool from the server (`tags->areasElements` overlap)
@@ -4754,8 +4792,12 @@ export default function StudioApp() {
   const autoPersistCustomVenue = useCallback(() => {
     const name = (clientVenueOther || "").trim();
     const rate = Number(customTripRate) || 0;
-    const gensets = customGensets;
-    if (!name || rate <= 0 || gensets === null || gensets === undefined || gensets < 0) return;
+    // Event Info's "Gensets needed" field for a brand-new venue only ever sets a 125 KVA count
+    // (there's no 62 KVA field here — this is a rough estimate the admin refines properly in
+    // Transport & Power afterward) — genset125 directly, genset62 starts at 0, not the old
+    // fractional "gensets" scalar.
+    const genset125 = customGensets;
+    if (!name || rate <= 0 || genset125 === null || genset125 === undefined || genset125 < 0) return;
     const lcName = name.toLowerCase();
     const inInhouse = allInhouseVenues.some(v => v.toLowerCase() === lcName);
     const inOutside = customOutdoor.some(o => (o.name || "").toLowerCase() === lcName);
@@ -4764,16 +4806,16 @@ export default function StudioApp() {
     const existingTR = trVenues.find(v => (v.name || "").toLowerCase() === lcName);
     let newTR;
     if (existingTR) {
-      newTR = trVenues.map(v => v.id === existingTR.id ? { ...v, rate, gensets, name } : v);
+      newTR = trVenues.map(v => v.id === existingTR.id ? { ...v, rate, genset125, genset62: 0, name } : v);
     } else {
       const id = "V" + Date.now().toString(36).slice(-5).toUpperCase();
-      newTR = [...trVenues, { id, tier: "other", name, rate, gensets }];
+      newTR = [...trVenues, { id, tier: "other", name, rate, genset125, genset62: 0 }];
     }
     const existingOut = customOutdoor.find(o => (o.name || "").toLowerCase() === lcName);
     const newOut = existingOut ? customOutdoor : [...customOutdoor, { name, empanelled: false }];
     saveTR(newTR, null);
     if (newOut !== customOutdoor) saveVenues(customInhouse, newOut);
-    showMsg(`✓ Saved ${name} (₹${rate}/trip, ${gensets} gensets)`, "green");
+    showMsg(`✓ Saved ${name} (₹${rate}/trip, ${genset125} × 125 KVA genset)`, "green");
   }, [clientVenueOther, customTripRate, customGensets, trVenues, customOutdoor, customInhouse, allInhouseVenues, saveTR, saveVenues]);
 
   // ── Outdoor venue list (DB + events) — VERBATIM ──

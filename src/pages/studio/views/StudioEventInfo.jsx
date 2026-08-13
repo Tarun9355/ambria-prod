@@ -698,8 +698,8 @@ export default function StudioEventInfo({ ctx }) {
                           <input type="number" min="0" value={customTripRate||""} onChange={e=>setCustomTripRate(Number(e.target.value)||0)} onBlur={autoPersistCustomVenue} placeholder="e.g. 5000" style={S.input}/>
                         </div>
                         <div>
-                          <div style={{...label,fontSize:10}}>Gensets needed</div>
-                          <input type="number" min="0" step="0.5" value={customGensets!==null?customGensets:""} onChange={e=>{const v=e.target.value;setCustomGensets(v===""?null:Number(v)||0);}} onBlur={autoPersistCustomVenue} placeholder="1" style={S.input}/>
+                          <div style={{...label,fontSize:10}}>Gensets needed (125 KVA)</div>
+                          <input type="number" min="0" step="1" value={customGensets!==null?customGensets:""} onChange={e=>{const v=e.target.value;setCustomGensets(v===""?null:Number(v)||0);}} onBlur={autoPersistCustomVenue} placeholder="1" style={S.input}/>
                         </div>
                       </div>
                       <div style={{fontSize:10,color:textM,marginTop:4,lineHeight:1.5}}>Used for transport + genset calculation on Build. Admin can refine these in Pricing → Transport later.</div>

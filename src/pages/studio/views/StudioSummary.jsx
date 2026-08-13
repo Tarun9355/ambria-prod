@@ -693,8 +693,19 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             const r = ws.addRow(["Transport", `${trips} trip${trips !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2 (round trip)`, "", "", "", fnObj.transport.truckTotal || 0]);
             r.getCell(6).numFmt = money.numFmt; r.getCell(6).alignment = { horizontal: "right" };
           }
-          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
-          gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
+          {
+            // One row per genset SIZE actually in use — a genset is a whole physical unit, never a
+            // fraction of one, so this lists each size's own count, rate and cost rather than a
+            // single blended number. A venue needing no genset at all shows neither row.
+            const gensetLines = [
+              { label: "Genset (125 KVA)", count: fnObj.transport.gensets || 0, rate: fnObj.transport.gensetRate || 0 },
+              { label: "Genset (62 KVA)", count: fnObj.transport.genset62 || 0, rate: fnObj.transport.gensetRate62 || 0 },
+            ].filter((g) => g.count > 0);
+            gensetLines.forEach((g) => {
+              const gRow = ws.addRow([g.label, `${g.count} unit${g.count !== 1 ? "s" : ""} × ${f(g.rate)}`, "", "", "", g.count * g.rate]);
+              gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
+            });
+          }
           const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
           tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
           tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };

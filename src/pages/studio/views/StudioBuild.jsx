@@ -515,9 +515,10 @@ export default function StudioBuild({ ctx }) {
     imsTrussRates, imsMaskingRates, structRates,
     // Platform rates (IMS Admin → Settings → 🪵 Platform Rates)
     imsPlatformRates,
-    // Genset count override — null means "follow the venue's own figure". Stepped from the
-    // Build total's Genset row; persisted with the rest of the session snapshot.
-    customGensets, setCustomGensets, setGenset62,
+    // Genset count override, one per size — null means "follow the venue's own figure" for that
+    // size. Stepped from the Build total's Genset rows; persisted with the rest of the session
+    // snapshot.
+    customGensets, setCustomGensets, genset62, setGenset62,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items in the "+Add element" search
     recipeOnlyPatterns,
@@ -3017,18 +3018,19 @@ undefined
       </div>
       {/* Genset count is adjustable here rather than only in Event Info's custom-venue block,
           which is where the override lived and where nobody looks once a build is underway.
-          The venue supplies a default; stepping it writes customGensets, which the session
-          snapshot already persists. Setting it back to the venue's own number clears the
-          override, so the row stops being pinned and follows the venue again. */}
+          Each size supplies its own venue default (IMS Admin → Transport & Power — whole units
+          now, not one fractional number); stepping either one writes its own override, which the
+          session snapshot persists per function. Setting it back to the venue's own number clears
+          the override, so the row stops being pinned and follows the venue again. */}
       {/* One row per genset size, each with its own count — an event often needs a big unit AND a
-          smaller one, so a single "which size" toggle could never express that. 125 KVA keeps the
-          venue's own default; 62 KVA starts at 0, so nothing re-prices until someone adds one. */}
+          smaller one, so a single "which size" toggle could never express that. */}
       {[
         { kva: "125", count: transportCalc.gensets, rate: transportCalc.gensetRate,
           set: (n) => setCustomGensets(n === transportCalc.venueGensets ? null : n),
           note: customGensets !== null ? `venue default ${transportCalc.venueGensets}` : "" },
         { kva: "62", count: transportCalc.genset62, rate: transportCalc.gensetRate62,
-          set: (n) => setGenset62(n), note: "" },
+          set: (n) => setGenset62(n === transportCalc.venueGenset62 ? null : n),
+          note: genset62 !== null ? `venue default ${transportCalc.venueGenset62}` : "" },
       ].map((g, gi) => (
         <div key={g.kva} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,
           ...(gi===1?{paddingBottom:10,borderBottom:"1px solid rgba(255,255,255,0.1)"}:null)}}>
