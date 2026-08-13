@@ -18,7 +18,7 @@ import { swatchHexFor } from "../../../lib/studio/colours";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport } from "../../../lib/canva";
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
 import { detailShots } from "../../../lib/studio/detailShots";
-import { gammaCreateGeneration, gammaPollGeneration, gammaThemes } from "../../../lib/gamma";
+import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
@@ -79,30 +79,27 @@ function AnimatedTotal({ value, fmt }) {
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
+  // ═══ WHICH ENGINE DESIGNS THE DECK ═══
+  // The built-in one. Flip to true and Gamma takes over instead; both paths are kept because the
+  // choice has already gone back and forth twice, and neither is wrong in the abstract:
+  //
+  //   Gamma      designs each deck fresh and varies the composition in ways worth having. But its
+  //              API offers one lever — themeId — plus prose it interprets, so background, fonts,
+  //              type weight and spacing are all requests rather than instructions. A day of asking
+  //              for a title beside the photograph rather than under it did not reliably get one.
+  //   Built-in   places every element at fixed coordinates: exact background, fonts, weight,
+  //              margins. Identical on every run and ready in seconds instead of minutes — and it
+  //              only ever produces what it has been told to, so variety has to be coded.
+  //
+  // Everything except the rendering is shared: the same content, the same photo grading, the same
+  // detail crops. Switching engines changes how it is drawn, never what it says.
+  const USE_GAMMA = false;
+
   // "🎨 Canva" button state — idle | building | uploading | processing | ready | error
   const [canvaState, setCanvaState] = useState("idle");
   const [canvaEditUrl, setCanvaEditUrl] = useState("");
   const [canvaError, setCanvaError] = useState("");
-  // ═══ WHICH GAMMA THEME THIS DECK WEARS ═══
-  // A deck is one Gamma generation and a generation takes ONE theme, so this is per deal rather than
-  // per function — a Haldi and a Reception in the same deck cannot wear different looks.
-  //
-  // Empty means "whatever the edge function defaults to", which is the right behaviour when the list
-  // has not loaded or the call failed: the deck still generates, just in the standard theme.
-  const [deckThemes, setDeckThemes] = useState([]);
-  const [deckThemeId, setDeckThemeId] = useState(() => {
-    // Remembered across decks — a studio settles on one look and re-picking it every time is friction.
-    try { return localStorage.getItem("ambria-deck-theme") || ""; } catch { return ""; }
-  });
-  useEffect(() => {
-    let dead = false;
-    gammaThemes().then((list) => { if (!dead) setDeckThemes(list); }).catch(() => { /* picker just stays hidden */ });
-    return () => { dead = true; };
-  }, []);
-  const pickDeckTheme = (id) => {
-    setDeckThemeId(id);
-    try { if (id) localStorage.setItem("ambria-deck-theme", id); else localStorage.removeItem("ambria-deck-theme"); } catch { /* private mode */ }
-  };
+
   const {
     // theme / chrome
     S, isDark, accent, border, textS, textP, accentBg, accentText, fmt,
@@ -130,6 +127,27 @@ export default function StudioSummary({ ctx }) {
     // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
     setStep, setActiveClientId, startNewDeal,
   } = ctx;
+
+  // ═══ THE DECK THIS DEAL ALREADY HAS ═══
+  // canvaEditUrl lived in component state alone, so the link died on a reload, on closing the
+  // preview, or on switching deal and back — and the button dropped to "Canva", offering to build a
+  // second deck when one already existed. Remembered against the CLIENT, so it follows the deal
+  // rather than the tab, and so opening someone else's deal never shows this one's link.
+  const canvaKey = (id) => `ambria-canva-deck-${id || "none"}`;
+  const rememberDeck = (url) => {
+    try { if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), url); } catch { /* private mode */ }
+  };
+  const forgetDeck = () => {
+    try { if (activeClientId) localStorage.removeItem(canvaKey(activeClientId)); } catch { /* private mode */ }
+  };
+  useEffect(() => {
+    // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
+    if (canvaState !== "idle") return;
+    let saved = "";
+    try { saved = localStorage.getItem(canvaKey(activeClientId)) || ""; } catch { /* private mode */ }
+    if (saved) { setCanvaEditUrl(saved); setCanvaState("ready"); }
+  }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
   // the Client Tracker's delete needs the same reset and could not reach a function declared here —
   // it cleared only activeClientId, and the auto-save then re-created the client it had just
@@ -988,17 +1006,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     };
   };
 
-  // ═══ WHICH ENGINE DESIGNS THE DECK ═══
-  // Gamma. The hand-built PptxGenJS deck below stays in the file and still works — flip this to false
-  // and it takes over — because the two answer different needs and the choice has gone back and forth
-  // once already:
-  //
-  //   Gamma      designs each deck fresh, so it can surprise you. Takes 2–3 minutes, and the result
-  //              differs run to run; matching Ambria's own reference layouts exactly is not something
-  //              it does, however specific the art direction.
-  //   Built-in   places every element at fixed coordinates. Identical every run, ready in seconds,
-  //              matches the reference decks — and only ever produces what it is told to.
-  const USE_GAMMA = true;
 
   // ═══ THE OUTLINE GAMMA DESIGNS FROM ═══
   // The same `content` the built-in deck uses — photos, callouts read off the references, palette,
@@ -1554,7 +1561,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       if (USE_GAMMA) {
         // Gamma designs it. Two polls' worth of patience is the cost: generation takes minutes, not
         // seconds, and the client waits on this screen while it runs.
-        const generationId = await gammaCreateGeneration(buildGammaOutline(content), title, deckThemeId);
+        const generationId = await gammaCreateGeneration(buildGammaOutline(content), title);
         for (let i = 0; i < 40; i++) {
           await new Promise((r) => setTimeout(r, 4000));
           const res = await gammaPollGeneration(generationId);
@@ -1583,7 +1590,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); return; }
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); rememberDeck(res.editUrl); return; }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
@@ -1998,25 +2005,22 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
             <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
             <button onClick={csExportExcel} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} Excel</button>
-            {/* Theme picker — sits with the Canva button because it only affects that deck. Hidden
-                until the list loads, and while a deck is generating, since changing it mid-run would
-                say nothing about the deck actually being made. */}
-            {deckThemes.length > 0 && canvaState !== "ready" && (
-              <select value={deckThemeId} onChange={(e) => pickDeckTheme(e.target.value)}
-                disabled={canvaState === "designing" || canvaState === "uploading" || canvaState === "processing"}
-                title="Which Gamma theme this deck is designed in"
-                style={{padding:"8px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:12,fontWeight:600,maxWidth:190,cursor:"pointer"}}>
-                <option value="" style={{color:"#111"}}>Default theme</option>
-                {/* Ambria's own themes first — see gammaThemes(). Fifty standard ones follow. */}
-                {deckThemes.map((t) => (
-                  <option key={t.id} value={t.id} style={{color:"#111"}}>{t.custom ? `★ ${t.name}` : t.name}</option>
-                ))}
-              </select>
-            )}
             {(() => {
               const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
               const busyLabel = canvaState === "designing" ? "Designing…" : canvaState === "uploading" ? "Uploading…" : "Finalizing…";
-              if (canvaState === "ready") return <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>;
+              // Once a deck is made, "Open in Canva" USED TO BE the only button — so the link to the
+              // first deck was all anyone could reach, and a second one could not be made without
+              // reloading the page. Worse, that link outlived whatever changed since: a new theme,
+              // an edited build, different photos. Both actions are offered now, and Make again is
+              // deliberately plain so the link stays the obvious one.
+              if (canvaState === "ready") return (
+                <>
+                  <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>
+                  <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
+                    title="Design a fresh deck — the current link stays open in Canva either way"
+                    style={{padding:"8px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>{"⟳"} Make again</button>
+                </>
+              );
               return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":"🎨 Canva"}</button>;
             })()}
             <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
