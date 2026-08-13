@@ -2115,8 +2115,11 @@ undefined
                   {/* The whole strip under the photo selects, not just the two lines of text —
                       flex:1 claims the leftover height and the padding widens the target. */}
                   <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);setGridZones(g=>g[k]?{...g,[k]:false}:g);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}}>
-                    <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ph.eventName}</div>
-                    <div style={{fontSize:10.5,color:isSelected?"#059669":textS,marginTop:3}}>
+                    {/* No filename. For a library photo eventName is whatever the file was called in
+                        storage — "fnq8zuwlfxtductgq4ov" — which tells a salesperson nothing and reads
+                        as a bug on screen. What is useful is what the photo CONTAINS, which is the
+                        line below. The name stays in alt text for screen readers. */}
+                    <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,marginTop:1}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
                     </div>
                     {isSelected&&<div style={{marginTop:5,fontSize:10.5,fontWeight:700,color:"#047857",display:"flex",alignItems:"center",gap:4}}>✓ Selected</div>}
@@ -3282,7 +3285,8 @@ undefined
         {many&&<span title="Next (→)" aria-label="Next photo" onClick={e=>{e.stopPropagation();lightboxStep(1);}} style={navBtn("right")}>{"›"}</span>}
         <img src={cur.src} alt={cur.name||""} onClick={e=>e.stopPropagation()} style={{maxWidth:"88vw",maxHeight:"88vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",cursor:"default"}}/>
         <div style={{position:"absolute",bottom:18,left:0,right:0,textAlign:"center",color:"#fff",fontSize:13,fontWeight:600,textShadow:"0 1px 4px rgba(0,0,0,0.8)"}}>
-          {cur.name||""}{many&&<span style={{marginLeft:10,fontWeight:400,opacity:0.75}}>{lightbox.idx+1} / {items.length}</span>}
+          {/* The caption carried the storage filename. Position is what a viewer actually wants here. */}
+          {many&&<span style={{fontWeight:400,opacity:0.75}}>{lightbox.idx+1} / {items.length}</span>}
         </div>
       </div>);
     })()}

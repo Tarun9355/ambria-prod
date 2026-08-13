@@ -861,7 +861,9 @@ export default function StudioModals({ ctx }) {
                     </div>}
                   </div>
                   <div style={{padding:"12px 16px"}}>
-                    <div style={{fontSize:14,fontWeight:600,color:"#fff",marginBottom:4}}>{ph.eventName||ph.title||"Inspiration"}</div>
+                    {/* title only — eventName on a library photo is its storage filename, which is a
+                        20-character id and reads as a bug rather than a name. */}
+                    <div style={{fontSize:14,fontWeight:600,color:"#fff",marginBottom:4}}>{ph.title||"Inspiration"}</div>
                     {ph.desc&&<div style={{fontSize:11,color:"#9CA3AF",lineHeight:1.5,marginBottom:6}}>{ph.desc}</div>}
                     {ph.tags?.length>0&&<div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>{ph.tags.slice(0,4).map((t,j)=><span key={j} style={{fontSize:9,padding:"2px 8px",borderRadius:6,background:"rgba(201,169,110,0.15)",color:"#C9A96E"}}>{t}</span>)}</div>}
                   </div>

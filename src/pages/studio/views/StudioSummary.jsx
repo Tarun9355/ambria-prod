@@ -1814,7 +1814,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                   <span style={{fontSize:10,color:textS}}>{eb.itemCount} items</span>
                                   {eb.zc && <span style={{fontSize:9,color:textS}}>{["L","W","H"].map(d=>`${eb.zc.dims?.[d]||0}ft`).join("×")}</span>}
-                                  {eb.selPh && <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"#ECFDF5",color:"#059669"}}>📷 {eb.selPh.eventName}</span>}
+                                  {/* The chip says a reference photo IS chosen. Its name was the storage
+                                      filename, which told nobody anything. */}
+                                  {eb.selPh && <span title="Reference photo selected for this zone" style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"#ECFDF5",color:"#059669"}}>📷 Photo</span>}
                                 </div>
                               </div>
                             </div>
