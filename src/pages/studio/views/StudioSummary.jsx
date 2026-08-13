@@ -175,8 +175,22 @@ export default function StudioSummary({ ctx }) {
   // second deck when one already existed. Remembered against the CLIENT, so it follows the deal
   // rather than the tab, and so opening someone else's deal never shows this one's link.
   const canvaKey = (id) => `ambria-canva-deck-${id || "none"}`;
-  const rememberDeck = (url) => {
-    try { if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), url); } catch { /* private mode */ }
+  const [deckThumb, setDeckThumb] = useState("");
+  // Stored as JSON now that the cover thumbnail is kept beside the link. Decks remembered before
+  // this was a JSON blob are a bare URL string, and are still read — a salesperson mid-deal should
+  // not lose the link they already have because the shape of the record changed under them.
+  const rememberDeck = (url, thumb) => {
+    try {
+      if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "" }));
+    } catch { /* private mode */ }
+  };
+  const readDeck = (id) => {
+    let raw = "";
+    try { raw = localStorage.getItem(canvaKey(id)) || ""; } catch { /* private mode */ }
+    if (!raw) return { url: "", thumb: "" };
+    if (raw[0] !== "{") return { url: raw, thumb: "" };
+    try { const o = JSON.parse(raw); return { url: o.url || "", thumb: o.thumb || "" }; }
+    catch { return { url: "", thumb: "" }; }
   };
   const forgetDeck = () => {
     try { if (activeClientId) localStorage.removeItem(canvaKey(activeClientId)); } catch { /* private mode */ }
@@ -205,9 +219,8 @@ export default function StudioSummary({ ctx }) {
   useEffect(() => {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
     if (canvaState !== "idle") return;
-    let saved = "";
-    try { saved = localStorage.getItem(canvaKey(activeClientId)) || ""; } catch { /* private mode */ }
-    if (saved) { setCanvaEditUrl(saved); setCanvaState("ready"); }
+    const saved = readDeck(activeClientId);
+    if (saved.url) { setCanvaEditUrl(saved.url); setDeckThumb(saved.thumb); setCanvaState("ready"); }
   }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
@@ -1703,7 +1716,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); rememberDeck(res.editUrl); return; }
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setDeckThumb(res.thumbnailUrl || ""); rememberDeck(res.editUrl, res.thumbnailUrl); return; }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
@@ -2161,6 +2174,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                 style={{padding:"5px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11}}>{"✕"}</button>
             </div>
             <iframe title="Design deck preview" src={deckPdf.url} style={{width:"100%",height:"52vh",border:"none",background:"#1f2937"}} />
+          </div>
+        )}
+        {/* ── The deck this deal already has, said on the page rather than only in a button ──
+            A made deck was invisible here: two buttons in a toolbar, and nothing on the sheet to
+            say a presentation existed at all, let alone what it looked like. The cover comes from
+            the import, so decks made before it was kept show the card without the image rather
+            than not showing at all. */}
+        {canvaState==="ready"&&deckPdf.state!=="ready"&&(
+          <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:14,padding:"11px 22px",background:"#111827",borderBottom:"1px solid rgba(255,255,255,0.10)"}}>
+            {deckThumb
+              ? <img src={deckThumb} alt="Design deck cover" style={{width:104,height:59,objectFit:"cover",borderRadius:6,border:"1px solid rgba(255,255,255,0.18)",flexShrink:0}} />
+              : <div style={{width:104,height:59,borderRadius:6,border:"1px dashed rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{"🎨"}</div>}
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:12.5,fontWeight:700,color:"#fff"}}>Design deck ready</div>
+              <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>Preview it here as a PDF, or open it in Canva to edit.</div>
+            </div>
+            <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
+              style={{marginLeft:"auto",padding:"7px 14px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:11.5,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Exporting…":"👁 Preview deck"}</button>
           </div>
         )}
         {/* Scrollable body */}
