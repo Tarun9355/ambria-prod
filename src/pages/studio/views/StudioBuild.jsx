@@ -2778,8 +2778,15 @@ undefined
           </div>
         </div>
         {isOn&&!isCollapsed(k)&&<div style={{padding:"0 18px 16px"}}>
+          {/* ═══ FOUR SECTIONS ═══ Same chip switcher the standard zones use — Elements / Truss &
+              Masking / Platform / Print — so a custom "Other" zone looks and behaves like every
+              other zone instead of dumping its whole Zone Structure open by default. */}
+          <div className="sec-grid" id={`zone-sec-${k}`}>
+            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
+          </div>
+
           {/* Element card — add items from Rate Card */}
-          <div>
+          {zoneSection[k]==="elements"&&<div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the item list":"Show the item list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}>
                     <span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>
@@ -2937,132 +2944,127 @@ undefined
               </div>
               {showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>Items: {fmt(czElCost)}</div>}
             </div>}
-          </div>
-          {/* Zone structure — FULL, same as standard zones */}
-          {(()=>{
-            const zc=zoneConfig[k]||{};
-            const dims=zc.dims||{};
-            const fd=zc.floorDims||{};
-            const st=calcStructCost(k,zc,structRates);
-            const sZ=u=>{setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
-            const sD=(d,v)=>{setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
+          </div>}
+
+          {/* Print — identical block to the standard zones (Flex/Vinyl/Sunboard etc). */}
+          {zoneSection[k]==="print"&&<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"9px 12px",marginBottom:10,border:`1px solid ${border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:11.5,fontWeight:600,color:"#0369A1",display:"flex",alignItems:"center",gap:6}}><IconPrinter size={12}/>Print</div>
+              <button onClick={()=>{
+                const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null};
+                setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
+              }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
+            </div>
+            {(()=>{
+              const rows=((zoneConfig[k]||{}).prints||[]).length===0
+                ? [{id:"__phantom__",material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null}]
+                : (zoneConfig[k]||{}).prints;
+              return (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {rows.map((p,pi)=>{
+                  const isPhantom=p.id==="__phantom__";
+                  const invItem=p.invId?(imsInventory||[]).find(i=>i.id===p.invId):null;
+                  const thumbSrc=invItem?.img||invItem?.photoUrls?.[0];
+                  const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
+                  const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
+                  const rate=mat?.ratePerSqft||0;
+                  const cost=sqft*rate;
+                  const setPrint=(patch)=>{
+                    if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
+                    setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}}));
+                  };
+                  const removePrint=()=>setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).filter((_,i)=>i!==pi)}}));
+                  const linkQ=zonePrintSearch[p.id]||"";
+                  return <div key={p.id} style={{padding:"7px 9px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
+                        <option value="">Material…</option>
+                        {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                      </select>
+                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:11.5,color:textS}}>×</span>
+                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
+                      {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
+                      <div>
+                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
+                    {p.refImageUrl&&<img src={p.refImageUrl} alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
+                      </div>
+                      <div style={{position:"relative"}}>
+                    {p.invId ? (
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{width:20,height:20,borderRadius:4,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={12}/></span>}
+                        </div>
+                        <span style={{fontSize:11.5,color:invItem?textS:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{invItem?invItem.name:`⚠ ${p.invId} not in IMS`}</span>
+                        <span onClick={()=>setPrint({invId:null})} style={{cursor:"pointer",color:textS,fontSize:11,textDecoration:"underline"}}>Unlink</span>
+                      </div>
+                    ) : (
+                      <div>
+                        <input value={linkQ} onChange={e=>setZonePrintSearch(prev=>({...prev,[p.id]:e.target.value}))} placeholder="Link to an inventory item (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",width:"100%",marginBottom:0}} />
+                        {linkQ.trim() && (()=>{
+                          const tokens=linkQ.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                          const matches=(imsInventory||[]).filter(it=>tokens.every(t=>(it.name+" "+(it.subCat||it.subcategory||"")+" "+(it.cat||"")).toLowerCase().includes(t))).slice(0,40);
+                          return <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:260,overflowY:"auto"}}>
+                            {matches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
+                            {matches.map(it=>{
+                              const src=it.img||it.photoUrls?.[0];
+                              return <div key={it.id} onClick={()=>{
+                                const toFt=(v,u)=>(Number(v)||0)*({Feet:1,Inches:1/12,Cm:1/30.48,Metre:3.28084}[u]||1);
+                                const patch={invId:it.id};
+                                if(!p.areaW&&!p.areaD){if(it.printW)patch.areaW=toFt(it.printW,it.printUnit);if(it.printL)patch.areaD=toFt(it.printL,it.printUnit);}
+                                setPrint(patch);
+                                setZonePrintSearch(prev=>({...prev,[p.id]:""}));
+                              }} style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                                <div style={{width:32,height:32,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                  {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={15}/></span>}
+                                </div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{it.name}</div>
+                                  <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{it.printW?" · print area on file":""}</div>
+                                </div>
+                              </div>;
+                            })}
+                          </div>;
+                        })()}
+                      </div>
+                    )}
+                      </div>
+                    </div>{/* /optional-fields grid */}
+                  </div>;
+                })}
+                {showCosts&&((zoneConfig[k]||{}).prints||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:700,paddingTop:4}}>
+                  <span style={{color:textP}}>Print Total</span>
+                  <span style={{color:"#0EA5E9"}}>{fmt(((zoneConfig[k]||{}).prints||[]).reduce((sum,p)=>{const m=(imsPrintMaterials||[]).find(x=>x.id===p.material);const s=(Number(p.areaW)||0)*(Number(p.areaD)||0);return sum+s*(m?.ratePerSqft||0);},0))}</span>
+                </div>}
+              </div>
+              );
+            })()}
+          </div>}
+
+          {/* Truss & Masking / Platform — reuse the exact TrussStack/FloorStack the standard zones
+              render, instead of the old bespoke "Zone Structure" block (no §23 truss-type picker,
+              no extra truss/platform rows, no per-row material captions). Same components, same
+              pricing, same look. */}
+          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
+            const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
+            const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
               // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
               const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
               return {...p,[k]:{...cur,dims,trT}};});};
-            const sFD=(d,v)=>{setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
-            const mw={back:true,left:true,right:true};
-            return <div style={{borderRadius:10,padding:"10px 14px",border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",marginBottom:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS}}><IconRuler size={11}/> Zone Structure</div>
-                {showCosts&&st.total>0&&<div style={{fontWeight:600,color:textP}}>{fmt(st.total)}</div>}
-              </div>
-              {/* Truss type — Box vs Single U is set by how many dims are filled below (2 ⇒ Single
-                  U, 3 ⇒ Box), so that choice is read-only here; "None" is the one real manual
-                  action (turns truss off regardless of dims). */}
-              <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
-                {zc.trT&&<span style={{fontSize:10,fontWeight:600,color:textS}} title="Set by how many Truss dims are filled below — 2 dims = Single U, 3 dims = Box">{zc.trT==="box"?"Box Truss":"Single U Truss"}{showCosts?` · ₹${zc.trT==="box"?50:30}/sqft`:""}</span>}
-                <button onClick={()=>sZ({trT:null})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${!zc.trT?textP:border}`,background:!zc.trT?"rgba(0,0,0,0.06)":"transparent",color:!zc.trT?textP:textS,fontSize:10,cursor:"pointer",fontWeight:!zc.trT?600:400}}>None</button>
-              </div>
-              {/* Truss dims: L, W, H + Qty */}
-              <div style={{display:"flex",gap:8,marginBottom:8}}>
-                {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
-                  <input type="number" value={dims[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>)}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss Qty</div>
-                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="1"/></div>}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>}
-                {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={String(zc.dims?.H||0)}/></div>}
-              </div>
-              {/* ── §23 Truss Type selector + Height-anchor validation (custom zone) ── */}
-              {(()=>{
-                const tr = resolveTrussConfig(zc);
-                if (tr.source === "none") return null;
-                if (tr.source === "invalid") {
-                  return <div style={{marginBottom:8,padding:"6px 10px",borderRadius:8,background:"rgba(220,38,38,0.08)",border:"1px solid rgba(220,38,38,0.3)",fontSize:10,color:"#B91C1C",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                    <span>⚠️</span><span>{tr.error}</span>
-                  </div>;
-                }
-                if (tr.source === "auto-3dim") {
-                  return <div style={{marginBottom:8,padding:"5px 10px",borderRadius:8,background:"rgba(220,38,38,0.06)",border:"1px solid rgba(220,38,38,0.2)",fontSize:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{color:textS}}>Truss Type:</span>
-                    <span style={{fontWeight:700,color:"#B91C1C"}}>Full Box <span style={{fontWeight:400,color:textS,fontSize:9}}>(auto · 3 dims)</span></span>
-                  </div>;
-                }
-                const picked = zc.trussType;
-                const opts = [
-                  { id:"u_only",   label:"U Truss" },
-                  { id:"half_box", label:"Half Box" },
-                ];
-                return <div style={{marginBottom:8,padding:"6px 10px",borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8",border:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                    <span style={{fontSize:10,fontWeight:600,color:textS}}>Truss Type:</span>
-                    {tr.source==="default-on-forget" && <span style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(217,119,6,0.12)",color:"#A16207",fontWeight:600}}>defaulted</span>}
-                  </div>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {opts.map(o=>{
-                      const isOn = picked === o.id;
-                      const isDefault = !picked && o.id === "half_box";
-                      return <button key={o.id} onClick={()=>sZ({trussType:o.id})}
-                        style={{padding:"3px 8px",borderRadius:5,border:`1px solid ${isOn?textP:(isDefault?"rgba(217,119,6,0.4)":border)}`,background:isOn?"rgba(0,0,0,0.06)":(isDefault?"rgba(217,119,6,0.06)":"transparent"),color:isOn?textP:textS,fontSize:9,cursor:"pointer",fontWeight:isOn?700:(isDefault?600:400)}}>{o.label}</button>;
-                    })}
-                  </div>
-                </div>;
-              })()}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
-                  <span style={{fontWeight:600,color:textS}}>Material:</span>
-                  {TRUSS_MATERIALS.map(m=>{
-                    const sel=(zc.trussMaterial|| "iron")===m.key;
-                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
-                  })}
-                  {zc.trT==="box" && customCeilingField(k, zc, true)}
-                </div>
-              )}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
-                  <span style={{fontWeight:600,color:textS}}>Density:</span>
-                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
-                    const sel=(zc.drapeDensity||"moderate")===o.v;
-                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?"#EC4899":border}`,background:sel?"rgba(236,72,153,0.12)":"transparent",color:sel?"#9D174D":textS}}>{o.l}</span>;
-                  })}
-                </div>
-              )}
-              {showCosts&&st.truss>0&&<div style={{fontSize:10,color:textS,marginBottom:6}}>Truss: {fmt(st.truss)}</div>}
-              {/* Masking */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}><span><IconWall size={11}/> Masking</span>
-                  <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
-                </div>{showCosts&&st.masking>0&&<span style={{fontWeight:600,fontSize:11,color:textP}}>{fmt(st.masking)}</span>}
-              </div>
-              {zc.mkOn&&<div style={{display:"flex",gap:4,marginBottom:6,paddingLeft:20,flexWrap:"wrap",alignItems:"center"}}>
-                {maskingOptions(imsMaskingRates).map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                {customMaskingField(k, zc, true)}
-              </div>}
-              {/* Platform */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,fontSize:11}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconPlatform size={11}/> Platform</span>
-                  {platformOptions(imsPlatformRates).map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                </div>{showCosts&&st.platform>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
-              </div>
-              {/* Carpet */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:11}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconCarpet size={11}/> Carpet</span>
-                  <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
-                    <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                  </select>
-                </div>{showCosts&&st.carpet>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
-              </div>
-              {/* Floor dims */}
-              <div style={{display:"flex",gap:8}}>
-                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor Width (ft)</div>
-                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.W||"—"}/></div>
-                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.L||"—"}/></div>
-                <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:9,color:textS}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W"}</div></div>
-              </div>
-            </div>;
+            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
+            const fd=zc.floorDims||{};
+            return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
+              {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} />}
+              {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} />}
+            </div>);
           })()}
         </div>}
       </div>);
