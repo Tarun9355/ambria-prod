@@ -2655,7 +2655,17 @@ export default function StudioApp() {
         if (error) throw error;
       }
       for (const id of dels) await deleteRow("library", id);
-    } catch (e) { showMsg?.("Library save failed: " + (e?.message || e), "red"); }
+      return { ok: true };
+    } catch (e) {
+      // The cache above was already updated optimistically, before we knew the write would land.
+      // Roll it back on failure — otherwise the screen keeps showing the edit as if it saved (a
+      // photo that looks verified with its new tags) even though the database never got it, and the
+      // only sign anything went wrong is a red toast that the caller's own "saved!" message stomps a
+      // moment later. A refresh then re-fetches the real (unsaved) row and it looks like data reverted.
+      libItemsRef.current = prev; setLibItems(prev);
+      showMsg?.("Library save failed: " + (e?.message || e), "red");
+      return { ok: false, error: e };
+    }
   }, [showMsg]);
   // Log ONE verification event (who verified/edited which photo/video, when) for contribution
   // reporting — the "Contributions" leaderboard. A plain INSERT into the photo_corrections table

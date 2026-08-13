@@ -3135,14 +3135,21 @@ undefined
           // No mergeLibItems first — it writes libItemsRef, which saveLib diffs against to work out
           // what changed, so pre-merging made it compare `created` to itself and skip the write.
           // saveLib does the merge itself. Same bug as the Build photo upload in StudioApp.
-          await saveLib([created]);
+          const res=await saveLib([created]);
+          // saveLib swallows its own DB error (shows its own red toast) but used to leave it there —
+          // callers kept going and showed their own "✅ saved" message regardless, so a failed write
+          // looked identical to a successful one until the next refresh re-fetched the real (unsaved)
+          // row. Bail out here instead: keep the modal open with the user's edits intact so they can
+          // retry, and don't claim a save that didn't happen.
+          if(!res?.ok) return;
           // Point this zone's selection at the new Library entry going forward (same src, now backed by a real row).
           setElSelectedPhoto(p=>({...p,[zk]:{...p[zk],isLibrary:true,eventId:newId}}));
           logVerificationEvent?.({photoId:newId,photoName:created.name,source:"build"});
           showMsg("✅ Saved as a new Library photo — thanks!","green");
         } else {
           const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
-          await saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
+          const res=await saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
+          if(!res?.ok) return; // see comment above — don't claim success on a failed write
           // Only the first verification counts as a contribution — re-corrections of an already-
           // verified photo update _lastEditedBy above but don't log again.
           if(!wasVerified) logVerificationEvent?.({photoId:correctPhoto.libId,photoName:corrected.name,source:"build"});

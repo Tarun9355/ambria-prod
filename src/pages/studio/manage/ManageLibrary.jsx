@@ -734,7 +734,7 @@ export default function ManageLibrary({ ctx }) {
                       }catch(e){showMsg("AI error: "+e.message,"red");}
                       setLibAiLoading(false);
                     }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px", background: "#7C3AED", opacity: libAiLoading ? 0.5 : 1 }}>{libAiLoading ? "🔄 Tagging..." : "🤖 AI Tag"}</button>
-                    <button onClick={() => {
+                    <button onClick={async () => {
                       // Drape density defaults to Moderate when unset (house standard), so it's no longer
                       // mandatory for Full Box photos — the tagger can still pick Minimum/Dense to override.
                       const d = libEditImg.dims || {};
@@ -747,7 +747,13 @@ export default function ManageLibrary({ ctx }) {
                       const verified = wasVerified
                         ? { ...libEditImg, _verified: true, _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() }
                         : { ...libEditImg, _verified: true, _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() };
-                      saveLib([verified]);
+                      const res = await saveLib([verified]);
+                      // saveLib shows its own red toast on a failed write but used to swallow the
+                      // failure otherwise — this button kept going and claimed "Saved & verified"
+                      // regardless, so a failed save looked identical to a real one until the tags
+                      // reverted on the next refresh. Stop here instead: the modal stays open with the
+                      // edits intact so nothing is lost, and no false "saved" message is shown.
+                      if (!res?.ok) return;
                       // Already-verified photo re-saved → update in place; newly-verified → it just
                       // left this tab (review/untagged/manual/build), drop it from the visible page.
                       if (wasVerified) libPage.updateItem(verified.id, verified); else libPage.removeItem(verified.id);
@@ -763,7 +769,7 @@ export default function ManageLibrary({ ctx }) {
                       // Dim the Save button when Full Box + no density to give visual cue
                       opacity: (libEditImg.dims?.trussL && libEditImg.dims?.trussW && libEditImg.dims?.trussH && !libEditImg.dims?.drapeDensity) ? 0.45 : 1
                     }}>{libEditImg._verified ? "✅ Save" : "✅ Save & Verify"}</button>
-                    <button onClick={() => { saveLib([], [libEditImg.id]); libPage.removeItem(libEditImg.id); setLibEditImg(null); }} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px", color: "#E11D48" }}>Delete</button>
+                    <button onClick={async () => { const res = await saveLib([], [libEditImg.id]); if (!res?.ok) return; libPage.removeItem(libEditImg.id); setLibEditImg(null); }} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px", color: "#E11D48" }}>Delete</button>
                     <button onClick={() => setLibEditImg(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Close</button>
                   </div>
                 </div>
