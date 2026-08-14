@@ -474,7 +474,8 @@ export default function StudioBuild({ ctx }) {
     events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
     // client / function meta
-    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions,
+    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
+    clientPalette, setClientPalette,
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
@@ -820,13 +821,10 @@ export default function StudioBuild({ ctx }) {
   // caps as the rail, but its own expand state — it is a separate surface you open per zone.
   const [zpInlinePaletteAll, setZpInlinePaletteAll] = useState(false);
   const [zpInlineVenueAll, setZpInlineVenueAll] = useState(false);
-  // Cap a list but never hide an active selection: a filter you cannot see is a filter you cannot
-  // clear, and the photo count would look wrong with nothing on screen to explain it.
-  const zpCap = (all, sel, cap, seeAll) => {
-    if (seeAll || all.length <= cap) return { shown: all, hidden: 0 };
-    const head = all.slice(0, cap);
-    return { shown: [...head, ...sel.filter((v) => all.includes(v) && !head.includes(v))], hidden: all.length - cap };
-  };
+  // Same reasoning, same smart search as the rail's Venue/Palette groups — own query state because
+  // only one zone's popup is ever open at once, but it's still a separate surface from the rail.
+  const [zpInlinePaletteQ, setZpInlinePaletteQ] = useState("");
+  const [zpInlineVenueQ, setZpInlineVenueQ] = useState("");
   const zpMorePill = () => ({ ...zpPill(false), borderStyle: "dashed", fontWeight: 700, color: accent });
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   // One row, rails open or folded. Folding them used to add a second row of four, which is the
@@ -1738,9 +1736,32 @@ undefined
         : railTab("left","Photo filters",<IconSliders size={14}/>)}
       <div style={{flex:1,minWidth:0}}>
 
-    {/* Event Palette strip removed on request. The palette still comes from the selected
-        video's tag via clientPalette / extraFunctions[].palette — there is simply no override
-        control on Build any more. */}
+    {/* ═══ FABRIC PALETTE ═══ Brought back as a deliberately narrow control: this sets fn.fnPalette,
+        which Deal Check's Truss tab (DCTrussTab.jsx) reads for its anchor colours when auto-filling
+        masking/liza/curtain fabric allocation — production planning, not client-facing. It does
+        NOT touch photo matching or filtering; that's the separate "Color palette" filter inside
+        each zone's own Photo Filters. Was previously auto-only (from the selected video's tag,
+        with no override) — this reintroduces a manual pick, per zone group's own function. */}
+    {(()=>{
+      const isPrimaryFn = activeFnIdx === 0;
+      const current = isPrimaryFn ? (clientPalette || "Custom") : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
+      const setPalette = (v) => {
+        if (isPrimaryFn) setClientPalette(v);
+        else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: v } : f));
+      };
+      const opts = azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
+      return <div style={{borderRadius:10,padding:"11px 16px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+          <span style={{display:"flex",color:accent}}><IconPalette size={14}/></span>
+          <span style={{fontSize:12.5,fontWeight:600,color:textP}}>Fabric Palette</span>
+          <span style={{fontSize:10.5,color:textS}}>Sets masking/drape colour in Deal Check — doesn't affect photo filtering above</span>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          <span onClick={()=>setPalette("Custom")} style={zpPill(current==="Custom"||!current)}>Custom</span>
+          {opts.map(v=><span key={v} onClick={()=>setPalette(v)} style={zpPill(current===v)}>{v}</span>)}
+        </div>
+      </div>;
+    })()}
 
     {/* The date-demand banner that stood here has moved up beside the date itself. */}
 
@@ -2020,12 +2041,27 @@ undefined
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Color palette</div>
                   {(()=>{
                     const all=azSort(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
-                    const {shown,hidden}=zpCap(all,zpFilters.colorPalette||[],ZP_PALETTE_CAP,zpInlinePaletteAll);
-                    return <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
-                      {shown.map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
-                      {(hidden>0||zpInlinePaletteAll)&&all.length>ZP_PALETTE_CAP&&<span onClick={()=>setZpInlinePaletteAll(v=>!v)} style={zpMorePill()}>{hidden>0?`+${hidden} more`:"Show fewer"}</span>}
-                    </div>;
+                    const anchorsOf=(name)=>(imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
+                    const matched=paletteSearch(all,zpInlinePaletteQ,anchorsOf);
+                    const capped=!zpInlinePaletteAll&&!zpInlinePaletteQ.trim()&&matched.length>ZP_PALETTE_CAP;
+                    const shown=capped?matched.slice(0,ZP_PALETTE_CAP):matched;
+                    const sel=zpFilters.colorPalette||[];
+                    const selectedHidden=sel.filter(v=>all.includes(v)&&!shown.includes(v));
+                    const optPill=(v)=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(sel.includes(v))}>{v}</span>;
+                    return <>
+                      <div style={{marginBottom:5}}><FSearchBox value={zpInlinePaletteQ} onChange={setZpInlinePaletteQ} placeholder="Search palettes…" noun="palettes" resultCount={matched.length} totalCount={all.length}/></div>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                        <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(sel.length===0)}>All</span>
+                        {shown.filter(v=>paletteMatches(v,zpInlinePaletteQ)).map(optPill)}
+                        {(()=>{const byColour=shown.filter(v=>!paletteMatches(v,zpInlinePaletteQ));return byColour.length===0?null:<>
+                          <div style={{width:"100%",fontSize:9,color:textS,marginTop:2}}>Contains this colour</div>
+                          {byColour.map(optPill)}
+                        </>;})()}
+                        {selectedHidden.length>0&&<div style={{width:"100%",fontSize:9,color:textS,marginTop:2}}>{zpInlinePaletteQ.trim()?"Selected, outside this search":"Selected"}</div>}
+                        {selectedHidden.map(optPill)}
+                        {!zpInlinePaletteQ.trim()&&(capped||zpInlinePaletteAll)&&matched.length>ZP_PALETTE_CAP&&<span onClick={()=>setZpInlinePaletteAll(v=>!v)} style={zpMorePill()}>{capped?`See all ${matched.length}`:"Show fewer"}</span>}
+                      </div>
+                    </>;
                   })()}
                 </div>
                 <div>
@@ -2041,13 +2077,23 @@ undefined
                   </div>
                   {(()=>{
                     const all=azSort(zpVenueChoices);
-                    const {shown,hidden}=zpCap(all,zpFilters.venue||[],ZP_VENUE_CAP,zpInlineVenueAll);
-                    return <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
-                      {shown.map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
-                      {(hidden>0||zpInlineVenueAll)&&all.length>ZP_VENUE_CAP&&<span onClick={()=>setZpInlineVenueAll(v=>!v)} style={zpMorePill()}>{hidden>0?`+${hidden} more`:"Show fewer"}</span>}
-                      {all.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
-                    </div>;
+                    const matched=paletteSearch(all,zpInlineVenueQ);
+                    const capped=!zpInlineVenueAll&&!zpInlineVenueQ.trim()&&matched.length>ZP_VENUE_CAP;
+                    const shown=capped?matched.slice(0,ZP_VENUE_CAP):matched;
+                    const sel=zpFilters.venue||[];
+                    const selectedHidden=sel.filter(v=>all.includes(v)&&!shown.includes(v));
+                    const optPill=(v)=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(sel.includes(v))}>{v}</span>;
+                    return <>
+                      {all.length>0&&<div style={{marginBottom:5,maxWidth:340}}><FSearchBox value={zpInlineVenueQ} onChange={setZpInlineVenueQ} placeholder="Search venues…" noun="venues" resultCount={matched.length} totalCount={all.length}/></div>}
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                        <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(sel.length===0)}>All</span>
+                        {shown.map(optPill)}
+                        {selectedHidden.length>0&&<div style={{width:"100%",fontSize:9,color:textS,marginTop:2}}>{zpInlineVenueQ.trim()?"Selected, outside this search":"Selected"}</div>}
+                        {selectedHidden.map(optPill)}
+                        {!zpInlineVenueQ.trim()&&(capped||zpInlineVenueAll)&&matched.length>ZP_VENUE_CAP&&<span onClick={()=>setZpInlineVenueAll(v=>!v)} style={zpMorePill()}>{capped?`See all ${matched.length} venues`:"Show fewer"}</span>}
+                        {all.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
+                      </div>
+                    </>;
                   })()}
                 </div>
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
