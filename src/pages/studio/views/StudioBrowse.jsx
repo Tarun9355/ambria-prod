@@ -56,7 +56,8 @@ export default function StudioBrowse({ ctx }) {
     // multi-function
     extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData,
     // build / session
-    sourceVideo, venue, showMsg,
+    sourceVideo, sourceEvent, venue, showMsg,
+    elSelectedPhoto, zoneElements, enabledEls,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, browseVideosAll, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
@@ -64,6 +65,27 @@ export default function StudioBrowse({ ctx }) {
     clientLedger, saveClientLedger, askConfirm,
     favVideos, saveFavVideos,
   } = ctx;
+  // Customize/Exact Look both hand off to pickAndLoadFromVideo → loadEvent, which REPLACES
+  // enabledEls wholesale (down to just `{lighting:true}`) for whichever function is active — it
+  // never merges with what's already turned on. If that function's live canvas already holds a
+  // real build (zone photos picked, zones enabled, or its own reference), doing this silently
+  // orphans that work: the zones just stop being enabled, and the next autosave persists the
+  // now-near-empty state over the session it came from. fnSnapHasData is the exact same test the
+  // save path already uses for "does this snapshot hold a build" — reused here against the LIVE
+  // state instead of a saved one, so the two can't disagree about what counts as real work.
+  const guardedPickAndLoadFromVideo = (videoId, targetStep, onLoaded) => {
+    const liveSnap = { elSelectedPhoto, zoneElements, enabledEls, sourceVideo, sourceEvent };
+    const proceed = () => { pickAndLoadFromVideo(videoId, targetStep); if (onLoaded) onLoaded(); };
+    if (fnSnapHasData(liveSnap)) {
+      askConfirm(
+        "Switch reference and start customizing this instead?",
+        proceed,
+        { note: "The zones you already turned on for this function will be switched off — their picks aren't deleted from the library, but this build stops using them.", yesLabel: "Switch anyway" }
+      );
+      return;
+    }
+    proceed();
+  };
   // The sticky offset clears the header, plus the function tab strip when there is more than one
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
   const railTop = extraFunctions.length > 0 ? 120 : 70;
@@ -164,8 +186,8 @@ export default function StudioBrowse({ ctx }) {
                 <div onClick={(e)=>{e.stopPropagation();setPremiaGate({ev:{id:v.id,name:v.title,video:`https://www.youtube.com/embed/${v.id}`}});}} className="sb-gate" style={{width:"100%",padding:"8px 12px",borderRadius:8,background:"linear-gradient(135deg,#EDE9FE,#F5F3FF)",textAlign:"center",fontSize:11,color:"#7C3AED",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCrown size={13}/>Sr. Designer Only</div>
               ):(
                 <Fragment>
-                  <button className="sb-cta" onClick={(e)=>{e.stopPropagation();pickAndLoadFromVideo(v.id,1);}} style={{flex:1,padding:"8px 0",borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#B8944F)",color:"#fff",border:"none",fontSize:11,fontWeight:700,cursor:"pointer"}}>Customize</button>
-                  {!priceTBD&&<button className="sb-alt" onClick={(e)=>{e.stopPropagation();pickAndLoadFromVideo(v.id,2);showMsg("✓ Exact look loaded — review summary","green");}} style={{flex:1,padding:"8px 0",borderRadius:8,border:`1.5px solid ${accentText}`,background:"transparent",color:accentText,fontSize:11,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><IconClipboard size={13}/>Exact Look</button>}
+                  <button className="sb-cta" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}} style={{flex:1,padding:"8px 0",borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#B8944F)",color:"#fff",border:"none",fontSize:11,fontWeight:700,cursor:"pointer"}}>Customize</button>
+                  {!priceTBD&&<button className="sb-alt" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}} style={{flex:1,padding:"8px 0",borderRadius:8,border:`1.5px solid ${accentText}`,background:"transparent",color:accentText,fontSize:11,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><IconClipboard size={13}/>Exact Look</button>}
                 </Fragment>
               )}
             </div>
