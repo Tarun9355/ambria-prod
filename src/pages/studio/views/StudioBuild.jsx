@@ -786,24 +786,6 @@ export default function StudioBuild({ ctx }) {
     scheduleGroupSave(k, srcType, label, new Set());
     return { ...prev, [k]: new Set() };
   });
-  // Delete a zone's whole group for the current function. Confirmed, because unlike unpinning a
-  // ticked photo or two this throws away an arrangement that could have taken a while to build.
-  const clearZoneGroup = (zoneKey, srcType, label) => {
-    const area = groupAreaFor(srcType, label);
-    const current = zoneGroups?.[area]?.[groupFn] || [];
-    if (!area || !current.length || !writeZoneGroup) return;
-    askConfirm(`Delete the ${area}${groupFn ? ` · ${groupFn}` : ""} group?`, async () => {
-      try {
-        await writeZoneGroup(area, groupFn, []);
-        clearGrpPick(zoneKey, srcType, label);
-        setPhPage(p => ({ ...p, [zoneKey]: 0 }));   // the whole order just changed under the pager
-        showMsg(`✓ Group deleted — ${area} goes back to its normal photo order`, "green");
-      } catch (e) { showMsg("Couldn't delete the group: " + (e.message || "unknown"), "red"); }
-    }, {
-      yesLabel: "Delete group",
-      note: `The ${current.length} photo${current.length === 1 ? "" : "s"} stay in the Library and keep their tags — they just stop leading this zone.`,
-    });
-  };
   // Both side rails fold away together, from the one control in the Photo filters header.
   // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
   // running total off screen — the one thing you want kept while you widen it.
@@ -1957,8 +1939,9 @@ undefined
             {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
             {/* Pinned-count chip. The only sign a zone is grouped during normal browsing, and the
                 way in to editing it outside grid mode: clicking re-ticks every pinned photo, which
-                opens the group bar (Delete group lives there). Hidden when the zone has no group, so
-                a strip nobody has curated stays exactly as clean as before. */}
+                opens the group bar and the ✕ Clear button above with it — one control empties the
+                group, not two. Hidden when the zone has no group, so a strip nobody has curated
+                stays exactly as clean as before. */}
             {isOn&&grpOn&&grpSaved.length>0&&<button onClick={e=>{e.stopPropagation();setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));}} title={`${grpSaved.length} photo${grpSaved.length===1?"":"s"} pinned to the front of ${grpArea}${groupFn?` · ${groupFn}`:""} — click to edit the group`} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${accent}`,background:`${accent}18`,color:accent,fontSize:10,fontWeight:800,cursor:"pointer"}}>◆ {grpSaved.length}</button>}
             {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(o=>o===k?null:k);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen===k||zpHasFilters?accent:border}`,background:zpFilterOpen===k||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen===k||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
@@ -1995,10 +1978,6 @@ undefined
                 <span style={{fontSize:10.5,color:grpSaveStatus[k]==="error"?"#E11D48":textS}}>
                   {grpSaveStatus[k]==="saving"?"Saving…":grpSaveStatus[k]==="error"?"⚠ Couldn't save — will retry on the next tick":"✓ Saved"}
                 </span>
-                <div style={{flex:1}}/>
-                {grpSaved.length>0&&<button onClick={()=>clearZoneGroup(k,srcType,el.label)} style={{padding:"5px 12px",borderRadius:8,border:`1px solid #E11D48`,background:"transparent",color:"#E11D48",fontSize:11,fontWeight:700,cursor:"pointer"}}>
-                  🗑 Delete group ({grpSaved.length})
-                </button>}
               </div>}
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
                   along the strip look like the venue pick silently failed. */}
