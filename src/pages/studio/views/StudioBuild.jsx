@@ -1015,6 +1015,36 @@ export default function StudioBuild({ ctx }) {
     setZoneScale(k, raw);
   };
 
+  // ── Recalibrate — repair a zone whose baseQty drifted from a legacy corrupted save ────────────
+  // Normally baseQty stays trustworthy forever (every qty edit and every scale change keeps it in
+  // step). But a photo corrected to master WHILE a zone was mid-scale, before that save started
+  // stripping baseQty, could bake a stale ratio (e.g. 0.5) straight into the library photo — and any
+  // deal that had already loaded that photo before the fix shipped is still sitting on it in its own
+  // saved snapshot. The symptom: Scale reads 20, an element shows 10, and every further scale edit
+  // just multiplies the same wrong base (0.5×20=10 forever) because it's internally self-consistent.
+  // The only real fix is to re-derive from the photo's own canonical recipe qty, not from anything
+  // already sitting in this zone. Re-selecting the same photo does exactly that (see selectElPhoto)
+  // but also wipes truss/platform/scale — this does the same recipe re-pull without losing either.
+  const recalibrateZoneScale = (k) => {
+    const photo = elSelectedPhoto[k];
+    if (!photo?.isLibrary) return;
+    const libImg = libItems.find(i => i.url === photo.src || i.id === photo.eventId);
+    const rawEls = libImg?.elements || photo.elements || [];
+    if (!rawEls.length) return;
+    askConfirm(
+      "Recalibrate this zone's quantities to the selected photo's recipe?",
+      () => {
+        const s = zoneScaleVal(k);
+        setZoneElements(p => ({ ...p, [k]: JSON.parse(JSON.stringify(rawEls)).map(({ baseQty: _drop, ...e }) => {
+          const base = Number(e.qty) || 0;
+          return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * s)) };
+        }) }));
+        showMsg("✓ Recalibrated to the photo's recipe", "green");
+      },
+      { yesLabel: "Recalibrate", note: "Any manual quantity edits or added items in this zone will be replaced by the photo's own element list, scaled ×" + zoneScaleVal(k) + "." }
+    );
+  };
+
   // ── Per-element stock availability browser (Build) ───────────────────────────────────────────
   // A discreet 📦 on each element opens a modal listing that element's IMS sub-category items (alias-aware)
   // with the FREE count on the event date (owned − blocked). Picking one + Save pins it on the element
@@ -1972,6 +2002,7 @@ undefined
             {isOn&&<span onClick={e=>e.stopPropagation()} title="Scale the whole zone — multiplies every element count below (e.g. set 10 and each element's quantity becomes 10×). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
               <input type="number" min="1" step="1" value={scaleDraft[k] ?? String(zoneScaleVal(k))} onClick={e=>e.stopPropagation()} onChange={e=>{const v=e.target.value;setScaleDraft(p=>({...p,[k]:v}));}} onBlur={()=>commitScale(k)} onKeyDown={e=>{e.stopPropagation();if(e.key==="Enter")e.currentTarget.blur();if(e.key==="Escape"){setScaleDraft(p=>{const n={...p};delete n[k];return n;});e.currentTarget.blur();}}} onFocus={e=>e.target.select()} style={{width:52,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
+              {elSelectedPhoto[k]?.isLibrary&&<span onClick={e=>{e.stopPropagation();recalibrateZoneScale(k);}} title="Quantities look off for this scale? Re-derive them from the selected photo's recipe (fixes a stale count left over from an old save; discards manual qty edits in this zone)." style={{cursor:"pointer",color:accent,fontSize:11,padding:"1px 2px",lineHeight:1}}>↻</span>}
             </span>}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{isRepeat(k)?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{isRepeat(k)?"Repeat":"Fresh"}</span></span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
