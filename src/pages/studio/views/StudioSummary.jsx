@@ -14,7 +14,8 @@ import { useState, useEffect, useRef } from "react";
 import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
-import { swatchHexFor } from "../../../lib/studio/colours";
+import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
+import { paletteFromPhotos } from "../../../lib/studio/photoPalette";
 import { canvaConnectionStatus, canvaCreateImport, canvaPollImport, canvaExportPdfUrl } from "../../../lib/canva";
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
 import { detailShots } from "../../../lib/studio/detailShots";
@@ -1050,9 +1051,25 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         : String(fnObj.palette || "").split(/[,&/]+/).map((s) => s.trim()).filter(Boolean);
       // "#cccccc" IS the not-found sentinel, so anything landing on it is dropped rather than shown
       // as a grey block captioned with a colour it isn't.
-      const palette = anchorNames.slice(0, 6)
+      let palette = anchorNames.slice(0, 6)
         .map((n) => ({ name: n, hex: String(swatchHexFor(n, imsColourCatalogue) || "").replace("#", "").trim().toLowerCase() }))
         .filter((c) => /^[0-9a-f]{6}$/.test(c.hex) && c.hex !== "cccccc");
+
+      // Nothing usable? Read the colours off the photographs instead of dropping the slide.
+      //
+      // The palette field defaults to the literal string "Custom", which matches no catalogue entry
+      // and no colour name, so it filtered down to nothing — and since the slide needs two swatches,
+      // every deck where nobody picked a palette went out with no colour story at all. Which was
+      // most of them.
+      //
+      // Sampled colours are also the truer slide: they are the colours of the décor being proposed,
+      // rather than a dropdown value chosen once and never revisited.
+      if (palette.length < 2) {
+        const sampled = await paletteFromPhotos([...board, ...zones.map((z) => z.photo)], 5);
+        if (sampled.length >= 2) {
+          palette = sampled.map((hex) => ({ name: nearestColourName(hex, imsColourCatalogue) || "", hex }));
+        }
+      }
 
       const zoneCards = [];
       for (const z of zones) {
@@ -1078,7 +1095,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         dateLine: [String(fnObj.fnType || ""), fmtDate(fnObj.fnDate), fnObj.fnShift].filter(Boolean).join("  ·  "),
         hero: libPic || fallbackPic || "",
         board, boardLabels, palette, zones: zoneCards,
-        paletteName: String(fnObj.palette || ""),
+        // "Custom" is the field's DEFAULT, not a choice — titling the slide with it puts a piece of
+        // form plumbing in front of the client. Blank falls through to "Colour Story".
+        paletteName: /^custom$/i.test(String(fnObj.palette || "").trim()) ? "" : String(fnObj.palette || ""),
       });
     }
 

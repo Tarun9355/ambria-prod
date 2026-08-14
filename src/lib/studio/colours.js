@@ -13,6 +13,39 @@ export const DECOR_COLOURS = {
   "green": "#2E7D32", "sage green": "#9CAF88", "sage": "#9CAF88", "olive": "#808000", "mint": "#98D8A0",
 };
 
+/**
+ * The closest NAME we have for a hex — "Blush", "Sage", "Ivory" — searching the catalogue first.
+ *
+ * Colours sampled off a photograph arrive as raw hex, and a palette slide captioned #C4A882 tells a
+ * client nothing. Distance is measured in plain RGB: it is not perceptually uniform, but for
+ * picking the nearest of forty well-spread decor colours the difference never shows, and the
+ * alternative is a Lab conversion nobody can check by eye.
+ *
+ * The catalogue wins over the built-in map, so a house colour Ambria has named itself is the name
+ * that comes back.
+ */
+export const nearestColourName = (hex, colourCatalogue) => {
+  const rgb = (h) => {
+    const m = String(h || "").trim().replace("#", "");
+    if (!/^[0-9a-fA-F]{6}$/.test(m)) return null;
+    return [parseInt(m.slice(0, 2), 16), parseInt(m.slice(2, 4), 16), parseInt(m.slice(4, 6), 16)];
+  };
+  const target = rgb(hex);
+  if (!target) return "";
+  const pool = [
+    ...(colourCatalogue || []).filter((c) => c?.name && /^#?[0-9a-fA-F]{6}$/.test(String(c.hex || "").replace("#", "")))
+      .map((c) => ({ name: c.name, rgb: rgb(c.hex) })),
+    ...Object.entries(DECOR_COLOURS).map(([name, h]) => ({ name, rgb: rgb(h) })),
+  ].filter((c) => c.rgb);
+  let best = "", bestD = Infinity;
+  for (const c of pool) {
+    const d = (c.rgb[0] - target[0]) ** 2 + (c.rgb[1] - target[1]) ** 2 + (c.rgb[2] - target[2]) ** 2;
+    if (d < bestD) { bestD = d; best = c.name; }
+  }
+  // Title Case, since these become slide captions and the built-in map is keyed in lower case.
+  return best.replace(/\b\w/g, (ch) => ch.toUpperCase());
+};
+
 export const cssColourToHex = (name) => {
   try {
     const spaceless = String(name || "").trim().toLowerCase().replace(/\s+/g, "");
