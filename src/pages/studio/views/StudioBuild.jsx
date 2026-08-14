@@ -1,4 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
@@ -2470,10 +2471,17 @@ undefined
                           }}
                           onMouseLeave={()=>setElThumbHover(null)}>
                           {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11.5}}><IconBox size={12}/></div>}
-                          {elThumbHover?.key===thumbKey && thumbSrc && (
+                          {/* Portal straight to <body> — .el-row lifts on :hover via a CSS transform,
+                              and a transformed ancestor turns position:fixed descendants into
+                              position:absolute-relative-to-THAT-ancestor instead of the viewport, so
+                              the getBoundingClientRect() coordinates below land in the wrong place
+                              and the popup effectively never shows. Escaping the DOM subtree entirely
+                              is the fix — the popup no longer has a transformed ancestor to inherit. */}
+                          {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
                             <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
                               <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                            </div>
+                            </div>,
+                            document.body
                           )}
                         </div>
                         <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
@@ -2945,10 +2953,14 @@ undefined
                         }}
                         onMouseLeave={()=>setElThumbHover(null)}>
                         {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}><IconBox size={11}/></div>}
-                        {elThumbHover?.key===thumbKey && thumbSrc && (
+                        {/* Portal to <body> — see the matching note on the standard-zone element
+                            card above: .el-row's hover transform otherwise hijacks this fixed
+                            popup's positioning context and it renders invisibly off-place. */}
+                        {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
                           <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
                             <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </div>
                       <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
