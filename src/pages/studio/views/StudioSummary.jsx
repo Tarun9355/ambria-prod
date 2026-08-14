@@ -1679,11 +1679,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
       if (ornament) { corners(s); frame(s); }
-      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: DISPLAY, fontSize: 52, color: t.body, bold: true });
-      s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
-      rule(s, M, 4.25, 2.2);
-      s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
-      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { x: M, y: 4.9, w: 9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
+      // Centred, to close the deck the way the cover opened it — the two are a matched pair, and a
+      // left-aligned last page after a centred first one reads as an unfinished thought.
+      const mid = { x: M, w: SLIDE_W - M * 2, align: "center" };
+      s.addText("Thank You", { ...mid, y: 2.15, h: 1.3, fontFace: DISPLAY, fontSize: 52, color: t.body, bold: true });
+      s.addText("We would love to bring this design to life for you.", { ...mid, y: 3.5, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
+      rule(s, (SLIDE_W - 2.2) / 2, 4.25, 2.2);
+      s.addText("AMBRIA DESIGN & DECOR", { ...mid, y: 4.5, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
+      s.addText("Pushpanjali, Bijwasan, New Delhi  ·  thefusiondecor.com", { ...mid, y: 4.9, h: 0.4, fontFace: SANS, fontSize: 10, color: t.mute });
       // Centred here rather than left, as a full stop for the deck.
       flourish(s, SLIDE_W / 2, 6.15);
     }
