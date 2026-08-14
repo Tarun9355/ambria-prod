@@ -7327,6 +7327,13 @@ export default function StudioApp() {
   // mode later is this one line rather than a rewrite.
   const isDark = false;
   const S = makeS(isDark);
+  // Event Info (step 0) runs chrome-free: it's where a deal is STARTED, so the bar above it offers
+  // nothing you can act on — three of its four step chips are inert until this form is filled.
+  // NOTE: this also takes sign-out, the Studio↔IMS switch, Manage and Deal Check off the screen you
+  // land on after login. They come back at step 1, so the way to reach them is Continue. Held back
+  // while `restoring`, because a refresh sits on step 0 for a beat before snapping to the real step
+  // — hiding the bar then would read as a flash. Every other step keeps the full header.
+  const bareEventInfo = mode === "studio" && step === 0 && !restoring;
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const textS = isDark ? "#6B7280" : "#8b8fa3";
@@ -7546,7 +7553,10 @@ export default function StudioApp() {
   // ═══════════════════════════════════════════════════════════════
   return (
     <div style={S.app}>
-      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+      {/* Playfair Display + Cinzel are the display faces the client decks are already set in
+          (see SERIF/DISPLAY in StudioSummary) — Event Info borrows them so the screen a deal is
+          started on and the deck it ends as read as the same brand. */}
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600;1,700&family=Cinzel:wght@500;600;700&display=swap" rel="stylesheet" />
       <style>{`* { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; } h1,h2,h3 { font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, sans-serif !important; } input,select,textarea,button { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; }
         /* Toast entrance — keeps the translateX(-50%) centring in both frames, so the resting
            inline transform matches the animation's end state and there's no snap on completion. */
@@ -7624,7 +7634,7 @@ export default function StudioApp() {
           size-matched (each renders at its own optical weight); the icons all share NAV_ICON.
           Type is on two tiers only: NAV_FS for everything clickable, META_FS for the uppercase
           micro-labels. The old header mixed 8/9/10/11/12/13px in one row. ═══ */}
-      <div style={S.header}>
+      {!bareEventInfo && <div style={S.header}>
         {/* ── LEFT: brand, then the cross-app switcher. Both answer "where am I?", so they belong
                together at the start of the bar; a rule separates identity from navigation.
                flex:1 so the centre zone stays optically centred rather than content-pushed. */}
@@ -7718,7 +7728,7 @@ export default function StudioApp() {
             </div>
           );
         })()}
-      </div>
+      </div>}
 
       {/* MANAGE MODE — permission-gated */}
       {mode === "manage" && authUser && (() => {
