@@ -50,7 +50,7 @@ export default function StudioModals({ ctx }) {
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
-    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
+    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, loadAvailability, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -111,6 +111,9 @@ export default function StudioModals({ ctx }) {
         textS={textS}
         onClose={() => setDcCustomModal(null)}
         zonePhoto={elSelectedPhoto[dcCustomModal.zoneKey]?.src || ""}
+        eventDate={activeFnMeta?.date || clientDate}
+        getStudioAvailable={getStudioAvailable}
+        loadAvailability={loadAvailability}
       />}
 
       {videoModal&&(

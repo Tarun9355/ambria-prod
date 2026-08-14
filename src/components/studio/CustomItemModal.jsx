@@ -17,7 +17,7 @@ const imsField = {
 };
 
 // §26.13 — Production/Buying Custom Item Modal (proper component for hooks)
-export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, rcCats, rcItems, isDark, border, textP, textS, onClose, zonePhoto }) {
+export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, rcCats, rcItems, isDark, border, textP, textS, onClose, zonePhoto, eventDate, getStudioAvailable, loadAvailability }) {
   const { fnIdx, zoneKey, type, editId } = config;
   const isProduction = type === "production";
   const icon = isProduction ? "🏭" : "🛒";
@@ -45,6 +45,17 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
     })();
   }, []);
   const imsInventory = (liveInv && liveInv.length > 0) ? liveInv : initialInv;
+  // Real stock availability for the event's own date — same source Build's own 📦 availability
+  // picker uses (openAvailModal in StudioBuild.jsx), so a reference item shown here as "free" is
+  // free by the same accounting, not a separate guess. Blank/loading until the date resolves.
+  const [blocksForDate, setBlocksForDate] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!eventDate || !loadAvailability) { setBlocksForDate({}); return; }
+    loadAvailability(eventDate).then(({ blocksForDate: b }) => { if (!cancelled) setBlocksForDate(b || {}); })
+      .catch(() => { if (!cancelled) setBlocksForDate({}); });
+    return () => { cancelled = true; };
+  }, [eventDate, loadAvailability]);
   // Photo upload to Cloudinary
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -89,13 +100,21 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
       const il = Number(d.l) || 0, iw = Number(d.w) || 0, ih = Number(d.h) || 0;
       const hasDims = dimL > 0 || dimW > 0 || dimH > 0;
       const dimScore = hasDims ? Math.abs(il - dimL) + Math.abs(iw - dimW) + Math.abs(ih - dimH) : 0;
-      return { ...it, _relevance: relevance, _dimScore: dimScore, _photo: imsField.photos(it)[0] || "", _cost: Number(it.cost) || Number(it.price) || 0, _dims: imsField.sizeText(it) };
+      const free = (getStudioAvailable && blocksForDate) ? getStudioAvailable(it, blocksForDate) : null;
+      return { ...it, _relevance: relevance, _dimScore: dimScore, _photo: imsField.photos(it)[0] || "", _cost: Number(it.cost) || Number(it.price) || 0, _dims: imsField.sizeText(it), _free: free };
     }).filter(Boolean);
-    scored.sort((a, b) => b._relevance - a._relevance || a._dimScore - b._dimScore);
+    // Availability leads the ranking once it's known — a closer-dims match sitting at 0 free for
+    // this date is a worse pick than a slightly rougher match that's actually available, and the
+    // whole point of surfacing this here is to stop that from being invisible.
+    scored.sort((a, b) => {
+      const aOut = a._free != null && a._free <= 0, bOut = b._free != null && b._free <= 0;
+      if (aOut !== bOut) return aOut ? 1 : -1;
+      return b._relevance - a._relevance || a._dimScore - b._dimScore;
+    });
     const top = scored.slice(0, 3);
     setCRefResults(top);
     if (top.length > 0 && !cSelectedRef) setCSelectedRef(top[0].id);
-  }, [cForm.subCat, cForm.cat, cForm.dims.l, cForm.dims.w, cForm.dims.h, imsInventory]);
+  }, [cForm.subCat, cForm.cat, cForm.dims.l, cForm.dims.w, cForm.dims.h, imsInventory, blocksForDate, getStudioAvailable]);
   const selectedItem = cRefResults.find(r => r.id === cSelectedRef);
   const refPrice = selectedItem?._cost || 0;
   const finalPrice = cManualPrice ? Number(cManualPrice) : refPrice;
@@ -121,7 +140,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontSize:14,fontWeight:700,color:textP}}>{icon} Add {label} Item</div>
-            <div style={{fontSize:10,color:textS,marginTop:2}}>Zone: {zoneKey} · System will find reference pricing from inventory</div>
+            <div style={{fontSize:10,color:textS,marginTop:2}}>Zone: {zoneKey} · System will find reference pricing &amp; stock availability from inventory</div>
           </div>
           <button onClick={onClose} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:13,cursor:"pointer"}}>✕</button>
         </div>
@@ -192,19 +211,30 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
           {cForm.subCat && (
             <div>
               <div style={{fontSize:10,color:textS,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>
-                {cRefResults.length > 0 ? `System Reference (${cRefResults.length} match${cRefResults.length===1?"":"es"})` : "No reference items found"}
+                {cRefResults.length > 0 ? `Reference & Availability (${cRefResults.length} match${cRefResults.length===1?"":"es"})` : "No reference items found"}
               </div>
               {cRefResults.length > 0 ? (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
                   {cRefResults.map(it => {
                     const isSel = cSelectedRef === it.id;
+                    const free = it._free;
+                    const isOut = free != null && free <= 0;
                     return (
                       <div key={it.id} onClick={() => { setCSelectedRef(it.id); setCShowManual(false); setCManualPrice(""); }}
-                        style={{cursor:"pointer",padding:10,borderRadius:10,border:isSel?`2px solid ${color}`:`1px solid ${border}`,background:isSel?`${color}12`:isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
+                        style={{cursor:"pointer",padding:10,borderRadius:10,border:isSel?`2px solid ${color}`:`1px solid ${border}`,background:isSel?`${color}12`:isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative",opacity:isOut?0.7:1}}>
                         {isSel && <div style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:"50%",background:color,color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>✓</div>}
                         {it._photo ? <img src={it._photo} alt="" style={{width:"100%",height:80,objectFit:"cover",borderRadius:6}} /> : <div style={{width:"100%",height:80,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:textS}}>📦</div>}
                         <div style={{fontSize:11,fontWeight:600,color:textP,lineHeight:1.2}}>{it.name}</div>
                         <div style={{fontSize:9,color:textS}}>{it._dims || "No dims"}</div>
+                        {/* Real stock for the event's own date — same accounting as Build's own 📦
+                            availability picker. null (still loading, or no date to check against)
+                            shows nothing rather than a wrong "0 free". */}
+                        {free != null && (
+                          <div style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,alignSelf:"flex-start",
+                            background:isOut?"rgba(239,68,68,0.15)":"rgba(16,185,129,0.15)",color:isOut?"#EF4444":"#059669"}}>
+                            {isOut?"Fully booked for this date":`${free} free for this date`}
+                          </div>
+                        )}
                         <div style={{fontSize:12,fontWeight:700,color}}>₹{Math.round(it._cost).toLocaleString("en-IN")}</div>
                       </div>
                     );
