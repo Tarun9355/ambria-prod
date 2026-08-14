@@ -1311,7 +1311,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       } catch { return null; }
     })();
     // The artwork carries its own bracket corners, so ours would double up and read as a mistake.
-    const ornament = !customGround;
+    // Our gold brackets and frame, drawn UNLESS the artwork already carries a border of its own —
+    // two frames read as a mistake. Which artwork does is a property of the image, not something
+    // that can be worked out from it, so the ones that come framed are named here. A plain texture
+    // (the wedding toile) still gets the frame, or the slides lose their edge entirely.
+    const FRAMED_BACKGROUNDS = new Set(["birthday"]);
+    const ornament = !customGround || !FRAMED_BACKGROUNDS.has(String(kind).toLowerCase());
 
     const groundDark = makeGround(INK, false);
     const groundLight = makeGround(IVORY, true);
