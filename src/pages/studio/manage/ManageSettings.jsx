@@ -70,6 +70,20 @@ export default function ManageSettings({ ctx }) {
     saveZD({ ...zoneDefs, meta: newMeta });
   };
 
+  // Drag-and-drop zone reordering — same target shape as moveZone (rebuild zoneDefs.meta in the
+  // new key order) but moves a zone directly from fromIdx to toIdx instead of swapping neighbours.
+  const [dragZoneIdx, setDragZoneIdx] = useState(null);
+  const [dragOverZoneIdx, setDragOverZoneIdx] = useState(null);
+  const reorderZone = (fromIdx, toIdx) => {
+    const keys = Object.keys(zoneDefs.meta || {});
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || fromIdx >= keys.length || toIdx >= keys.length) return;
+    const [moved] = keys.splice(fromIdx, 1);
+    keys.splice(toIdx, 0, moved);
+    const newMeta = {};
+    keys.forEach((k) => { newMeta[k] = zoneDefs.meta[k]; });
+    saveZD({ ...zoneDefs, meta: newMeta });
+  };
+
   // ═══ ADMIN VENUES (settingsView "venues") — App_latest.jsx:7990 ═══
   const AdminVenues = () => {
 
@@ -621,16 +635,27 @@ export default function ManageSettings({ ctx }) {
       )}
       {settingsView === "zones" && <div style={{maxWidth:800}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div><div style={{fontSize:16,fontWeight:700,color:accent}}>📐 Zone Types</div><div style={{fontSize:11,color:textS,marginTop:2}}>Define zone types used across Build, Templates, and Library. Use the ↑ ↓ arrows to set the order zones appear on the Build page. Changes sync to all devices via Redis.</div></div>
+          <div><div style={{fontSize:16,fontWeight:700,color:accent}}>📐 Zone Types</div><div style={{fontSize:11,color:textS,marginTop:2}}>Define zone types used across Build, Templates, and Library. Drag ⠿ (or use the ↑ ↓ arrows) to set the order zones appear on the Build page. Changes sync to all devices via Redis.</div></div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={()=>{const label=prompt("Enter zone name (e.g. 'Stage', 'Photobooth'):");if(label&&label.trim())addZoneWithAreaSync(label);}} style={{...S.btn(true),fontSize:11,padding:"8px 14px"}}>+ Add Zone</button>
             <button onClick={()=>{if(!confirm("Reset all zones to factory defaults?"))return;const nd={elements:{},meta:JSON.parse(JSON.stringify(ZONE_META))};saveZD(nd);}} style={{...S.btn(false),fontSize:11,padding:"8px 14px"}}>↻ Reset</button>
           </div>
         </div>
-        {Object.entries(zoneDefs.meta).map(([zk,zm],zIdx)=>{const lbl=zoneLabelsD[zk];const zTotal=Object.keys(zoneDefs.meta).length;return(
-          <div key={zk} style={{...S.card,padding:"16px 18px",marginBottom:10}}>
+        {Object.entries(zoneDefs.meta).map(([zk,zm],zIdx)=>{const lbl=zoneLabelsD[zk];const zTotal=Object.keys(zoneDefs.meta).length;const dragOver=dragOverZoneIdx===zIdx&&dragZoneIdx!==null&&dragZoneIdx!==zIdx;return(
+          <div key={zk}
+            onDragOver={e=>{if(dragZoneIdx===null)return;e.preventDefault();e.dataTransfer.dropEffect="move";if(dragOverZoneIdx!==zIdx)setDragOverZoneIdx(zIdx);}}
+            onDragLeave={()=>{setDragOverZoneIdx(o=>o===zIdx?null:o);}}
+            onDrop={e=>{e.preventDefault();reorderZone(dragZoneIdx,zIdx);setDragZoneIdx(null);setDragOverZoneIdx(null);}}
+            style={{...S.card,padding:"16px 18px",marginBottom:10,transition:"opacity 0.15s, outline 0.1s",outline:dragOver?`2px dashed ${accent}`:"2px dashed transparent",outlineOffset:-2,opacity:dragZoneIdx===zIdx?0.4:1}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div
+                  draggable
+                  onDragStart={e=>{setDragZoneIdx(zIdx);e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",zk);}catch{/* some browsers require data to be set for DnD to engage */}}}
+                  onDragEnd={()=>{setDragZoneIdx(null);setDragOverZoneIdx(null);}}
+                  title="Drag to reorder"
+                  style={{cursor:"grab",fontSize:16,color:textS,padding:"2px 2px",lineHeight:1,userSelect:"none"}}
+                >⠿</div>
                 <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
                   <button onClick={()=>moveZone(zIdx,-1)} disabled={zIdx===0} style={{width:24,height:20,borderRadius:5,border:`1px solid ${border}`,background:"transparent",cursor:zIdx===0?"default":"pointer",opacity:zIdx===0?0.3:1,fontSize:11,color:textP,lineHeight:1,padding:0}}>↑</button>
                   <span style={{fontSize:10,fontWeight:700,color:accent}}>{zIdx+1}</span>
