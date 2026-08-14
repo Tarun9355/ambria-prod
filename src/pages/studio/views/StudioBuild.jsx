@@ -825,6 +825,11 @@ export default function StudioBuild({ ctx }) {
   // only one zone's popup is ever open at once, but it's still a separate surface from the rail.
   const [zpInlinePaletteQ, setZpInlinePaletteQ] = useState("");
   const [zpInlineVenueQ, setZpInlineVenueQ] = useState("");
+  // Fabric Palette combobox (Deal Check's fabric colour input, not a photo filter) — collapsed to a
+  // single trigger chip, same toggle-by-click-again model as the per-zone filter icon (no outside-
+  // click handling needed): open shows a search box + dropdown, picking a value closes it.
+  const [fabricPaletteOpen, setFabricPaletteOpen] = useState(false);
+  const [fabricPaletteQ, setFabricPaletteQ] = useState("");
   const zpMorePill = () => ({ ...zpPill(false), borderStyle: "dashed", fontWeight: 700, color: accent });
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   // One row, rails open or folded. Folding them used to add a second row of four, which is the
@@ -1748,17 +1753,39 @@ undefined
       const setPalette = (v) => {
         if (isPrimaryFn) setClientPalette(v);
         else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: v } : f));
+        setFabricPaletteQ(""); setFabricPaletteOpen(false);
       };
       const opts = azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
-      return <div style={{borderRadius:10,padding:"11px 16px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-          <span style={{display:"flex",color:accent}}><IconPalette size={14}/></span>
-          <span style={{fontSize:12.5,fontWeight:600,color:textP}}>Fabric Palette</span>
-          <span style={{fontSize:10.5,color:textS}}>Sets masking/drape colour in Deal Check — doesn't affect photo filtering above</span>
-        </div>
-        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-          <span onClick={()=>setPalette("Custom")} style={zpPill(current==="Custom"||!current)}>Custom</span>
-          {opts.map(v=><span key={v} onClick={()=>setPalette(v)} style={zpPill(current===v)}>{v}</span>)}
+      const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
+      const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ, anchorsOf) : opts;
+      const optRow = (v, isCustom) => (
+        <div key={v} onClick={()=>setPalette(v)} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+          fontWeight:current===v?700:isCustom?500:400,
+          background:current===v?`${accent}18`:"transparent",
+          color:current===v?accent:textP}}>{v}</div>
+      );
+      return <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:14,flexWrap:"wrap"}}>
+        <span style={{display:"flex",color:accent}}><IconPalette size={13}/></span>
+        <span style={{fontSize:11.5,fontWeight:600,color:textP}}>Fabric Palette</span>
+        <span title="Sets masking/drape colour allocation in Deal Check — doesn't affect the photo filters above" style={{fontSize:10,color:textS,cursor:"help"}}>ⓘ</span>
+        <div style={{position:"relative"}}>
+          <div onClick={()=>setFabricPaletteOpen(o=>!o)} title="Click to change"
+            style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,
+              border:`1px solid ${fabricPaletteOpen?accent:border}`,background:cardBg,cursor:"pointer",
+              fontSize:11,fontWeight:600,color:current==="Custom"?textS:textP}}>
+            {current}
+            <span style={{display:"inline-flex",transform:fabricPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={10}/></span>
+          </div>
+          {fabricPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:230,
+            background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:8}}>
+            <input autoFocus value={fabricPaletteQ} onChange={e=>setFabricPaletteQ(e.target.value)}
+              placeholder="Search palettes…" style={{...S.input,fontSize:11,padding:"5px 8px",marginBottom:6,width:"100%"}}/>
+            <div style={{maxHeight:220,overflowY:"auto"}}>
+              {optRow("Custom", true)}
+              {matched.map(v=>optRow(v))}
+              {fabricPaletteQ.trim()&&matched.length===0&&<div style={{padding:"5px 9px",fontSize:10.5,color:textS}}>No matches</div>}
+            </div>
+          </div>}
         </div>
       </div>;
     })()}
