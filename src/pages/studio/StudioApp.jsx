@@ -65,7 +65,7 @@ import {
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { itemImsSubcat, priceForInvItem } from "../../lib/ims/helpers";
+import { itemImsSubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
@@ -1537,6 +1537,11 @@ export default function StudioApp() {
   const [dcPrefModal, setDcPrefModal] = useState(null);
   const [dcCustomItems, setDcCustomItems] = useState([]);
   const [dcCustomModal, setDcCustomModal] = useState(null);
+  // Per-element/per-reference stock availability picker — { zoneKey, idx, elName, subcat, date,
+  // loading, items, selectedId, onPick }. Lifted here (rather than staying local to StudioBuild)
+  // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
+  // trigger the exact same picker instead of each growing its own copy.
+  const [availModal, setAvailModal] = useState(null);
   // Swap modal local state — lifted to App scope to avoid hook-reset on parent re-render.
   const [dcSwapSearch, setDcSwapSearch] = useState("");
   const [dcSwapPicked, setDcSwapPicked] = useState(null);
@@ -6915,6 +6920,40 @@ export default function StudioApp() {
     return () => { cancelled = true; };
   }, [activeFnMeta?.date, clientDate, loadAvailability]);
 
+  // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
+  // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
+  // being duplicated. Behaviour is unchanged — same subcat resolution, same free-sorted item list.
+  const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick) => {
+    const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+    const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
+    const date = activeFnMeta?.date || clientDate || "";
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
+    try {
+      const { inventory, blocksForDate } = await loadAvailability(date);
+      const target = String(subcat).toLowerCase().trim();
+      const items = (inventory || [])
+        .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        .sort((a, b) => b.free - a.free);
+      setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
+    } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey]);
+  const saveAvailPick = useCallback(() => {
+    if (!availModal) return;
+    const { zoneKey, idx, selectedId, items, onPick } = availModal;
+    const pick = (items || []).find(i => i.id === selectedId);
+    if (onPick) { onPick(selectedId && pick ? pick : null); setAvailModal(null); return; }
+    setZoneElements(p => {
+      const elems = [...(p[zoneKey] || [])];
+      if (!elems[idx]) return p;
+      elems[idx] = (selectedId && pick)
+        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "" }
+        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; return e; })();
+      return { ...p, [zoneKey]: elems };
+    });
+    setAvailModal(null);
+  }, [availModal, setZoneElements]);
+
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
     setDealCheckLoading(true);
@@ -7632,6 +7671,7 @@ export default function StudioApp() {
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,
+    availModal, setAvailModal, openAvailModal, saveAvailPick,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,

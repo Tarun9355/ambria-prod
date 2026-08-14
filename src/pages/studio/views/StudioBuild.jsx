@@ -15,7 +15,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
-import { itemImsSubcat, itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
+import { itemDimsText } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
@@ -476,7 +476,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
     clientPalette, setClientPalette,
-    studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
+    studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
@@ -1019,51 +1019,13 @@ export default function StudioBuild({ ctx }) {
   // A discreet 📦 on each element opens a modal listing that element's IMS sub-category items (alias-aware)
   // with the FREE count on the event date (owned − blocked). Picking one + Save pins it on the element
   // (deal-local) → Deal Check auto-match honors the pin. No costs shown — availability only.
-  const [availModal, setAvailModal] = useState(null); // { zoneKey, idx, elName, subcat, loading, items, selectedId }
+  // availModal/openAvailModal/saveAvailPick now live in ctx (StudioApp.jsx) — the Add Production/
+  // Buying Item modal (StudioModals.jsx, a sibling view) needed the exact same picker rather than a
+  // second copy, and the modal itself now renders in StudioModals.jsx alongside it.
   // Hover-to-zoom on an element's thumbnail — same fixed-position enlarged-preview pattern as
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
-  // `onPick(pickedItemOrNull)`, when given, hands the picked item back to the CALLER instead of the
-  // hardcoded zoneElements-by-index update below — lets a kit component row (KitComponentsEditor's
-  // own 📦 icon) reuse this exact same modal/availability-lookup to swap ITS item, without a second
-  // copy of the modal or the availability-fetch logic.
-  const openAvailModal = async (zoneKey, idx, el, rc, onPick) => {
-    // Inventory-sourced elements (el.invId) already know their exact real sub-category — no
-    // Rate-Card→IMS alias lookup needed, unlike the legacy rc path below.
-    const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
-    const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
-    const date = activeFnMeta?.date || clientDate || "";
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
-    try {
-      const { inventory, blocksForDate } = await loadAvailability(date);
-      const target = String(subcat).toLowerCase().trim();
-      const items = (inventory || [])
-        .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
-        .sort((a, b) => b.free - a.free);
-      setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
-    } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
-  };
-  const saveAvailPick = () => {
-    if (!availModal) return;
-    const { zoneKey, idx, selectedId, items, onPick } = availModal;
-    const pick = (items || []).find(i => i.id === selectedId);
-    if (onPick) { onPick(selectedId && pick ? pick : null); setAvailModal(null); return; }
-    setZoneElements(p => {
-      const elems = [...(p[zoneKey] || [])];
-      if (!elems[idx]) return p;
-      elems[idx] = (selectedId && pick)
-        // Picking an item REPLACES this element with it — invId drives both the display name and
-        // the price (getElPriceFromInventory), so name + rate follow the picked item. imsId keeps
-        // the booking pin in sync.
-        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "" }
-        // Deselecting clears only the booking pin — the element keeps its current identity.
-        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; return e; })();
-      return { ...p, [zoneKey]: elems };
-    });
-    setAvailModal(null);
-  };
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -3406,53 +3368,8 @@ undefined
 
     <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}><button onClick={()=>setStep(1)} style={S.btn(false)}>← Browse</button><button onClick={()=>setStep(3)} style={S.btn(true)}>Summary →</button></div>
 
-    {/* ── Per-element stock availability modal — image + free count only, pick one to book ── */}
-    {availModal && (
-      <div onClick={()=>setAvailModal(null)} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
-            <div>
-              <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
-              <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</div>
-            </div>
-            <span onClick={()=>setAvailModal(null)} style={{cursor:"pointer",fontSize:22,color:textS,lineHeight:1}}>×</span>
-          </div>
-          <div style={{padding:16,overflowY:"auto",flex:1}}>
-            {availModal.loading ? (
-              <div style={{padding:"48px 0",textAlign:"center",color:textS,fontSize:13}}>Loading availability…</div>
-            ) : (availModal.items.length===0 ? (
-              <div style={{padding:"48px 0",textAlign:"center",color:textS,fontSize:13}}>No inventory found in “{availModal.subcat||"this sub-category"}”.</div>
-            ) : (
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
-                {availModal.items.map(it=>{
-                  const sel = availModal.selectedId===it.id;
-                  const out = it.free<=0;
-                  return (
-                    <div key={it.id} onClick={()=>setAvailModal(m=>({...m,selectedId: sel?null:it.id}))} style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
-                      {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
-                      <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
-                      {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
-                      <div style={{padding:"8px 10px"}}>
-                        <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
-                        {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
-                        <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-          <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,color:textS}}>{availModal.onPick ? "Pick an item to swap this kit component to." : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin.")}</span>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setAvailModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
-              <button onClick={saveAvailPick} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )}
+    {/* Per-element stock availability modal now renders in StudioModals.jsx — shared with the
+        Add Production/Buying Item modal, which also triggers openAvailModal via ctx. */}
 
     {/* ═══ FULL-SCREEN PHOTO LIGHTBOX — tap any zone photo; ‹ › or arrow keys walk the set ═══ */}
     {lightbox && (()=>{
