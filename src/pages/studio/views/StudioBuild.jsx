@@ -660,7 +660,7 @@ export default function StudioBuild({ ctx }) {
   const elCardSummary = (k) => {
     const els = zoneElements[k] || [];
     if (!els.length) return null;
-    const total = showCosts ? calcElsCost(els, true, zoneConfig[k]) : 0;
+    const total = showCosts ? calcElsCost(els, true, zoneConfig[k], {checkAvailability:true}) : 0;
     return <span style={{fontSize:10.5,fontWeight:600,color:textS,display:"inline-flex",alignItems:"center",gap:6,marginLeft:2}}>
       <span>{els.length} item{els.length === 1 ? "" : "s"}</span>
       {showCosts && total > 0 && <span style={{color:textP,fontWeight:700}}>{fmt(total)}</span>}
@@ -683,8 +683,13 @@ export default function StudioBuild({ ctx }) {
   const textS = isDark ? "#A6ADC0" : "#5A6076";   // 6.4:1 on white
 
   // One definition of "what does this zone cost" — lifted verbatim out of the zone header so the
-  // header and the live-pricing tile share it and cannot drift apart. Arithmetic is unchanged.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  // header and the live-pricing tile share it and cannot drift apart. `{checkAvailability:true}`
+  // matches StudioApp.jsx's totalCost() exactly (same call, same flag) — without it, a zone with an
+  // item short in stock for this date priced HIGHER here (full rate) than in the Décor grand total
+  // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
+  // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
+  // with themselves, and with Summary/Deal Check's.
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -2106,8 +2111,17 @@ undefined
                 const isSelected = multiZone
                   ? (elMultiPhotos[k] || []).some(p => (p.eventId || p.src) === (ph.eventId || ph.src))
                   : elSelectedPhoto[k]?.src === ph.src;
-                // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
-                const photoFullCost = calcPhotoCost(k, ph);
+                // For the zone's ACTIVE picture, show the zone's real live total (zoneTotal — the
+                // same figure the header and "By zone" row use) instead of recomputing from the
+                // photo's own stored baseline. calcPhotoCost prices only photo.elements + a bare
+                // buildZoneConfig(photo.dims) — it never picks up a saved masking/carpet/print
+                // config, an extra truss/platform row, or any hand-edit made to the zone after
+                // selecting, so a selected photo with any of that silently badged LOWER than what
+                // was actually charged. Every OTHER (unselected) tile keeps the preview-if-picked
+                // number from calcPhotoCost — that "what would this cost instead" comparison is the
+                // whole point of the strip. Left alone for multi-photo zones (Installations), where
+                // several photos combine into one total and no single tile can claim it as its own.
+                const photoFullCost = (isSelected && !multiZone) ? zoneTotal(k) : calcPhotoCost(k, ph);
                 // Column layout so the caption below the photo can take every pixel the image does
                 // not — see .ph-sel's flex:1. The tile is a grid item, so it already stretches to
                 // the tallest card in the row; that slack now belongs to the select target instead
@@ -2535,7 +2549,7 @@ undefined
                   </div>);
                 })}
               </div>
-                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k]))}</div>}
+                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true}))}</div>}
               </div>}
             </div>
           ) : (
@@ -2738,7 +2752,7 @@ undefined
     {/* ═══ CUSTOM ZONES (non-duplicates only — duplicates render in main loop above) ═══ */}
     {customZones.filter(cz=>!cz.sourceType).map(cz=>{
       const k=cz.id;const isOn=enabledEls[k];
-      const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k]);
+      const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true});
       const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
       const czTotal=czElCost+czStructCost;
       return(<div key={k} id={`zone-${k}`} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
