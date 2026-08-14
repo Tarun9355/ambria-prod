@@ -3108,22 +3108,24 @@ undefined
       </div>;
     })()}
 
-    {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ Tied to the Live Estimate rail's own open/
-        closed state: this is the same numbers in a second place, so it only makes sense to show
-        once the rail itself is showing. Folding the rail away (the default on load) hides both;
-        opening it brings both back together. */}
-    {showCosts&&venue&&rightRailOpen&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+    {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ The genset selector needs to stay reachable
+        (it's the one control here, not just a readout) regardless of the Live Estimate rail's
+        state, so the panel itself no longer folds away with it. Its COSTS do — every ₹ figure
+        (Decor, Transport, per-genset rate/cost, Grand Total) is the same numbers as the rail, so
+        showing them with the rail closed would just be a second, unlabelled place pricing leaks
+        to. Rail closed → this is a bare genset qty stepper; rail open → the full breakdown returns. */}
+    {showCosts&&venue&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
         <span style={{fontSize:12,color:"#a5b4fc"}}><IconPlatform size={12}/> Decor (all zones)</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(totalCost())}</span>
-      </div>
+      </div>}
       {/* Trucks and genset are two different things bought from two different rates —
           transportCalc has always kept truckTotal and gensetCost apart, they were merely being
           summed here. Showing one figure meant a venue's genset charge was invisible. */}
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
         <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} truck{transportCalc.trucks===1?"":"s"})</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(transportCalc.truckTotal)}</span>
-      </div>
+      </div>}
       {/* Genset count is adjustable here rather than only in Event Info's custom-venue block,
           which is where the override lived and where nobody looks once a build is underway.
           Each size supplies its own venue default (IMS Admin → Transport & Power — whole units
@@ -3158,19 +3160,19 @@ undefined
                 </Fragment>
               ))}
             </span>
-            {g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate)}</span>}
+            {rightRailOpen&&g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate)}</span>}
             {g.note&&<span style={{fontSize:10,opacity:0.7}}>· {g.note}</span>}
           </span>
-          <span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate)}</span>
+          {rightRailOpen&&<span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate)}</span>}
         </div>
       ))}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Grand Total</span>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:28,fontWeight:700}}>{fmt(grandTotal)}</div>
           <span style={{fontSize:11,padding:"3px 12px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
         </div>
-      </div>
+      </div>}
     </div>}
 
     {/* ── §23 Soft truss validation summary (warns but doesn't block nav) ── */}
