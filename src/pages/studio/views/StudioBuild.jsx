@@ -3094,8 +3094,11 @@ undefined
       </div>;
     })()}
 
-    {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ */}
-    {showCosts&&venue&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
+    {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ Tied to the Live Estimate rail's own open/
+        closed state: this is the same numbers in a second place, so it only makes sense to show
+        once the rail itself is showing. Folding the rail away (the default on load) hides both;
+        opening it brings both back together. */}
+    {showCosts&&venue&&rightRailOpen&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
         <span style={{fontSize:12,color:"#a5b4fc"}}><IconPlatform size={12}/> Decor (all zones)</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(totalCost())}</span>
