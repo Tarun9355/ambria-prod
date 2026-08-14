@@ -6581,7 +6581,12 @@ export default function StudioApp() {
     // Carry the CURRENT live scale over onto the incoming photo's elements instead.
     const curScale = Math.max(1, Math.round(Number(zoneConfig[elKey]?.scale) || 1));
     if (photo.isLibrary && (photo.elements || []).length > 0) {
-      const rawEls = JSON.parse(JSON.stringify(photo.elements));
+      // Strip any `baseQty` the photo's own saved elements happen to be carrying — "Correct & update
+      // master" persists zoneElements verbatim, so a photo corrected while a zone was mid-scale can
+      // have a stale baseQty baked in (e.g. 0.5, left over from a long-gone ÷2). A fresh photo pick
+      // always derives its base from that photo's own qty, never an inherited one, or the very next
+      // Scale edit multiplies the WRONG base and lands on a qty nobody asked for.
+      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, ...e }) => e);
       setZoneElements(p => ({ ...p, [elKey]: curScale > 1
         ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
         : rawEls
@@ -6653,7 +6658,10 @@ export default function StudioApp() {
     // seeds zoneConfig (truss/platform/print/dims); every one after that contributes elements only.
     const nextPhotos = [...current, photo];
     setElMultiPhotos(p => ({ ...p, [elKey]: nextPhotos }));
-    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(it => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey }));
+    // Strip any stray baseQty the photo's saved elements carry — see the matching note in
+    // selectElPhoto; a photo corrected mid-scale can bake in a leftover ratio that has nothing to do
+    // with this build.
+    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey }));
     setZoneElements(p => ({ ...p, [elKey]: [...(p[elKey] || []), ...tagged] }));
     if (!current.length) {
       setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));

@@ -3243,7 +3243,12 @@ undefined
       const save=async ()=>{
         if(!isNewMaster && !master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const zk=correctPhoto.zoneKey;
-        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[]));
+        // baseQty is Scale By's own per-element bookkeeping (this zone's qty ÷ whatever scale was
+        // live when this photo was corrected) — never the photo's real recipe quantity. Saving it
+        // verbatim baked a stray scale ratio into the master; the next salesperson to pick this photo
+        // fresh (scale back at 1) would have it silently resurface on their very first Scale edit,
+        // multiplying against a base that had nothing to do with their build. Strip it at the source.
+        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[])).map(({baseQty:_drop,...e})=>e);
         // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
         // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
         // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity
