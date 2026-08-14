@@ -112,7 +112,6 @@ export function RemoveFunctionDialog({ snap, onCancel, onConfirm, S, sheet, hair
 }
 
 export default function StudioEventInfo({ ctx }) {
-  const [sessionHistoryOpen, setSessionHistoryOpen] = useState(false); // collapsed by default
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
   const [confirmRemove, setConfirmRemove] = useState(null);
@@ -134,7 +133,6 @@ export default function StudioEventInfo({ ctx }) {
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
     activeClient, loadClientSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
-    sessionHistoryExpanded, setSessionHistoryExpanded,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
     refreshLmsSync, lmsSyncing,
     taxonomy,
@@ -852,60 +850,6 @@ export default function StudioEventInfo({ ctx }) {
     </div>
   );
 
-  // ═══ SESSION HISTORY ═══ (aside column, collapsed by default)
-  const SESSION_HISTORY = activeClient && activeClient.sessions && activeClient.sessions.length > 0 && (() => {
-    const sessions = activeClient.sessions;
-    const visible = sessionHistoryExpanded ? sessions.slice(0, 20) : sessions.slice(0, 5);
-    const timeAgo = (ts) => {
-      const ms = Date.now() - ts;
-      const min = Math.floor(ms / 60000);
-      if (min < 1) return "just now";
-      if (min < 60) return `${min}m ago`;
-      const hr = Math.floor(min / 60);
-      if (hr < 24) return `${hr}h ago`;
-      const days = Math.floor(hr / 24);
-      if (days < 30) return `${days}d ago`;
-      return new Date(ts).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
-    };
-    const fmtDate = (d) => {
-      if (!d) return "—";
-      try { return new Date(d+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}); } catch { return d; }
-    };
-    return <div style={{padding:"4px 15px 13px",borderRadius:14,background:isDark?"rgba(201,169,110,0.04)":"linear-gradient(180deg,#FFFCF4,#fff 70%)",border:`1px solid ${isDark?"rgba(201,169,110,0.15)":`${accent}2E`}`,boxShadow:isDark?"none":`0 8px 24px -16px ${accent}99`}}>
-      <div className="ei-head" onClick={() => setSessionHistoryOpen(o => !o)} style={{padding:"8px 0",cursor:"pointer",fontSize:11,fontWeight:700,color:gold,display:"flex",alignItems:"center",gap:6,textTransform:"uppercase",letterSpacing:0.5}}>
-        <span>📋</span>
-        <span style={{flex:1}}>Session History — {sessions.length} meeting{sessions.length>1?"s":""}</span>
-        <span style={{fontSize:10}}>{sessionHistoryOpen ? "▲ Hide" : "▼ Show"}</span>
-      </div>
-      {sessionHistoryOpen && <div style={{marginTop:6}}>
-        {visible.map((s, si) => <div key={s.id || si} className="ei-row" style={{padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:12,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-              <span>{new Date(s.savedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
-              <span style={{color:textM,fontWeight:400,fontSize:10}}>({timeAgo(s.savedAt)})</span>
-              <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:`${accent}25`,color:gold}}>by {s.savedBy || "—"}</span>
-              {si === 0 && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:C.emerald}}>LATEST</span>}
-            </div>
-            <div style={{fontSize:10,color:textM,marginTop:3}}>
-              {s.venue && <span>📍 {s.venue}</span>}
-              {s.eventDate && <span> · 📅 {fmtDate(s.eventDate)}</span>}
-              {s.fn && <span> · {s.fn}</span>}
-              {s.total && <span style={{color:textP,fontWeight:600}}> · {fmt(s.total)}</span>}
-              {s.tier && <span style={{color:textM}}> {s.tier}</span>}
-            </div>
-          </div>
-          <button className="ei-btn ei-gold" onClick={() => {
-            if (!confirm(`Load session from ${new Date(s.savedAt).toLocaleString("en-IN")} by ${s.savedBy||"—"}?\n\nAny unsaved changes will be replaced.`)) return;
-            loadClientSession(activeClient, s, 0);
-          }} style={{marginTop:8,padding:"5px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:gold,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
-        </div>)}
-        {sessions.length > 5 && <button className="ei-btn ei-link" onClick={() => setSessionHistoryExpanded(!sessionHistoryExpanded)} style={{marginTop:4,padding:"4px 10px",fontSize:10,color:gold,background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>
-          {sessionHistoryExpanded ? `↑ Show fewer (5)` : `↓ Show all ${sessions.length} sessions`}
-        </button>}
-      </div>}
-    </div>;
-  })();
-
   return (
     <div className="ei-view">
       <style>{hoverCSS}</style>
@@ -1341,7 +1285,6 @@ export default function StudioEventInfo({ ctx }) {
               </div>
             </div>
 
-            {SESSION_HISTORY}
             {FOOTER_ACTIONS}
         </div>
       </div>
