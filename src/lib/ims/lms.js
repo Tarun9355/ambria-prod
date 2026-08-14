@@ -81,7 +81,29 @@ const LMS_REQUEST_BODIES = {
   }),
 };
 
-const LMS_ENTRY_BY_NAMES = { "1": "Admin", "5": "", "6": "", "9": "", "11": "" };
+// LMS's own `users` table (id → display name) — id is the numeric `entryById`/`fisc_entryby`/
+// `dhc_decor_entryby` value a contract or lead is stamped with in LMS, telling us who owns it
+// there. Sourced from users.sql (LMS's MySQL dump, project root) — firstname where set, else
+// username. Comparisons against Studio's own authUser.name are done case-insensitively (see
+// StudioEventInfo's salesperson filter), since the two systems don't agree on capitalization
+// (e.g. LMS "Krati" vs Studio's stored "krati").
+const LMS_ENTRY_BY_NAMES = {
+  "1": "Admin", "2": "Shivika", "3": "Rajnish", "4": "Priyanka Biwal", "5": "Nivedita",
+  "6": "Harsh Pachouri", "7": "Kartik", "8": "Pavitra", "9": "Rajesh", "10": "Tarun",
+  "11": "Krati", "12": "Himanshu", "13": "Ashi", "14": "Tushita", "15": "Dipesh",
+  "16": "Medhavi", "17": "Gaurav", "18": "Sahaj", "19": "Kaushal", "20": "Ajay",
+  "21": "Ajay Chauhan", "22": "Pratiksha", "23": "JP Singh", "24": "Amanjeet", "25": "Anmol",
+  "26": "Harsh Vardhan", "27": "Rahul", "28": "Expense Test User", "29": "Jitanshu", "30": "Arjun",
+  "31": "Tajinder Singh", "32": "Aman", "33": "Amarpreet", "34": "Ompal Sharma", "35": "Lalit Joshi",
+  "36": "SUDHIR", "37": "GUDDU", "38": "Karan", "39": "Priyanshu", "40": "Vindeep",
+  "41": "Shiven", "42": "Nikhil", "43": "Rajesh V", "44": "Security", "45": "Events",
+  "46": "SecurityExp", "47": "Jasmeet Singh", "48": "Rashi Wadhwa", "49": "Chaitanya", "50": "Amar Kumar",
+  "51": "Abhishek", "52": "Pratik", "53": "Reception", "54": "VIRENDER", "55": "Umakant",
+  "56": "Sandeep Guard", "57": "Kartik Meena", "58": "Amba", "59": "Rajshekhar", "60": "Vipin",
+  "61": "Vinay Kumar", "62": "Yatinder", "63": "Aditya", "64": "Bablu Guard", "65": "Ravi",
+  "66": "Abhishek Srivastav", "67": "Ruby", "68": "mobiletest", "69": "HV", "70": "Tutor",
+  "71": "Finance",
+};
 const lmsEntryByName = (id) => LMS_ENTRY_BY_NAMES[String(id)] || ("User #" + id);
 
 export function normalizeLmsRow(raw, dept) {
@@ -269,6 +291,11 @@ function lmsContractToLead(c, source = "venue") {
     dept: c.dept,
     entryNo: c.entryNo,
     priority: c.priority || "",
+    // Who this is assigned to in LMS. Only populated for contracts (the edge function's
+    // normalizeRow reads fisc_entryby/dhc_decor_entryby) — decor LEADS have no confirmed raw
+    // field for this yet, so entryById is absent there and entryByName falls back to "".
+    entryById: c.entryById || "",
+    entryByName: c.entryById ? lmsEntryByName(c.entryById) : "",
     // Venue contracts store nothing here (the sync writes no status for them) and decor leads store
     // `status`; lmsStatus is what the fuller normaliser below calls it. Read all three so this stops
     // depending on which producer wrote the row.

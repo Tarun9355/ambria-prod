@@ -65,7 +65,7 @@ import {
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { itemImsSubcat, priceForInvItem } from "../../lib/ims/helpers";
+import { itemImsSubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
@@ -78,7 +78,7 @@ import { rowToItem } from "../../lib/inventory/adapter";
 import { VENUE_MIG_SK, LEGACY_VENUE_SEED } from "../../lib/studio/venues";
 import {
   STORAGE_KEY, AMBRIA_PLAYLIST_ID, CLD_CLOUD,
-  YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK,
+  YT_SK, YT_TAG_SK, MANUAL_VID_SK, HIDDEN_VID_SK, FAV_VID_SK, FAV_PHOTO_SK,
   NOTIF_SK, DT_SK, PIMAP_SK, SCAN_HIST_SK,
   IMS_SETTINGS_SK, STUDIO_LMS_CACHE_SK, PALETTE_SK,
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
@@ -1537,6 +1537,11 @@ export default function StudioApp() {
   const [dcPrefModal, setDcPrefModal] = useState(null);
   const [dcCustomItems, setDcCustomItems] = useState([]);
   const [dcCustomModal, setDcCustomModal] = useState(null);
+  // Per-element/per-reference stock availability picker — { zoneKey, idx, elName, subcat, date,
+  // loading, items, selectedId, onPick }. Lifted here (rather than staying local to StudioBuild)
+  // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
+  // trigger the exact same picker instead of each growing its own copy.
+  const [availModal, setAvailModal] = useState(null);
   // Swap modal local state — lifted to App scope to avoid hook-reset on parent re-render.
   const [dcSwapSearch, setDcSwapSearch] = useState("");
   const [dcSwapPicked, setDcSwapPicked] = useState(null);
@@ -2069,6 +2074,8 @@ export default function StudioApp() {
   const [manualVideos, setManualVideos] = useState([]);
   const [hiddenVideos, setHiddenVideos] = useState({});
   const [showHidden, setShowHidden] = useState(false);
+  const [favVideos, setFavVideos] = useState({});
+  const [favPhotos, setFavPhotos] = useState({});
   const [lastVisitTs, setLastVisitTs] = useState(0);
 
   // ═══ CLOUDINARY PHOTO BROWSER STATE (reference ~3580) ═══
@@ -2291,6 +2298,10 @@ export default function StudioApp() {
       try { const v = await kvGet(MANUAL_VID_SK); if (v != null) { const mp = parse(v); if (Array.isArray(mp) && !cancelled) setManualVideos(mp); } } catch {}
       // Hidden videos
       try { const v = await kvGet(HIDDEN_VID_SK); if (v != null) { const hp = parse(v); if (hp && typeof hp === "object" && !cancelled) setHiddenVideos(hp); } } catch {}
+      // Favourite videos
+      try { const v = await kvGet(FAV_VID_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavVideos(fp); } } catch {}
+      // Favourite zone photos
+      try { const v = await kvGet(FAV_PHOTO_SK); if (v != null) { const fp = parse(v); if (fp && typeof fp === "object" && !cancelled) setFavPhotos(fp); } } catch {}
       // Filter priority
       try { const v = await kvGet(FILTER_PRIORITY_SK); if (v != null) { const fpp = parse(v); if (Array.isArray(fpp) && fpp.length === 5 && !cancelled) setFilterPriority(fpp); } } catch {}
       // Tagging-hidden sub-categories (Pricing flags)
@@ -2425,6 +2436,8 @@ export default function StudioApp() {
           // hid what goes stale for as long as it stays open, and the folder counts silently disagree
           // between tabs. Merge-on-save makes staleness harmless for data, but not for what you see.
           else if (key === HIDDEN_VID_SK) { const hv = pj(await kvGet(HIDDEN_VID_SK)); if (hv && typeof hv === "object") setHiddenVideos(hv); }
+          else if (key === FAV_VID_SK) { const fv = pj(await kvGet(FAV_VID_SK)); if (fv && typeof fv === "object") setFavVideos(fv); }
+          else if (key === FAV_PHOTO_SK) { const fp = pj(await kvGet(FAV_PHOTO_SK)); if (fp && typeof fp === "object") setFavPhotos(fp); }
           else if (key === ZONE_GROUPS_SK) { const zg = normaliseZoneGroups(pj(await kvGet(ZONE_GROUPS_SK))); zoneGroupsRef.current = zg; setZoneGroups(zg); }
           else if (FLORAL_DATA_KEYS.includes(key)) { refreshStudioFloralData(); }
         } catch { /* ignore */ }
@@ -4491,6 +4504,76 @@ export default function StudioApp() {
     return { ok: !!saved?.ok, error: saved?.error || null };
   }, []);
 
+  // Same read-merge-write contract as saveHiddenVideos, same reason — a video's favourite flag
+  // toggled before the async load lands must not stomp anyone else's.
+  //
+  // Shape is { [videoId]: { [userId]: true } } — favouriting is PER SALESPERSON. Tarun and Krati
+  // favouriting the same video are two independent flags, not one shared one; the one settings row
+  // holds everyone's, so the merge here has to happen at the (videoId, userId) pair, not just the
+  // videoId — merging at the videoId level alone would let one person's toggle silently overwrite
+  // every other salesperson's flag on that same video. Callers pass `{ [videoId]: { [userId]: val } }`.
+  const saveFavVideos = useCallback(async (patch) => {
+    const res = await kvTryGet(FAV_VID_SK);
+    if (!res.ok) {
+      setSaveError({ label: "Favourite videos", error: `Couldn't read the current favourites (${res.error}). Nothing was saved. Check your connection and try again.` });
+      return { ok: false, error: res.error };
+    }
+    let fresh = {};
+    if (res.value != null) {
+      try {
+        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
+        fresh = p;
+      } catch (e) {
+        setSaveError({ label: "Favourite videos", error: `The saved favourites could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
+        return { ok: false, error: "unreadable" };
+      }
+    }
+    const merged = { ...fresh };
+    Object.entries(patch || {}).forEach(([videoId, userPatch]) => {
+      const cur = { ...(merged[videoId] || {}) };
+      Object.entries(userPatch || {}).forEach(([uid, val]) => { if (!val) delete cur[uid]; else cur[uid] = val; });
+      if (Object.keys(cur).length) merged[videoId] = cur; else delete merged[videoId];
+    });
+    setFavVideos(merged);
+    const saved = await reliableSave(FAV_VID_SK, JSON.stringify(merged), "Favourite videos");
+    if (!saved?.ok) setSaveError({ label: "Favourite videos", error: saved?.error || "Save failed" });
+    return { ok: !!saved?.ok, error: saved?.error || null };
+  }, []);
+
+  // Same shape, same per-(id, userId) merge, same reasoning as saveFavVideos above — one shared row,
+  // one salesperson's toggle never touches another's flag on the same photo. `id` here is the
+  // Library photo's own id (or its src for a non-library photo), never a (photo, zone) pair — see
+  // FAV_PHOTO_SK's comment for why that's what makes a re-tagged photo keep its favourite.
+  const saveFavPhotos = useCallback(async (patch) => {
+    const res = await kvTryGet(FAV_PHOTO_SK);
+    if (!res.ok) {
+      setSaveError({ label: "Favourite photos", error: `Couldn't read the current favourites (${res.error}). Nothing was saved. Check your connection and try again.` });
+      return { ok: false, error: res.error };
+    }
+    let fresh = {};
+    if (res.value != null) {
+      try {
+        const p = typeof res.value === "string" ? JSON.parse(res.value) : res.value;
+        if (!p || typeof p !== "object") throw new Error("stored value is not an object");
+        fresh = p;
+      } catch (e) {
+        setSaveError({ label: "Favourite photos", error: `The saved favourites could not be read (${e.message}). Nothing was saved, so nothing was overwritten. Please report this instead of retrying.` });
+        return { ok: false, error: "unreadable" };
+      }
+    }
+    const merged = { ...fresh };
+    Object.entries(patch || {}).forEach(([photoId, userPatch]) => {
+      const cur = { ...(merged[photoId] || {}) };
+      Object.entries(userPatch || {}).forEach(([uid, val]) => { if (!val) delete cur[uid]; else cur[uid] = val; });
+      if (Object.keys(cur).length) merged[photoId] = cur; else delete merged[photoId];
+    });
+    setFavPhotos(merged);
+    const saved = await reliableSave(FAV_PHOTO_SK, JSON.stringify(merged), "Favourite photos");
+    if (!saved?.ok) setSaveError({ label: "Favourite photos", error: saved?.error || "Save failed" });
+    return { ok: !!saved?.ok, error: saved?.error || null };
+  }, []);
+
   // ═══ STORAGE VIDEO BROWSER (was Cloudinary) ═══
   // Same bucket and same folder tree as the photo browser — only the type filter differs.
   const storageVideos = useCallback(async (path) => {
@@ -4866,8 +4949,11 @@ export default function StudioApp() {
     return Object.values(venueMap).sort((a, b) => a.name.localeCompare(b.name));
   }, [events, allOutdoorDB, allInhouseVenues]);
 
-  // ── Browse videos (tagged-video inspiration catalog) — VERBATIM ──
-  const browseVideos = useMemo(() => {
+  // ── Browse videos base list: mapped + hidden-videos dropped + permission scope applied ──
+  // Factored out so a search can read it directly (browseVideosAll below) instead of the fully
+  // filtered browseVideos — permission scope is the one boundary a search still has to respect,
+  // but nothing past it (venue/tier/style/palette/function) should narrow a search's results.
+  const browseVideosBase = useMemo(() => {
     // Hiding a video in Manage → Library promises it "won't show in the app", but Browse was built
     // straight off ytVideoTags and never consulted hiddenVideos — so hidden references still filled
     // the grid and were counted in the "N videos" headline. Drop them at the source, before any
@@ -4898,21 +4984,34 @@ export default function StudioApp() {
         source: vid?.source || "youtube"
       };
     });
-    let out = list;
     // allInhouseVenueOrParentNames also covers a video stored at the ambiguous PROPERTY level
     // (e.g. "Restro" itself, when a description named the property but not one of its rooms) —
     // plain allInhouseVenues (rooms only) would otherwise misfile such a video as "outside".
     // A video with NO venue tag belongs to neither group — 191 of 428 are in that state, which is
     // why a group pill hides so much.
     const groupOf = (v) => (!v.venue ? "none" : allInhouseVenueOrParentNames.includes(v.venue) ? "inhouse" : "outside");
-
     // ── Permission scope: the ONLY hard boundary here ──────────────────────────────────────────
     // A user restricted to inhouse must never be shown outside venues, whatever they click. This
     // used to be conflated with the venueGroup pill, which meant the pill could not be relaxed
     // without also breaking the restriction.
     const scope = isAdmin ? "all" : (userVenueScope || "all");
-    if (scope === "inhouse" || scope === "outside") out = out.filter(v => groupOf(v) === scope);
+    return (scope === "inhouse" || scope === "outside") ? list.filter(v => groupOf(v) === scope) : list;
+  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, allInhouseVenueOrParentNames, isAdmin, userVenueScope]);
 
+  // Same favourite-first ordering browseVideos applies, with none of the optional filters — the
+  // list a search reads from (see Browse's shownVideos), so favourites still lead but nothing else
+  // narrows it.
+  const browseVideosAll = useMemo(() => {
+    const isMyFav = (v) => !!favVideos[v.id]?.[authUser?.id];
+    const favs = [], rest = [];
+    for (const v of browseVideosBase) (isMyFav(v) ? favs : rest).push(v);
+    return favs.length ? [...favs, ...rest] : browseVideosBase;
+  }, [browseVideosBase, favVideos, authUser]);
+
+  // ── Browse videos (tagged-video inspiration catalog) — VERBATIM ──
+  const browseVideos = useMemo(() => {
+    let out = browseVideosBase;
+    const groupOf = (v) => (!v.venue ? "none" : allInhouseVenueOrParentNames.includes(v.venue) ? "inhouse" : "outside");
     // ── The Inhouse/Outside pill: a filter only until you pick a venue ─────────────────────────
     // Once a specific venue is chosen, the venue IS the preference and the pill was merely how you
     // navigated to it — so the references BELOW that venue's own videos should be every other
@@ -4940,13 +5039,28 @@ export default function StudioApp() {
       preferredVenues = new Set(browseVenues);
       browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => preferredVenues.add(sv)); });
     }
+    // Function type is the one filter a favourited video still has to clear — every other filter
+    // below exempts it. Favouriting a video is a deliberate "always show this for its venue" pin;
+    // the whole point is not having to remember to clear the tier/style/palette filters just to
+    // pull it back up mid-meeting.
+    // Favouriting is per salesperson (see saveFavVideos) — Tarun's picks for a venue are independent
+    // of Krati's, so every check below is against MY OWN flag on the video, never anyone else's.
+    const isMyFav = (v) => !!favVideos[v.id]?.[authUser?.id];
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
-    if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
-    if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
-    if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
+    if (filterCat.length > 0) out = out.filter(v => isMyFav(v) || (v.tierCat && filterCat.includes(v.tierCat)));
+    if (filterSpace.length > 0) out = out.filter(v => isMyFav(v) || (v.space && filterSpace.includes(v.space)));
+    if (filterMood.length > 0) out = out.filter(v => isMyFav(v) || v.styles.some(s => filterMood.includes(s)));
     // Whitespace/case-insensitive: the pill says "Brown" (trimmed by paletteNames) while the video
     // may be tagged "Brown " — an exact includes() matched neither half of the library reliably.
-    if (filterPalette.length > 0) out = out.filter(v => (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    if (filterPalette.length > 0) out = out.filter(v => isMyFav(v) || (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    // Favourited videos lead whichever group they land in (below) rather than jumping across group
+    // boundaries — a favourite tagged to a DIFFERENT venue must not outrank the venue you actually
+    // selected, it just leads once it's already in the right bucket.
+    const favFirst = (arr) => {
+      const favs = [], rest = [];
+      for (const v of arr) (isMyFav(v) ? favs : rest).push(v);
+      return favs.length ? [...favs, ...rest] : arr;
+    };
     // Applied last, so the chosen venue floats to the top of whatever the other filters left. A
     // stable partition, not a sort — order within each group is untouched. `_venueMatch` lets
     // Browse draw the divider; without one this reads as the venue filter having stopped working.
@@ -4964,10 +5078,12 @@ export default function StudioApp() {
         else if (venueGroup !== "all" && groupOf(v) === venueGroup) sameGroup.push(rec);
         else rest.push(rec);
       }
-      out = [...atVenue, ...sameGroup, ...rest];
+      out = [...favFirst(atVenue), ...favFirst(sameGroup), ...favFirst(rest)];
+    } else {
+      out = favFirst(out);
     }
     return out;
-  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent, isAdmin, userVenueScope]);
+  }, [browseVideosBase, favVideos, authUser, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood, filterPalette, allInhouseVenueOrParentNames, allOutdoorDB, subVenuesOfParent]);
 
   // ── Active client + meeting number ──
   const activeClient = useMemo(() => clientLedger.find(c => c.id === activeClientId), [clientLedger, activeClientId]);
@@ -6457,8 +6573,24 @@ export default function StudioApp() {
       return;
     }
     setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
+    // Scale By is a deal-specific "how many of this zone" multiplier (40 tables, say) — it has
+    // nothing to do with WHICH reference photo is loaded. Browsing to a different centrepiece photo
+    // used to silently drop it: the new photo's elements came in at their own raw (×1) baseQty and
+    // zoneConfig[elKey] got wholesale-replaced by a fresh cfg that never carries `scale`, so the
+    // Scale box kept showing its old number while the actual priced quantities quietly reset to 1×.
+    // Carry the CURRENT live scale over onto the incoming photo's elements instead.
+    const curScale = Math.max(1, Math.round(Number(zoneConfig[elKey]?.scale) || 1));
     if (photo.isLibrary && (photo.elements || []).length > 0) {
-      setZoneElements(p => ({ ...p, [elKey]: JSON.parse(JSON.stringify(photo.elements)) }));
+      // Strip any `baseQty` the photo's own saved elements happen to be carrying — "Correct & update
+      // master" persists zoneElements verbatim, so a photo corrected while a zone was mid-scale can
+      // have a stale baseQty baked in (e.g. 0.5, left over from a long-gone ÷2). A fresh photo pick
+      // always derives its base from that photo's own qty, never an inherited one, or the very next
+      // Scale edit multiplies the WRONG base and lands on a qty nobody asked for.
+      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, ...e }) => e);
+      setZoneElements(p => ({ ...p, [elKey]: curScale > 1
+        ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
+        : rawEls
+      }));
     } else {
       setZoneElements(p => ({ ...p, [elKey]: [] }));
     }
@@ -6483,7 +6615,9 @@ export default function StudioApp() {
       }
     }
     if (cfg) {
-      setZoneConfig(p => ({ ...p, [elKey]: cfg }));
+      // Same reason as above — scale/repeat are live deal choices, not part of what a reference
+      // photo's config describes. Preserve them across the replace instead of losing them.
+      setZoneConfig(p => ({ ...p, [elKey]: { ...cfg, scale: p[elKey]?.scale, repeat: p[elKey]?.repeat } }));
     }
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
@@ -6524,7 +6658,10 @@ export default function StudioApp() {
     // seeds zoneConfig (truss/platform/print/dims); every one after that contributes elements only.
     const nextPhotos = [...current, photo];
     setElMultiPhotos(p => ({ ...p, [elKey]: nextPhotos }));
-    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(it => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey }));
+    // Strip any stray baseQty the photo's saved elements carry — see the matching note in
+    // selectElPhoto; a photo corrected mid-scale can bake in a leftover ratio that has nothing to do
+    // with this build.
+    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey }));
     setZoneElements(p => ({ ...p, [elKey]: [...(p[elKey] || []), ...tagged] }));
     if (!current.length) {
       setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
@@ -6803,6 +6940,40 @@ export default function StudioApp() {
     loadAvailability(date).then(({ blocksForDate }) => { if (!cancelled) setActiveBlocksForDate(blocksForDate || {}); }).catch(() => { if (!cancelled) setActiveBlocksForDate({}); });
     return () => { cancelled = true; };
   }, [activeFnMeta?.date, clientDate, loadAvailability]);
+
+  // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
+  // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
+  // being duplicated. Behaviour is unchanged — same subcat resolution, same free-sorted item list.
+  const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick) => {
+    const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+    const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
+    const date = activeFnMeta?.date || clientDate || "";
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
+    try {
+      const { inventory, blocksForDate } = await loadAvailability(date);
+      const target = String(subcat).toLowerCase().trim();
+      const items = (inventory || [])
+        .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        .sort((a, b) => b.free - a.free);
+      setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
+    } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey]);
+  const saveAvailPick = useCallback(() => {
+    if (!availModal) return;
+    const { zoneKey, idx, selectedId, items, onPick } = availModal;
+    const pick = (items || []).find(i => i.id === selectedId);
+    if (onPick) { onPick(selectedId && pick ? pick : null); setAvailModal(null); return; }
+    setZoneElements(p => {
+      const elems = [...(p[zoneKey] || [])];
+      if (!elems[idx]) return p;
+      elems[idx] = (selectedId && pick)
+        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "" }
+        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; return e; })();
+      return { ...p, [zoneKey]: elems };
+    });
+    setAvailModal(null);
+  }, [availModal, setZoneElements]);
 
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
@@ -7387,7 +7558,7 @@ export default function StudioApp() {
     taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER, PAINT_TOKENS_FALLBACK,
     // derived memos
     activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames, leafInhouseVenues,
-    allVenueData, outdoorVenueList, browseVideos, allVideos,
+    allVenueData, outdoorVenueList, browseVideos, browseVideosAll, allVideos,
     // handlers
     loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
@@ -7494,6 +7665,7 @@ export default function StudioApp() {
     ytFilterStyle, setYtFilterStyle, ytFilterColor, setYtFilterColor, ytFilterIO, setYtFilterIO, ytPhotoUrl, setYtPhotoUrl,
     manualVideos, setManualVideos, hiddenVideos, setHiddenVideos, showHidden, setShowHidden, lastVisitTs, setLastVisitTs,
     saveManualVideos, saveHiddenVideos, aiTagVideo, aiTagVideoSave, getPhotos, ZONE_ICONS,
+    favVideos, saveFavVideos, favPhotos, saveFavPhotos,
     // cloudinary photo browser
     cldOpen, setCldOpen, cldFolders, setCldFolders, cldPath, setCldPath, cldImages, setCldImages, cldLoading, setCldLoading,
     cldUploading, setCldUploading, cldUploadProgress, setCldUploadProgress, cldUploadRef, cldFolderUploadRef,
@@ -7527,6 +7699,7 @@ export default function StudioApp() {
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,
+    availModal, setAvailModal, openAvailModal, saveAvailPick,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
@@ -7690,10 +7863,19 @@ export default function StudioApp() {
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {authUser && mode === "studio" && (isAdmin || studioSub("design", "dealcheck")) && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" aria-label="Deal Check" style={NAV_ICON_BTN}><IconClipboardCheck size={NAV_ICON} /></button>}
             {authUser && <>
-              <div style={{ ...NAV_CHIP_BASE, background: "rgba(255,255,255,0.06)", color: "#fff", fontWeight: 500 }}>
-                {authUser.name}
-                {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
-                {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                <div style={{ ...NAV_CHIP_BASE, background: "rgba(255,255,255,0.06)", color: "#fff", fontWeight: 500 }}>
+                  {authUser.name}
+                  {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
+                  {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
+                </div>
+                {/* Which deal this session is on — guest, date, venue — so the account zone still
+                    answers "who am I looking at?" once Event Info scrolls out of view (Browse/Build). */}
+                {mode === "studio" && (() => {
+                  const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
+                  const parts = [clientName.trim(), fmtDate(clientDate), venue].filter(Boolean);
+                  return parts.length > 0 ? <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", fontWeight: 500, whiteSpace: "nowrap" }}>{parts.join(" · ")}</div> : null;
+                })()}
               </div>
               <button onClick={doLogout} title="Log out" aria-label="Log out" style={NAV_ICON_BTN}><IconLogout size={NAV_ICON} /></button>
             </>}

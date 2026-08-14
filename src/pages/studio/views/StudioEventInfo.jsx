@@ -116,6 +116,10 @@ export default function StudioEventInfo({ ctx }) {
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
   const [confirmRemove, setConfirmRemove] = useState(null);
+  // LMS leads and Studio clients default to "mine only" (see the salesperson filter below) —
+  // this is the escape hatch for sitting in on a colleague's meeting. Resets to false each time
+  // the component mounts fresh (not persisted), so nobody is silently stuck in "all" mode later.
+  const [showAllReps, setShowAllReps] = useState(false);
 
   const {
     S, isDark, accent, border, textP, fmt, showMsg,
@@ -128,7 +132,7 @@ export default function StudioEventInfo({ ctx }) {
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
-    activeClient, loadClientSession,
+    activeClient, loadClientSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
@@ -947,7 +951,29 @@ export default function StudioEventInfo({ ctx }) {
                 {HEAD_WAVE}
                 <span style={{width:5,height:5,borderRadius:"50%",background:accent,flexShrink:0}}/>
                 <div className="ei-display" style={{fontSize:15.5,fontWeight:600,color:headText,letterSpacing:0.1}}>Client Details</div>
-                <div style={{marginLeft:"auto",...eyebrow,fontSize:9,color:headMeta}}>Required</div>
+                <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:11}}>
+                  {(() => {
+                    const hasContent = !!(clientName.trim() || clientPhone.trim() || clientBrideGroom.trim() || clientDate || venue || fn || clientShift || clientPax || extraFunctions.length > 0 || activeClientId);
+                    const doReset = () => {
+                      if (!hasContent) return;
+                      askConfirm("Reset this form?", () => { startNewDeal(); showMsg("Form reset", "green"); }, {
+                        yesLabel: "Reset",
+                        note: activeClientId
+                          ? "This closes the currently active deal on screen — its saved sessions stay in Client Tracker, nothing is deleted."
+                          : "Clears everything typed on this screen so far.",
+                      });
+                    };
+                    // Restyled for the ink head this now sits on — the original was grey-on-cream,
+                    // which disappears here. Behaviour is untouched.
+                    return <button type="button" onClick={doReset} disabled={!hasContent}
+                      style={{padding:"3px 10px",borderRadius:6,fontSize:9,fontWeight:700,whiteSpace:"nowrap",
+                        border:`1px solid ${hasContent ? `${accent}66` : "rgba(255,255,255,0.14)"}`,
+                        background:hasContent ? "rgba(201,169,110,0.12)" : "transparent",
+                        color:hasContent ? accent : "rgba(245,241,231,0.3)",
+                        cursor:hasContent ? "pointer" : "default"}}>↺ Reset</button>;
+                  })()}
+                  <span style={{...eyebrow,fontSize:9,color:headMeta}}>Required</span>
+                </div>
               </div>
               <div style={{padding:"22px 24px 26px"}}>
                 <div className="ei-two" style={{marginBottom:18}}>
@@ -978,6 +1004,17 @@ export default function StudioEventInfo({ ctx }) {
                 {(clientName.trim().length >= 2 || clientPhone.trim().length >= 4) && !activeClientId && (() => {
                   const qName = clientName.trim().toLowerCase();
                   const qPhone = clientPhone.trim();
+                  // Each Studio client is tagged to whoever created it (createdBy); each LMS lead/contract
+                  // is tagged to whoever entered it there (entryByName). Default to showing only the
+                  // logged-in salesperson's own — showAllReps is the escape hatch for covering a colleague's
+                  // meeting. An UNTAGGED record (no createdBy, or an LMS row whose entry-by field isn't
+                  // populated yet — true for every decor LEAD today, see lmsContractToLead) always shows
+                  // regardless of the toggle: hiding something nobody could tell was or wasn't "theirs"
+                  // would just make it look lost, not filtered.
+                  const mine = (name) => !name || String(name).toLowerCase() === String(authUser?.name || "").toLowerCase();
+                  const rawLmsLeads = lmsLeads || [];
+                  const visibleLmsLeads = showAllReps ? rawLmsLeads : rawLmsLeads.filter(l => mine(l.entryByName));
+                  const hiddenLmsCount = rawLmsLeads.length - visibleLmsLeads.length;
                   const timeAgo = (ts) => {
                     const ms = Date.now() - ts;
                     const min = Math.floor(ms / 60000);
@@ -997,16 +1034,16 @@ export default function StudioEventInfo({ ctx }) {
                     </div>;
                   }
                   // ── LMS results block (shown ALONGSIDE matching Studio clients, not instead of them) ──
-                  const lmsBlock = (lmsLeads && lmsLeads.length > 0) ? (<div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.04)",border:`1px solid ${isDark?"rgba(34,197,94,0.25)":"rgba(34,197,94,0.2)"}`}}>
+                  const lmsBlock = (visibleLmsLeads.length > 0) ? (<div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.04)",border:`1px solid ${isDark?"rgba(34,197,94,0.25)":"rgba(34,197,94,0.2)"}`}}>
                       <div style={{fontSize:11,fontWeight:600,color:C.green,marginBottom:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                        <span>📥</span><span>{lmsLeads.length} LMS lead{lmsLeads.length>1?"s":""} found — load to capture full lead context</span>
+                        <span>📥</span><span>{visibleLmsLeads.length} LMS lead{visibleLmsLeads.length>1?"s":""} found{hiddenLmsCount>0?` (+${hiddenLmsCount} from others)`:""} — load to capture full lead context</span>
                         {lmsFilling && <span style={{fontSize:10,fontWeight:600,color:C.amber,display:"inline-flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
                           <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:"#F59E0B",animation:"pulse 1.5s infinite"}}></span>
                           more loading…
                         </span>}
                         <button className="ei-btn ei-tint" onClick={refreshLmsSync} disabled={lmsSyncing} style={{marginLeft:"auto",padding:"2px 8px",borderRadius:4,border:"1px solid rgba(21,128,61,0.2)",background:"transparent",color:C.green,fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{lmsSyncing ? "⏳ Syncing…" : "🔄 Refresh"}</button>
                       </div>
-                      {lmsLeads.map(lead => {
+                      {visibleLmsLeads.map(lead => {
                         const deptBadgeStyle = lead.dept === "decor"
                           ? {background:"rgba(168,85,247,0.15)",color:C.purple}
                           : {background:"rgba(59,130,246,0.15)",color:C.blue};
@@ -1050,7 +1087,7 @@ export default function StudioEventInfo({ ctx }) {
                     </div>
                   ) : null;
                   // ── Studio clientLedger matches — shown ALONGSIDE LMS, not only when LMS is empty ──
-                  const matches = clientLedger.filter(c => {
+                  const matchesBeforeRepFilter = clientLedger.filter(c => {
                     if (!c.name) return false;
                     const nameMatch = qName.length >= 2 && c.name.toLowerCase().includes(qName);
                     const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
@@ -1061,8 +1098,22 @@ export default function StudioEventInfo({ ctx }) {
                     // didn't return it (sync lag, filtered out), this Studio card is still the only way in.
                     if (c.lmsLeadId && (lmsLeads || []).some(l => l.entryNo === c.lmsLeadId && l.dept === c.lmsDept)) return false;
                     return true;
-                  }).slice(0, 5);
+                  });
+                  const matchesAfterRepFilter = showAllReps ? matchesBeforeRepFilter : matchesBeforeRepFilter.filter(c => mine(c.createdBy));
+                  const hiddenClientCount = matchesBeforeRepFilter.length - matchesAfterRepFilter.length;
+                  const matches = matchesAfterRepFilter.slice(0, 5);
                   if (!lmsBlock && matches.length === 0) {
+                    // Everything found belongs to other salespeople — say so specifically (rather than
+                    // "no matches", which would send someone covering a colleague's meeting hunting for a
+                    // typo) and offer the toggle right here rather than making them find it elsewhere.
+                    const onlyHiddenByRep = !showAllReps && (hiddenLmsCount > 0 || hiddenClientCount > 0);
+                    if (onlyHiddenByRep) {
+                      const n = hiddenLmsCount + hiddenClientCount;
+                      return <div style={{marginBottom:16,padding:"8px 12px",borderRadius:8,background:isDark?"rgba(99,102,241,0.06)":"rgba(99,102,241,0.04)",border:`1px solid ${isDark?"rgba(99,102,241,0.2)":"rgba(99,102,241,0.15)"}`,fontSize:11,color:C.indigo,display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{flex:1}}>Found {n} match{n>1?"es":""}, but tagged to other salespeople</span>
+                        <button className="ei-btn ei-solid" onClick={()=>setShowAllReps(true)} style={{padding:"3px 10px",borderRadius:6,border:"none",background:C.indigo,color:"#fff",fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>👥 Show all</button>
+                      </div>;
+                    }
                     // Nothing from LMS or Studio — show only an explanatory note if a search was attempted.
                     const note = lmsError ? "⚠ LMS unavailable — showing Studio clients"
                       : lmsFilling ? "⏳ LMS cache loading… results will appear shortly"
@@ -1077,7 +1128,7 @@ export default function StudioEventInfo({ ctx }) {
                     <div style={{fontSize:11,fontWeight:600,color:C.indigo,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                       <span>💡</span>
                       <span style={{flex:1}}>
-                        {`Found ${matches.length} existing Studio client${matches.length>1?"s":""} — load to continue previous work?`}
+                        {`Found ${matches.length} existing Studio client${matches.length>1?"s":""}${hiddenClientCount>0?` (+${hiddenClientCount} from others)`:""} — load to continue previous work?`}
                       </span>
                       <button className="ei-btn ei-tint" onClick={refreshLmsSync} disabled={lmsSyncing} style={{padding:"2px 8px",borderRadius:4,border:"1px solid rgba(99,102,241,0.2)",background:"transparent",color:C.indigo,fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{lmsSyncing ? "⏳ Syncing…" : "🔄 Refresh"}</button>
                     </div>
@@ -1108,7 +1159,21 @@ export default function StudioEventInfo({ ctx }) {
                       </div>;
                     })}
                   </div>) : null;
-                  return <>{lmsBlock}{studioBlock}</>;
+                  // Persistent toggle whenever there's something to switch between — either results are
+                  // already hidden (so there's something "all" would add), or "all" is already on (so
+                  // there's a way back to "mine"). Covering a colleague's meeting means finding this
+                  // BEFORE typing produces zero matches, not just as a fallback in the empty-state note.
+                  const anyHiddenByRep = hiddenLmsCount > 0 || hiddenClientCount > 0;
+                  const repToggle = (showAllReps || anyHiddenByRep) && (
+                    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+                      <button className="ei-btn ei-tint" onClick={()=>setShowAllReps(v=>!v)}
+                        title={showAllReps ? "Back to just your own leads/clients" : "See everyone's leads/clients — for covering a colleague's meeting"}
+                        style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textM,fontSize:9,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                        {showAllReps ? "👤 Show mine only" : `👥 Show all${anyHiddenByRep?` (+${hiddenLmsCount+hiddenClientCount})`:""}`}
+                      </button>
+                    </div>
+                  );
+                  return <>{repToggle}{lmsBlock}{studioBlock}</>;
                 })()}
                 <div><div style={label}>Bride &amp; Groom Name</div><input value={clientBrideGroom} onChange={e=>setClientBrideGroom(e.target.value)} placeholder="e.g. Rahul & Priya" style={S.input}/></div>
               </div>

@@ -1,4 +1,5 @@
 import { useState, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { IconBox } from "../icons.jsx";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
@@ -232,10 +233,16 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   }}
                   onMouseLeave={() => setHoverImg(null)}>
                   {cSrc ? <img src={cSrc} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", cursor: "zoom-in" }} /> : <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}><IconBox size={11}/></span>}
-                  {hoverImg?.idx === ci && cSrc && (
+                  {/* Portal to <body> — this editor renders inside Build's .el-row card, whose
+                      :hover state applies a CSS transform to lift the row. A transformed ancestor
+                      hijacks position:fixed descendants (they position relative to IT, not the
+                      viewport), so without the portal this popup silently renders in the wrong
+                      place — hovering never visibly showed anything. */}
+                  {hoverImg?.idx === ci && cSrc && createPortal(
                     <div style={{ position: "fixed", top: hoverImg.top, bottom: hoverImg.bottom, left: hoverImg.left, zIndex: 10000, width: 160, height: 160, borderRadius: 8, overflow: "hidden", border: `2px solid ${border}`, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", pointerEvents: "none" }}>
                       <img src={cSrc} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>

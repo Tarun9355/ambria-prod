@@ -1,4 +1,5 @@
 import { Fragment, useState, useRef, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
@@ -15,7 +16,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
-import { itemImsSubcat, itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
+import { itemDimsText } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
@@ -474,8 +475,9 @@ export default function StudioBuild({ ctx }) {
     events, libItems, sourceEvent, sourceVideo, ytVideoTags, allVideos,
     getFullCost, findTemplate, templates,
     // client / function meta
-    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions,
-    studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate,
+    clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions,
+    clientPalette, setClientPalette,
+    studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
     imsPaletteCatalogue, imsColourCatalogue,
@@ -535,6 +537,7 @@ export default function StudioBuild({ ctx }) {
     showMsg, askConfirm, saveLib, authUser, logVerificationEvent,
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
+    favPhotos, saveFavPhotos,
   } = ctx;
   // Details & pricing are always shown now (the old global toggle is gone). Each zone is instead
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
@@ -659,7 +662,7 @@ export default function StudioBuild({ ctx }) {
   const elCardSummary = (k) => {
     const els = zoneElements[k] || [];
     if (!els.length) return null;
-    const total = showCosts ? calcElsCost(els, true, zoneConfig[k]) : 0;
+    const total = showCosts ? calcElsCost(els, true, zoneConfig[k], {checkAvailability:true}) : 0;
     return <span style={{fontSize:10.5,fontWeight:600,color:textS,display:"inline-flex",alignItems:"center",gap:6,marginLeft:2}}>
       <span>{els.length} item{els.length === 1 ? "" : "s"}</span>
       {showCosts && total > 0 && <span style={{color:textP,fontWeight:700}}>{fmt(total)}</span>}
@@ -682,8 +685,13 @@ export default function StudioBuild({ ctx }) {
   const textS = isDark ? "#A6ADC0" : "#5A6076";   // 6.4:1 on white
 
   // One definition of "what does this zone cost" — lifted verbatim out of the zone header so the
-  // header and the live-pricing tile share it and cannot drift apart. Arithmetic is unchanged.
-  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k])+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
+  // header and the live-pricing tile share it and cannot drift apart. `{checkAvailability:true}`
+  // matches StudioApp.jsx's totalCost() exactly (same call, same flag) — without it, a zone with an
+  // item short in stock for this date priced HIGHER here (full rate) than in the Décor grand total
+  // (shortfall-adjusted), so "By zone" + "Zones subtotal" quietly failed to add up to the number
+  // above them. Same reasoning as calcFunctionCost's — this is what makes Build's own totals agree
+  // with themselves, and with Summary/Deal Check's.
+  const zoneTotal = (k) => calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true})+(zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0)+dcCustomItems.filter(c=>c.fnIdx===(activeFnIdx||0)&&c.zoneKey===k).reduce((acc,c)=>acc+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0);
   void textSRaw;
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
@@ -766,6 +774,16 @@ export default function StudioBuild({ ctx }) {
     scheduleGroupSave(k, srcType, label, cur);
     return { ...prev, [k]: cur };
   });
+  // Add-only, never removes — used when picking a photo for the actual build (not ticking the
+  // checkbox) while grid mode is already open. Whatever gets chosen to build with should already
+  // be a group member, same as the grid-view-open pre-tick; a no-op (and no re-save) if it already is.
+  const ensureGrpPick = (k, id, srcType, label) => setGrpSel(prev => {
+    const cur = new Set(prev[k] || []);
+    if (cur.has(id)) return prev;
+    cur.add(id);
+    scheduleGroupSave(k, srcType, label, cur);
+    return { ...prev, [k]: cur };
+  });
   // Hide the ticks locally WITHOUT touching the saved group — used when leaving grid view, where
   // the ticks just stop being visible/actionable, same as the group being untouched always meant.
   const hideGrpPick = (k) => setGrpSel(prev => ({ ...prev, [k]: new Set() }));
@@ -775,24 +793,6 @@ export default function StudioBuild({ ctx }) {
     scheduleGroupSave(k, srcType, label, new Set());
     return { ...prev, [k]: new Set() };
   });
-  // Delete a zone's whole group for the current function. Confirmed, because unlike unpinning a
-  // ticked photo or two this throws away an arrangement that could have taken a while to build.
-  const clearZoneGroup = (zoneKey, srcType, label) => {
-    const area = groupAreaFor(srcType, label);
-    const current = zoneGroups?.[area]?.[groupFn] || [];
-    if (!area || !current.length || !writeZoneGroup) return;
-    askConfirm(`Delete the ${area}${groupFn ? ` · ${groupFn}` : ""} group?`, async () => {
-      try {
-        await writeZoneGroup(area, groupFn, []);
-        clearGrpPick(zoneKey, srcType, label);
-        setPhPage(p => ({ ...p, [zoneKey]: 0 }));   // the whole order just changed under the pager
-        showMsg(`✓ Group deleted — ${area} goes back to its normal photo order`, "green");
-      } catch (e) { showMsg("Couldn't delete the group: " + (e.message || "unknown"), "red"); }
-    }, {
-      yesLabel: "Delete group",
-      note: `The ${current.length} photo${current.length === 1 ? "" : "s"} stay in the Library and keep their tags — they just stop leading this zone.`,
-    });
-  };
   // Both side rails fold away together, from the one control in the Photo filters header.
   // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
   // running total off screen — the one thing you want kept while you widen it.
@@ -822,13 +822,15 @@ export default function StudioBuild({ ctx }) {
   // caps as the rail, but its own expand state — it is a separate surface you open per zone.
   const [zpInlinePaletteAll, setZpInlinePaletteAll] = useState(false);
   const [zpInlineVenueAll, setZpInlineVenueAll] = useState(false);
-  // Cap a list but never hide an active selection: a filter you cannot see is a filter you cannot
-  // clear, and the photo count would look wrong with nothing on screen to explain it.
-  const zpCap = (all, sel, cap, seeAll) => {
-    if (seeAll || all.length <= cap) return { shown: all, hidden: 0 };
-    const head = all.slice(0, cap);
-    return { shown: [...head, ...sel.filter((v) => all.includes(v) && !head.includes(v))], hidden: all.length - cap };
-  };
+  // Same reasoning, same smart search as the rail's Venue/Palette groups — own query state because
+  // only one zone's popup is ever open at once, but it's still a separate surface from the rail.
+  const [zpInlinePaletteQ, setZpInlinePaletteQ] = useState("");
+  const [zpInlineVenueQ, setZpInlineVenueQ] = useState("");
+  // Fabric Palette combobox (Deal Check's fabric colour input, not a photo filter) — collapsed to a
+  // single trigger chip, same toggle-by-click-again model as the per-zone filter icon (no outside-
+  // click handling needed): open shows a search box + dropdown, picking a value closes it.
+  const [fabricPaletteOpen, setFabricPaletteOpen] = useState(false);
+  const [fabricPaletteQ, setFabricPaletteQ] = useState("");
   const zpMorePill = () => ({ ...zpPill(false), borderStyle: "dashed", fontWeight: 700, color: accent });
   const PH_COLS = 4;                          // always four across: a wider column means BIGGER
   // One row, rails open or folded. Folding them used to add a second row of four, which is the
@@ -1014,55 +1016,47 @@ export default function StudioBuild({ ctx }) {
     setZoneScale(k, raw);
   };
 
+  // ── Recalibrate — repair a zone whose baseQty drifted from a legacy corrupted save ────────────
+  // Normally baseQty stays trustworthy forever (every qty edit and every scale change keeps it in
+  // step). But a photo corrected to master WHILE a zone was mid-scale, before that save started
+  // stripping baseQty, could bake a stale ratio (e.g. 0.5) straight into the library photo — and any
+  // deal that had already loaded that photo before the fix shipped is still sitting on it in its own
+  // saved snapshot. The symptom: Scale reads 20, an element shows 10, and every further scale edit
+  // just multiplies the same wrong base (0.5×20=10 forever) because it's internally self-consistent.
+  // The only real fix is to re-derive from the photo's own canonical recipe qty, not from anything
+  // already sitting in this zone. Re-selecting the same photo does exactly that (see selectElPhoto)
+  // but also wipes truss/platform/scale — this does the same recipe re-pull without losing either.
+  const recalibrateZoneScale = (k) => {
+    const photo = elSelectedPhoto[k];
+    if (!photo?.isLibrary) return;
+    const libImg = libItems.find(i => i.url === photo.src || i.id === photo.eventId);
+    const rawEls = libImg?.elements || photo.elements || [];
+    if (!rawEls.length) return;
+    askConfirm(
+      "Recalibrate this zone's quantities to the selected photo's recipe?",
+      () => {
+        const s = zoneScaleVal(k);
+        setZoneElements(p => ({ ...p, [k]: JSON.parse(JSON.stringify(rawEls)).map(({ baseQty: _drop, ...e }) => {
+          const base = Number(e.qty) || 0;
+          return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * s)) };
+        }) }));
+        showMsg("✓ Recalibrated to the photo's recipe", "green");
+      },
+      { yesLabel: "Recalibrate", note: "Any manual quantity edits or added items in this zone will be replaced by the photo's own element list, scaled ×" + zoneScaleVal(k) + "." }
+    );
+  };
+
   // ── Per-element stock availability browser (Build) ───────────────────────────────────────────
   // A discreet 📦 on each element opens a modal listing that element's IMS sub-category items (alias-aware)
   // with the FREE count on the event date (owned − blocked). Picking one + Save pins it on the element
   // (deal-local) → Deal Check auto-match honors the pin. No costs shown — availability only.
-  const [availModal, setAvailModal] = useState(null); // { zoneKey, idx, elName, subcat, loading, items, selectedId }
+  // availModal/openAvailModal/saveAvailPick now live in ctx (StudioApp.jsx) — the Add Production/
+  // Buying Item modal (StudioModals.jsx, a sibling view) needed the exact same picker rather than a
+  // second copy, and the modal itself now renders in StudioModals.jsx alongside it.
   // Hover-to-zoom on an element's thumbnail — same fixed-position enlarged-preview pattern as
   // ManageLibrary.jsx's elHoverImg. Keyed by "zoneKey:idx" since two near-duplicate element-list
   // blocks in this file can both be on screen at once.
   const [elThumbHover, setElThumbHover] = useState(null); // { key, top, bottom, left }
-  // `onPick(pickedItemOrNull)`, when given, hands the picked item back to the CALLER instead of the
-  // hardcoded zoneElements-by-index update below — lets a kit component row (KitComponentsEditor's
-  // own 📦 icon) reuse this exact same modal/availability-lookup to swap ITS item, without a second
-  // copy of the modal or the availability-fetch logic.
-  const openAvailModal = async (zoneKey, idx, el, rc, onPick) => {
-    // Inventory-sourced elements (el.invId) already know their exact real sub-category — no
-    // Rate-Card→IMS alias lookup needed, unlike the legacy rc path below.
-    const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
-    const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
-    const date = activeFnMeta?.date || clientDate || "";
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
-    try {
-      const { inventory, blocksForDate } = await loadAvailability(date);
-      const target = String(subcat).toLowerCase().trim();
-      const items = (inventory || [])
-        .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
-        .sort((a, b) => b.free - a.free);
-      setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
-    } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
-  };
-  const saveAvailPick = () => {
-    if (!availModal) return;
-    const { zoneKey, idx, selectedId, items, onPick } = availModal;
-    const pick = (items || []).find(i => i.id === selectedId);
-    if (onPick) { onPick(selectedId && pick ? pick : null); setAvailModal(null); return; }
-    setZoneElements(p => {
-      const elems = [...(p[zoneKey] || [])];
-      if (!elems[idx]) return p;
-      elems[idx] = (selectedId && pick)
-        // Picking an item REPLACES this element with it — invId drives both the display name and
-        // the price (getElPriceFromInventory), so name + rate follow the picked item. imsId keeps
-        // the booking pin in sync.
-        ? { ...elems[idx], invId: selectedId, name: pick.name || elems[idx].name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "" }
-        // Deselecting clears only the booking pin — the element keeps its current identity.
-        : (() => { const e = { ...elems[idx] }; delete e.imsId; delete e.imsName; delete e.imsPhoto; return e; })();
-      return { ...p, [zoneKey]: elems };
-    });
-    setAvailModal(null);
-  };
 
   // The currently-selected photo per zone can be restored from a saved session and its id may not
   // be in the lazy library cache yet (used below for the "correct & save to master" lookup) —
@@ -1740,9 +1734,54 @@ undefined
         : railTab("left","Photo filters",<IconSliders size={14}/>)}
       <div style={{flex:1,minWidth:0}}>
 
-    {/* Event Palette strip removed on request. The palette still comes from the selected
-        video's tag via clientPalette / extraFunctions[].palette — there is simply no override
-        control on Build any more. */}
+    {/* ═══ FABRIC PALETTE ═══ Brought back as a deliberately narrow control: this sets fn.fnPalette,
+        which Deal Check's Truss tab (DCTrussTab.jsx) reads for its anchor colours when auto-filling
+        masking/liza/curtain fabric allocation — production planning, not client-facing. It does
+        NOT touch photo matching or filtering; that's the separate "Color palette" filter inside
+        each zone's own Photo Filters. Was previously auto-only (from the selected video's tag,
+        with no override) — this reintroduces a manual pick, per zone group's own function. */}
+    {(()=>{
+      const isPrimaryFn = activeFnIdx === 0;
+      const current = isPrimaryFn ? (clientPalette || "Custom") : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
+      const setPalette = (v) => {
+        if (isPrimaryFn) setClientPalette(v);
+        else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, palette: v } : f));
+        setFabricPaletteQ(""); setFabricPaletteOpen(false);
+      };
+      const opts = azSort(paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
+      const anchorsOf = (name) => (imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
+      const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ, anchorsOf) : opts;
+      const optRow = (v, isCustom) => (
+        <div key={v} onClick={()=>setPalette(v)} style={{padding:"5px 9px",borderRadius:6,cursor:"pointer",fontSize:11,
+          fontWeight:current===v?700:isCustom?500:400,
+          background:current===v?`${accent}18`:"transparent",
+          color:current===v?accent:textP}}>{v}</div>
+      );
+      return <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:14,flexWrap:"wrap"}}>
+        <span style={{display:"flex",color:accent}}><IconPalette size={13}/></span>
+        <span style={{fontSize:11.5,fontWeight:600,color:textP}}>Fabric Palette</span>
+        <span title="Sets masking/drape colour allocation in Deal Check — doesn't affect the photo filters above" style={{fontSize:10,color:textS,cursor:"help"}}>ⓘ</span>
+        <div style={{position:"relative"}}>
+          <div onClick={()=>setFabricPaletteOpen(o=>!o)} title="Click to change"
+            style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,
+              border:`1px solid ${fabricPaletteOpen?accent:border}`,background:cardBg,cursor:"pointer",
+              fontSize:11,fontWeight:600,color:current==="Custom"?textS:textP}}>
+            {current}
+            <span style={{display:"inline-flex",transform:fabricPaletteOpen?"rotate(180deg)":"none",transition:"transform .15s ease",color:textS}}><IconChevron size={10}/></span>
+          </div>
+          {fabricPaletteOpen&&<div style={{position:"absolute",top:"100%",left:0,zIndex:60,marginTop:4,width:230,
+            background:cardBg,border:`1px solid ${border}`,borderRadius:9,boxShadow:"0 6px 20px rgba(0,0,0,0.22)",padding:8}}>
+            <input autoFocus value={fabricPaletteQ} onChange={e=>setFabricPaletteQ(e.target.value)}
+              placeholder="Search palettes…" style={{...S.input,fontSize:11,padding:"5px 8px",marginBottom:6,width:"100%"}}/>
+            <div style={{maxHeight:220,overflowY:"auto"}}>
+              {optRow("Custom", true)}
+              {matched.map(v=>optRow(v))}
+              {fabricPaletteQ.trim()&&matched.length===0&&<div style={{padding:"5px 9px",fontSize:10.5,color:textS}}>No matches</div>}
+            </div>
+          </div>}
+        </div>
+      </div>;
+    })()}
 
     {/* The date-demand banner that stood here has moved up beside the date itself. */}
 
@@ -1849,6 +1888,19 @@ undefined
         inGroup.sort((a, b) => (a.groupRank ?? Infinity) - (b.groupRank ?? Infinity));
         matchedPhotos = [...inGroup, ...rest];
       }
+      // My own favourites (per salesperson — see saveFavPhotos) lead everything above except the
+      // hand-picked group, which stays a stronger signal. Keyed by the photo's own id/src, never a
+      // (photo, zone) pair, so re-tagging a photo to a different zone doesn't orphan its favourite —
+      // it just keeps applying wherever the photo currently matches. Respects whatever the Photo
+      // Filters already narrowed matchedPhotos to; it only reorders, it doesn't pull in anything
+      // the filters excluded.
+      const favKey = (ph) => ph.eventId || ph.src;
+      const isMyFavPhoto = (ph) => !!favPhotos[favKey(ph)]?.[authUser?.id];
+      if (matchedPhotos.some(isMyFavPhoto)) {
+        const favd = [], rest = [];
+        for (const ph of matchedPhotos) (isMyFavPhoto(ph) ? favd : rest).push(ph);
+        matchedPhotos = [...favd, ...rest];
+      }
       // Pin the last-selected photo to the FRONT of the strip (and force it in even if relevance/
       // filters would drop it), so re-opening a saved session shows the saved pick first — no
       // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/
@@ -1908,14 +1960,34 @@ undefined
                 always acts on the FULL current membership, not a blank slate — ticking more adds,
                 unticking a pinned one removes, both auto-saved. Leaving the grid hides the ticks, so
                 drop the (already-saved) selection with them — nothing left to act on unseen. */}
-            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{const on=!g[k];if(on)setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));else hideGrpPick(k);return {...g,[k]:on};});}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            {isOn&&<button onClick={e=>{e.stopPropagation();setGridZones(g=>{
+              const on=!g[k];
+              if(on){
+                // Whatever's actually driving this zone's build right now shouldn't have to be
+                // re-found and re-ticked by hand — it starts in the group already, same as if it
+                // had been pinned earlier. Untick it here and it's simply excluded from now on.
+                const initial=new Set(grpSaved);
+                if(isMultiPhotoZone(el.label)){
+                  (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId) initial.add(p.eventId); });
+                } else {
+                  const selP=elSelectedPhoto[k];
+                  if(selP?.eventId) initial.add(selP.eventId);
+                }
+                setGrpSel(p=>({...p,[k]:initial}));
+                // Only save if the currently-selected photo(s) actually added something new — no
+                // point re-writing an identical group every time someone opens the grid.
+                if(initial.size!==grpSaved.length) scheduleGroupSave(k,srcType,el.label,initial);
+              } else hideGrpPick(k);
+              return {...g,[k]:on};
+            });}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
             {/* Clear every tick in this zone in one click — with the auto-save above, this also
                 empties the saved group, same as unticking each photo would. */}
             {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
             {/* Pinned-count chip. The only sign a zone is grouped during normal browsing, and the
                 way in to editing it outside grid mode: clicking re-ticks every pinned photo, which
-                opens the group bar (Delete group lives there). Hidden when the zone has no group, so
-                a strip nobody has curated stays exactly as clean as before. */}
+                opens the group bar and the ✕ Clear button above with it — one control empties the
+                group, not two. Hidden when the zone has no group, so a strip nobody has curated
+                stays exactly as clean as before. */}
             {isOn&&grpOn&&grpSaved.length>0&&<button onClick={e=>{e.stopPropagation();setGrpSel(p=>({...p,[k]:new Set(grpSaved)}));}} title={`${grpSaved.length} photo${grpSaved.length===1?"":"s"} pinned to the front of ${grpArea}${groupFn?` · ${groupFn}`:""} — click to edit the group`} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${accent}`,background:`${accent}18`,color:accent,fontSize:10,fontWeight:800,cursor:"pointer"}}>◆ {grpSaved.length}</button>}
             {isOn&&<button onClick={e=>{e.stopPropagation();setZpFilterOpen(o=>o===k?null:k);}} title="Filter this zone's photos" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${zpFilterOpen===k||zpHasFilters?accent:border}`,background:zpFilterOpen===k||zpHasFilters?`${accent}15`:"transparent",color:zpFilterOpen===k||zpHasFilters?accent:textS,fontSize:10,fontWeight:500,cursor:"pointer"}}><IconSearch size={11}/>{zpHasFilters?` (${Object.values(zpFilters).flat().length})`:""}</button>}
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
@@ -1931,6 +2003,7 @@ undefined
             {isOn&&<span onClick={e=>e.stopPropagation()} title="Scale the whole zone — multiplies every element count below (e.g. set 10 and each element's quantity becomes 10×). Works even with pricing hidden." style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"rgba(201,169,110,0.10)",border:`1px solid ${accent}40`}}>
               <span style={{fontSize:10,fontWeight:700,color:accent,letterSpacing:0.3}}>✕ Scale</span>
               <input type="number" min="1" step="1" value={scaleDraft[k] ?? String(zoneScaleVal(k))} onClick={e=>e.stopPropagation()} onChange={e=>{const v=e.target.value;setScaleDraft(p=>({...p,[k]:v}));}} onBlur={()=>commitScale(k)} onKeyDown={e=>{e.stopPropagation();if(e.key==="Enter")e.currentTarget.blur();if(e.key==="Escape"){setScaleDraft(p=>{const n={...p};delete n[k];return n;});e.currentTarget.blur();}}} onFocus={e=>e.target.select()} style={{width:52,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
+              {elSelectedPhoto[k]?.isLibrary&&<span onClick={e=>{e.stopPropagation();recalibrateZoneScale(k);}} title="Quantities look off for this scale? Re-derive them from the selected photo's recipe (fixes a stale count left over from an old save; discards manual qty edits in this zone)." style={{cursor:"pointer",color:accent,fontSize:11,padding:"1px 2px",lineHeight:1}}>↻</span>}
             </span>}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{isRepeat(k)?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{isRepeat(k)?"Repeat":"Fresh"}</span></span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
@@ -1952,10 +2025,6 @@ undefined
                 <span style={{fontSize:10.5,color:grpSaveStatus[k]==="error"?"#E11D48":textS}}>
                   {grpSaveStatus[k]==="saving"?"Saving…":grpSaveStatus[k]==="error"?"⚠ Couldn't save — will retry on the next tick":"✓ Saved"}
                 </span>
-                <div style={{flex:1}}/>
-                {grpSaved.length>0&&<button onClick={()=>clearZoneGroup(k,srcType,el.label)} style={{padding:"5px 12px",borderRadius:8,border:`1px solid #E11D48`,background:"transparent",color:"#E11D48",fontSize:11,fontWeight:700,cursor:"pointer"}}>
-                  🗑 Delete group ({grpSaved.length})
-                </button>}
               </div>}
               {/* Venue is a preference, not a filter — say so, or the other venues' photos further
                   along the strip look like the venue pick silently failed. */}
@@ -1993,12 +2062,27 @@ undefined
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Color palette</div>
                   {(()=>{
                     const all=azSort(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]));
-                    const {shown,hidden}=zpCap(all,zpFilters.colorPalette||[],ZP_PALETTE_CAP,zpInlinePaletteAll);
-                    return <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(zpFilters.colorPalette.length===0)}>All</span>
-                      {shown.map(v=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(zpFilters.colorPalette.includes(v))}>{v}</span>)}
-                      {(hidden>0||zpInlinePaletteAll)&&all.length>ZP_PALETTE_CAP&&<span onClick={()=>setZpInlinePaletteAll(v=>!v)} style={zpMorePill()}>{hidden>0?`+${hidden} more`:"Show fewer"}</span>}
-                    </div>;
+                    const anchorsOf=(name)=>(imsPaletteCatalogue||[]).find(p=>p.name===name)?.anchorColours;
+                    const matched=paletteSearch(all,zpInlinePaletteQ,anchorsOf);
+                    const capped=!zpInlinePaletteAll&&!zpInlinePaletteQ.trim()&&matched.length>ZP_PALETTE_CAP;
+                    const shown=capped?matched.slice(0,ZP_PALETTE_CAP):matched;
+                    const sel=zpFilters.colorPalette||[];
+                    const selectedHidden=sel.filter(v=>all.includes(v)&&!shown.includes(v));
+                    const optPill=(v)=><span key={v} onClick={()=>zpToggleFilter("colorPalette",v)} style={zpPill(sel.includes(v))}>{v}</span>;
+                    return <>
+                      <div style={{marginBottom:5}}><FSearchBox value={zpInlinePaletteQ} onChange={setZpInlinePaletteQ} placeholder="Search palettes…" noun="palettes" resultCount={matched.length} totalCount={all.length}/></div>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                        <span onClick={()=>setZpFilters(p=>({...p,colorPalette:[]}))} style={zpPill(sel.length===0)}>All</span>
+                        {shown.filter(v=>paletteMatches(v,zpInlinePaletteQ)).map(optPill)}
+                        {(()=>{const byColour=shown.filter(v=>!paletteMatches(v,zpInlinePaletteQ));return byColour.length===0?null:<>
+                          <div style={{width:"100%",fontSize:9,color:textS,marginTop:2}}>Contains this colour</div>
+                          {byColour.map(optPill)}
+                        </>;})()}
+                        {selectedHidden.length>0&&<div style={{width:"100%",fontSize:9,color:textS,marginTop:2}}>{zpInlinePaletteQ.trim()?"Selected, outside this search":"Selected"}</div>}
+                        {selectedHidden.map(optPill)}
+                        {!zpInlinePaletteQ.trim()&&(capped||zpInlinePaletteAll)&&matched.length>ZP_PALETTE_CAP&&<span onClick={()=>setZpInlinePaletteAll(v=>!v)} style={zpMorePill()}>{capped?`See all ${matched.length}`:"Show fewer"}</span>}
+                      </div>
+                    </>;
                   })()}
                 </div>
                 <div>
@@ -2014,13 +2098,23 @@ undefined
                   </div>
                   {(()=>{
                     const all=azSort(zpVenueChoices);
-                    const {shown,hidden}=zpCap(all,zpFilters.venue||[],ZP_VENUE_CAP,zpInlineVenueAll);
-                    return <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(zpFilters.venue.length===0)}>All</span>
-                      {shown.map(v=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(zpFilters.venue.includes(v))}>{v}</span>)}
-                      {(hidden>0||zpInlineVenueAll)&&all.length>ZP_VENUE_CAP&&<span onClick={()=>setZpInlineVenueAll(v=>!v)} style={zpMorePill()}>{hidden>0?`+${hidden} more`:"Show fewer"}</span>}
-                      {all.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
-                    </div>;
+                    const matched=paletteSearch(all,zpInlineVenueQ);
+                    const capped=!zpInlineVenueAll&&!zpInlineVenueQ.trim()&&matched.length>ZP_VENUE_CAP;
+                    const shown=capped?matched.slice(0,ZP_VENUE_CAP):matched;
+                    const sel=zpFilters.venue||[];
+                    const selectedHidden=sel.filter(v=>all.includes(v)&&!shown.includes(v));
+                    const optPill=(v)=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(sel.includes(v))}>{v}</span>;
+                    return <>
+                      {all.length>0&&<div style={{marginBottom:5,maxWidth:340}}><FSearchBox value={zpInlineVenueQ} onChange={setZpInlineVenueQ} placeholder="Search venues…" noun="venues" resultCount={matched.length} totalCount={all.length}/></div>}
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                        <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(sel.length===0)}>All</span>
+                        {shown.map(optPill)}
+                        {selectedHidden.length>0&&<div style={{width:"100%",fontSize:9,color:textS,marginTop:2}}>{zpInlineVenueQ.trim()?"Selected, outside this search":"Selected"}</div>}
+                        {selectedHidden.map(optPill)}
+                        {!zpInlineVenueQ.trim()&&(capped||zpInlineVenueAll)&&matched.length>ZP_VENUE_CAP&&<span onClick={()=>setZpInlineVenueAll(v=>!v)} style={zpMorePill()}>{capped?`See all ${matched.length} venues`:"Show fewer"}</span>}
+                        {all.length===0&&<span style={{fontSize:9,color:textS}}>No venues configured yet</span>}
+                      </div>
+                    </>;
                   })()}
                 </div>
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
@@ -2084,8 +2178,17 @@ undefined
                 const isSelected = multiZone
                   ? (elMultiPhotos[k] || []).some(p => (p.eventId || p.src) === (ph.eventId || ph.src))
                   : elSelectedPhoto[k]?.src === ph.src;
-                // Calculate cost: SAME formula as zone header — elements (with floralRatio) + current zone structure
-                const photoFullCost = calcPhotoCost(k, ph);
+                // For the zone's ACTIVE picture, show the zone's real live total (zoneTotal — the
+                // same figure the header and "By zone" row use) instead of recomputing from the
+                // photo's own stored baseline. calcPhotoCost prices only photo.elements + a bare
+                // buildZoneConfig(photo.dims) — it never picks up a saved masking/carpet/print
+                // config, an extra truss/platform row, or any hand-edit made to the zone after
+                // selecting, so a selected photo with any of that silently badged LOWER than what
+                // was actually charged. Every OTHER (unselected) tile keeps the preview-if-picked
+                // number from calcPhotoCost — that "what would this cost instead" comparison is the
+                // whole point of the strip. Left alone for multi-photo zones (Installations), where
+                // several photos combine into one total and no single tile can claim it as its own.
+                const photoFullCost = (isSelected && !multiZone) ? zoneTotal(k) : calcPhotoCost(k, ph);
                 // Column layout so the caption below the photo can take every pixel the image does
                 // not — see .ph-sel's flex:1. The tile is a grid item, so it already stretches to
                 // the tallest card in the row; that slack now belongs to the select target instead
@@ -2109,6 +2212,24 @@ undefined
                   }}>
                     <img src={ph.src} alt={ph.eventName} loading="lazy" className="ph-img" style={{width:"100%",height:gridZones[k]?95:190,objectFit:"cover",display:"block",opacity:isSelected?1:0.85}} onError={e=>{e.target.style.display="none"}}/>
                     {showCosts&&!isCollapsed(k)&&photoFullCost>0&&<div style={{position:"absolute",bottom:6,right:6,background:isSelected?"#059669":"rgba(0,0,0,0.7)",color:"#fff",padding:gridZones[k]?"3px 7px":"3px 8px",borderRadius:gridZones[k]?5:6,fontSize:gridZones[k]?9:12.5,fontWeight:gridZones[k]?600:700}}>{fmt(photoFullCost)}</div>}
+                    {/* Favourite marker — bottom-right, a small dot, deliberately subtle (same
+                        reasoning as Browse's tier-pill ring: this can be on screen in front of a
+                        guest). Shown in both grid and strip view, ticked or not — it never competes
+                        with the grouping tick (top-left) or the price badge (shares this corner, so
+                        it shifts up when that's also showing). Keyed by the photo's own id/src, not
+                        a (photo, zone) pair, so re-tagging this photo to a different zone later
+                        doesn't lose the favourite — see FAV_PHOTO_SK. */}
+                    {(()=>{
+                      const fKey=ph.eventId||ph.src;
+                      const isFav=!!favPhotos[fKey]?.[authUser?.id];
+                      const priceShown=showCosts&&!isCollapsed(k)&&photoFullCost>0;
+                      return <div onClick={e=>{e.stopPropagation();saveFavPhotos({[fKey]:{[authUser?.id]:isFav?null:true}});}}
+                        title={isFav?"Favourited for this zone — click to remove":"Favourite this photo for this zone"}
+                        style={{position:"absolute",bottom:priceShown?(gridZones[k]?24:30):6,right:6,width:14,height:14,borderRadius:"50%",zIndex:3,cursor:"pointer",
+                          border:`2px solid ${isFav?"#EF4444":"rgba(255,255,255,0.55)"}`,
+                          background:isFav?"#EF4444":"rgba(0,0,0,0.15)",
+                          boxShadow:isFav?"0 0 0 2px rgba(239,68,68,0.35)":"none"}}/>;
+                    })()}
                     {(()=>{
                       // Verified only. An unverified photo shows nothing here, so the tick means
                       // something — same rule the Library grid uses, minus its AI/untagged states.
@@ -2153,7 +2274,14 @@ undefined
                   </div>
                   {/* The whole strip under the photo selects, not just the two lines of text —
                       flex:1 claims the leftover height and the padding widens the target. */}
-                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{if(phSwipedJustNow())return;if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);setGridZones(g=>g[k]?{...g,[k]:false}:g);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}}>
+                  <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{
+                    if(phSwipedJustNow())return;
+                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}
+                    // Same rule as opening the grid: whatever you actually pick to build with belongs
+                    // in the group already, not just whatever happened to be ticked before. Add-only —
+                    // never un-ticks anything the checkbox itself didn't touch.
+                    if(grpOn&&ph.isLibrary&&ph.eventId)ensureGrpPick(k,ph.eventId,srcType,el.label);
+                  }}>
                     {/* No filename. For a library photo eventName is whatever the file was called in
                         storage — "fnq8zuwlfxtductgq4ov" — which tells a salesperson nothing and reads
                         as a bug on screen. What is useful is what the photo CONTAINS, which is the
@@ -2343,10 +2471,17 @@ undefined
                           }}
                           onMouseLeave={()=>setElThumbHover(null)}>
                           {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11.5}}><IconBox size={12}/></div>}
-                          {elThumbHover?.key===thumbKey && thumbSrc && (
+                          {/* Portal straight to <body> — .el-row lifts on :hover via a CSS transform,
+                              and a transformed ancestor turns position:fixed descendants into
+                              position:absolute-relative-to-THAT-ancestor instead of the viewport, so
+                              the getBoundingClientRect() coordinates below land in the wrong place
+                              and the popup effectively never shows. Escaping the DOM subtree entirely
+                              is the fix — the popup no longer has a transformed ancestor to inherit. */}
+                          {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
                             <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
                               <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                            </div>
+                            </div>,
+                            document.body
                           )}
                         </div>
                         <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
@@ -2488,7 +2623,7 @@ undefined
                   </div>);
                 })}
               </div>
-                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k]))}</div>}
+                {(zoneElements[k]||[]).length>0&&showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>{fmt(calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true}))}</div>}
               </div>}
             </div>
           ) : (
@@ -2691,7 +2826,7 @@ undefined
     {/* ═══ CUSTOM ZONES (non-duplicates only — duplicates render in main loop above) ═══ */}
     {customZones.filter(cz=>!cz.sourceType).map(cz=>{
       const k=cz.id;const isOn=enabledEls[k];
-      const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k]);
+      const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true});
       const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
       const czTotal=czElCost+czStructCost;
       return(<div key={k} id={`zone-${k}`} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
@@ -2710,8 +2845,15 @@ undefined
           </div>
         </div>
         {isOn&&!isCollapsed(k)&&<div style={{padding:"0 18px 16px"}}>
+          {/* ═══ FOUR SECTIONS ═══ Same chip switcher the standard zones use — Elements / Truss &
+              Masking / Platform / Print — so a custom "Other" zone looks and behaves like every
+              other zone instead of dumping its whole Zone Structure open by default. */}
+          <div className="sec-grid" id={`zone-sec-${k}`}>
+            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
+          </div>
+
           {/* Element card — add items from Rate Card */}
-          <div>
+          {zoneSection[k]==="elements"&&<div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the item list":"Show the item list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}>
                     <span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>
@@ -2811,10 +2953,14 @@ undefined
                         }}
                         onMouseLeave={()=>setElThumbHover(null)}>
                         {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}><IconBox size={11}/></div>}
-                        {elThumbHover?.key===thumbKey && thumbSrc && (
+                        {/* Portal to <body> — see the matching note on the standard-zone element
+                            card above: .el-row's hover transform otherwise hijacks this fixed
+                            popup's positioning context and it renders invisibly off-place. */}
+                        {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
                           <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
                             <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </div>
                       <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
@@ -2869,132 +3015,127 @@ undefined
               </div>
               {showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>Items: {fmt(czElCost)}</div>}
             </div>}
-          </div>
-          {/* Zone structure — FULL, same as standard zones */}
-          {(()=>{
-            const zc=zoneConfig[k]||{};
-            const dims=zc.dims||{};
-            const fd=zc.floorDims||{};
-            const st=calcStructCost(k,zc,structRates);
-            const sZ=u=>{setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
-            const sD=(d,v)=>{setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
+          </div>}
+
+          {/* Print — identical block to the standard zones (Flex/Vinyl/Sunboard etc). */}
+          {zoneSection[k]==="print"&&<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"9px 12px",marginBottom:10,border:`1px solid ${border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:11.5,fontWeight:600,color:"#0369A1",display:"flex",alignItems:"center",gap:6}}><IconPrinter size={12}/>Print</div>
+              <button onClick={()=>{
+                const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null};
+                setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
+              }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
+            </div>
+            {(()=>{
+              const rows=((zoneConfig[k]||{}).prints||[]).length===0
+                ? [{id:"__phantom__",material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null}]
+                : (zoneConfig[k]||{}).prints;
+              return (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {rows.map((p,pi)=>{
+                  const isPhantom=p.id==="__phantom__";
+                  const invItem=p.invId?(imsInventory||[]).find(i=>i.id===p.invId):null;
+                  const thumbSrc=invItem?.img||invItem?.photoUrls?.[0];
+                  const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
+                  const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
+                  const rate=mat?.ratePerSqft||0;
+                  const cost=sqft*rate;
+                  const setPrint=(patch)=>{
+                    if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
+                    setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}}));
+                  };
+                  const removePrint=()=>setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).filter((_,i)=>i!==pi)}}));
+                  const linkQ=zonePrintSearch[p.id]||"";
+                  return <div key={p.id} style={{padding:"7px 9px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
+                        <option value="">Material…</option>
+                        {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
+                      </select>
+                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:11.5,color:textS}}>×</span>
+                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
+                      <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
+                      {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
+                      <div>
+                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
+                    {p.refImageUrl&&<img src={p.refImageUrl} alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
+                      </div>
+                      <div style={{position:"relative"}}>
+                    {p.invId ? (
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <div style={{width:20,height:20,borderRadius:4,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={12}/></span>}
+                        </div>
+                        <span style={{fontSize:11.5,color:invItem?textS:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{invItem?invItem.name:`⚠ ${p.invId} not in IMS`}</span>
+                        <span onClick={()=>setPrint({invId:null})} style={{cursor:"pointer",color:textS,fontSize:11,textDecoration:"underline"}}>Unlink</span>
+                      </div>
+                    ) : (
+                      <div>
+                        <input value={linkQ} onChange={e=>setZonePrintSearch(prev=>({...prev,[p.id]:e.target.value}))} placeholder="Link to an inventory item (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",width:"100%",marginBottom:0}} />
+                        {linkQ.trim() && (()=>{
+                          const tokens=linkQ.toLowerCase().trim().split(/\s+/).filter(Boolean);
+                          const matches=(imsInventory||[]).filter(it=>tokens.every(t=>(it.name+" "+(it.subCat||it.subcategory||"")+" "+(it.cat||"")).toLowerCase().includes(t))).slice(0,40);
+                          return <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:260,overflowY:"auto"}}>
+                            {matches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
+                            {matches.map(it=>{
+                              const src=it.img||it.photoUrls?.[0];
+                              return <div key={it.id} onClick={()=>{
+                                const toFt=(v,u)=>(Number(v)||0)*({Feet:1,Inches:1/12,Cm:1/30.48,Metre:3.28084}[u]||1);
+                                const patch={invId:it.id};
+                                if(!p.areaW&&!p.areaD){if(it.printW)patch.areaW=toFt(it.printW,it.printUnit);if(it.printL)patch.areaD=toFt(it.printL,it.printUnit);}
+                                setPrint(patch);
+                                setZonePrintSearch(prev=>({...prev,[p.id]:""}));
+                              }} style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                                <div style={{width:32,height:32,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                  {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={15}/></span>}
+                                </div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{it.name}</div>
+                                  <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{it.printW?" · print area on file":""}</div>
+                                </div>
+                              </div>;
+                            })}
+                          </div>;
+                        })()}
+                      </div>
+                    )}
+                      </div>
+                    </div>{/* /optional-fields grid */}
+                  </div>;
+                })}
+                {showCosts&&((zoneConfig[k]||{}).prints||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:700,paddingTop:4}}>
+                  <span style={{color:textP}}>Print Total</span>
+                  <span style={{color:"#0EA5E9"}}>{fmt(((zoneConfig[k]||{}).prints||[]).reduce((sum,p)=>{const m=(imsPrintMaterials||[]).find(x=>x.id===p.material);const s=(Number(p.areaW)||0)*(Number(p.areaD)||0);return sum+s*(m?.ratePerSqft||0);},0))}</span>
+                </div>}
+              </div>
+              );
+            })()}
+          </div>}
+
+          {/* Truss & Masking / Platform — reuse the exact TrussStack/FloorStack the standard zones
+              render, instead of the old bespoke "Zone Structure" block (no §23 truss-type picker,
+              no extra truss/platform rows, no per-row material captions). Same components, same
+              pricing, same look. */}
+          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
+            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
+            const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
+            const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
               // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
               const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
               return {...p,[k]:{...cur,dims,trT}};});};
-            const sFD=(d,v)=>{setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
-            const mw={back:true,left:true,right:true};
-            return <div style={{borderRadius:10,padding:"10px 14px",border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",marginBottom:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:11,fontWeight:600,color:textS}}><IconRuler size={11}/> Zone Structure</div>
-                {showCosts&&st.total>0&&<div style={{fontWeight:600,color:textP}}>{fmt(st.total)}</div>}
-              </div>
-              {/* Truss type — Box vs Single U is set by how many dims are filled below (2 ⇒ Single
-                  U, 3 ⇒ Box), so that choice is read-only here; "None" is the one real manual
-                  action (turns truss off regardless of dims). */}
-              <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
-                {zc.trT&&<span style={{fontSize:10,fontWeight:600,color:textS}} title="Set by how many Truss dims are filled below — 2 dims = Single U, 3 dims = Box">{zc.trT==="box"?"Box Truss":"Single U Truss"}{showCosts?` · ₹${zc.trT==="box"?50:30}/sqft`:""}</span>}
-                <button onClick={()=>sZ({trT:null})} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${!zc.trT?textP:border}`,background:!zc.trT?"rgba(0,0,0,0.06)":"transparent",color:!zc.trT?textP:textS,fontSize:10,cursor:"pointer",fontWeight:!zc.trT?600:400}}>None</button>
-              </div>
-              {/* Truss dims: L, W, H + Qty */}
-              <div style={{display:"flex",gap:8,marginBottom:8}}>
-                {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
-                  <input type="number" value={dims[d]||""} onChange={e=>sD(d,e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>)}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Truss Qty</div>
-                  <input type="number" min={1} value={zc.trussQty||1} onChange={e=>sZ({trussQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="1"/></div>}
-                {zc.trT&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Single-U extension on each front side, this many ft long. Priced as 2× Single U truss. Rare.">Front ext (ft/side)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExt||""} onChange={e=>sZ({trussFrontExt:Math.max(0,parseFloat(e.target.value)||0)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder="0"/></div>}
-                {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
-                  <input type="number" min={0} step="0.5" value={zc.trussFrontExtH||""} onChange={e=>sZ({trussFrontExtH:Math.max(0,parseFloat(e.target.value)||0)})} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={String(zc.dims?.H||0)}/></div>}
-              </div>
-              {/* ── §23 Truss Type selector + Height-anchor validation (custom zone) ── */}
-              {(()=>{
-                const tr = resolveTrussConfig(zc);
-                if (tr.source === "none") return null;
-                if (tr.source === "invalid") {
-                  return <div style={{marginBottom:8,padding:"6px 10px",borderRadius:8,background:"rgba(220,38,38,0.08)",border:"1px solid rgba(220,38,38,0.3)",fontSize:10,color:"#B91C1C",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
-                    <span>⚠️</span><span>{tr.error}</span>
-                  </div>;
-                }
-                if (tr.source === "auto-3dim") {
-                  return <div style={{marginBottom:8,padding:"5px 10px",borderRadius:8,background:"rgba(220,38,38,0.06)",border:"1px solid rgba(220,38,38,0.2)",fontSize:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{color:textS}}>Truss Type:</span>
-                    <span style={{fontWeight:700,color:"#B91C1C"}}>Full Box <span style={{fontWeight:400,color:textS,fontSize:9}}>(auto · 3 dims)</span></span>
-                  </div>;
-                }
-                const picked = zc.trussType;
-                const opts = [
-                  { id:"u_only",   label:"U Truss" },
-                  { id:"half_box", label:"Half Box" },
-                ];
-                return <div style={{marginBottom:8,padding:"6px 10px",borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#FFFEF8",border:`1px solid ${border}`}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                    <span style={{fontSize:10,fontWeight:600,color:textS}}>Truss Type:</span>
-                    {tr.source==="default-on-forget" && <span style={{fontSize:8,padding:"1px 5px",borderRadius:4,background:"rgba(217,119,6,0.12)",color:"#A16207",fontWeight:600}}>defaulted</span>}
-                  </div>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {opts.map(o=>{
-                      const isOn = picked === o.id;
-                      const isDefault = !picked && o.id === "half_box";
-                      return <button key={o.id} onClick={()=>sZ({trussType:o.id})}
-                        style={{padding:"3px 8px",borderRadius:5,border:`1px solid ${isOn?textP:(isDefault?"rgba(217,119,6,0.4)":border)}`,background:isOn?"rgba(0,0,0,0.06)":(isDefault?"rgba(217,119,6,0.06)":"transparent"),color:isOn?textP:textS,fontSize:9,cursor:"pointer",fontWeight:isOn?700:(isDefault?600:400)}}>{o.label}</button>;
-                    })}
-                  </div>
-                </div>;
-              })()}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
-                  <span style={{fontWeight:600,color:textS}}>Material:</span>
-                  {TRUSS_MATERIALS.map(m=>{
-                    const sel=(zc.trussMaterial|| "iron")===m.key;
-                    return <span key={m.key} onClick={()=>sZ({trussMaterial:m.key})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?textP:border}`,background:sel?"rgba(0,0,0,0.06)":"transparent",color:sel?textP:textS}}>{m.label}</span>;
-                  })}
-                  {zc.trT==="box" && customCeilingField(k, zc, true)}
-                </div>
-              )}
-              {zc.trT && (
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap",fontSize:9}}>
-                  <span style={{fontWeight:600,color:textS}}>Density:</span>
-                  {[{v:"minimum",l:"Minimum"},{v:"moderate",l:"Moderate"},{v:"dense",l:"Dense"}].map(o=>{
-                    const sel=(zc.drapeDensity||"moderate")===o.v;
-                    return <span key={o.v} onClick={()=>sZ({drapeDensity:o.v})} style={{padding:"2px 7px",borderRadius:5,fontWeight:sel?700:400,cursor:"pointer",border:`1px solid ${sel?"#EC4899":border}`,background:sel?"rgba(236,72,153,0.12)":"transparent",color:sel?"#9D174D":textS}}>{o.l}</span>;
-                  })}
-                </div>
-              )}
-              {showCosts&&st.truss>0&&<div style={{fontSize:10,color:textS,marginBottom:6}}>Truss: {fmt(st.truss)}</div>}
-              {/* Masking */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11}}><span><IconWall size={11}/> Masking</span>
-                  <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:mw})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
-                </div>{showCosts&&st.masking>0&&<span style={{fontWeight:600,fontSize:11,color:textP}}>{fmt(st.masking)}</span>}
-              </div>
-              {zc.mkOn&&<div style={{display:"flex",gap:4,marginBottom:6,paddingLeft:20,flexWrap:"wrap",alignItems:"center"}}>
-                {maskingOptions(imsMaskingRates).map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.mkT===o.id?700:400,background:zc.mkT===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.mkT===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                {customMaskingField(k, zc, true)}
-              </div>}
-              {/* Platform */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,fontSize:11}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconPlatform size={11}/> Platform</span>
-                  {platformOptions(imsPlatformRates).map(o=><button key={o.id} onClick={()=>sZ({plH:zc.plH===o.id?null:o.id})} style={{padding:"2px 7px",borderRadius:5,border:"none",fontSize:10,cursor:"pointer",fontWeight:zc.plH===o.id?700:400,background:zc.plH===o.id?"rgba(0,0,0,0.08)":"transparent",color:zc.plH===o.id?textP:textS}}>{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
-                </div>{showCosts&&st.platform>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.platform)}</span>}
-              </div>
-              {/* Carpet */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:11}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}><span><IconCarpet size={11}/> Carpet</span>
-                  <select value={zc.cpT||defaultCarpetMatId(imsPrintMaterials)||""} onChange={e=>sZ({cpT:e.target.value})} style={{fontSize:10,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
-                    <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
-                    {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                  </select>
-                </div>{showCosts&&st.carpet>0&&<span style={{fontWeight:600,color:textP}}>{fmt(st.carpet)}</span>}
-              </div>
-              {/* Floor dims */}
-              <div style={{display:"flex",gap:8}}>
-                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor Width (ft)</div>
-                  <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.W||"—"}/></div>
-                <div style={{flex:1}}><div style={{fontSize:9,color:textS,marginBottom:3}}>Floor Depth (ft)</div>
-                  <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,fontSize:12,padding:"6px 8px",textAlign:"center"}} placeholder={dims.L||"—"}/></div>
-                <div style={{flex:1,display:"flex",alignItems:"flex-end"}}><div style={{fontSize:9,color:textS}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft`:"Uses truss L×W"}</div></div>
-              </div>
-            </div>;
+            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
+            const fd=zc.floorDims||{};
+            return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
+              {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} />}
+              {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
+                isDark={isDark} border={border} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} />}
+            </div>);
           })()}
         </div>}
       </div>);
@@ -3045,19 +3186,24 @@ undefined
       </div>;
     })()}
 
-    {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ */}
+    {/* ═══ BUILD PAGE TOTAL — detailed breakdown ═══ The genset selector needs to stay reachable
+        (it's the one control here, not just a readout) regardless of the Live Estimate rail's
+        state, so the panel itself no longer folds away with it. Its COSTS do — every ₹ figure
+        (Decor, Transport, per-genset rate/cost, Grand Total) is the same numbers as the rail, so
+        showing them with the rail closed would just be a second, unlabelled place pricing leaks
+        to. Rail closed → this is a bare genset qty stepper; rail open → the full breakdown returns. */}
     {showCosts&&venue&&<div style={{background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:16,padding:"20px 24px",color:"#fff",marginTop:24}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
         <span style={{fontSize:12,color:"#a5b4fc"}}><IconPlatform size={12}/> Decor (all zones)</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(totalCost())}</span>
-      </div>
+      </div>}
       {/* Trucks and genset are two different things bought from two different rates —
           transportCalc has always kept truckTotal and gensetCost apart, they were merely being
           summed here. Showing one figure meant a venue's genset charge was invisible. */}
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
         <span style={{fontSize:12,color:"#a5b4fc"}}>Transport ({transportCalc.trucks} truck{transportCalc.trucks===1?"":"s"})</span>
         <span style={{fontSize:14,fontWeight:600}}>{fmt(transportCalc.truckTotal)}</span>
-      </div>
+      </div>}
       {/* Genset count is adjustable here rather than only in Event Info's custom-venue block,
           which is where the override lived and where nobody looks once a build is underway.
           Each size supplies its own venue default (IMS Admin → Transport & Power — whole units
@@ -3092,19 +3238,19 @@ undefined
                 </Fragment>
               ))}
             </span>
-            {g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate)}</span>}
+            {rightRailOpen&&g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate)}</span>}
             {g.note&&<span style={{fontSize:10,opacity:0.7}}>· {g.note}</span>}
           </span>
-          <span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate)}</span>
+          {rightRailOpen&&<span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate)}</span>}
         </div>
       ))}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Grand Total</span>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:28,fontWeight:700}}>{fmt(grandTotal)}</div>
           <span style={{fontSize:11,padding:"3px 12px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
         </div>
-      </div>
+      </div>}
     </div>}
 
     {/* ── §23 Soft truss validation summary (warns but doesn't block nav) ── */}
@@ -3140,7 +3286,12 @@ undefined
       const save=async ()=>{
         if(!isNewMaster && !master){showMsg("Photo not found.","red");setCorrectPhoto(null);return;}
         const zk=correctPhoto.zoneKey;
-        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[]));
+        // baseQty is Scale By's own per-element bookkeeping (this zone's qty ÷ whatever scale was
+        // live when this photo was corrected) — never the photo's real recipe quantity. Saving it
+        // verbatim baked a stray scale ratio into the master; the next salesperson to pick this photo
+        // fresh (scale back at 1) would have it silently resurface on their very first Scale edit,
+        // multiplying against a base that had nothing to do with their build. Strip it at the source.
+        const elems=JSON.parse(JSON.stringify(zoneElements[zk]||master?.elements||[])).map(({baseQty:_drop,...e})=>e);
         // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
         // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
         // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity
@@ -3265,53 +3416,8 @@ undefined
 
     <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}><button onClick={()=>setStep(1)} style={S.btn(false)}>← Browse</button><button onClick={()=>setStep(3)} style={S.btn(true)}>Summary →</button></div>
 
-    {/* ── Per-element stock availability modal — image + free count only, pick one to book ── */}
-    {availModal && (
-      <div onClick={()=>setAvailModal(null)} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
-            <div>
-              <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
-              <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</div>
-            </div>
-            <span onClick={()=>setAvailModal(null)} style={{cursor:"pointer",fontSize:22,color:textS,lineHeight:1}}>×</span>
-          </div>
-          <div style={{padding:16,overflowY:"auto",flex:1}}>
-            {availModal.loading ? (
-              <div style={{padding:"48px 0",textAlign:"center",color:textS,fontSize:13}}>Loading availability…</div>
-            ) : (availModal.items.length===0 ? (
-              <div style={{padding:"48px 0",textAlign:"center",color:textS,fontSize:13}}>No inventory found in “{availModal.subcat||"this sub-category"}”.</div>
-            ) : (
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
-                {availModal.items.map(it=>{
-                  const sel = availModal.selectedId===it.id;
-                  const out = it.free<=0;
-                  return (
-                    <div key={it.id} onClick={()=>setAvailModal(m=>({...m,selectedId: sel?null:it.id}))} style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
-                      {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
-                      <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
-                      {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
-                      <div style={{padding:"8px 10px"}}>
-                        <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
-                        {it.dims && <div style={{fontSize:9,color:textS,marginTop:2}}><IconRuler size={9}/> {it.dims}</div>}
-                        <div style={{fontSize:11,fontWeight:700,color:accent,marginTop:2}}>{fmt(Math.round(it.price))}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-          <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,color:textS}}>{availModal.onPick ? "Pick an item to swap this kit component to." : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin.")}</span>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setAvailModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
-              <button onClick={saveAvailPick} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )}
+    {/* Per-element stock availability modal now renders in StudioModals.jsx — shared with the
+        Add Production/Buying Item modal, which also triggers openAvailModal via ctx. */}
 
     {/* ═══ FULL-SCREEN PHOTO LIGHTBOX — tap any zone photo; ‹ › or arrow keys walk the set ═══ */}
     {lightbox && (()=>{

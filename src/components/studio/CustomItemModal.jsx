@@ -17,7 +17,7 @@ const imsField = {
 };
 
 // §26.13 — Production/Buying Custom Item Modal (proper component for hooks)
-export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, rcCats, rcItems, isDark, border, textP, textS, onClose, zonePhoto }) {
+export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, rcCats, rcItems, isDark, border, textP, textS, onClose, zonePhoto, openAvailModal }) {
   const { fnIdx, zoneKey, type, editId } = config;
   const isProduction = type === "production";
   const icon = isProduction ? "🏭" : "🛒";
@@ -96,6 +96,19 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
     setCRefResults(top);
     if (top.length > 0 && !cSelectedRef) setCSelectedRef(top[0].id);
   }, [cForm.subCat, cForm.cat, cForm.dims.l, cForm.dims.w, cForm.dims.h, imsInventory]);
+  // "Pick a different item based on availability" — the same 📦 picker Build's own Element card
+  // uses (openAvailModal), reused here instead of a second availability UI. Feeding it a fake
+  // rc={sub:cForm.subCat} makes it filter by exactly this sub-category, same as a real Rate Card
+  // item would; el={name:cForm.subCat} just supplies the modal's title. The picked item REPLACES
+  // whatever the fuzzy matcher above suggested, same shape so the price/photo below don't care
+  // which source it came from.
+  const handleAvailPick = (picked) => {
+    if (!picked) return;
+    const synthetic = { id: picked.id, name: picked.name, _photo: picked.photo || "", _dims: picked.dims || "", _cost: Number(picked.price) || 0 };
+    setCRefResults(prev => [synthetic, ...prev.filter(x => x.id !== picked.id)]);
+    setCSelectedRef(picked.id);
+    setCShowManual(false); setCManualPrice("");
+  };
   const selectedItem = cRefResults.find(r => r.id === cSelectedRef);
   const refPrice = selectedItem?._cost || 0;
   const finalPrice = cManualPrice ? Number(cManualPrice) : refPrice;
@@ -191,8 +204,17 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
           </div>
           {cForm.subCat && (
             <div>
-              <div style={{fontSize:10,color:textS,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>
-                {cRefResults.length > 0 ? `System Reference (${cRefResults.length} match${cRefResults.length===1?"":"es"})` : "No reference items found"}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div style={{fontSize:10,color:textS,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>
+                  {cRefResults.length > 0 ? `System Reference (${cRefResults.length} match${cRefResults.length===1?"":"es"})` : "No reference items found"}
+                </div>
+                {openAvailModal && (
+                  <span onClick={() => openAvailModal(null, null, { name: cForm.subCat }, { sub: cForm.subCat }, handleAvailPick)}
+                    title="Check stock availability & pick a different reference item"
+                    style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:600,color,padding:"2px 8px",borderRadius:6,border:`1px solid ${color}40`,background:`${color}08`}}>
+                    📦 Check availability
+                  </span>
+                )}
               </div>
               {cRefResults.length > 0 ? (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>

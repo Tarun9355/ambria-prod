@@ -31,6 +31,10 @@ export default function StudioBrowse({ ctx }) {
   // Palette filter search. Lives here rather than inside the Section so it survives the panel's
   // re-renders — the section subtree is rebuilt on every filter change.
   const [paletteQ, setPaletteQ] = useState("");
+  // "Last 5 sessions" history under the most-recent-session card — collapsed by default so it
+  // doesn't compete with the filters/videos for space; per-client is enough (doesn't need to
+  // persist across clients), so plain local state rather than anything ctx-level.
+  const [bannerHistoryOpen, setBannerHistoryOpen] = useState(false);
   const {
     // theme / chrome
     S, isDark, accent, border, textS, fmt,
@@ -52,12 +56,36 @@ export default function StudioBrowse({ ctx }) {
     // multi-function
     extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData,
     // build / session
-    sourceVideo, venue, showMsg,
+    sourceVideo, sourceEvent, venue, showMsg,
+    elSelectedPhoto, zoneElements, enabledEls,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
-    ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, allVideos, activeClient,
+    ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, browseVideosAll, allVideos, activeClient,
     subVenuesOfParent, allInhouseVenueOrParentNames, leafInhouseVenues,
     pickAndLoadFromVideo, resumeSavedSession, allInhouseVenues, taxOr, FUNCTIONS, CATEGORIES,
+    clientLedger, saveClientLedger, askConfirm,
+    favVideos, saveFavVideos,
   } = ctx;
+  // Customize/Exact Look both hand off to pickAndLoadFromVideo → loadEvent, which REPLACES
+  // enabledEls wholesale (down to just `{lighting:true}`) for whichever function is active — it
+  // never merges with what's already turned on. If that function's live canvas already holds a
+  // real build (zone photos picked, zones enabled, or its own reference), doing this silently
+  // orphans that work: the zones just stop being enabled, and the next autosave persists the
+  // now-near-empty state over the session it came from. fnSnapHasData is the exact same test the
+  // save path already uses for "does this snapshot hold a build" — reused here against the LIVE
+  // state instead of a saved one, so the two can't disagree about what counts as real work.
+  const guardedPickAndLoadFromVideo = (videoId, targetStep, onLoaded) => {
+    const liveSnap = { elSelectedPhoto, zoneElements, enabledEls, sourceVideo, sourceEvent };
+    const proceed = () => { pickAndLoadFromVideo(videoId, targetStep); if (onLoaded) onLoaded(); };
+    if (fnSnapHasData(liveSnap)) {
+      askConfirm(
+        "Switch reference and start customizing this instead?",
+        proceed,
+        { note: "The zones you already turned on for this function will be switched off — their picks aren't deleted from the library, but this build stops using them.", yesLabel: "Switch anyway" }
+      );
+      return;
+    }
+    proceed();
+  };
   // The sticky offset clears the header, plus the function tab strip when there is more than one
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
   const railTop = extraFunctions.length > 0 ? 120 : 70;
@@ -66,12 +94,16 @@ export default function StudioBrowse({ ctx }) {
   // panel header, and a slim tab on the edge to bring it back.
   const [filtersOpen, setFiltersOpen] = useState(true);
   const railMaxH = useRailMaxHeight(railRef, railTop);
-  // Search narrows what the filters already produced, so the two compose instead of competing.
+  // With nothing typed, search narrows what the left-rail filters already produced. The moment
+  // something IS typed, the relationship flips: the search stands on its own, over the full
+  // (permission-scoped) catalog, ignoring every filter chip rather than compounding with them —
+  // the filters stay exactly as selected on screen, they just stop narrowing while there's a query,
+  // and go straight back to applying the instant the search box is cleared.
   // Token-AND over the fields a card actually shows, so word order does not matter.
   const shownVideos = (() => {
     const tokens = vq.toLowerCase().split(/\s+/).filter(Boolean);
     if (!tokens.length) return browseVideos;
-    return browseVideos.filter((v) => {
+    return browseVideosAll.filter((v) => {
       const hay = [v.title, v.venue, v.fn, ...(v.fns || []), v.space, v.tier, ...(v.styles || []), ...(v.colors || [])]
         .filter(Boolean).join(" ").toLowerCase();
       return tokens.every((t) => hay.includes(t));
@@ -118,7 +150,16 @@ export default function StudioBrowse({ ctx }) {
           <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:v.title, video:videoUrl, venue:v.venue, fn:v.fn});setVideoPlaying(true);}}>
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
             <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
-            {v.tierCat&&<div style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3}}>{v.tierCat}</div>}
+            {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
+                favFirst) — it then leads that venue's results ahead of every filter except function
+                type. Per salesperson (favVideos[id][myUserId]) — my favourites and a colleague's are
+                independent. Deliberately subtle (a thin red ring, no icon/label change): this can be
+                on screen in front of a guest, and the point is the salesperson recognising it, not them. */}
+            {v.tierCat&&(()=>{ const isFav = !!favVideos[v.id]?.[authUser?.id]; return (
+              <div onClick={(e)=>{e.stopPropagation();saveFavVideos({[v.id]:{[authUser?.id]:isFav?null:true}});}}
+                title={isFav?"Favourited for this venue — click to remove":"Favourite for this venue (ranks first here, past every filter but function type)"}
+                style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3,cursor:"pointer",boxShadow:isFav?"0 0 0 2px #EF4444":"none"}}>{v.tierCat}</div>
+            ); })()}
             {/* Fix tags takes the corner the AI badge used to hold. Below the fold it had a row to
                 itself holding one small control, which was mostly empty space; up here it costs
                 nothing. Dark translucent pill so it stays legible over any thumbnail, and it stops
@@ -145,8 +186,8 @@ export default function StudioBrowse({ ctx }) {
                 <div onClick={(e)=>{e.stopPropagation();setPremiaGate({ev:{id:v.id,name:v.title,video:`https://www.youtube.com/embed/${v.id}`}});}} className="sb-gate" style={{width:"100%",padding:"8px 12px",borderRadius:8,background:"linear-gradient(135deg,#EDE9FE,#F5F3FF)",textAlign:"center",fontSize:11,color:"#7C3AED",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCrown size={13}/>Sr. Designer Only</div>
               ):(
                 <Fragment>
-                  <button className="sb-cta" onClick={(e)=>{e.stopPropagation();pickAndLoadFromVideo(v.id,1);}} style={{flex:1,padding:"8px 0",borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#B8944F)",color:"#fff",border:"none",fontSize:11,fontWeight:700,cursor:"pointer"}}>Customize</button>
-                  {!priceTBD&&<button className="sb-alt" onClick={(e)=>{e.stopPropagation();pickAndLoadFromVideo(v.id,2);showMsg("✓ Exact look loaded — review summary","green");}} style={{flex:1,padding:"8px 0",borderRadius:8,border:`1.5px solid ${accentText}`,background:"transparent",color:accentText,fontSize:11,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><IconClipboard size={13}/>Exact Look</button>}
+                  <button className="sb-cta" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}} style={{flex:1,padding:"8px 0",borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#B8944F)",color:"#fff",border:"none",fontSize:11,fontWeight:700,cursor:"pointer"}}>Customize</button>
+                  {!priceTBD&&<button className="sb-alt" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}} style={{flex:1,padding:"8px 0",borderRadius:8,border:`1.5px solid ${accentText}`,background:"transparent",color:accentText,fontSize:11,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><IconClipboard size={13}/>Exact Look</button>}
                 </Fragment>
               )}
             </div>
@@ -202,6 +243,8 @@ export default function StudioBrowse({ ctx }) {
     // saved has fnSnapshots {"0"} and nothing else, so switching to Fn2 made the whole banner
     // vanish and there was no way to reach the saved build at all. Now the row stays and says
     // "Fn1", and Resume jumps to that function instead of blanking the pill you're standing on.
+    // Only the single most recent one gets the full "continue" card — history beyond that lives in
+    // the collapsed "Last 5 sessions" list below (bannerHistory), which isn't pill-filtered at all.
     const bannerSaved = (() => {
       if (!activeClient) return [];
       const withFn = [];
@@ -241,7 +284,7 @@ export default function StudioBrowse({ ctx }) {
         if (seenIds.has(s.id)) continue;
         seenIds.add(s.id);
         out.push(s);
-        if (out.length >= 3) break;
+        if (out.length >= 1) break;
       }
       return out;
     })();
@@ -258,6 +301,29 @@ export default function StudioBrowse({ ctx }) {
     }) : false;
     const bannerShowCurrent = !!bannerCurrentId && !bannerCurrentInSaved;
     const bannerFmtDate = (ts) => { try { return new Date(ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); } catch { return ""; } };
+    // Last 5 sessions for this client, most-recent first — the raw history, not the pill-aware
+    // dedup bannerSaved does. Collapsed by default (bannerHistoryOpen) since it's a "just in case"
+    // list, not something needed on every visit.
+    const bannerHistory = (activeClient?.sessions || []).slice(0, 5);
+    // Same "which pill actually has data" logic bannerSaved uses above, applied per history row
+    // (which — unlike bannerSaved's entries — never got a _fnIdx computed for it) so Resume lands
+    // on the function this particular past session holds, not blindly on whichever pill is active now.
+    const bestFnIdxForSession = (s) => {
+      const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
+      if (!snaps || !Object.keys(snaps).length) return fnSnapHasData(s) ? 0 : null;
+      if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) return activeFnIdx;
+      const idxs = Object.keys(snaps).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+      for (const i of idxs) { if (fnSnapHasData(snaps[i] || snaps[String(i)] || null)) return i; }
+      return null;
+    };
+    const deleteSession = (sessionId) => {
+      if (!activeClient) return;
+      askConfirm("Delete this saved session?", () => {
+        const nextSessions = (activeClient.sessions || []).filter(sess => sess.id !== sessionId);
+        saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
+        showMsg("Session deleted", "green");
+      }, { yesLabel: "Delete", note: "This can't be undone." });
+    };
 
     // ═══ FILTER PANEL PRESENTATION ═══
     // Now sourced from components/studio/filterUI.jsx so Browse and Build share one panel
@@ -414,8 +480,10 @@ export default function StudioBrowse({ ctx }) {
                 const videoTitle = s.sourceVideoTitle || vid?.title || "Video";
                 const unavailable = !vid && !s.sourceVideoTitle;
                 return (
-                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
-                    <div style={{display:"flex",alignItems:"flex-start",gap:9}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
+                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+                    {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
+                      style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
+                    <div style={{display:"flex",alignItems:"flex-start",gap:9,paddingRight:16}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:11.5,fontWeight:600,color:textP,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                         {videoTitle}
@@ -461,6 +529,30 @@ export default function StudioBrowse({ ctx }) {
                   </div>
                 );
               })()}
+              {/* Collapsed history — the raw last-5, not the pill-aware single "continue" card above.
+                  A safety net for "I want an older save back", not something needed on every visit. */}
+              {bannerHistory.length > 0 && (
+                <div style={{borderRadius:9,border:`1px solid ${border}`,overflow:"hidden",background:cardBg}}>
+                  <button type="button" onClick={()=>setBannerHistoryOpen(v=>!v)} aria-expanded={bannerHistoryOpen}
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"7px 10px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
+                    <span style={{display:"inline-flex",transform:bannerHistoryOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
+                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Last {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
+                  </button>
+                  {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
+                    {bannerHistory.map((s,i) => (
+                      <div key={s.id||i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 7px",borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#FAFAFB"}}>
+                        <span style={{fontSize:10,color:textS,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{typeof s.total==="number"?` · ${fmt(s.total)}`:""}{s.tier?` ${s.tier}`:""}
+                        </span>
+                        <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                          <span onClick={()=>resumeSavedSession(s, bestFnIdxForSession(s) ?? undefined)} style={{fontSize:9.5,fontWeight:700,color:accent,cursor:"pointer",whiteSpace:"nowrap"}}>↻ Resume</span>
+                          {s.id && <span onClick={()=>deleteSession(s.id)} title="Delete this session" style={{fontSize:11,color:textS,cursor:"pointer",lineHeight:1}}>✕</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>}
+                </div>
+              )}
             </div>
           )}
           {/* The filter card takes what is left after the banner, and keeps its own scrollport, so a
@@ -628,7 +720,10 @@ export default function StudioBrowse({ ctx }) {
                 Aura", which was false — 130 was the whole Inhouse group while only 12 are tagged
                 Aura. No venue clause here any more: the section headings below carry the per-venue
                 counts, and repeating them next to the total is what made the two look contradictory. */}
-            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideos.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideos.length}</span>}</div>
+            {/* While searching, shownVideos comes from browseVideosAll (filters ignored), so the
+                "of N" comparison has to be against that same full catalog, not the filtered count —
+                otherwise a search matching more than the filters currently allow read as broken. */}
+            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideosAll.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideosAll.length}</span>}</div>
             <div style={{fontSize:12,color:textM}}>{browseVenues.length===0&&venueGroup!=="all"?`(${venueGroup})`:""}</div>
             {activeTotal>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:11,color:textM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
