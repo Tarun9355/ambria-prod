@@ -1162,7 +1162,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   // The fallbacks matter for anyone opening the file in PowerPoint rather than Canva. PptxGenJS takes
   // one name per run, so the fallback is stated here rather than in a CSS-style stack: Georgia and
   // Trebuchet remain the substitutes a Windows machine will land on by itself.
-  const SERIF = "Playfair Display", SANS = "Montserrat";
+  //
+  // DISPLAY carries the headings — Cinzel Decorative, a Roman-inscription face with flourished caps.
+  // It is a display font in the strict sense: right for six words on a cover, wrong for a paragraph,
+  // which is why the supporting lines stay in Playfair rather than following the headings across.
+  // Canva has it; PowerPoint on a bare Windows machine does not and will substitute.
+  const SERIF = "Playfair Display", SANS = "Montserrat", DISPLAY = "Cinzel Decorative";
 
   // ═══ TWO GROUNDS, ALTERNATING ═══
   // Every card on one near-black ground made the deck oppressive by the third page — the photographs
@@ -1499,7 +1504,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     // The rounding pass has to cut each photograph to the exact box it will land in, so the sizes
     // live here rather than inline, and both the pass and the slides read the same numbers.
     const BOX = {
-      cover: { w: 4.05, h: 3.0 },
       hero: { w: 4.75, h: 3.55 },
       element: { w: SLIDE_W - 6.35 - M, h: (SLIDE_W - 6.35 - M) * 0.68 },
       flower: { w: SLIDE_W - 6.4 - M, h: SLIDE_H - 2.6 },
@@ -1517,7 +1521,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
     {
       const jobs = [];
-      if (content.cover) jobs.push({ url: content.cover, ...BOX.cover, ground: IVORY });
       for (const fn of content.functions) {
         if (fn.hero) jobs.push({ url: fn.hero, ...BOX.hero, ground: IVORY });
         const bb = boardBoxes(Math.min(fn.board.length, 3));
@@ -1541,18 +1544,41 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     }
 
     // ── Cover ──
+    // A title page and nothing else: no photograph, everything on the centre line. A picture here
+    // asks to be read as one of the design references, which is what the pages after this are for —
+    // and a cover that shows one zone quietly promises the whole deck is about that zone.
+    //
+    // What it carries instead is the detail a client checks first: their name, and when and where
+    // each function is. Centred at this size that IS the composition, so it needs no ornament to
+    // fill space the way the old left-aligned cover did.
     {
       const s = newSlide();
       if (ornament) { corners(s); frame(s); }
-      s.addText(`DESIGN YOUR ${kind.toUpperCase()}`, { x: M, y: 1.5, w: 8, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
-      s.addText(content.clientName || kind, { x: M - 0.06, y: 2.0, w: 10, h: 1.5, fontFace: SERIF, fontSize: 60, color: t.body, bold: true });
-      s.addText("Decor Presentation", { x: M - 0.04, y: 3.45, w: 10, h: 0.9, fontFace: SERIF, fontSize: 34, color: t.body, italic: true });
-      rule(s, M, 4.6, 2.4);
-      // Sits in the empty lower-left the cover deliberately leaves, so that space reads as composed
-      // rather than as a gap the layout failed to fill.
-      flourish(s, M + 1.2, 5.15);
-      s.addText("AMBRIA DESIGN & DECOR", { x: SLIDE_W - 4.6, y: SLIDE_H - 0.95, w: 3.9, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3, align: "right" });
-      if (content.cover) card(s, content.cover, SLIDE_W - M - BOX.cover.w, 1.35, BOX.cover.w, BOX.cover.h);
+      const mid = { x: M, w: SLIDE_W - M * 2, align: "center" };
+
+      s.addText(`DESIGN YOUR ${kind.toUpperCase()}`, { ...mid, y: 1.45, h: 0.35, fontFace: SANS, fontSize: 12, color: t.accent, charSpacing: 6, bold: true });
+      // Long names come down a step rather than running into the margins: PptxGenJS does not
+      // shrink-to-fit, it simply overflows the box.
+      const name = content.clientName || kind;
+      s.addText(name, { ...mid, y: 2.05, h: 1.5, fontFace: DISPLAY, fontSize: name.length > 22 ? 44 : name.length > 14 ? 54 : 64, color: t.body, bold: true });
+
+      rule(s, (SLIDE_W - 2.4) / 2, 3.72, 2.4);
+      s.addText("Decor Presentation", { ...mid, y: 3.92, h: 0.6, fontFace: SERIF, fontSize: 26, color: t.body, italic: true });
+
+      // One line per function — the type, the date, then the venue, dropped only when the venue was
+      // never filled in (venueLine falls back to the function's own name, which would read twice).
+      const fnLines = content.functions.map((f) => {
+        const venue = f.venueLine && f.venueLine !== f.name ? f.venueLine : "";
+        return [f.dateLine || f.name, venue].filter(Boolean).join("  ·  ");
+      }).filter(Boolean);
+      if (fnLines.length) {
+        s.addText(fnLines.join("\n"), {
+          ...mid, y: 4.75, h: Math.min(1.5, 0.34 * fnLines.length + 0.1),
+          fontFace: SANS, fontSize: fnLines.length > 3 ? 12 : 13.5, color: t.body, lineSpacingMultiple: 1.5,
+        });
+      }
+
+      s.addText("AMBRIA DESIGN & DECOR", { ...mid, y: SLIDE_H - 0.95, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
     }
 
     for (const fn of content.functions) {
@@ -1561,7 +1587,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         const s = newSlide();
         if (ornament) { corners(s); frame(s); }
         s.addText(fn.name.toUpperCase(), { x: M, y: 1.25, w: 7.5, h: 0.5, fontFace: SANS, fontSize: 13, color: t.accent, charSpacing: 5 });
-        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: SERIF, fontSize: 42, color: t.body, bold: true });
+        s.addText(fn.venueLine || fn.name, { x: M - 0.06, y: 1.85, w: 7.6, h: 1.1, fontFace: DISPLAY, fontSize: 42, color: t.body, bold: true });
         s.addText(fn.dateLine || "", { x: M - 0.02, y: 3.0, w: 7.4, h: 0.9, fontFace: SERIF, fontSize: 22, color: t.accent, italic: true });
         rule(s, M, 4.05, 2.2);
         card(s, fn.hero, SLIDE_W - M - BOX.hero.w, 2.5, BOX.hero.w, BOX.hero.h);
@@ -1571,7 +1597,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       if (fn.board.length) {
         const s = newSlide();
         diamond(s, M, 0.82); s.addText("MOOD BOARD", { x: M + 0.26, y: 0.75, w: 6, h: 0.35, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 5, bold: true });
-        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: SERIF, fontSize: 30, color: t.body, bold: true });
+        s.addText(fn.name, { x: M - 0.05, y: 1.12, w: 8, h: 0.75, fontFace: DISPLAY, fontSize: 30, color: t.body, bold: true });
         // One large plate with a stacked pair beside it — the asymmetry the references use, held to a
         // shared grid so it composes rather than scatters.
         const { top, botH, gut, bigW, rw: rwS, rh: rhS } = boardBoxes(Math.min(fn.board.length, 3));
@@ -1604,7 +1630,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // ── Element cards: the photograph placed right, its callouts read down the left ──
       for (const z of fn.zones) {
         const s = newSlide();
-        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: SERIF, fontSize: 32, color: t.body, bold: true });
+        s.addText(z.label, { x: M - 0.05, y: 1.15, w: 5.0, h: 1.0, fontFace: DISPLAY, fontSize: 32, color: t.body, bold: true });
         rule(s, M, 2.25, 1.8);
         const outs = z.callouts.length ? z.callouts : (z.note ? [z.note] : []);
         outs.slice(0, 3).forEach((c, i) => {
@@ -1653,7 +1679,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // Sat low and left with dead space above and below it. The block is now centred vertically as
       // one unit, so the card reads as composed rather than as text that slid down the page.
       if (ornament) { corners(s); frame(s); }
-      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: SERIF, fontSize: 52, color: t.body, bold: true });
+      s.addText("Thank You", { x: M - 0.06, y: 2.15, w: 9, h: 1.3, fontFace: DISPLAY, fontSize: 52, color: t.body, bold: true });
       s.addText("We would love to bring this design to life for you.", { x: M, y: 3.5, w: 8, h: 0.5, fontFace: SERIF, fontSize: 18, color: t.accent, italic: true });
       rule(s, M, 4.25, 2.2);
       s.addText("AMBRIA DESIGN & DECOR", { x: M, y: 4.5, w: 8, h: 0.4, fontFace: SANS, fontSize: 11, color: t.accent, charSpacing: 3 });
