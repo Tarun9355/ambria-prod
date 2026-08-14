@@ -6573,8 +6573,19 @@ export default function StudioApp() {
       return;
     }
     setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
+    // Scale By is a deal-specific "how many of this zone" multiplier (40 tables, say) — it has
+    // nothing to do with WHICH reference photo is loaded. Browsing to a different centrepiece photo
+    // used to silently drop it: the new photo's elements came in at their own raw (×1) baseQty and
+    // zoneConfig[elKey] got wholesale-replaced by a fresh cfg that never carries `scale`, so the
+    // Scale box kept showing its old number while the actual priced quantities quietly reset to 1×.
+    // Carry the CURRENT live scale over onto the incoming photo's elements instead.
+    const curScale = Math.max(1, Math.round(Number(zoneConfig[elKey]?.scale) || 1));
     if (photo.isLibrary && (photo.elements || []).length > 0) {
-      setZoneElements(p => ({ ...p, [elKey]: JSON.parse(JSON.stringify(photo.elements)) }));
+      const rawEls = JSON.parse(JSON.stringify(photo.elements));
+      setZoneElements(p => ({ ...p, [elKey]: curScale > 1
+        ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
+        : rawEls
+      }));
     } else {
       setZoneElements(p => ({ ...p, [elKey]: [] }));
     }
@@ -6599,7 +6610,9 @@ export default function StudioApp() {
       }
     }
     if (cfg) {
-      setZoneConfig(p => ({ ...p, [elKey]: cfg }));
+      // Same reason as above — scale/repeat are live deal choices, not part of what a reference
+      // photo's config describes. Preserve them across the replace instead of losing them.
+      setZoneConfig(p => ({ ...p, [elKey]: { ...cfg, scale: p[elKey]?.scale, repeat: p[elKey]?.repeat } }));
     }
     setActiveZones([]);
     setCustomMode(p => ({ ...p, [elKey]: false }));
