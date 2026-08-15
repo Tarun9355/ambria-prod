@@ -150,6 +150,11 @@ function normalizeLeadRow(raw: any) {
     balance: raw.dh_balance || 0,
     priority: raw.dh_priority || "",
     status: raw.dh_status || "",
+    // Who entered this lead in LMS — the raw field genuinely exists (confirmed against a live
+    // sample: dh_decor_entryby), it was just never read here before. Same id space as
+    // dhc_decor_entryby on decor contracts; resolving it to a Studio salesperson name is a
+    // client-side lookup (LMS_ENTRY_BY_NAMES in src/lib/ims/lms.js), not this function's job.
+    entryById: raw.dh_decor_entryby || "",
     cancelled: false,
   };
   return { header, fnDetail };

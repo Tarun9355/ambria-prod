@@ -291,9 +291,9 @@ function lmsContractToLead(c, source = "venue") {
     dept: c.dept,
     entryNo: c.entryNo,
     priority: c.priority || "",
-    // Who this is assigned to in LMS. Only populated for contracts (the edge function's
-    // normalizeRow reads fisc_entryby/dhc_decor_entryby) — decor LEADS have no confirmed raw
-    // field for this yet, so entryById is absent there and entryByName falls back to "".
+    // Who entered this in LMS. The edge function's normalizeRow reads fisc_entryby/dhc_decor_entryby
+    // for contracts and normalizeLeadRow reads dh_decor_entryby for decor leads (confirmed against a
+    // live sample — it was just never wired up before), so all three sources populate this.
     entryById: c.entryById || "",
     entryByName: c.entryById ? lmsEntryByName(c.entryById) : "",
     // Venue contracts store nothing here (the sync writes no status for them) and decor leads store

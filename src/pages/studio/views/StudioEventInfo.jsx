@@ -949,18 +949,19 @@ export default function StudioEventInfo({ ctx }) {
                   const qName = clientName.trim().toLowerCase();
                   const qPhone = clientPhone.trim();
                   // Each Studio client is tagged to whoever created it (createdBy); each LMS lead/contract
-                  // is tagged to whoever entered it there (entryByName). Default to showing only the
-                  // logged-in salesperson's own — showAllReps is the escape hatch for covering a colleague's
-                  // meeting.
+                  // is tagged to whoever entered it there (entryByName — dh_decor_entryby for decor leads,
+                  // dhc_decor_entryby / fisc_entryby for contracts). Default to showing only the logged-in
+                  // salesperson's own — showAllReps is the escape hatch for covering a colleague's meeting.
                   //
-                  // An earlier version treated an UNTAGGED record (no createdBy, or an LMS row whose
-                  // entry-by field isn't populated — true for every decor LEAD today, see
-                  // lmsContractToLead) as always "mine", reasoning that hiding something nobody could
-                  // tell was or wasn't theirs would look like data loss rather than filtering. In
-                  // practice that meant every decor lead — which is most of what this search surfaces —
-                  // showed to every salesperson regardless of the toggle, which is exactly the gap this
-                  // gating was supposed to close. Untagged now defaults to hidden like everything else;
-                  // "Show all" is the one way to see it, same as anyone else's leads.
+                  // An earlier version treated an UNTAGGED record (no createdBy, or an entry-by field
+                  // reading blank) as always "mine", reasoning that hiding something nobody could tell was
+                  // or wasn't theirs would look like data loss rather than filtering. That was covering for
+                  // a real bug, not a real gap: the edge function's decor-lead normalizer just never read
+                  // dh_decor_entryby (now fixed — see supabase/functions/lms/index.ts), so every decor
+                  // lead — most of what this search surfaces — looked untagged and showed to everyone
+                  // regardless of the toggle. Untagged now defaults to hidden like everything else; "Show
+                  // all" is the one way to see it, same as anyone else's leads. Rows synced before that
+                  // fix still lack an owner until the next LMS sync re-pulls them.
                   const mine = (name) => String(name || "").toLowerCase() === String(authUser?.name || "").toLowerCase();
                   const rawLmsLeads = lmsLeads || [];
                   const visibleLmsLeads = showAllReps ? rawLmsLeads : rawLmsLeads.filter(l => mine(l.entryByName));
