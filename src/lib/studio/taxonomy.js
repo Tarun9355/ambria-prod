@@ -209,6 +209,27 @@ export function maskingOptions(maskingRates) {
 // not silently drop to ₹0.
 export const CARPET_OFF = "__off__";
 
+/**
+ * One platform footprint's platform + carpet cost.
+ *
+ * `row` is `{plH, floorDims, cpT}` — either the zone's own floor or one entry of
+ * zc.extraPlatformRows. Each footprint carries its OWN carpet material, since different platforms
+ * in the same zone can be finished differently.
+ *
+ * Lives here rather than in StudioApp because the zone editor needs it too: each floor card shows
+ * what THAT footprint costs, and the cost engine sums the same function over every row. Two copies
+ * of a pricing formula is how a card ends up disagreeing with the bill.
+ */
+export function platformRowCost(row, rates) {
+  const fd = row?.floorDims || {};
+  const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
+  // platformRateFor, not a hard-coded rate — it is admin-editable, and this is the line that
+  // actually charges for it.
+  const platform = row?.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0;
+  const carpet = row?.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row?.cpT, rates?.carpetMaterials).rate;
+  return { platform, carpet };
+}
+
 // Carpet used to be a fixed Old/New rate baked in here, then briefly piggybacked on IMS Admin →
 // Settings → 🖨️ Print Materials (a real print-job material catalogue — the wrong master for a
 // floor covering). It's now priced live from its own IMS Admin → Settings → 🟫 Carpet Materials

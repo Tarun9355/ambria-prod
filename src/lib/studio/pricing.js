@@ -5,7 +5,10 @@
 // resolveMandiFlower already lives in the shared IMS flower helpers — import +
 // re-export it here so callers can use it from the studio pricing namespace.
 import { resolveMandiFlower } from "../ims/flowerHelpers.js";
-import { CARPET_OFF } from "./taxonomy";
+import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxonomy";
+// trussRowCost prices a custom ceiling / masking panel off a real IMS inventory item, so it needs
+// the same valuation the rest of the app uses rather than a second opinion on what an item costs.
+import { priceForInvItem } from "../ims/helpers.js";
 export { resolveMandiFlower };
 
 // ═══ AREAS ↔ ZONES SYNC HELPERS ═══
@@ -701,4 +704,82 @@ export function buildPlatformPlan(fns, dealCheckData) {
     };
   });
   return { fattaItem, standItem, perZone };
+}
+
+
+// ═══ ONE TRUSS STRUCTURE'S COST ═══
+// Moved out of StudioApp so the zone editor can price each truss card individually. It cannot
+// import it from there: StudioApp imports StudioBuild, and the other direction would be a cycle.
+// Two copies of a truss formula is how a card ends up disagreeing with the bill.
+// One truss structure's own truss+masking cost. `row` is zc-shaped for row 0 ({dims, trT,
+// trussType, trussQty, trussFrontExt, trussFrontExtH, trussBackDepth, mkOn, mkT, mkWalls, mkS}) or
+// one entry of zc.extraTrussRows (same shape).
+// `rates` bundles the live IMS Admin → Settings rates: { printMaterials, trussRates, maskingRates }.
+export function trussRowCost(row, rates) {
+  const d = row.dims || {};
+  let truss = 0, masking = 0;
+  // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at
+  // the Single U rate even if the toggle still reads Box (stale from a 3-dim state or an older
+  // saved zone) — "2 dims ⇒ Single U, 3 dims ⇒ Box".
+  // Area + mode come from trussBaseArea so the Build card's cost caption is derived from the same
+  // rule this charges on, rather than a second copy of it that can drift.
+  const _base = trussBaseArea(row);
+  const _trMode = _base.mode;
+  const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates);
+  const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates);
+  // Custom ceiling — the salesperson picked a specific IMS inventory item (a printed ceiling panel)
+  // instead of the fabric ceiling drape, so the ceiling portion of the Box rate doesn't apply and
+  // that item's own rental (× its sub-category's scaling factor) is charged instead. Single U has
+  // no ceiling concept (open-top structure), so its rate is never reduced this way.
+  const hasCustomCeiling = !!row.customCeilingItemId;
+  const boxRate = hasCustomCeiling ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
+  const singleURate = singleU.rate;
+  if (_trMode === "box") {
+    truss = _base.area * boxRate;
+    // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
+    // Single U rate = extension length × extension height. Its own height (can differ from the box).
+    // The shared box-corner pillar saves material/fabric, NOT cost — so the rupee cost is the full
+    // Single U area for both sides.
+    const ext = Number(row.trussFrontExt) || 0;
+    if (ext > 0) { const extH = Number(row.trussFrontExtH) || (d.H || 0); truss += 2 * ext * extH * singleURate; }
+  }
+  else if (_trMode === "singleU") { truss = _base.area * singleURate; }
+  // Multiple identical trusses in one row (e.g. 3× Single U) — cost scales by quantity.
+  truss *= Math.max(1, row.trussQty || 1);
+  if (hasCustomCeiling) {
+    const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
+    if (ceilingItem) truss += priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1);
+  }
+  // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
+  // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.
+  if (row.customMaskingItemId) {
+    const maskItem = (rates?.imsInventory || []).find((i) => i.id === row.customMaskingItemId);
+    masking = maskItem ? priceForInvItem(maskItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1) : 0;
+  } else if (row.mkOn && row.mkT) {
+    const h = d.H || 0, rate = maskingRateFor(row.mkT, rates?.maskingRates); let w = 0;
+    const dL = d.L || d.S || 0, dW = d.W || d.S || 0;
+    if (row.mkWalls) {
+      const _trCfg = resolveTrussConfig({ dims: row.dims, trussType: row.trussType });
+      const _cfg = _trCfg?.config || (row.trT === "box" ? "full_box" : "half_box");
+      const _spanL = _trCfg?.spanFt || dL || dW;
+      const _backDepth = row.trussBackDepth || 4;
+      if (_cfg === "full_box") {
+        if (row.mkWalls.back) w += dW * h;   // back wall spans the WIDTH
+        if (row.mkWalls.left) w += dL * h;   // side walls span the DEPTH
+        if (row.mkWalls.right) w += dL * h;
+      } else if (_cfg === "half_box") {
+        if (row.mkWalls.back) w += _spanL * h;
+        if (row.mkWalls.left) w += _backDepth * h;
+        if (row.mkWalls.right) w += _backDepth * h;
+      } else if (_cfg === "u_only") {
+        if (row.mkWalls.back) w += _spanL * h;
+      }
+    } else {
+      const s = row.mkS || 1;
+      if (row.trT === "box") { const dd = [dL, dW].sort((a, b) => b - a); if (s >= 1) w += dd[0] * h; if (s >= 2) w += dd[1] * h; if (s >= 3) w += dd[0] * h; }
+      else { w = dW * h * s; }
+    }
+    masking = w * rate * Math.max(1, row.trussQty || 1);
+  }
+  return { truss, masking };
 }

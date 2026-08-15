@@ -52,7 +52,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
 } from "../../lib/studio/taxonomy";
 
@@ -61,7 +61,7 @@ import {
   resolveTrussConfig, findZoneForArea, findAreaForZone, makeZoneId,
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
-  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE,
+  buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
@@ -225,90 +225,10 @@ const FLORAL_HARDPROP_DEFAULT = {
 // ═══ STRUCTURAL COST (module scope, deterministic) — VERBATIM (extracted per-row below to support
 // zoneConfig[k].extraTrussRows/extraPlatformRows — additional truss structures/platform footprints
 // in the same zone, beyond the zone's own single "row 0" scalar fields) ═══
-// One truss structure's own truss+masking cost. `row` is zc-shaped for row 0 ({dims, trT,
-// trussType, trussQty, trussFrontExt, trussFrontExtH, trussBackDepth, mkOn, mkT, mkWalls, mkS}) or
-// one entry of zc.extraTrussRows (same shape).
-// `rates` bundles the live IMS Admin → Settings rates: { printMaterials, trussRates, maskingRates }.
-function trussRowCost(row, rates) {
-  const d = row.dims || {};
-  let truss = 0, masking = 0;
-  // A Box truss needs all 3 dims. With only 2 dims filled it's physically a Single U, so price it at
-  // the Single U rate even if the toggle still reads Box (stale from a 3-dim state or an older
-  // saved zone) — "2 dims ⇒ Single U, 3 dims ⇒ Box".
-  // Area + mode come from trussBaseArea so the Build card's cost caption is derived from the same
-  // rule this charges on, rather than a second copy of it that can drift.
-  const _base = trussBaseArea(row);
-  const _trMode = _base.mode;
-  const box = trussRateFor("box", row.trussMaterial, row.drapeDensity, rates?.trussRates);
-  const singleU = trussRateFor("singleU", row.trussMaterial, row.drapeDensity, rates?.trussRates);
-  // Custom ceiling — the salesperson picked a specific IMS inventory item (a printed ceiling panel)
-  // instead of the fabric ceiling drape, so the ceiling portion of the Box rate doesn't apply and
-  // that item's own rental (× its sub-category's scaling factor) is charged instead. Single U has
-  // no ceiling concept (open-top structure), so its rate is never reduced this way.
-  const hasCustomCeiling = !!row.customCeilingItemId;
-  const boxRate = hasCustomCeiling ? Math.max(0, box.rate - box.ceilingRate) : box.rate;
-  const singleURate = singleU.rate;
-  if (_trMode === "box") {
-    truss = _base.area * boxRate;
-    // Optional FRONT EXTENSION (box only, rare): a Single U truss on EACH front side, priced at the
-    // Single U rate = extension length × extension height. Its own height (can differ from the box).
-    // The shared box-corner pillar saves material/fabric, NOT cost — so the rupee cost is the full
-    // Single U area for both sides.
-    const ext = Number(row.trussFrontExt) || 0;
-    if (ext > 0) { const extH = Number(row.trussFrontExtH) || (d.H || 0); truss += 2 * ext * extH * singleURate; }
-  }
-  else if (_trMode === "singleU") { truss = _base.area * singleURate; }
-  // Multiple identical trusses in one row (e.g. 3× Single U) — cost scales by quantity.
-  truss *= Math.max(1, row.trussQty || 1);
-  if (hasCustomCeiling) {
-    const ceilingItem = (rates?.imsInventory || []).find((i) => i.id === row.customCeilingItemId);
-    if (ceilingItem) truss += priceForInvItem(ceilingItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1);
-  }
-  // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
-  // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.
-  if (row.customMaskingItemId) {
-    const maskItem = (rates?.imsInventory || []).find((i) => i.id === row.customMaskingItemId);
-    masking = maskItem ? priceForInvItem(maskItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1) : 0;
-  } else if (row.mkOn && row.mkT) {
-    const h = d.H || 0, rate = maskingRateFor(row.mkT, rates?.maskingRates); let w = 0;
-    const dL = d.L || d.S || 0, dW = d.W || d.S || 0;
-    if (row.mkWalls) {
-      const _trCfg = resolveTrussConfig({ dims: row.dims, trussType: row.trussType });
-      const _cfg = _trCfg?.config || (row.trT === "box" ? "full_box" : "half_box");
-      const _spanL = _trCfg?.spanFt || dL || dW;
-      const _backDepth = row.trussBackDepth || 4;
-      if (_cfg === "full_box") {
-        if (row.mkWalls.back) w += dW * h;   // back wall spans the WIDTH
-        if (row.mkWalls.left) w += dL * h;   // side walls span the DEPTH
-        if (row.mkWalls.right) w += dL * h;
-      } else if (_cfg === "half_box") {
-        if (row.mkWalls.back) w += _spanL * h;
-        if (row.mkWalls.left) w += _backDepth * h;
-        if (row.mkWalls.right) w += _backDepth * h;
-      } else if (_cfg === "u_only") {
-        if (row.mkWalls.back) w += _spanL * h;
-      }
-    } else {
-      const s = row.mkS || 1;
-      if (row.trT === "box") { const dd = [dL, dW].sort((a, b) => b - a); if (s >= 1) w += dd[0] * h; if (s >= 2) w += dd[1] * h; if (s >= 3) w += dd[0] * h; }
-      else { w = dW * h * s; }
-    }
-    masking = w * rate * Math.max(1, row.trussQty || 1);
-  }
-  return { truss, masking };
-}
-// One platform footprint's platform+carpet cost. `row` is `{plH, floorDims, cpT}` for row 0 or one
-// entry of zc.extraPlatformRows — each footprint carries its OWN carpet material, since different
-// platforms in the same zone can be finished in different carpet. `rates` — see trussRowCost above.
-function platformRowCost(row, rates) {
-  const fd = row.floorDims || {};
-  const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
-  // platformRateFor, not BASE_RATES.platform — the rate is admin-editable now, and this is the
-  // line that actually charges for it. The BASE_RATES entry survives only as its fallback.
-  const platform = row.plH ? a * platformRateFor(row.plH, rates?.platformRates) : 0;
-  const carpet = row.cpT === CARPET_OFF ? 0 : a * carpetPricingFor(row.cpT, rates?.carpetMaterials).rate;
-  return { platform, carpet };
-}
+// trussRowCost moved to lib/studio/pricing.js — the zone editor prices each truss card with it.
+// platformRowCost moved to lib/studio/taxonomy.js — the zone editor needs the same function to
+// show each floor card its own cost, and two copies of a pricing formula is how a card ends up
+// disagreeing with the bill.
 function calcStructCost(zk, zc, rates) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
@@ -7746,6 +7666,46 @@ export default function StudioApp() {
         @media (prefers-reduced-motion: reduce) {
           @keyframes studioToastIn { from { opacity: 0 } to { opacity: 1 } }
           @keyframes studioDlgPop { from { opacity: 0 } to { opacity: 1 } }
+        }
+
+        /* ══════════════ TABLET ══════════════
+           Two breakpoints, chosen off real viewports rather than round numbers:
+             <= 1180px  landscape (iPad 1180x820, iPad Pro 11" 1194, older iPad 1024x768)
+             <=  840px  portrait  (iPad 820x1180, iPad mini 744, older iPad 768x1024)
+           Studio is inline-styled, so these hook onto classes added to the layout containers
+           rather than restyling elements directly. Everything here is layout only — no colour,
+           no type family — so a tablet gets the same design, laid out for its width.
+
+           S.main caps at 1200 and centres, so the content column itself never needed capping;
+           what breaks on a tablet is the header (three zones competing on one row), fixed side
+           rails, and grids with hard column counts. */
+        @media (max-width: 1180px) {
+          .sa-header { padding: 10px 14px !important; gap: 8px !important; }
+          .sa-nav-left { gap: 10px !important; }
+          .sa-nav-right { gap: 8px !important; }
+
+          /* Three zones cannot share this row, and failing to fit does NOT wrap them — it overlaps
+             them. The outer zones are flex:1 1 0 with min-width:0, which lets them shrink below
+             their own content; the account cluster is justify-content:flex-end, so its overflow
+             runs LEFT and prints on top of the step nav. Wrapping never gets a chance because the
+             zones report as fitting.
+             So: give the step nav its own full-width row, and stop the outer two shrinking past
+             their content. order/flex-basis rather than reordering the JSX, so the DOM order — and
+             with it the tab order — still reads brand, steps, account. */
+          .sa-nav-left  { flex: 0 1 auto !important; min-width: 0 !important; }
+          .sa-nav-right { flex: 1 1 auto !important; min-width: 0 !important; }
+          .sa-nav-mid   { order: 3; flex: 1 0 100% !important; justify-content: center; min-width: 0; }
+          /* The step nav is the one thing that must never be clipped — it's how you move through
+             the deal. Let it scroll sideways rather than shrink the hit targets below thumb size. */
+          .sa-nav-mid > div { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+          .sa-nav-mid > div::-webkit-scrollbar { display: none; }
+        }
+        @media (max-width: 840px) {
+          /* Portrait: row 1 is brand + account only, and it is still tight. Chips shed horizontal
+             padding before they shed legibility — the type stays at NAV_FS. */
+          .sa-header { padding: 9px 11px !important; }
+          .sa-nav-left, .sa-nav-right { gap: 6px !important; }
+          .sa-nav-right > div, .sa-nav-mid > div { padding: 2px !important; }
         }`}</style>
 
       {/* SAVE FAILURE BANNER */}
@@ -7812,11 +7772,11 @@ export default function StudioApp() {
           size-matched (each renders at its own optical weight); the icons all share NAV_ICON.
           Type is on two tiers only: NAV_FS for everything clickable, META_FS for the uppercase
           micro-labels. The old header mixed 8/9/10/11/12/13px in one row. ═══ */}
-      {!bareEventInfo && <div style={S.header}>
+      {!bareEventInfo && <div className="sa-header" style={S.header}>
         {/* ── LEFT: brand, then the cross-app switcher. Both answer "where am I?", so they belong
                together at the start of the bar; a rule separates identity from navigation.
                flex:1 so the centre zone stays optically centred rather than content-pushed. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 0", minWidth: 0 }}>
+        <div className="sa-nav-left" style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 0", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg,${accent},#8B7355)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#0F0F1A", letterSpacing: -0.3, flexShrink: 0 }}>A</div>
             <div style={{ minWidth: 0 }}>
@@ -7831,7 +7791,7 @@ export default function StudioApp() {
 
         {/* ── CENTRE: where you are in the flow. Its own zone so it isn't crushed against the
                account controls the way it was when everything shared one right-hand run. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+        <div className="sa-nav-mid" style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
           {/* Studio step nav — completed steps carry a tick, upcoming ones stay inert */}
           {mode === "studio" && <div style={NAV_GROUP}>{["Event Info", "Browse", "Build", "Summary"].map((l, i) => {
             const done = i < step, active = i === step, reachable = i <= step;
@@ -7855,7 +7815,7 @@ export default function StudioApp() {
         {/* ── RIGHT: money, mode, account. Hairline rules mark each change of meaning. The app
                switcher now lives on the left, which also pulls the two "Studio" chips (this-app
                vs this-mode) apart — side by side they read as one broken control. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, flex: "1 1 0", minWidth: 0 }}>
+        <div className="sa-nav-right" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, flex: "1 1 0", minWidth: 0 }}>
           {/* The estimate chip lived here; Build's right-hand Live Estimate tile owns it now. */}
           {/* Mode switch — which part of Studio. Titled to distinguish it from the app switcher. */}
           <div style={NAV_GROUP}>
