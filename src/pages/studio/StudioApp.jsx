@@ -3767,32 +3767,45 @@ export default function StudioApp() {
           rc = rcItems.find(i => {
             if (String(i.cat || "").toLowerCase() !== "florals") return false;
             const n = (i.name || "").toLowerCase().trim();
-            return n && (elNm.includes(n) || n.includes(elNm));
+            return n && n.length >= 4 && (elNm.includes(n) || n.includes(elNm));
           });
         }
+        // el.invId is Build's THIRD identity source (getElPrice/getElPriceForFn check invId before
+        // patternId before falling back to the Rate Card by name — Rate Card is never even consulted
+        // for an invId element). This rollup had no branch for it at all: an IMS-inventory-sourced
+        // floral element — the common case for a real physical product; patternId is reserved for
+        // pure recipe-only elements with no inventory backing — only counted here if its name also
+        // happened to match a Rate Card row, so most of a real build's florals silently contributed
+        // NOTHING to this total, while DCFloralsTab.jsx (which resolves invId directly) kept showing
+        // the correct, much larger figure. Same fix as that tab, ported here so the two agree.
+        const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+        const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
-        if (!el.patternId && String(rc?.cat || "").toLowerCase() !== "florals") return;
+        if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc) / 100, ap = 1 - rp;
         // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
         // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
         // getElPrice's blend). Computed at element level, before the recipe gate below.
-        // Guarded: rc can be null now (element priced from its own patternId with no rate-card row).
-        // resolveRcRate reads rc.inhouseFlat unguarded and would throw. No rate-card row means no
-        // billed rate to split, so income simply has nothing to add here — the sourcing COST below
+        // Guarded: rc can be null now (element priced from its own patternId/invId with no rate-card
+        // row). resolveRcRate reads rc.inhouseFlat unguarded and would throw. No rate-card row means
+        // no billed rate to split, so income simply has nothing to add here — the sourcing COST below
         // still computes from the recipe, which is the number this function exists to produce.
         if (rc) { const szU = String(el.size || "").toUpperCase(); const { realRate: rr, artRate: ar } = resolveRcRate(rc, szU);
           realIncome += q * rp * rr; artIncome += q * ap * ar; }
-        // The element's OWN recipe wins — that is what Build priced it with. Name matching is only
-        // the fallback, and could otherwise land on a different recipe than the one chosen.
-        let pat = elPat;
-        if (!pat) {
-          const tn = (rc?.name || el.name || "").toLowerCase().trim();
-          pat = fp.find(p => (p.name || "").toLowerCase().trim() === tn);
-          if (!pat) pat = fp.find(p => { const n = (p.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
-        }
+        // Prefer the recipe Build actually priced this element with, in Build's own priority order
+        // (invId, then patternId, then Rate Card by name) — re-deriving it a different way could land
+        // on a different recipe than Build/the salesperson actually used, or on none at all.
+        // matchFlowerPattern is the same sub-category-first matcher Build itself prices from; for an
+        // invId element it's fed the real IMS inventory item (matching getElPriceFromInventory
+        // exactly) instead of a coincidental Rate Card name-match.
+        let pat = elPat || (invItem ? matchFlowerPattern(invItem, fp) : null) || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, fp);
         if (!pat) return;
-        const sk = szMap(pat?.mode || rc?.inhouseMode, el.size);
+        // Build sizes an invId floral element the same way regardless of any Rate Card "smb" mode —
+        // sizeFromMode/szMap below requires rc.inhouseMode==="smb" to honour el.size at all, which an
+        // invId element (no rc, or an unrelated coincidental match) would never have, silently always
+        // pricing at "medium" regardless of the S/M/B toggle actually picked on Build.
+        const sk = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : szMap(pat?.mode || rc?.inhouseMode, el.size);
         const sizes = pat.sizes || {};
         let comp = sizes[sk] || sizes.medium;
         if (!comp && sk === "big" && sizes.large) comp = sizes.large;
@@ -3875,7 +3888,7 @@ export default function StudioApp() {
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs]);
+  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
