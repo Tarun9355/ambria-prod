@@ -98,6 +98,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
+import { registerFlushBeforeReload, unregisterFlushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -5279,9 +5280,14 @@ export default function StudioApp() {
     }
     setActiveClientId(client.id);
     const finalLedger = updated.slice(0, 200);
-    saveClientLedger(finalLedger);
+    // saveClientLedger is async (a real Supabase upsert) but every existing caller here is
+    // fire-and-forget — timers and unmount handlers that can't await anyway. Handing back the
+    // promise costs them nothing (they just don't read it) and lets a caller that DOES need to
+    // know the write actually landed — the update banner flushing before it reloads — await it
+    // instead of racing a reload against an in-flight network request.
+    const savePromise = saveClientLedger(finalLedger);
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
-    return { client, ledger: finalLedger };
+    return { client, ledger: finalLedger, savePromise };
   }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
@@ -5340,6 +5346,20 @@ export default function StudioApp() {
     window.addEventListener("pagehide", autoSaveBuild);
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); autoSaveBuild(); /* save on unmount → covers Studio↔IMS route switch (no pagehide fires) */ };
   }, [autoSaveBuild]);
+  // 4) On-demand flush for the "new version available" banner (App.jsx), which lives above the
+  // router and reloads the page on click. pagehide fires on reload too, but a reload can cancel an
+  // in-flight fetch before it lands — the same network write that pagehide kicks off has no guarantee
+  // of finishing before the browser tears the page down. Registering a flush the banner can AWAIT
+  // (via saveSession's savePromise) closes that race instead of hoping pagehide wins it.
+  useEffect(() => {
+    const flush = async () => {
+      if (switchingRef.current || !buildHasDataRef.current) return;
+      const result = saveSessionRef.current({ auto: true });
+      if (result?.savePromise) await result.savePromise;
+    };
+    registerFlushBeforeReload(flush);
+    return () => unregisterFlushBeforeReload(flush);
+  }, []);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
   const markSold = useCallback(() => {
@@ -6900,6 +6920,44 @@ export default function StudioApp() {
     setAvailModal(null);
   }, [availModal, setZoneElements]);
 
+  // ═══ AVAILABILITY SPLIT ═══ A second mode on the same picker: instead of swapping the element to
+  // ONE different item, divide its qty across 2+ chosen items from the same sub-category — e.g. 18
+  // arches booked becomes 9 of one design + 9 of another, instead of hunting down 18 of a single
+  // item that isn't actually free. Replaces the one element-breakdown line with one line per chosen
+  // item. Splits as evenly as integer math allows; any remainder from an uneven split (20 into 3 →
+  // 7/7/6, not 6/6/6 dropping 2) lands on the first few lines so the total booked qty never drifts
+  // from what was there before the split. Not offered when this modal was opened via onPick (kit
+  // component swap / CustomItemModal reference pick) — there's no "element with a qty" to divide there.
+  const saveAvailSplit = useCallback((pickedIds) => {
+    if (!availModal || availModal.onPick || !Array.isArray(pickedIds) || pickedIds.length < 2) return;
+    const { zoneKey, idx, items } = availModal;
+    setZoneElements(p => {
+      const elems = [...(p[zoneKey] || [])];
+      const original = elems[idx];
+      if (!original) return p;
+      const total = Number(original.qty) || 0;
+      const n = pickedIds.length;
+      const base = Math.floor(total / n);
+      const remainder = total - base * n; // 0..n-1 leftover units, handed one each to the first `remainder` lines
+      // Same scale math as Build's own applyQty — a split line stays correctly proportioned the
+      // next time this zone's Scale By changes, instead of freezing at whatever qty it was split at.
+      const scale = Math.max(1, Math.round(Number(zoneConfig[zoneKey]?.scale) || 1));
+      const splitEls = pickedIds.map((id, i) => {
+        const pick = (items || []).find((it) => it.id === id);
+        const qty = base + (i < remainder ? 1 : 0);
+        return {
+          ...original,
+          invId: id, imsId: id,
+          name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
+          qty, baseQty: scale > 1 ? qty / scale : qty,
+        };
+      });
+      elems.splice(idx, 1, ...splitEls);
+      return { ...p, [zoneKey]: elems };
+    });
+    setAvailModal(null);
+  }, [availModal, setZoneElements, zoneConfig]);
+
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
     setDealCheckLoading(true);
@@ -7455,7 +7513,17 @@ export default function StudioApp() {
   const applyZoneUpload = () => {
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
+    // A custom ("Other") zone isn't in the taxonomy the Areas & elements chips offer, so there was
+    // no way to tag a photo INTO one — picking "Lounge" or any fixed chip never surfaced it there,
+    // and the zone's own name wasn't even an option to pick. The zone selector at the top of this
+    // modal already says exactly where this photo belongs; auto-include that zone's name in the
+    // tag instead of asking for a second, redundant confirmation the taxonomy can't actually offer.
+    // Whatever else was picked in Areas & elements still applies too — this only adds, never replaces.
+    const customOther = customZones.find((cz) => cz.id === r.elKey && !cz.sourceType);
+    const tags = customOther
+      ? { ...r.tags, areasElements: [...new Set([...(r.tags?.areasElements || []), customOther.name])] }
+      : r.tags;
+    const libImg = { id: libId, url: r.url, name: r.name, tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
     // NOT mergeLibItems first: that writes libItemsRef, which is exactly what saveLib diffs against
     // to decide what changed. Pre-merging made saveLib compare the new photo to itself, find no
     // difference, and skip the upsert entirely — so every Build upload since this was written lived
@@ -7624,7 +7692,7 @@ export default function StudioApp() {
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,
-    availModal, setAvailModal, openAvailModal, saveAvailPick,
+    availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
