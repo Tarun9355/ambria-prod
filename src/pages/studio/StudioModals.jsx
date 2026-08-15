@@ -54,7 +54,7 @@ export default function StudioModals({ ctx }) {
     collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // per-element / per-reference stock availability picker — shared by Build's own 📦 icon and
     // the Add Production/Buying Item modal above
-    availModal, setAvailModal, openAvailModal, saveAvailPick,
+    availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -62,6 +62,10 @@ export default function StudioModals({ ctx }) {
     premiaGate, setPremiaGate, premiaConfig,
     imsInventory,
   } = ctx;
+  // Availability modal's "🔀 Split" mode — UI-only, so it stays local rather than riding on the
+  // shared availModal ctx object. Keyed to which element the modal is open for, so leftover
+  // selections from a previous element (or a previous open of the same one) never carry over.
+  const [availSplit, setAvailSplit] = useState(null); // { key: "zoneKey:idx", ids: string[] } | null
   // Live soft-blocking for the zone-upload-review modal — same logic as Build's own zone editor
   // (StudioBuild.jsx's remainingForItem). The staged elements here haven't been written into
   // zoneElements[elKey] yet, so exclude that zone key entirely.
@@ -121,16 +125,57 @@ export default function StudioModals({ ctx }) {
       {/* ── Per-element / per-reference stock availability modal — image + free count only, pick
           one to book. Moved here from StudioBuild.jsx so it's reachable from any trigger — Build's
           own 📦 icons AND the Add Production/Buying Item modal's 📦 above share this one instance.
-          zIndex sits above CustomItemModal's (9200) so it stacks correctly when opened from there. ── */}
-      {availModal && (
-        <div onClick={()=>setAvailModal(null)} style={{position:"fixed",inset:0,zIndex:9300,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          zIndex sits above CustomItemModal's (9200) so it stacks correctly when opened from there.
+          "🔀 Split" is a second mode on the same picker — instead of swapping the element to one
+          different item, it divides its qty across 2+ chosen items (e.g. 18 booked as one arch
+          design that isn't free splits into 9 of one design + 9 of another that are). Only offered
+          for the direct zoneElements path (not the onPick swap used by kit components / the
+          Production-Item reference picker — there's no "element with a qty" to divide there) and
+          only once the element actually has 2+ units to split. ── */}
+      {availModal && (() => {
+        const modalKey = `${availModal.zoneKey}:${availModal.idx}`;
+        const original = !availModal.onPick ? (zoneElements[availModal.zoneKey] || [])[availModal.idx] : null;
+        const origQty = Number(original?.qty) || 0;
+        const splitEligible = !availModal.onPick && origQty >= 2;
+        const inSplit = splitEligible && availSplit?.key === modalKey;
+        const splitIds = inSplit ? availSplit.ids : [];
+        const toggleSplitId = (id) => setAvailSplit(s => {
+          const ids = s?.key === modalKey ? s.ids : [];
+          return { key: modalKey, ids: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
+        });
+        // Live preview of the split — same integer math as saveAvailSplit (see StudioApp.jsx), so
+        // what's shown here is exactly what Save will produce.
+        const splitPreview = (() => {
+          if (!inSplit || splitIds.length < 2) return null;
+          const n = splitIds.length;
+          const base = Math.floor(origQty / n);
+          const remainder = origQty - base * n;
+          const parts = Array.from({ length: n }, (_, i) => base + (i < remainder ? 1 : 0));
+          return parts.join(" · ");
+        })();
+        const closeModal = () => { setAvailModal(null); setAvailSplit(null); };
+        return (
+        <div onClick={closeModal} style={{position:"fixed",inset:0,zIndex:9300,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#12121F":"#fff",borderRadius:16,border:`1px solid ${border}`,width:"min(900px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.4)"}}>
             <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
               <div>
                 <div style={{fontSize:16,fontWeight:700,color:textP}}><IconBox size={14}/> Availability — {availModal.elName}</div>
-                <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</div>
+                <div style={{fontSize:11,color:textS,marginTop:2,letterSpacing:0.3}}>
+                  {inSplit
+                    ? `Splitting ${origQty} × ${availModal.elName} — pick 2 or more items below`
+                    : <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</>}
+                </div>
               </div>
-              <span onClick={()=>setAvailModal(null)} style={{cursor:"pointer",fontSize:22,color:textS,lineHeight:1}}>×</span>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                {splitEligible && (
+                  <button
+                    onClick={() => setAvailSplit(inSplit ? null : { key: modalKey, ids: [] })}
+                    title={inSplit ? "Back to picking a single replacement item" : `Divide this element's ${origQty} across 2 or more items instead of swapping to just one`}
+                    style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${inSplit?accent:border}`,background:inSplit?`${accent}18`:"transparent",color:inSplit?accent:textS,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}
+                  >🔀 {inSplit ? "Cancel split" : "Split"}</button>
+                )}
+                <span onClick={closeModal} style={{cursor:"pointer",fontSize:22,color:textS,lineHeight:1}}>×</span>
+              </div>
             </div>
             <div style={{padding:16,overflowY:"auto",flex:1}}>
               {availModal.loading ? (
@@ -140,10 +185,10 @@ export default function StudioModals({ ctx }) {
               ) : (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
                   {availModal.items.map(it=>{
-                    const sel = availModal.selectedId===it.id;
+                    const sel = inSplit ? splitIds.includes(it.id) : availModal.selectedId===it.id;
                     const out = it.free<=0;
                     return (
-                      <div key={it.id} onClick={()=>setAvailModal(m=>({...m,selectedId: sel?null:it.id}))} style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
+                      <div key={it.id} onClick={()=>inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id}))} style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative"}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>✓</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>
                         {it.photo ? <img src={it.photo} alt="" style={{width:"100%",height:120,objectFit:"cover",display:"block",opacity:out?0.5:1}}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
@@ -159,15 +204,22 @@ export default function StudioModals({ ctx }) {
               ))}
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-              <span style={{fontSize:10,color:textS}}>{availModal.onPick ? "Pick an item to swap this kit component to." : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin.")}</span>
+              <span style={{fontSize:10,color:textS}}>
+                {inSplit
+                  ? (splitPreview ? `${splitIds.length} items selected — splits ${origQty} into ${splitPreview}` : "Select 2 or more items to split into")
+                  : (availModal.onPick ? "Pick an item to swap this kit component to." : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."))}
+              </span>
               <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>setAvailModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
-                <button onClick={saveAvailPick} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>
+                <button onClick={closeModal} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>
+                {inSplit
+                  ? <button onClick={()=>{saveAvailSplit(splitIds);setAvailSplit(null);}} disabled={splitIds.length<2} style={{padding:"8px 18px",borderRadius:8,border:"none",background:splitIds.length<2?"#6B7280":"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:splitIds.length<2?"default":"pointer"}}>Save Split{splitIds.length>=2?` (${splitIds.length})`:""}</button>
+                  : <button onClick={()=>{saveAvailPick();setAvailSplit(null);}} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#059669",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save</button>}
               </div>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {videoModal&&(
         <div style={{position:"fixed",inset:0,background:"#000",zIndex:100,display:"flex",flexDirection:"column"}} onClick={()=>{setVideoModal(null);setVideoPlaying(false);setVideoOverlay(false);}}>

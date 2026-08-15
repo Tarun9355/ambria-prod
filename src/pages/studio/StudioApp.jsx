@@ -7000,6 +7000,44 @@ export default function StudioApp() {
     setAvailModal(null);
   }, [availModal, setZoneElements]);
 
+  // ═══ AVAILABILITY SPLIT ═══ A second mode on the same picker: instead of swapping the element to
+  // ONE different item, divide its qty across 2+ chosen items from the same sub-category — e.g. 18
+  // arches booked becomes 9 of one design + 9 of another, instead of hunting down 18 of a single
+  // item that isn't actually free. Replaces the one element-breakdown line with one line per chosen
+  // item. Splits as evenly as integer math allows; any remainder from an uneven split (20 into 3 →
+  // 7/7/6, not 6/6/6 dropping 2) lands on the first few lines so the total booked qty never drifts
+  // from what was there before the split. Not offered when this modal was opened via onPick (kit
+  // component swap / CustomItemModal reference pick) — there's no "element with a qty" to divide there.
+  const saveAvailSplit = useCallback((pickedIds) => {
+    if (!availModal || availModal.onPick || !Array.isArray(pickedIds) || pickedIds.length < 2) return;
+    const { zoneKey, idx, items } = availModal;
+    setZoneElements(p => {
+      const elems = [...(p[zoneKey] || [])];
+      const original = elems[idx];
+      if (!original) return p;
+      const total = Number(original.qty) || 0;
+      const n = pickedIds.length;
+      const base = Math.floor(total / n);
+      const remainder = total - base * n; // 0..n-1 leftover units, handed one each to the first `remainder` lines
+      // Same scale math as Build's own applyQty — a split line stays correctly proportioned the
+      // next time this zone's Scale By changes, instead of freezing at whatever qty it was split at.
+      const scale = Math.max(1, Math.round(Number(zoneConfig[zoneKey]?.scale) || 1));
+      const splitEls = pickedIds.map((id, i) => {
+        const pick = (items || []).find((it) => it.id === id);
+        const qty = base + (i < remainder ? 1 : 0);
+        return {
+          ...original,
+          invId: id, imsId: id,
+          name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
+          qty, baseQty: scale > 1 ? qty / scale : qty,
+        };
+      });
+      elems.splice(idx, 1, ...splitEls);
+      return { ...p, [zoneKey]: elems };
+    });
+    setAvailModal(null);
+  }, [availModal, setZoneElements, zoneConfig]);
+
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
     setDealCheckLoading(true);
@@ -7724,7 +7762,7 @@ export default function StudioApp() {
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,
-    availModal, setAvailModal, openAvailModal, saveAvailPick,
+    availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
