@@ -135,6 +135,7 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "production",label: "Production",       icon: "🏭", live: true  },
           { id: "buying",    label: "Buying",           icon: "🛒", live: true  },
           { id: "transport", label: "Transport",        icon: "🚚", live: true  },
+          { id: "power",     label: "Power",            icon: "⚡", live: true  },
           { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
@@ -883,6 +884,11 @@ export default function DealCheckOverlay({ ctx }) {
                   {(() => {
                     const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                     if (fns.length === 0) return <div style={{padding:"10px 12px",borderRadius:8,background:"rgba(26, 26, 46,0.03)",border:`1px solid ${border}`,fontSize:13,color:"#000",fontStyle:"italic"}}>No functions yet</div>;
+                    // Platform (fatta+stand) — computed once for every function's zones, same source
+                    // the bottom-bar rollup uses, so this per-fn chip can add its own share below.
+                    const platformPlanForSidebar = buildPlatformPlan(fns, dealCheckData);
+                    const pfFattaR = platformPlanForSidebar?.fattaItem ? imsField.rentalCost(platformPlanForSidebar.fattaItem) : 0;
+                    const pfStandR = platformPlanForSidebar?.standItem ? imsField.rentalCost(platformPlanForSidebar.standItem) : 0;
                     return fns.map((fn, fi) => {
                       // Per-fn decor cost (rental + floral) — spec §7.9.3. Mirrors the logic the
                       // shared cost rollup (dcCostRollup below) applies per zone/card, so this chip
@@ -927,6 +933,23 @@ export default function DealCheckOverlay({ ctx }) {
                         const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
                         fnDecor += _rep ? q * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : q * baseR;
                       });
+                      // Platform (fatta+stand) + carpet — same math as the bottom-bar rollup (they have
+                      // no zone "card" to hang off of, so the sum above never saw them). This used to
+                      // leave the sidebar chip running short of the bottom strip by exactly these two
+                      // structural costs on any deal with a platform or carpet.
+                      Object.entries(platformPlanForSidebar?.perZone || {}).forEach(([k, z]) => { if (Number(k.split("|")[0]) === fi) fnDecor += (z.fattas || 0) * pfFattaR + (z.stands || 0) * pfStandR; });
+                      {
+                        const zc = fn.zoneConfig || {};
+                        const en = fn.enabledEls || {};
+                        Object.keys(zc).forEach(zk => {
+                          if (!en[zk] || !zc[zk] || zc[zk].cpT === CARPET_OFF) return;
+                          const zcz = zc[zk];
+                          const fd = zcz.floorDims || zcz.dims || {};
+                          const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+                          const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
+                          if (area > 0 && cRate > 0) fnDecor += area * cRate;
+                        });
+                      }
                       const isActive = fi === activeFnIdx;
                       return (
                         <button key={fi} onClick={()=>switchActiveFn(fi)} style={{padding:"10px 11px",borderRadius:8,border:isActive?`1px solid ${accent}`:`1px solid ${border}`,background:isActive?`${accent}18`:"rgba(26, 26, 46,0.02)",cursor:isActive?"default":"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:3}}>
@@ -962,6 +985,8 @@ export default function DealCheckOverlay({ ctx }) {
                     : (dcInventoryCache || []);
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   const platformPlan = buildPlatformPlan(fns, dealCheckData);
+                  const platformFattaR = platformPlan?.fattaItem ? imsField.rentalCost(platformPlan.fattaItem) : 0;
+                  const platformStandR = platformPlan?.standItem ? imsField.rentalCost(platformPlan.standItem) : 0;
                   // §7.9.19 — Precompute reuse count per imsId for ♻ chip on cards
                   const reuseFnCount = {};
                   fns.forEach((_, fi) => { const cs = dcCards[fi] || {}; Object.values(cs).forEach(c => { if (c.imsId) { if (!reuseFnCount[c.imsId]) reuseFnCount[c.imsId] = new Set(); reuseFnCount[c.imsId].add(fi); } }); });
@@ -1083,11 +1108,49 @@ export default function DealCheckOverlay({ ctx }) {
                         const totalRowCount = zoneCards.length + platformEntriesForZone.length + recipeFlorals.length + manualItemsInZone.length;
                         const zonePhoto = fns[fnIdx]?.elSelectedPhoto?.[zk]?.src || null;
                         const zonePhotoName = fns[fnIdx]?.elSelectedPhoto?.[zk]?.eventName || "";
-                        // Total rental of every matched item in this zone (kit rentals already equal the
-                        // sum of their parts, so no double count) + any manual blocks.
+                        // Total rental of every matched item in this zone — mirrors the sidebar/bottom-bar
+                        // rollup math exactly (split-fulfilment lines, unavailable-shortfall cost%, the
+                        // fixed-venue Repeat discount) instead of a naive qty × rate sum, which is why this
+                        // pill used to run well under both of those. Also folds in this zone's own share of
+                        // platform (fatta/stand) and carpet — real rental cost that already shows as its own
+                        // card below but was never added into the "X rental" total above it.
+                        const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!(zzk && fns[fnIdx]?.zoneConfig?.[zzk]?.repeat); };
+                        const _repeatDiscPct = (subcat) => { const sc = Number((dealCheckData?.fixedVenueSubcatDiscount || {})[String(subcat || "").toLowerCase().trim()]); return (Number.isFinite(sc) && sc > 0) ? sc : 0; };
+                        const _costPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                         let zoneRentalTotal = 0;
-                        zoneCards.forEach(c => { if (!c.imsId) return; const it = dcInventoryCache.find(x => x.id === c.imsId); if (it) zoneRentalTotal += effKitRental(it, fnIdx, c._cardKey) * (Number(c.qty) || 1); });
-                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (it) zoneRentalTotal += imsField.rentalCost(it) * (Number(mi.qty) || 1); });
+                        zoneCards.forEach(c => {
+                          const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
+                          if (splitArr.length) {
+                            const _rep = _zoneIsRepeat(c._cardKey);
+                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += _rep ? q * br * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : q * br; });
+                            return;
+                          }
+                          if (!c.imsId) return;
+                          const it = dcInventoryCache.find(x => x.id === c.imsId);
+                          if (!it) return;
+                          const baseR = effKitRental(it, fnIdx, c._cardKey);
+                          const qty = Number(c.qty) || 1;
+                          const _rep = _zoneIsRepeat(c._cardKey);
+                          const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
+                          if (isKit) { zoneRentalTotal += _rep ? qty * baseR * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : qty * baseR; return; }
+                          const available = getStudioAvailable(it, fnBlocksForChip);
+                          const ownedQty = Math.min(qty, available);
+                          const shortQty = Math.max(0, qty - available);
+                          const ownedRental = _rep ? ownedQty * baseR * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : ownedQty * baseR;
+                          const shortCost = shortQty * (Number(it.cost) || 0) * (_costPctFor(imsField.subcategory(it)) / 100);
+                          zoneRentalTotal += ownedRental + shortCost;
+                        });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += _rep ? q * baseR * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : q * baseR; });
+                        platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
+                        {
+                          const zcz = fns[fnIdx]?.zoneConfig?.[zk];
+                          if (zcz && zcz.cpT !== CARPET_OFF) {
+                            const fd = zcz.floorDims || zcz.dims || {};
+                            const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+                            const cRate = carpetPricingFor(zcz.cpT, imsCarpetMaterials).rate || 0;
+                            if (area > 0 && cRate > 0) zoneRentalTotal += area * cRate;
+                          }
+                        }
                         zoneRentalTotal = Math.round(zoneRentalTotal);
                         return (
                           <div key={zk} style={{borderRadius:10,border:`1px solid ${border}`,background:"rgba(26, 26, 46,0.02)",overflow:"hidden"}}>
@@ -1763,21 +1826,85 @@ export default function DealCheckOverlay({ ctx }) {
                 ) : dcActiveTab === "truss" ? (
                   <DCTrussTab ctx={ctx} />
                 ) : dcActiveTab === "transport" ? (() => {
-                  // ═══ TRANSPORT TAB BODY (Patch 5) — per-function transport from existing calcFunctionBreakdown ═══
+                  // ═══ TRANSPORT TAB BODY — per-function truck allocation (genset split out to its own
+                  // Power tab below). Each truck-capacity row now also lists the zone/element lines that
+                  // filled it (bd.transport.breakdown[].items), so this isn't just a sub-category total —
+                  // it shows what is actually being loaded, same figures the truck-count math already used.
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No functions configured yet.</div>;
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {fns.map((fn, fi) => {
                         let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
-                        const t = bd?.transportTotal || 0;
+                        const tr = bd?.transport || null;
+                        const truckTotal = Number(tr?.truckTotal) || 0;
+                        const trucks = Number(tr?.trucks) || 0;
+                        const rows = tr?.breakdown || [];
                         return (
-                          <div key={fi} style={{padding:"11px 14px",borderRadius:9,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                            <div>
-                              <div style={{fontSize:13.5,fontWeight:700,color:"#000"}}>🚚 {fn?.fnType || `Function ${fi+1}`}</div>
-                              <div style={{fontSize:12,color:"#000",marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}{bd?.transport?.trucks?` · ${bd.transport.trucks.length} truck${bd.transport.trucks.length===1?"":"s"}`:""}</div>
+                          <div key={fi} style={{borderRadius:9,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`,overflow:"hidden"}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",borderBottom:rows.length?`1px solid ${border}`:"none"}}>
+                              <div>
+                                <div style={{fontSize:13.5,fontWeight:700,color:"#000"}}>🚚 {fn?.fnType || `Function ${fi+1}`}</div>
+                                <div style={{fontSize:12,color:"#000",marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}{trucks?` · ${trucks} truck${trucks===1?"":"s"}${tr?.tierLabel?` · ${tr.tierLabel}`:""}`:""}</div>
+                              </div>
+                              <div style={{fontSize:15.5,fontWeight:800,color:"#000",whiteSpace:"nowrap"}}>{truckTotal>0?`₹${Math.round(truckTotal).toLocaleString("en-IN")}`:"—"}</div>
                             </div>
-                            <div style={{fontSize:15.5,fontWeight:800,color:"#000",whiteSpace:"nowrap"}}>{t>0?`₹${Math.round(t).toLocaleString("en-IN")}`:"—"}</div>
+                            {rows.length > 0 && (
+                              <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:9}}>
+                                {rows.map((r, ri) => (
+                                  <div key={ri} style={{display:"flex",flexDirection:"column",gap:4}}>
+                                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5}}>
+                                      <span style={{fontWeight:700,color:"#000"}}>{r.isBuffer ? `🧯 Buffer${r.tierLabel?` — ${r.tierLabel}`:""}` : r.label}</span>
+                                      <span style={{color:"#000"}}>{r.isBuffer ? "" : `${r.qty} ${r.unit} · `}{r.trucks.toFixed(2)} truck{r.trucks===1?"":"s"}</span>
+                                    </div>
+                                    {Array.isArray(r.items) && r.items.length > 0 && (
+                                      <div style={{marginLeft:14,display:"flex",flexDirection:"column",gap:2}}>
+                                        {r.items.map((it, ii) => (
+                                          <div key={ii} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:"#000",opacity:0.75}}>
+                                            <span>{it.zoneKey ? `${it.zoneKey} · ` : ""}{it.name}</span>
+                                            <span>{Math.round((it.qty || 0) * 100) / 100} {r.unit}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })() : dcActiveTab === "power" ? (() => {
+                  // ═══ POWER TAB BODY — per-function genset plan, split out of Transport so genset
+                  // units/rates/cost have their own home instead of being buried inside one lump sum. ═══
+                  const fns = collectAllFunctionData ? collectAllFunctionData() : [];
+                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No functions configured yet.</div>;
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {fns.map((fn, fi) => {
+                        let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
+                        const tr = bd?.transport || null;
+                        const gensetCost = Number(tr?.gensetCost) || 0;
+                        const g125 = Number(tr?.gensets) || 0;
+                        const g62 = Number(tr?.genset62) || 0;
+                        const v125 = Number(tr?.venueGensets) || 0;
+                        const v62 = Number(tr?.venueGenset62) || 0;
+                        return (
+                          <div key={fi} style={{padding:"11px 14px",borderRadius:9,background:"rgba(245,158,11,0.05)",border:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <div>
+                              <div style={{fontSize:13.5,fontWeight:700,color:"#000"}}>⚡ {fn?.fnType || `Function ${fi+1}`}</div>
+                              <div style={{fontSize:12,color:"#000",marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}</div>
+                              {(g125>0 || g62>0) && (
+                                <div style={{fontSize:12,color:"#000",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
+                                  {g125>0 && <span>{g125} × 125 KVA @ ₹{Number(tr?.gensetRate||0).toLocaleString("en-IN")}{g125!==v125?` (venue default: ${v125})`:""}</span>}
+                                  {g62>0 && <span>{g62} × 62 KVA @ ₹{Number(tr?.gensetRate62||0).toLocaleString("en-IN")}{g62!==v62?` (venue default: ${v62})`:""}</span>}
+                                </div>
+                              )}
+                              {g125===0 && g62===0 && <div style={{fontSize:12,color:"#000",opacity:0.6,marginTop:4}}>No genset needed at this venue</div>}
+                            </div>
+                            <div style={{fontSize:15.5,fontWeight:800,color:"#000",whiteSpace:"nowrap"}}>{gensetCost>0?`₹${Math.round(gensetCost).toLocaleString("en-IN")}`:"—"}</div>
                           </div>
                         );
                       })}

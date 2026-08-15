@@ -3736,7 +3736,12 @@ export default function StudioApp() {
         // no rate-card row at all. Both were costed as plain rental instead.
         const elNm = (el.name || "").toLowerCase().trim();
         let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elNm);
-        if (!rc) {
+        // Same leniency gate DCFloralsTab.jsx uses: BOTH names need ≥4 chars before substring
+        // matching is attempted. This rollup was missing the elNm-length half of that guard, so a
+        // short element name (e.g. "Pot") could spuriously substring-match an unrelated florals
+        // Rate Card row here while the tab correctly left it unmatched — the two disagreeing on
+        // which elements even counted as priced florals, not just on the price.
+        if (!rc && elNm.length >= 4) {
           rc = rcItems.find(i => {
             if (String(i.cat || "").toLowerCase() !== "florals") return false;
             const n = (i.name || "").toLowerCase().trim();
@@ -4043,7 +4048,9 @@ export default function StudioApp() {
       const breakdown = [];
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {}; const totalFloralCost = 0;
-      const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0 }; subAgg[k].qty += qty; };
+      // items[]: the zone/element lines that made up this sub-category's qty — lets the Transport
+      // tab show WHAT is filling each truck-capacity row, not just its aggregate qty.
+      const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
       // An element's sub-category used to come ONLY from a legacy Rate-Card name match — the exact
       // same gap already fixed for pricing above (see the zones-loop comment a few lines up). Every
       // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
@@ -4062,19 +4069,20 @@ export default function StudioApp() {
           const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
           const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
-          else addSub(sub, Number(el.qty) || 0);
+          const elLabel = el.name || invItem?.name || pattern?.name || sub;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel); }
+          else addSub(sub, Number(el.qty) || 0, zk, elLabel);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
       let truckFrac = 0;
-      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck }); } });
+      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);
