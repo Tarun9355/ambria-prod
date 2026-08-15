@@ -18,6 +18,7 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
+import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemDimsText } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
@@ -2553,7 +2554,19 @@ undefined
                     : (el.qty||0) * adjUp;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
                   const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
-                  const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
+                  // A pure flower-recipe element (patternId, no invId) has no IMS inventory row at
+                  // all, so thumbItem is always empty for it — it fell back to the generic box icon
+                  // regardless of whether IMS had a reference photo for this size. Recipes now carry
+                  // one (AdminSettingsTab.jsx, Flowers → Recipes), keyed by size, so resolve it the
+                  // same way Deal Check resolves a recipe size (sizeClassToPatternKey + resolveSizeKey
+                  // — handles the "large"/"big" legacy alias) instead of guessing the shape.
+                  const patternThumbSrc = (!thumbItem && el.patternId) ? (() => {
+                    const patterns = (dealCheckData||studioFloralData)?.flowerPatterns || recipeOnlyPatterns || [];
+                    const pat = patterns.find(pt => pt.id === el.patternId);
+                    const sk = resolveSizeKey(pat?.sizes, sizeClassToPatternKey(el.size));
+                    return sk ? pat.sizes[sk]?.img : null;
+                  })() : null;
+                  const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0] || patternThumbSrc;
                   const thumbKey = `${k}:${idx}`;
                   const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   return (
