@@ -6,7 +6,7 @@
 // reference (App_latest.jsx). Transcribed VERBATIM here and driven off `ctx`.
 // ═══════════════════════════════════════════════════════════════
 import { Fragment, useState } from "react";
-import { IconBox, IconRuler } from "../../components/icons.jsx";
+import { IconBox, IconRuler, IconCrown, IconPalette, IconFlower, IconFactory } from "../../components/icons.jsx";
 import AllocationPicker from "../../components/studio/AllocationPicker.jsx";
 import CustomItemModal from "../../components/studio/CustomItemModal.jsx";
 import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx";
@@ -1152,19 +1152,42 @@ export default function StudioModals({ ctx }) {
         );
       })()}
 
-      {premiaGate&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setPremiaGate(null)}>
-        <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#1a1a2e":"#fff",borderRadius:14,maxWidth:440,width:"100%",overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
-          <div style={{background:isDark?"#0F0F1A":"#F5F3EE",padding:"22px 26px 16px",borderBottom:`1px solid ${border}`}}>
-            <div style={{display:"inline-block",background:"#26215C",color:"#CECBF6",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:5,letterSpacing:"0.04em",marginBottom:10}}>{premiaConfig.badge}</div>
-            <div style={{fontSize:19,fontWeight:600,color:isDark?"#F5F5F0":"#1a1a2e"}}>{premiaConfig.title}</div>
-            <div style={{fontSize:12,color:textS,marginTop:3}}>{premiaConfig.subtitle}</div>
+      {/* AMBRIA PREMIA gate — a sales moment, not a dead end. The old version just said "can't be
+          customized" and stopped there (no CTA at all if ctaUrl wasn't set), which reads as a wall.
+          The point this needs to make: a Platinum look isn't one designer clicking through Studio —
+          it's Design, Floral and Production sitting down together and building it as a team, the
+          same way we'd do it for the client's own event. The department-icon row makes that
+          concrete instead of asserting it in prose alone, and the CTA now always has somewhere
+          real to go (falls back to a sales@ambria.in mailto if no ctaUrl is configured). */}
+      {premiaGate&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(2px)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={()=>setPremiaGate(null)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:isDark?"#17172A":"#fff",borderRadius:16,maxWidth:460,width:"100%",overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 24px 70px rgba(0,0,0,0.55)"}}>
+          <div style={{background:"linear-gradient(135deg,#2B2566,#191345)",padding:"26px 28px 22px",position:"relative"}}>
+            <div style={{position:"absolute",top:-30,right:-20,width:120,height:120,borderRadius:"50%",background:"rgba(255,255,255,0.05)"}}/>
+            <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(255,255,255,0.12)",color:"#E8E4FF",fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,letterSpacing:"0.06em",marginBottom:14}}>
+              <IconCrown size={12}/>{premiaConfig.badge}
+            </div>
+            <div style={{fontSize:21,fontWeight:700,color:"#fff",letterSpacing:"-0.01em"}}>{premiaConfig.title}</div>
+            <div style={{fontSize:12.5,color:"#B8B2E0",marginTop:4}}>{premiaConfig.subtitle}</div>
           </div>
-          <div style={{padding:"18px 26px 14px",whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7,color:isDark?"#E5E5E5":"#1a1a2e"}}>
+          <div style={{padding:"20px 28px 6px",whiteSpace:"pre-wrap",fontSize:13,lineHeight:1.7,color:isDark?"#E5E5E5":"#2a2a3e"}}>
             {premiaConfig.body}
           </div>
-          <div style={{padding:"12px 26px 22px",display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
-            <button onClick={()=>setPremiaGate(null)} style={{background:"transparent",border:`1px solid ${border}`,color:isDark?"#E5E5E5":"#1a1a2e",padding:"9px 18px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>{premiaConfig.closeLabel||"Close"}</button>
-            {premiaConfig.ctaLabel&&premiaConfig.ctaUrl&&<a href={premiaConfig.ctaUrl} target="_blank" rel="noopener noreferrer" onClick={()=>setPremiaGate(null)} style={{background:"#26215C",border:"1px solid #26215C",color:"#EEEDFE",padding:"9px 18px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",textDecoration:"none"}}>{premiaConfig.ctaLabel}</a>}
+          {/* Made concrete, not just claimed — the four leads a Platinum build actually pulls in. */}
+          <div style={{display:"flex",gap:8,padding:"16px 28px 4px",flexWrap:"wrap"}}>
+            {[
+              { Icon: IconPalette, label: "Design" },
+              { Icon: IconFlower, label: "Floral" },
+              { Icon: IconFactory, label: "Production" },
+            ].map(({ Icon, label }) => (
+              <div key={label} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 11px",borderRadius:20,background:isDark?"rgba(124,58,237,0.14)":"rgba(124,58,237,0.08)",border:`1px solid ${isDark?"rgba(124,58,237,0.3)":"rgba(124,58,237,0.18)"}`}}>
+                <span style={{color:"#7C3AED",display:"flex"}}><Icon size={12}/></span>
+                <span style={{fontSize:11,fontWeight:600,color:isDark?"#D8CFFF":"#4C1D95"}}>{label}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{padding:"18px 28px 24px",display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap",marginTop:8,borderTop:`1px solid ${border}`,paddingTop:18}}>
+            <button onClick={()=>setPremiaGate(null)} style={{background:"transparent",border:`1px solid ${border}`,color:isDark?"#E5E5E5":"#1a1a2e",padding:"9px 18px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer"}}>{premiaConfig.closeLabel||"Maybe later"}</button>
+            <a href={premiaConfig.ctaUrl||"mailto:sales@ambria.in?subject=Ambria%20Premia%20-%20Design%20Session%20Request"} target="_blank" rel="noopener noreferrer" onClick={()=>setPremiaGate(null)} style={{display:"inline-flex",alignItems:"center",gap:6,background:"linear-gradient(135deg,#3B3282,#26215C)",border:"1px solid #26215C",color:"#EEEDFE",padding:"9px 18px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",textDecoration:"none"}}><IconCrown size={12}/>{premiaConfig.ctaLabel||"Book a Design Session"}</a>
           </div>
         </div>
       </div>}

@@ -115,14 +115,19 @@ const ROLE_DEFAULTS = { admin: { canViewPricing: true, canEditEvents: true, canM
 const DEFAULT_TEAM = Object.fromEntries(Object.entries(TEAM).map(([id, u]) => ([id, { ...u, active: true, perms: { ...(ROLE_DEFAULTS[u.role] || ROLE_DEFAULTS.sales) }, assignedVenues: [], venueScope: u.role === "admin" ? "all" : "outside", defaultVenue: "" }])));
 
 // ══ AMBRIA PREMIA (Platinum gate) — fully editable copy & CTA ══
+// The point of this gate is a sales one, not a policy one: a Platinum look isn't one designer
+// clicking through Studio, it's Design, Floral and Production sitting down together and building
+// it end-to-end as a team — the same collaboration we'd put behind the client's own event. That's
+// why it can't be self-served here, and framing it that way (not just "you can't do this") is what
+// turns a dead end into a reason to book time with us.
 const PREMIA_DEFAULTS = {
   badge: "AMBRIA PREMIA",
-  title: "Platinum collection",
-  subtitle: "Curated designs by our Sr. Designer",
-  body: "This design is part of our Platinum collection and can't be customized in Studio — it's showcased to give clients a glimpse of what our Sr. Designer creates.\n\nTo take this further, set up a meeting with our Ambria Premia team.",
-  closeLabel: "Close",
-  ctaLabel: "Request Sr. Designer",
-  ctaUrl: "",
+  title: "A Platinum-level design",
+  subtitle: "This isn't the work of one designer",
+  body: "Looks like this aren't built by one person clicking through options — they come out of a real sit-down: our Design, Floral and Production leads in one room, brainstorming every detail together, the same way we'd do it for your own event.\n\nThat kind of collaboration can't be replicated by editing a template. Book a planning session with our Ambria Premia team and get that same senior, whole-studio treatment for your celebration.",
+  closeLabel: "Maybe later",
+  ctaLabel: "Book a Design Session",
+  ctaUrl: "mailto:sales@ambria.in?subject=Ambria%20Premia%20-%20Design%20Session%20Request",
 };
 
 const TAX_LABELS = { eventType: "Event type", venueType: "Venue type", areasElements: "Areas & elements", colorPalette: "Color palette", tier: "Tier", categoryTier: "Category tier (legacy)", designStyle: "Design style", timeSetting: "Time / setting" };
