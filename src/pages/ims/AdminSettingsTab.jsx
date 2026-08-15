@@ -196,6 +196,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [recipeSubSearch, setRecipeSubSearch] = useState(""); // find-a-sub-category search, Recipes panel
   const [recipeSubOpen, setRecipeSubOpen] = useState({}); // { [sub]: true } — collapsed by default, click to expand
   const [recipeItemOpen, setRecipeItemOpen] = useState({}); // { [studioItem.id]: true } — collapsed by default, click to expand
+  const [recipeImgUploading, setRecipeImgUploading] = useState({}); // { [studioItem.id+":"+sz]: true } — per-size reference photo upload
 
   const forcedMode = !!mode;
   const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
@@ -1277,6 +1278,35 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           return (
             <div key={sz} className="p-3">
               <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">{sizeEmoji} {sizeLabel}</p>
+              {/* Reference photo for THIS size — what the finished piece actually looks like, not a
+                  raw flower stock photo (that's Mandi Prices' own per-flower photo, above). Shown in
+                  Studio Build's element breakdown for whichever size is currently selected, with the
+                  same hover-to-enlarge popup every other item thumbnail there already has. */}
+              <div className="relative w-16 mb-2">
+                <label className="block cursor-pointer">
+                  {sizeData.img
+                    ? <img src={sizeData.img} alt={sizeLabel} className="w-16 h-16 rounded object-cover border" title="Click to replace this size's reference photo" />
+                    : <div className="w-16 h-16 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title={`Upload a ${sizeLabel.toLowerCase()} reference photo`}>
+                        {recipeImgUploading[`${studioItem.id}:${sz}`] ? "…" : "+"}
+                      </div>}
+                  <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0]; if (!file) return;
+                    const key = `${studioItem.id}:${sz}`;
+                    setRecipeImgUploading((prev) => ({ ...prev, [key]: true }));
+                    try {
+                      const compressed = await compressImageForUpload(file);
+                      const url = await uploadToStorage(compressed, STORAGE_FOLDERS.RECIPE_REF);
+                      mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...(p.sizes?.[sz] || sizeData), img: url } } }));
+                    } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
+                    finally { setRecipeImgUploading((prev) => { const np = { ...prev }; delete np[key]; return np; }); e.target.value = ""; }
+                  }} />
+                </label>
+                {sizeData.img && (
+                  <button onClick={() => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...(p.sizes?.[sz] || sizeData), img: undefined } } }))}
+                    title="Remove reference photo"
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white border border-gray-300 text-red-400 hover:text-red-600 text-[10px] leading-none flex items-center justify-center shadow-sm">×</button>
+                )}
+              </div>
               {sizeData.flowers.map((fl, fi) => {
                 const setRow = (patch) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, ...patch } : x)) } } }));
                 if (fl.invItemId) {

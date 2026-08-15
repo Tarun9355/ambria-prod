@@ -20,6 +20,9 @@ export const STORAGE_FOLDERS = {
   // Mandi flower photos previously went to the Cloudinary root, mixed in with 489 other loose
   // files. Giving them a folder keeps the bucket navigable.
   MANDI: "mandi",
+  // Per-size (Small/Medium/Big) reference photos on a flower recipe — what the finished piece
+  // actually looks like at that size, distinct from MANDI's raw-flower stock photos.
+  RECIPE_REF: "flower-recipe-ref",
 };
 
 /**
