@@ -17,6 +17,7 @@ import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
+import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemDimsText } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
@@ -1129,15 +1130,20 @@ export default function StudioBuild({ ctx }) {
   //    parent was swallowing their photos. Aliases nobody else claims stay ("Entry Passage" /
   //    "Entry & Passage" are two spellings of one zone, not two zones).
   const areaNamesFor = (elKey) => {
-    // A true custom ("Other") zone has no zoneLabelsD entry at all — it isn't part of the admin
-    // zone taxonomy, just a per-deal zone the salesperson typed a name for. Without this, `label`
-    // fell through to the raw internal id (customZones' generated `id`, e.g. "cz1723..."), which no
-    // photo's "Areas & elements" tags could ever match — a custom zone's own photo strip was
-    // structurally unfillable by tagging, no matter what was picked. (Duplicate zones — the ones
-    // with `sourceType` — never hit this: the caller resolves them to their source's standard zone
-    // key before calling areaNamesFor at all.)
+    // A true custom ("Other") zone has no zoneLabelsD entry — it isn't part of the admin zone
+    // taxonomy, just a per-deal zone the salesperson typed a name for, with no company-wide
+    // agreement on what that name means. Matching it by NAME (like a standard zone) would let two
+    // unrelated deals that both happen to name a zone e.g. "Selfie Booth" silently share photos —
+    // matching it by the raw internal id (what this fell through to before) worked but meant no
+    // amount of tagging could ever reach it, since nothing outside this deal's own customZones
+    // array ever produces that id. Either way it needs its own channel, not areasElements: return a
+    // CUSTOM_ZONE_TAG_PREFIX-marked id instead, which getLibPhotosForZone (StudioApp.jsx) reads as
+    // "match tags.customZoneIds by this id", never as a literal areasElements string. (Duplicate
+    // zones — the ones with `sourceType` — never hit this: the caller resolves them to their
+    // source's standard zone key before calling areaNamesFor at all.)
     const customOther = customZones.find((cz) => cz.id === elKey && !cz.sourceType);
-    const label = (zoneLabelsD[elKey]?.label) || customOther?.name || elKey || "";
+    if (customOther) return [CUSTOM_ZONE_TAG_PREFIX + customOther.id];
+    const label = (zoneLabelsD[elKey]?.label) || elKey || "";
     const raw = ZONE_TYPE_TO_AREA[elKey];
     const names = Array.isArray(raw) ? [...raw] : (raw ? [raw] : []);
     if (!names.length) return label ? [label] : [];
@@ -3400,11 +3406,12 @@ undefined
         const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};
         // A true custom ("Other") zone isn't in the taxonomy this chip editor offers below, so there
         // was no way to tag a photo as belonging to one — see the matching note on applyZoneUpload
-        // (StudioApp.jsx). This zone IS where the photo is being corrected FOR, so include its name
-        // alongside whatever was picked, same as a fresh upload does.
+        // (StudioApp.jsx) and on areaNamesFor above. This zone IS where the photo is being corrected
+        // FOR, so include its id in the private customZoneIds channel, same as a fresh upload does —
+        // by id, not name, so it can't collide with an unrelated deal's same-named zone.
         const czSrcThis = customZones.find(cz => cz.id === zk && !cz.sourceType);
         const tags = czSrcThis
-          ? { ...correctPhoto.tags, areasElements: [...new Set([...(correctPhoto.tags?.areasElements || []), czSrcThis.name])] }
+          ? { ...correctPhoto.tags, customZoneIds: [...new Set([...(correctPhoto.tags?.customZoneIds || []), czSrcThis.id])] }
           : correctPhoto.tags;
         if(isNewMaster){
           // This photo wasn't a Library photo yet (fresh upload / event photo) — create one now.
@@ -3443,9 +3450,15 @@ undefined
         // zoneElements / zoneConfig stay — the elements were built by hand and are not the photo's.
         {
           const czSrcZ = customZones.find(cz => cz.id === zk);
-          const areas = areaNamesFor(czSrcZ?.sourceType || zk);
-          const tagged = tags?.areasElements || [];
-          const stillInZone = areas.length ? tagged.some(a => areas.includes(a)) : true;
+          // A true custom zone's own tag lives in customZoneIds, not areasElements — checked
+          // directly by id rather than through areaNamesFor's marker (see areaNamesFor above).
+          const stillInZone = (czSrcZ && !czSrcZ.sourceType)
+            ? (tags?.customZoneIds || []).includes(czSrcZ.id)
+            : (() => {
+                const areas = areaNamesFor(czSrcZ?.sourceType || zk);
+                const tagged = tags?.areasElements || [];
+                return areas.length ? tagged.some(a => areas.includes(a)) : true;
+              })();
           if (!stillInZone) setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
         }
         setCorrectPhoto(null);
