@@ -3817,6 +3817,18 @@ export default function StudioApp() {
         const season = sMap[fn.fnDate] || "non_saya";
         const sMult = mults[season] || 1;
         comp.flowers.forEach(fl => {
+          // A direct IMS Inventory ingredient in the recipe (fl.invItemId set, no flowerId at all) —
+          // a physical rented piece bundled into the recipe (a vase, a wire base), not a mandi
+          // flower. DCFloralsTab.jsx counts it in FULL as real cost, never scaled by the real/
+          // artificial slider (there's no "artificial" version of a physical prop) — this rollup had
+          // no branch for it, so resolveMandiFlower(undefined, ...) below returned null and the whole
+          // line silently dropped out of both totalReal and totalArtificial.
+          if (fl.invItemId) {
+            const item = imsInventory.find(i => i.id === fl.invItemId);
+            const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+            fixedExtras += (fl.qty || 0) * q * rawPrice;
+            return;
+          }
           const resolved = resolveMandiFlower(fl.flowerId, mc);
           const parent = resolved?.parent || null;
           const parentId = parent?.id || fl.flowerId;
