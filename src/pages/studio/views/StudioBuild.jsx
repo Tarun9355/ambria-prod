@@ -1185,8 +1185,11 @@ export default function StudioBuild({ ctx }) {
       .finally(() => zoneFetchInFlight.current.delete(cacheKey));
   };
   // Kick off the fetch for every currently-rendered zone (cheap no-op for already-cached/in-flight keys).
+  // Every custom zone now gets its own card (see the main zone-cards loop below) — "Other" zones
+  // included, not just duplicates — so this has to prefetch for all of them, or a true custom
+  // zone's photo strip would sit permanently empty: nothing else ever calls ensureZoneMatches.
   useEffect(() => {
-    const keys = [...zoneKeys, ...customZones.filter(cz => cz.sourceType).map(cz => cz.id)];
+    const keys = [...zoneKeys, ...customZones.map(cz => cz.id)];
     keys.forEach((k) => {
       const czSrc = customZones.find(cz => cz.id === k);
       const srcType = czSrc?.sourceType || k;
@@ -1892,7 +1895,14 @@ undefined
     </div>}
     {/* ═══ ELEMENT CARDS ═══ One unified photo strip per zone (no Silver/Gold split). ═══ */}
     <div style={ctx.isFnSwitching?{opacity:0.45,pointerEvents:"none",transition:"opacity .15s ease"}:undefined}>
-    {[...zoneKeys, ...customZones.filter(cz=>cz.sourceType).map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
+    {/* Every custom zone renders here now, "Other" ones included — not just duplicates of a
+        standard zone. They used to get a separate, much simpler card (see git history) built before
+        custom-zone photo tagging actually worked, so a photo gallery there would have shown nothing
+        no matter what. Now that tagging resolves correctly (areaNamesFor / getLibPhotosForZone,
+        StudioApp.jsx), there's no reason "Other" zones shouldn't get the exact same card everything
+        else does — photo strip, Scale By, notes, paint allocation, all of it — instead of a second,
+        drifting copy of the parts that were duplicated anyway (elements list, truss/platform). */}
+    {[...zoneKeys, ...customZones.map(cz=>cz.id)].sort((a,b)=>(enabledEls[a]?0:1)-(enabledEls[b]?0:1)).map(k=>{
       const czSrc=customZones.find(cz=>cz.id===k);
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
@@ -2022,7 +2032,10 @@ undefined
               if(zoneConfig[k]?.plH) bits.push("platform");
               return <span style={{fontSize:11,color:textS,fontWeight:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bits.join(" · ")}</span>;
             })()}
-            {/* No "Duplicate" chip — the name already says "Stage (2)", so the chip only repeated it. */}
+            {/* No "Duplicate" chip — the name already says "Stage (2)", so the chip only repeated it.
+                A true custom ("Other") zone gets one, though — nothing else marks its name as
+                salesperson-typed rather than an admin-curated zone type. */}
+            {czSrc&&!czSrc.sourceType&&<span style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS,flexShrink:0}}>Custom</span>}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details</span>}</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {/* Zone total removed from the header. The Live Estimate rail already breaks the deal
@@ -2068,9 +2081,10 @@ undefined
             <span title="Add Production item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"production"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
             <span title="Add Buying item" onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx:activeFnIdx||0,zoneKey:k,type:"buying"});}} style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
             {/* The per-zone "Duplicate this zone" copy button is gone — it crowded the row and the
-                "+ Add Zone" box below covers the same need. Existing duplicates still render and
-                still carry their ✕ so saved sessions can be cleaned up. */}
-            {isDuplicate&&<span title={`Remove ${el.label}`} onClick={e=>{e.stopPropagation();askConfirm(`Remove ${el.label}?`,()=>{setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});showMsg(`✓ ${el.label} removed`,"green");});}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
+                "+ Add Zone" box below covers the same need. Every custom zone (duplicate or a true
+                "Other") still carries its own ✕ so it can be removed — a standard zone can't be
+                deleted here at all, only switched off, since it isn't this deal's to remove. */}
+            {czSrc&&<span title={`Remove ${el.label}`} onClick={e=>{e.stopPropagation();askConfirm(`Remove ${el.label}?`,()=>{setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});showMsg(`✓ ${el.label} removed`,"green");});}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>}
             {/* Scale is available on every zone, not just centrepieces. The mechanism was never
                 centrepiece-specific: it rewrites each element's qty from baseQty × scale, so
                 pricing, Deal Check and manpower follow on their own. Ten identical entry arches
@@ -2909,331 +2923,16 @@ undefined
       </div>);
     })}
 
-    {/* ═══ CUSTOM ZONES (non-duplicates only — duplicates render in main loop above) ═══ */}
-    {customZones.filter(cz=>!cz.sourceType).map(cz=>{
-      const k=cz.id;const isOn=enabledEls[k];
-      const czElCost=calcElsCost(zoneElements[k],true,zoneConfig[k],{checkAvailability:true});
-      const czStructCost=zoneConfig[k]?calcStructCost(k,zoneConfig[k],structRates).total:0;
-      const czTotal=czElCost+czStructCost;
-      return(<div key={k} id={`zone-${k}`} style={{background:isOn?cardBg:isDark?"#12121F":"#FAFAFA",borderRadius:16,border:isOn?`2px solid #444`:`2px solid ${border}`,marginBottom:14,overflow:"hidden"}}>
-        {/* Same rule as the standard zone header above — Details is the only collapse control. */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) setEnabledEls(p=>({...p,[k]:!p[k]})); }}>
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:22,display:"flex",alignItems:"center"}}>{cz.icon||<IconBox size={20}/>}</span>
-            <div style={{fontSize:15,fontWeight:600,color:isOn?textP:textS}}>{cz.name}</div>
-            <span style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F0F0F0",color:textS}}>Custom</span>
-            {isOn&&<span onClick={e=>{e.stopPropagation();toggleZoneCollapse(k);}} title={isCollapsed(k)?"Show details & pricing":"Hide details & pricing"} style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:11.5,fontWeight:600,color:isCollapsed(k)?textS:accent,padding:"3px 9px",borderRadius:9,border:`1px solid ${isCollapsed(k)?border:accent+"60"}`,background:isCollapsed(k)?"transparent":accent+"12",flexShrink:0,whiteSpace:"nowrap"}}><span style={{display:"inline-flex",transform:isCollapsed(k)?"rotate(-90deg)":"none",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>Details</span>}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            {isOn&&showCosts&&<div style={{fontSize:14,fontWeight:700,color:textP}}>{fmt(czTotal)}</div>}
-            <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();setEnabledEls(p=>({...p,[k]:!p[k]}));}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
-            <span title={`Remove ${cz.name}`} onClick={e=>{e.stopPropagation();askConfirm(`Remove ${cz.name}?`,()=>{setCustomZones(p=>p.filter(z=>z.id!==k));setEnabledEls(p=>{const n={...p};delete n[k];return n;});setZoneElements(p=>{const n={...p};delete n[k];return n;});setZoneConfig(p=>{const n={...p};delete n[k];return n;});showMsg(`✓ ${cz.name} removed`,"green");});}} style={{cursor:"pointer",color:"#E11D48",fontSize:14,fontWeight:700}}>✕</span>
-          </div>
-        </div>
-        {isOn&&!isCollapsed(k)&&<div style={{padding:"0 18px 16px"}}>
-          {/* ═══ FOUR SECTIONS ═══ Same chip switcher the standard zones use — Elements / Truss &
-              Masking / Platform / Print — so a custom "Other" zone looks and behaves like every
-              other zone instead of dumping its whole Zone Structure open by default. */}
-          <div className="sec-grid" id={`zone-sec-${k}`}>
-            {ZONE_SECTIONS.map(sec=>sectionTile(k,sec))}
-          </div>
-
-          {/* Element card — add items from Rate Card */}
-          {zoneSection[k]==="elements"&&<div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div onClick={()=>toggleElCard(k)} title={isElCardOpen(k)?"Hide the item list":"Show the item list"} style={{fontSize:11,fontWeight:600,color:"#666",cursor:"pointer",display:"flex",alignItems:"center",gap:5,userSelect:"none"}}>
-                    <span style={{display:"flex",color:"#999",transform:isElCardOpen(k)?"none":"rotate(-90deg)",transition:"transform 0.18s ease"}}><IconChevron size={11}/></span>
-                    <IconClipboard size={12}/> Items — {cz.name}
-                    {!isElCardOpen(k)&&elCardSummary(k)}
-                  </div>
-              {isElCardOpen(k)&&<div style={{position:"relative"}}>
-                <input value={zoneElSearch[k]||""} onChange={e=>setZoneElSearch(p=>({...p,[k]:e.target.value}))} placeholder="+ Add element..." style={{...S.input,fontSize:10,padding:"3px 8px",width:140,marginBottom:0}} onFocus={()=>setZoneElSearch(p=>({...p,[k]:""})) } />
-                {(zoneElSearch[k]||"").length>=1&&(()=>{
-                  const q=(zoneElSearch[k]||"").toLowerCase();
-                  // A kit's own components are already covered by that kit — don't offer adding
-                  // one separately (would double the item and double its cost).
-                  const kitCoveredIds=new Set((zoneElements[k]||[]).filter(el=>el.invId).flatMap(el=>{
-                    const it=(imsInventory||[]).find(i=>i.id===el.invId);
-                    const comps=Array.isArray(el.kitOverrides)?el.kitOverrides:(it?.subItems||[]);
-                    return comps.map(c=>c.itemId);
-                  }));
-                  // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
-                  // (Rate Card is not consulted here — see getElPriceFromInventory /
-                  // getElPriceFromPattern in StudioApp.jsx).
-                  const invMatches=(imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)&&(it.name.toLowerCase().includes(q)||(it.cat||"").toLowerCase().includes(q)||(it.subCat||it.subcategory||"").toLowerCase().includes(q))).slice(0,8);
-                  const patMatches=(recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)&&pt.name.toLowerCase().includes(q)).slice(0,4);
-                  const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt}))].slice(0,8);
-                  return matches.length>0?<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
-                    {matches.map(m=>{
-                      if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
-                        onClick={()=>{
-                          if(!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id}]}));}
-                          setZoneElSearch(prev=>({...prev,[k]:""}));
-                        }}
-                        style={{padding:"8px 10px",fontSize:11,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
-                        <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          <span style={{fontSize:22,opacity:0.5}}>🌺</span>
-                        </div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
-                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pt.name}</span>
-                            <span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700,flexShrink:0}}>🌺 RECIPE</span>
-                          </div>
-                          <div style={{fontSize:9,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
-                        </div>
-                      </div>; }
-                      const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
-                      const remaining=remainingForItem(it.id,k); const isBlocked=remaining!=null&&remaining<=0;
-                      return <div key={"inv:"+it.id}
-                        onClick={()=>{
-                          if(isBlocked) return;
-                          if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id}]}));}
-                          setZoneElSearch(prev=>({...prev,[k]:""}));
-                        }}
-                        style={{padding:"8px 10px",fontSize:11,cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,opacity:isBlocked?0.45:1}}>
-                        <ItemHoverThumb src={src} size={56} name={it.name} sub={(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):it.cat} dims={itemDimsText(it)} border={border} cardBg={cardBg} textP={textP} textS={textS} emptyBg={isDark?"#1a1a2e":"#eee"} />
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
-                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
-                            {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
-                            {isBlocked&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>fully used in this event</span>}
-                            {!isBlocked&&remaining!=null&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>}
-                          </div>
-                          <div style={{fontSize:9,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}</div>
-                        </div>
-                      </div>;
-                    })}
-                  </div>:<div style={{position:"absolute",top:"100%",right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:10,color:textS,width:320}}>No matches</div>;
-                })()}
-              </div>}
-            </div>
-            {isElCardOpen(k)&&(zoneElements[k]||[]).length>0&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
-              <div className="el-grid" style={{"--el-cols":elCols}}>
-              {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
-                const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
-                const rc = priceInfo.rc;
-                const hasSizes = rcIsSMB(rc);
-                const isTrussSqft = rc && rc.unit === "truss_sqft";
-                const rawUp = priceInfo.unitPrice;
-                const adjUp = applyFloralRatio(rawUp, rc);
-                const lineTotal = isTrussSqft
-                  ? applyFloralRatio(priceInfo.lineCost, rc)
-                  : (el.qty||0) * adjUp;
-                const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
-                const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
-                const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0];
-                const thumbKey = `${k}:${idx}`;
-                const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
-                return (
-                  <div key={idx} className="el-row" data-kit={isKit?"1":"0"} style={{display:"flex",flexDirection:"column",gap:6,padding:"9px 10px",borderRadius:12,border:`1px solid ${isDark?"rgba(255,255,255,0.09)":"rgba(26,26,46,0.10)"}`,background:cardBg,gridColumn:isKit?(firstKit?`1 / span ${kitSpan}`:`span ${kitSpan}`):"span 1",minHeight:isKit?undefined:98,justifyContent:isKit?"flex-start":"space-between"}}>
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-                      <div style={{position:"relative",flexShrink:0}}
-                        onMouseEnter={(e)=>{
-                          if(!thumbSrc) return;
-                          const r=e.currentTarget.getBoundingClientRect();
-                          const POP=164;
-                          const openUp=window.innerHeight-r.bottom<POP+8 && r.top>POP+8;
-                          setElThumbHover({key:thumbKey,openUp,top:openUp?undefined:r.bottom+4,bottom:openUp?window.innerHeight-r.top+4:undefined,left:Math.min(r.left,window.innerWidth-168)});
-                        }}
-                        onMouseLeave={()=>setElThumbHover(null)}>
-                        {thumbSrc ? <img src={thumbSrc} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover",cursor:"zoom-in"}}/> : <div style={{width:20,height:20,borderRadius:4,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}><IconBox size={11}/></div>}
-                        {/* Portal to <body> — see the matching note on the standard-zone element
-                            card above: .el-row's hover transform otherwise hijacks this fixed
-                            popup's positioning context and it renders invisibly off-place. */}
-                        {elThumbHover?.key===thumbKey && thumbSrc && createPortal(
-                          <div style={{position:"fixed",top:elThumbHover.top,bottom:elThumbHover.bottom,left:elThumbHover.left,zIndex:10000,width:160,height:160,borderRadius:8,overflow:"hidden",border:`2px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",pointerEvents:"none"}}>
-                            <img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                          </div>,
-                          document.body
-                        )}
-                      </div>
-                      <span title={isUnavail?"Not available for this date — tap the stock icon to pick a different item":undefined} style={{fontSize:12,fontWeight:500,color:isUnavail?"#EF4444":(rc||el.invId||el.patternId)?textP:"#F59E0B",textDecoration:isUnavail?"line-through":"none",minWidth:0,whiteSpace:"normal",overflowWrap:"anywhere"}}>{invItem?.name || el.name}</span>
-                        {showCosts&&<span title="Rate per unit" style={{flexShrink:0,fontSize:10,fontWeight:600,color:textS,whiteSpace:"nowrap"}}>{adjUp>0?`₹${adjUp.toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:"₹0"}</span>}
-                      {isKit&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700}}>KIT</span>}
-                      {!rc&&!el.invId&&!el.patternId&&<span style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700}}>NEW</span>}
-                      {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:7,padding:"1px 4px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short</span>}
-                      {(rc||el.invId)&&<span onClick={()=>openAvailModal(k, idx, el, rc)} title={isUnavail?"Not available for this date — tap to pick a different item":"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:isUnavail?13:11,opacity:isUnavail?1:0.5,padding:isUnavail?"1px 3px":"0 1px",borderRadius:4,background:isUnavail?"rgba(239,68,68,0.15)":"transparent",lineHeight:1}}>📦</span>}
-                      {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2}}>
-                      {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
-                      {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:9,fontWeight:(el.size||"B")===s?700:400,cursor:"pointer",background:(el.size||"B")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"B")===s?"#666":textS}}>{s}</button>)}
-                      {hasSizes&&!priceInfo.isFloralBlend&&<button onClick={()=>{const elems=[...(zoneElements[k]||[])];const used=new Set(elems.filter(e=>e.name===el.name).map(e=>e.size||"M"));const ns=["B","M","S"].find(s=>!used.has(s))||"B";elems.splice(idx+1,0,applyQty(k,{...el,size:ns},1));setZoneElements(p=>({...p,[k]:elems}));}} title="Split into another size (e.g. 3 Big + 2 Small)" style={{padding:"1px 6px",borderRadius:4,border:`1px dashed ${border}`,fontSize:9,fontWeight:600,cursor:"pointer",background:"transparent",color:accent}}>＋ size</button>}
-                      {priceInfo.isFloralBlend&&<span style={{display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>{"🌸"}<button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:typeof el.realPct==="number"?undefined:100};setZoneElements(p=>({...p,[k]:elems}));}} title={typeof el.realPct==="number"?"Priced at "+el.realPct+"% of the recipe's Studio rate — tap to go back to this sub-category's default ratio":"Using this sub-category's default real/artificial ratio — tap to price at 100% of the recipe's Studio rate"} style={floralPill(typeof el.realPct==="number")}>{typeof el.realPct==="number"?`${el.realPct}%`:"Ratio"}</button><input type="number" min="0" max="100" value={el.realPct??""} placeholder={String(priceInfo.realPct??"")} onChange={e=>{const v=e.target.value;const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],realPct:v===""?undefined:Math.max(0,Math.min(100,parseFloat(v)||0))};setZoneElements(p=>({...p,[k]:elems}));}} title="Manually set the exact % real — overrides Ratio/100%" style={{width:44,padding:"2px 6px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:11,textAlign:"center"}} /></span>}
-                    </div>
-                  </div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
-                    {isTrussSqft ? (
-                      <div style={{fontSize:11,fontWeight:600,color:textS,padding:"3px 8px",borderRadius:6,background:isDark?"rgba(59,130,246,0.08)":"rgba(59,130,246,0.06)",minWidth:64,textAlign:"center"}}>{priceInfo.area>0?`× ${priceInfo.area} sqft`:"× — sqft"}</div>
-                    ) : (
-                      <>
-                        <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],Math.max(0,(el.qty||0)-1));setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
-                        <input type="number" min="0" value={el.qty||0} onChange={e=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],Math.max(0,parseInt(e.target.value)||0));setZoneElements(p=>({...p,[k]:elems}));}} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                        <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],(el.qty||0)+1);setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-                      </>
-                    )}
-                      </div>
-                    {showCosts?<div style={{fontSize:13,fontWeight:600,color:lineTotal>0?textP:textS,textAlign:"left",whiteSpace:"nowrap"}}>{lineTotal>0?fmt(lineTotal):"—"}</div>:<span/>}
-                    <span onClick={()=>{const elems=(zoneElements[k]||[]).filter((_,i)=>i!==idx);setZoneElements(p=>({...p,[k]:elems}));}} style={{marginLeft:"auto",cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12}}>×</span>
-                  </div>
-                  </div>
-                  {isTrussSqft&&priceInfo.warning&&<div style={{fontSize:10,color:"#F59E0B",marginTop:4,padding:"4px 6px",borderRadius:4,background:"rgba(245,158,11,0.08)"}}>{priceInfo.warning}</div>}
-                  {isKit&&<KitComponentsEditor
-                    item={invItem}
-                    overrides={el.kitOverrides}
-                    onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));}}
-                    imsInventory={imsInventory}
-                    flowerPatterns={(dealCheckData||studioFloralData)?.flowerPatterns||recipeOnlyPatterns}
-                    qtyMultiplier={el.qty||1}
-                    dealAwareness={{getRemaining:(itemId)=>remainingForItem(itemId,k,idx)}}
-                    onCheckAvailability={(cItem,onPick)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick)}
-                    rcSubcatFactors={rcSubcatFactors}
-                    rcFactorByKey={rcFactorByKey}
-                    mandiCatalogue={(dealCheckData||studioFloralData)?.mandiCatalogue||[]} studioMarkup={Number((dealCheckData||studioFloralData)?.defaultStudioMarkup)||3} elSize={el.size}
-                    floralRatio={floralRatio} rcFloralModeByKey={rcFloralModeByKey} floralSettings={(dealCheckData||studioFloralData)||{}}
-                    textP={textP} textS={textS} border={border} cardBg={cardBg} accent={accent} isDark={isDark} fmt={fmt}
-                  />}
-                </div>);
-              })}
-              </div>
-              {showCosts&&<div style={{display:"flex",justifyContent:"flex-end",padding:"8px 0 0",fontWeight:700,color:textP}}>Items: {fmt(czElCost)}</div>}
-            </div>}
-          </div>}
-
-          {/* Print — identical block to the standard zones (Flex/Vinyl/Sunboard etc). */}
-          {zoneSection[k]==="print"&&<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"9px 12px",marginBottom:10,border:`1px solid ${border}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div style={{fontSize:11.5,fontWeight:600,color:"#0369A1",display:"flex",alignItems:"center",gap:6}}><IconPrinter size={12}/>Print</div>
-              <button onClick={()=>{
-                const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null};
-                setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
-              }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
-            </div>
-            {(()=>{
-              const rows=((zoneConfig[k]||{}).prints||[]).length===0
-                ? [{id:"__phantom__",material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null}]
-                : (zoneConfig[k]||{}).prints;
-              return (
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {rows.map((p,pi)=>{
-                  const isPhantom=p.id==="__phantom__";
-                  const invItem=p.invId?(imsInventory||[]).find(i=>i.id===p.invId):null;
-                  const thumbSrc=invItem?.img||invItem?.photoUrls?.[0];
-                  const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
-                  const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
-                  const rate=mat?.ratePerSqft||0;
-                  const cost=sqft*rate;
-                  const setPrint=(patch)=>{
-                    if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
-                    setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}}));
-                  };
-                  const removePrint=()=>setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).filter((_,i)=>i!==pi)}}));
-                  const linkQ=zonePrintSearch[p.id]||"";
-                  return <div key={p.id} style={{padding:"7px 9px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
-                        <option value="">Material…</option>
-                        {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
-                      </select>
-                      <input type="number" min="0" step="0.1" value={p.areaW||""} onChange={e=>setPrint({areaW:parseFloat(e.target.value)||0})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
-                      <span style={{fontSize:11.5,color:textS}}>×</span>
-                      <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
-                      <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
-                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
-                      {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginTop:7,alignItems:"start"}}>
-                      <div>
-                    <input value={p.refImageUrl||""} onChange={e=>setPrint({refImageUrl:e.target.value})} placeholder="Reference image URL (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",marginTop:6,marginBottom:0,width:"100%"}} />
-                    {p.refImageUrl&&<img src={p.refImageUrl} alt="" style={{marginTop:6,width:"100%",maxHeight:100,objectFit:"cover",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />}
-                      </div>
-                      <div style={{position:"relative"}}>
-                    {p.invId ? (
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <div style={{width:20,height:20,borderRadius:4,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {thumbSrc?<img src={thumbSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={12}/></span>}
-                        </div>
-                        <span style={{fontSize:11.5,color:invItem?textS:"#F59E0B",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{invItem?invItem.name:`⚠ ${p.invId} not in IMS`}</span>
-                        <span onClick={()=>setPrint({invId:null})} style={{cursor:"pointer",color:textS,fontSize:11,textDecoration:"underline"}}>Unlink</span>
-                      </div>
-                    ) : (
-                      <div>
-                        <input value={linkQ} onChange={e=>setZonePrintSearch(prev=>({...prev,[p.id]:e.target.value}))} placeholder="Link to an inventory item (optional)" style={{...S.input,fontSize:11.5,padding:"3px 8px",width:"100%",marginBottom:0}} />
-                        {linkQ.trim() && (()=>{
-                          const tokens=linkQ.toLowerCase().trim().split(/\s+/).filter(Boolean);
-                          const matches=(imsInventory||[]).filter(it=>tokens.every(t=>(it.name+" "+(it.subCat||it.subcategory||"")+" "+(it.cat||"")).toLowerCase().includes(t))).slice(0,40);
-                          return <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:cardBg,border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:260,overflowY:"auto"}}>
-                            {matches.length===0&&<div style={{padding:"8px 10px",fontSize:11.5,color:textS}}>No matches</div>}
-                            {matches.map(it=>{
-                              const src=it.img||it.photoUrls?.[0];
-                              return <div key={it.id} onClick={()=>{
-                                const toFt=(v,u)=>(Number(v)||0)*({Feet:1,Inches:1/12,Cm:1/30.48,Metre:3.28084}[u]||1);
-                                const patch={invId:it.id};
-                                if(!p.areaW&&!p.areaD){if(it.printW)patch.areaW=toFt(it.printW,it.printUnit);if(it.printL)patch.areaD=toFt(it.printL,it.printUnit);}
-                                setPrint(patch);
-                                setZonePrintSearch(prev=>({...prev,[p.id]:""}));
-                              }} style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
-                                <div style={{width:32,height:32,borderRadius:6,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                  {src?<img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{opacity:0.3,display:"flex"}}><IconBox size={15}/></span>}
-                                </div>
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{it.name}</div>
-                                  <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{it.printW?" · print area on file":""}</div>
-                                </div>
-                              </div>;
-                            })}
-                          </div>;
-                        })()}
-                      </div>
-                    )}
-                      </div>
-                    </div>{/* /optional-fields grid */}
-                  </div>;
-                })}
-                {showCosts&&((zoneConfig[k]||{}).prints||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:700,paddingTop:4}}>
-                  <span style={{color:textP}}>Print Total</span>
-                  <span style={{color:"#0EA5E9"}}>{fmt(((zoneConfig[k]||{}).prints||[]).reduce((sum,p)=>{const m=(imsPrintMaterials||[]).find(x=>x.id===p.material);const s=(Number(p.areaW)||0)*(Number(p.areaD)||0);return sum+s*(m?.ratePerSqft||0);},0))}</span>
-                </div>}
-              </div>
-              );
-            })()}
-          </div>}
-
-          {/* Truss & Masking / Platform — reuse the exact TrussStack/FloorStack the standard zones
-              render, instead of the old bespoke "Zone Structure" block (no §23 truss-type picker,
-              no extra truss/platform rows, no per-row material captions). Same components, same
-              pricing, same look. */}
-          {(zoneSection[k]==="truss"||zoneSection[k]==="platform")&&(()=>{
-            const zm=zoneMeta[k],zc=zoneConfig[k]||{},st=calcStructCost(k,zc,structRates);
-            const sZ=u=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],...u}}));};
-            const sD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
-              // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
-              const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
-              return {...p,[k]:{...cur,dims,trT}};});};
-            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...p[k],floorDims:{...(p[k]?.floorDims||{}),[d]:parseFloat(v)||0}}}));};
-            const fd=zc.floorDims||{};
-            return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
-              {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} />}
-              {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} />}
-            </div>);
-          })()}
-        </div>}
-      </div>);
-    })}
     </div>{/* end of the function-switch veil wrapper */}
 
     {/* ═══ + ADD CUSTOM ZONE ═══ Two things through one picker:
         - A zone TYPE gives you a second Stage / Entry Passage / … that behaves exactly like the
-          original (photo strip, elements, truss, platform, pricing) — that is what sourceType buys.
-          Naming is automatic, "Stage (2)".
+          original (photo strip, elements, truss, platform, pricing) AND starts from that zone's own
+          tagged photo pool — that is what sourceType buys. Naming is automatic, "Stage (2)".
         - "Other" is for a zone the list does not cover (Gajra Counter, Artist Stage). It has no
-          source type, so it gets no seeded photo strip — just a named zone you fill in yourself.
+          source type, so it starts with an empty photo strip of its own (nothing seeded from a
+          standard zone) — but it's the same full card either way: photo gallery, elements, truss,
+          platform, pricing, notes, all of it (see the main zone-cards loop above).
         The name box only appears for Other. Showing it always was the earlier design and it read as
         a second, competing way to add a zone. ═══ */}
     {(()=>{
@@ -3248,8 +2947,10 @@ undefined
         if (!canAdd) return;
         const id = "cz_"+Date.now();
         const name = isOther ? otherName : autoName;
-        // Other → no sourceType, so it renders in the plain custom-zone section rather than the
-        // main list, and carries no inherited photos or pricing.
+        // Other → no sourceType, so it starts with no inherited photos/elements/pricing — its own
+        // photo strip fills up only from what gets tagged into it from here on (see areaNamesFor /
+        // CUSTOM_ZONE_TAG_PREFIX). It still renders in the same main zone-cards list as everything
+        // else, full card included.
         setCustomZones(p=>[...p, isOther ? {id,name,icon:""} : {id,name,sourceType:newCzSrc,icon:zoneLabelsD[newCzSrc]?.icon||""}]);
         setEnabledEls(p=>({...p,[id]:true}));
         setNewCzSrc(""); setNewCzOtherName("");
