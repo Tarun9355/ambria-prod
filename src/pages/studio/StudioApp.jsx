@@ -854,7 +854,7 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
 // (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
 // their rate-card sub-category; truss / platform / carpet contribute sqft via the zone config.
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap) {
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns) {
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -866,11 +866,21 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   Object.entries(zoneElements || {}).forEach(([zk, elems]) => {
     if (!enabledEls[zk] || !elems) return;
     elems.forEach(el => {
-      const rc = rcItems.find(i => String(i.name || "").toLowerCase() === String(el.name || "").toLowerCase());
-      if (!rc) return;
-      const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
-      if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
-      else addSub(rc.sub, Number(el.qty) || 0);
+      // An element's sub-category used to come ONLY from a legacy Rate-Card name match. Every
+      // IMS-inventory-backed element (el.invId — the normal path for anything added via the "+ Add
+      // element" search today) and every pure flower-recipe element (el.patternId) never matches by
+      // name, so `rc` came back undefined and this silently dropped it from the truck count — most
+      // of a real build, not an edge case, same gap already fixed for pricing (see
+      // calcFunctionBreakdown's zones loop, StudioApp.jsx). Resolve the sub-category the same way
+      // getElPriceForFn's own sources do, falling back to the legacy name match only when neither
+      // an inventory item nor a pattern applies.
+      const invItem = el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+      const pattern = (!invItem && el.patternId) ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
+      const rc = (!invItem && !pattern) ? rcItems.find(i => String(i.name || "").toLowerCase() === String(el.name || "").toLowerCase()) : null;
+      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+      const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+      if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
+      else addSub(sub, Number(el.qty) || 0);
     });
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
@@ -3575,7 +3585,7 @@ export default function StudioApp() {
       return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: venueOnly.genset125, venueGenset62: venueOnly.genset62, gensetCost: 0, gensetRate, gensetRate62, genset62: 0, truckTotal: 0 };
     }
     const breakdown = [];
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -3586,7 +3596,7 @@ export default function StudioApp() {
     const truckTotal = allTrucks * tripRate * 2;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData]);
 
   const grandTotal = useMemo(() => totalCost() + transportCalc.total, [totalCost, transportCalc]);
 
@@ -3671,14 +3681,21 @@ export default function StudioApp() {
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {};
       const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { perTruck: Number(tc.perTruck) || 0, qty: 0 }; subAgg[k].qty += qty; };
+      // Same fix as calcFunctionBreakdown's identical loop below — an element's sub-category used to
+      // come ONLY from a legacy Rate-Card name match, so every IMS-inventory-backed element, kit
+      // line, and pure flower-recipe element silently never counted toward the truck total feeding
+      // THIS total (Summary's top banner, Deal Check's quote).
+      const fcFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
-          const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-          if (!rc) return;
-          const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
-          else addSub(rc.sub, Number(el.qty) || 0);
+          const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+          const pattern = (!invItem && el.patternId) ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
+          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+          const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
+          else addSub(sub, Number(el.qty) || 0);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -3700,7 +3717,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, activeFnIdx]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, activeFnIdx, imsInventory, dealCheckData, studioFloralData]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -4009,14 +4026,26 @@ export default function StudioApp() {
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {}; const totalFloralCost = 0;
       const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0 }; subAgg[k].qty += qty; };
+      // An element's sub-category used to come ONLY from a legacy Rate-Card name match — the exact
+      // same gap already fixed for pricing above (see the zones-loop comment a few lines up). Every
+      // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
+      // element" today), kit line, and pure flower-recipe element (el.patternId) never matches by
+      // name, so `rc` came back undefined and this silently dropped it from the truck count — most
+      // of a real build's elements, which is why Transport's per-item breakdown could look like
+      // barely anything was contributing. Resolve the sub-category the same three ways
+      // getElPriceForFn does, falling back to the legacy name match only when neither an inventory
+      // item nor a pattern applies.
+      const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
-          const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-          if (!rc) return;
-          const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
-          else addSub(rc.sub, Number(el.qty) || 0);
+          const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+          const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
+          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+          const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
+          else addSub(sub, Number(el.qty) || 0);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -4043,7 +4072,7 @@ export default function StudioApp() {
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
 
