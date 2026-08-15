@@ -7980,19 +7980,14 @@ export default function StudioApp() {
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {authUser && mode === "studio" && (isAdmin || studioSub("design", "dealcheck")) && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" aria-label="Deal Check" style={NAV_ICON_BTN}><IconClipboardCheck size={NAV_ICON} /></button>}
             {authUser && <>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                <div style={{ ...NAV_CHIP_BASE, background: "rgba(255,255,255,0.06)", color: "#fff", fontWeight: 500 }}>
-                  {authUser.name}
-                  {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
-                  {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
-                </div>
-                {/* Which deal this session is on — guest, date, venue — so the account zone still
-                    answers "who am I looking at?" once Event Info scrolls out of view (Browse/Build). */}
-                {mode === "studio" && (() => {
-                  const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
-                  const parts = [clientName.trim(), fmtDate(clientDate), venue].filter(Boolean);
-                  return parts.length > 0 ? <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", fontWeight: 500, whiteSpace: "nowrap" }}>{parts.join(" · ")}</div> : null;
-                })()}
+              {/* Which deal this session is on — guest, date, venue — used to stack here under the
+                  name on every step. Build already has its own header for it, and Browse now shows
+                  its own copy lower down, aligned with the search box, instead of cramped under
+                  "Admin" up here — so this zone goes back to being just identity + sign out. */}
+              <div style={{ ...NAV_CHIP_BASE, background: "rgba(255,255,255,0.06)", color: "#fff", fontWeight: 500 }}>
+                {authUser.name}
+                {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
+                {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
               </div>
               <button onClick={doLogout} title="Log out" aria-label="Log out" style={NAV_ICON_BTN}><IconLogout size={NAV_ICON} /></button>
             </>}

@@ -56,7 +56,7 @@ export default function StudioBrowse({ ctx }) {
     // multi-function
     extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData,
     // build / session
-    sourceVideo, sourceEvent, venue, showMsg,
+    sourceVideo, sourceEvent, venue, clientName, clientDate, showMsg,
     elSelectedPhoto, zoneElements, enabledEls,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, browseVideosAll, allVideos, activeClient,
@@ -732,6 +732,14 @@ export default function StudioBrowse({ ctx }) {
                 style={{...S.input,marginBottom:0,padding:"7px 30px 7px 30px",fontSize:12.5}}/>
               {vq&&<span onClick={()=>setVq("")} title="Clear the search" style={{position:"absolute",right:9,top:"50%",transform:"translateY(-50%)",cursor:"pointer",color:textM,fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>}
             </div>
+            {/* Which deal this session is on — guest, date, venue. Used to sit stacked under
+                "Admin" in the header; moved down here, aligned with the search box, so it reads as
+                part of the page rather than crowding the account zone on every step. */}
+            {(() => {
+              const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
+              const parts = [clientName?.trim(), fmtDate(clientDate), venue].filter(Boolean);
+              return parts.length > 0 ? <div style={{marginLeft:"auto",fontSize:12,color:textM,fontWeight:500,whiteSpace:"nowrap"}}>{parts.join(" · ")}</div> : null;
+            })()}
           </div>
           <div style={{display:"flex",alignItems:"baseline",gap:9,marginBottom:12,flexWrap:"wrap"}}>
             {/* The headline number is always what is ON SCREEN. It used to read "130 videos at
