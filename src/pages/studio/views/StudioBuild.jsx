@@ -1442,6 +1442,22 @@ export default function StudioBuild({ ctx }) {
 .sec-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:12px}
 @media (max-width:1200px){.sec-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){.sec-grid{grid-template-columns:minmax(0,1fr)}}
+/* ══ TABLET ══
+   Build is the tightest screen in Studio: two 258px sticky rails either side of the zone column.
+   That is 516px of furniture, which a desktop absorbs and a tablet cannot.
+   Landscape trims both to 208px, leaving the zone column ~700px at 1180 — still workable.
+   Portrait unpins them entirely and stacks the three, in DOM order: filters, zones, estimate.
+   They have to lose position:sticky as well as their width — a sticky element that now spans the
+   full column would otherwise pin a full-width block over the zones as you scroll. The inline
+   maxHeight (computed from the viewport for the scrolling rail) goes too, or the stacked strip
+   keeps a tall internal scrollport it no longer needs. */
+@media (max-width:1180px){
+  .bd-rail{width:208px !important}
+}
+@media (max-width:840px){
+  .bd-layout{flex-direction:column;gap:16px !important}
+  .bd-rail{width:100% !important;position:static !important;max-height:none !important}
+}
 .sec-tile{transition:transform .14s ease, box-shadow .2s ease, border-color .18s ease}
 .sec-tile:hover{transform:translateY(-2px);border-color:${accent} !important;
   box-shadow:${isDark?"0 10px 22px -12px rgba(0,0,0,0.7)":"0 10px 22px -12px rgba(26,26,46,0.22)"}}
@@ -1464,6 +1480,14 @@ export default function StudioBuild({ ctx }) {
 @media (max-width:1200px){.el-grid{--el-cols:3 !important}}
 @media (max-width:900px){.el-grid{--el-cols:2 !important}}
 @media (max-width:620px){.el-grid{--el-cols:1 !important}}
+/* Zone rows carry a lot of small controls — steppers, toggles, chips. Give them a tap target
+   without redrawing the rows. Inputs go to 16px because anything smaller makes iOS Safari zoom
+   the whole page on focus, which on this screen throws the layout completely. */
+@media (pointer: coarse){
+  .zone-row button,.sec-tile,.sb-pill{min-height:34px}
+  .el-grid button{min-height:36px}
+  input,select,textarea{font-size:16px}
+}
 /* ═══ ELEMENT CARD HOVER ═══
    Resting cards are flat outlines so the grid reads as one calm surface. Hover lifts exactly one
    card out of it: a two-layer shadow (a tight contact edge that keeps it attached to the page, plus
@@ -1523,11 +1547,18 @@ export default function StudioBuild({ ctx }) {
    corner of the photo does a different thing from the middle of it. */
 .ph-tick:hover{transform:scale(1.22);background:${accent} !important;border-color:#fff !important}
 .ph-tile:hover .ph-tick{border-color:${accent} !important}
+/* The star is a control, so it has to answer the cursor — otherwise it reads as a status dot and
+   nobody discovers they can click it. */
+.ph-star{transition:transform .14s ease, box-shadow .16s ease}
+.ph-star:hover{transform:scale(1.18)}
+.ph-star:active{transform:scale(1.02)}
 @media (prefers-reduced-motion: reduce){
   .ph-tile,.ph-tile img{transition:none}
   .ph-tile:hover,.ph-tile:hover img{transform:none}
   .ph-tick{transition:none}
   .ph-tick:hover{transform:none}
+  .ph-star{transition:none}
+  .ph-star:hover,.ph-star:active{transform:none}
 }
 /* ═══ "TAP TO SELECT" ═══ The caption is a separate click target from the image above it (select
    vs. preview), so it gets its own hover. [data-sel="0"] keeps it off already-selected tiles,
@@ -1649,9 +1680,9 @@ undefined
     </div>
     {/* ═══ TWO-COLUMN SHELL ═══ Photo filters live permanently in a sticky left rail, exactly
         as on Browse — always visible, no toggle. ═══ */}
-    <div style={{display:"flex",gap:leftRailOpen||rightRailOpen?22:12,alignItems:"flex-start"}}>
+    <div className="bd-layout" style={{display:"flex",gap:leftRailOpen||rightRailOpen?22:12,alignItems:"flex-start"}}>
       {leftRailOpen
-        ? <div ref={railRef} style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start",
+        ? <div ref={railRef} className="bd-rail bd-rail-l" style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start",
             maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:12}}>
             {ZP_PANEL}
           {/* Reference banner — moved out of the main column into the rail, under the filters, so
@@ -2219,31 +2250,42 @@ undefined
                         it shifts up when that's also showing). Keyed by the photo's own id/src, not
                         a (photo, zone) pair, so re-tagging this photo to a different zone later
                         doesn't lose the favourite — see FAV_PHOTO_SK. */}
+                    {/* The bottom-right favourite dot is gone — the star top-right is the favourite
+                        control now. Two controls for one act, in opposite corners of the same tile,
+                        with the star already SHOWING the state the dot set, was the confusing bit. */}
                     {(()=>{
-                      const fKey=ph.eventId||ph.src;
-                      const isFav=!!favPhotos[fKey]?.[authUser?.id];
-                      const priceShown=showCosts&&!isCollapsed(k)&&photoFullCost>0;
-                      return <div onClick={e=>{e.stopPropagation();saveFavPhotos({[fKey]:{[authUser?.id]:isFav?null:true}});}}
-                        title={isFav?"Favourited for this zone — click to remove":"Favourite this photo for this zone"}
-                        style={{position:"absolute",bottom:priceShown?(gridZones[k]?24:30):6,right:6,width:14,height:14,borderRadius:"50%",zIndex:3,cursor:"pointer",
-                          border:`2px solid ${isFav?"#EF4444":"rgba(255,255,255,0.55)"}`,
-                          background:isFav?"#EF4444":"rgba(0,0,0,0.15)",
-                          boxShadow:isFav?"0 0 0 2px rgba(239,68,68,0.35)":"none"}}/>;
-                    })()}
-                    {(()=>{
-                      // Verified only. An unverified photo shows nothing here, so the tick means
-                      // something — same rule the Library grid uses, minus its AI/untagged states.
-                      // phVerified also requires elements: a photo with 0 has no pricing to vouch for.
+                      // ── ONE STAR, THREE STATES ──
+                      //   gold  · favourited for this zone (yours — favourites are per salesperson)
+                      //   green · has elements, so it carries pricing
+                      //   white · no elements yet, nothing to price off it
+                      // It used to appear ONLY on verified photos and be absent otherwise, which
+                      // made "no badge" ambiguous: unverified, or unpriceable? Now every tile
+                      // carries one and the colour says which. Favourite outranks the element
+                      // state — it is the one a salesperson put there deliberately.
                       const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-                      if (!phVerified(ph)) return null;
-                      const by = li._verifiedBy || "unknown";
-                      const on = li._verifiedAt ? new Date(li._verifiedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}) : null;
-                      // A filled star, not a tick. Same disc treatment as before — solid fill, white
-                      // ring, drop shadow — because a flat badge vanishes over a photo, whether the
-                      // stage behind it is lit pale or dark.
-                      return <div title={`Verified by ${by}${on ? " on " + on : ""}`} style={{position:"absolute",top:6,right:6,width:21,height:21,borderRadius:11,
-                        background:"#059669",border:"2px solid rgba(255,255,255,0.92)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
-                        boxShadow:"0 2px 7px rgba(0,0,0,0.4)"}}>
+                      const nEls = (ph.elements || []).length;
+                      // Exactly the key the favourite toggle below writes — any drift here and the
+                      // star would disagree with the dot the salesperson just clicked.
+                      const isFavS = !!favPhotos[ph.eventId || ph.src]?.[authUser?.id];
+                      const st = isFavS
+                        ? { bg:"#C9A96E", fg:"#1A1A2E", t:"Your favourite — click to remove. Favourites lead the strip." }
+                        : nEls > 0
+                          ? { bg:"#059669", fg:"#fff", t:`${nEls} element${nEls===1?"":"s"} — priced from this photo. Click to favourite it.` }
+                          : { bg:"#FFFFFF", fg:"#6B7280", t:"No elements on this photo yet — nothing to price from it. Click to favourite it." };
+                      // Verified is still worth saying, so it rides in the tooltip rather than
+                      // taking the badge over.
+                      const vBy = li?._verified ? ` · verified by ${li._verifiedBy || "unknown"}` : "";
+                      // Solid fill, white ring, drop shadow — a flat badge vanishes over a photo,
+                      // whether the stage behind it is lit pale or dark. The white state gets a
+                      // darker ring instead, or it disappears against a bright frame.
+                      // The star IS the favourite control now. stopPropagation because the tile
+                      // itself selects the photo for pricing — a different act entirely, and one
+                      // that would otherwise fire on every favourite.
+                      return <div title={st.t + vBy} className="ph-star"
+                        onClick={e=>{e.stopPropagation();saveFavPhotos({[ph.eventId||ph.src]:{[authUser?.id]:isFavS?null:true}});}}
+                        style={{position:"absolute",top:6,right:6,width:21,height:21,borderRadius:11,zIndex:3,cursor:"pointer",
+                        background:st.bg,border:`2px solid ${isFavS||nEls>0?"rgba(255,255,255,0.92)":"rgba(26,26,46,0.35)"}`,color:st.fg,display:"flex",alignItems:"center",justifyContent:"center",
+                        boxShadow:isFavS?"0 0 0 2px rgba(201,169,110,0.45), 0 2px 7px rgba(0,0,0,0.4)":"0 2px 7px rgba(0,0,0,0.4)"}}>
                         <IconStar size={11} filled/>
                       </div>;
                     })()}
@@ -3444,7 +3486,7 @@ undefined
     })()}
       </div>{/* /right column */}
       {PRICING_TILE&&(rightRailOpen
-        ? <div style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
+        ? <div className="bd-rail bd-rail-r" style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
         : railTab("right","Live estimate",<IconBolt size={14}/>))}
     </div>{/* /two-column shell */}
   </div>
