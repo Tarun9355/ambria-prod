@@ -10,7 +10,7 @@
 //
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { IconSparkle } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
@@ -306,6 +306,21 @@ export default function StudioSummary({ ctx }) {
   // overlay — this panel is already fixed-position, and stacking a second fixed layer inside it
   // fights the scroll container. Ref'd on the wrapper so the toolbar goes full-screen with the
   // page, keeping Download and Close reachable.
+  // Which zone cards are open on the cost sheet. Keyed by function index + zone key, because zone
+  // keys repeat across functions — a wedding and its reception both have a Vedi / Mandap, and
+  // keying on the zone alone opened both at once.
+  const [csOpenZones, setCsOpenZones] = useState({});
+  const toggleZoneCard = (key) => setCsOpenZones((o) => ({ ...o, [key]: !o[key] }));
+  // The cost sheet is a fixed, full-screen panel, but the Studio page underneath stayed scrollable
+  // — so the window showed TWO scrollbars, and a wheel that missed the panel scrolled the wrong
+  // thing. Locked while it is open, and the previous value is restored rather than assumed to be
+  // "visible", so this can't quietly override a lock something else set.
+  useEffect(() => {
+    if (!csData) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [csData]);
   const deckViewRef = useRef(null);
   // Tracked as state, not read off document at render time: leaving full screen with Esc is a
   // browser action React never hears about, so the frame would keep its full-screen height after
@@ -1992,9 +2007,19 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    one line, which is what makes the table scannable.
    The deck/PDF export builds its own standalone HTML earlier in this file; nothing here reaches
    it, so an exported deck is untouched by any of this. */
+/* Zone card. The lift is what tells you it is pressable — the cards carry no button of their own,
+   the whole card is the control. */
+.sm-zcard{transition:transform .16s ease, box-shadow .18s ease, border-color .16s ease}
+.sm-zcard:hover{transform:translateY(-2px);box-shadow:0 14px 26px -14px rgba(26,26,46,0.45)}
+.sm-zcard:active{transform:translateY(0) scale(.99)}
+.sm-zcard:focus-visible{outline:2px solid ${accentText};outline-offset:2px}
 @media (max-width:840px){
   .sm-costgrid{font-size:11px !important}
   .sm-costgrid > *{padding-left:2px;padding-right:2px}
+}
+@media (prefers-reduced-motion: reduce){
+  .sm-zcard{transition:none}
+  .sm-zcard:hover,.sm-zcard:active{transform:none}
 }
 @media (pointer: coarse){
   .sh-nav{min-height:38px}
@@ -2310,7 +2335,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         d.eventGrandTotal=d.functions.reduce((s,f)=>s+(f.grand||0),0);
         setCsData(d);
       };
-      const csExportPDF=()=>{const html=exportPDF(csData);const w=window.open("","_blank");if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),800);}else{showMsg("Open in deployed app for PDF export","blue");}};
+      // The cost-sheet PDF button is gone from the toolbar. exportPDF() below still builds the sheet
+      // and is deliberately kept: Excel covers the same figures for anyone who needs a file, and
+      // putting the button back is one line if printing the sheet turns out to be missed.
       const csExportPPT=()=>exportPPT(csData);
       const csExportExcel=()=>exportExcel(csData);
       const fmtDate=(iso)=>{if(!iso)return"—";try{return new Date(iso+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"});}catch{return iso;}};
@@ -2325,8 +2352,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             <div><div style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Cost Sheet</div><div style={{fontSize:11,color:"#a5b4fc"}}>{csData.clientName||"Client"} · {fnCount} function{fnCount!==1?"s":""}</div></div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <div style={{textAlign:"right",marginRight:12}}><div style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase"}}>Event Grand Total</div><div style={{fontSize:22,fontWeight:700,color:"#C9A96E"}}>{fmt(csData.eventGrandTotal)}</div></div>
-            <button onClick={csExportPDF} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#E11D48",color:"#fff"}}>{"📄"} PDF</button>
+            {/* The grand total used to sit here, pinned above everything. It is still on the sheet
+                itself (and in the PDF, Excel and PPT exports) — off the toolbar it is no longer
+                the first thing on screen while a deck is open in front of a client. */}
             <button onClick={csExportExcel} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} Excel</button>
             {(() => {
               const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
@@ -2359,11 +2387,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             already pages, zooms and prints, and the export is a single PDF anyway. Sits above the
             cost sheet instead of replacing it, so the deck and its figures stay one screen apart. */}
         {deckPdf.state==="ready"&&deckPdf.url&&(
-          <div ref={deckViewRef} style={{flexShrink:0,borderBottom:"1px solid rgba(255,255,255,0.12)",background:"#111827"}}>
+          // flex:1 with minHeight:0, not a fixed height: the deck takes the whole panel while it is
+          // open. minHeight:0 is the part that matters — a flex child defaults to min-height:auto,
+          // which floors it at its content and would push the panel taller than the screen instead
+          // of letting the frame shrink into what is left below the toolbars.
+          <div ref={deckViewRef} style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",borderBottom:"1px solid rgba(255,255,255,0.12)",background:"#111827"}}>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 20px"}}>
               <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"#a5b4fc"}}>Design deck</span>
-              <button onClick={toggleDeckFullscreen} title="Full screen — for showing a client"
-                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:600}}>{"⛶"} Full screen</button>
+              <button onClick={toggleDeckFullscreen} title={deckFull?"Back to the page":"Full screen — for showing a client"}
+                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:600}}>{deckFull?"⤢ Exit full screen":"⛶ Full screen"}</button>
               {/* A plain link, not a fetch-then-save: the export URL is signed and cross-origin, so
                   reading it into a blob is at the mercy of Canva's CORS headers, while letting the
                   browser follow the link is not. */}
@@ -2372,11 +2404,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               <button onClick={()=>setDeckPdf({state:"idle",url:"",error:""})}
                 style={{padding:"5px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11}}>{"✕"}</button>
             </div>
-            {/* 68vh, not 52 — this is the deck being READ on the page, often with a client looking
-                at it, and half a viewport made every slide a scroll. In full screen the toolbar is
-                ~34px, so the frame takes the rest. */}
+            {/* Fills whatever the toolbars leave, rather than a fixed height. This is the deck being
+                READ, often with a client looking at it, so it gets the page. */}
             <iframe title="Design deck" src={deckPdf.url}
-              style={{width:"100%",height:deckFull?"calc(100vh - 34px)":"68vh",border:"none",background:"#1f2937"}} />
+              style={{flex:1,minHeight:0,width:"100%",border:"none",background:"#1f2937"}} />
           </div>
         )}
         {/* ── The deck this deal already has, said on the page rather than only in a button ──
@@ -2391,20 +2422,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               : <div style={{width:104,height:59,borderRadius:6,border:"1px dashed rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{"🎨"}</div>}
             <div style={{minWidth:0}}>
               <div style={{fontSize:12.5,fontWeight:700,color:"#fff"}}>Design deck ready</div>
-              <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>Read it right here — no Canva needed unless you want to edit it.</div>
+              {/* No View button here any more — the toolbar above owns that action. This card says a
+                  deck EXISTS and shows its cover; two buttons doing the same thing on one screen
+                  just made you decide which one to press. */}
+              <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>Open it with <strong style={{color:"#5EEAD4"}}>View deck</strong> above — no Canva needed unless you want to edit it.</div>
             </div>
-            <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
-              style={{marginLeft:"auto",padding:"7px 14px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:11.5,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Opening…":"👁 View deck"}</button>
           </div>
         )}
-        {/* Scrollable body */}
-        <div style={{flex:1,overflowY:"auto",padding:"20px 24px",maxWidth:960,margin:"0 auto",width:"100%"}}>
-          {/* Stacked function lines (mirrors PPT cover) */}
-          <div style={{textAlign:"center",marginBottom:20}}>
-            {csData.functions.map((fnObj,fi)=>(
-              <div key={fi} style={{fontSize:12,color:textS,marginBottom:3}}>{fnLine(fnObj)}</div>
-            ))}
-          </div>
+        {/* Scrollable body — hidden, not unmounted, while the deck is open: the deck takes the whole
+            panel, and unmounting this would throw away the reader's scroll position in a long cost
+            sheet every time they glanced at the slides. */}
+        {/* Full width. The 960px cap made sense when this was a column of item tables — a cost sheet
+            is read like a document. It is a photo grid now, and capping it left deep empty gutters
+            while squeezing the cards into three columns on a screen with room for six. */}
+        <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"20px 28px",width:"100%",display:deckPdf.state==="ready"?"none":"block"}}>
+          {/* The stacked function lines that sat here are gone — each function's own header already
+              carries its type, date, venue and shift, so this was the same information twice, once
+              before you reached anything. */}
           {/* Per-function blocks */}
           {csData.functions.map((fnObj,fi)=>(
             <div key={fi} style={{background:isDark?"#12121F":"#fff",borderRadius:14,border:`1px solid ${border}`,marginBottom:20,overflow:"hidden"}}>
@@ -2428,19 +2462,38 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                 </div>
               ):(
                 <>
-                  {/* Zone sections */}
-                  {fnObj.zones.map((z,zi)=>(
-                    <div key={z.k} style={{borderTop:`1px solid ${border}`}}>
-                      {/* Zone header */}
+                  {/* ═══ ZONES AS CARDS ═══
+                      The photograph is what this page is for — it is the same image the deck is
+                      built from — so it leads, and the pricing detail waits behind a tap. It used
+                      to be the other way round: a thin header, then the photo, then two tables per
+                      zone, which meant scrolling past a full cost breakdown to see the next photo.
+                      Cost is not on the card face on purpose. This screen gets turned toward a
+                      client, and a wall of zone totals is not what you want facing them. */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:14,padding:"14px 18px"}}>
+                  {fnObj.zones.map((z,zi)=>{
+                    const zKey=`${fi}-${z.k}`, zOpen=!!csOpenZones[zKey];
+                    return (
+                    <Fragment key={z.k}>
+                      <div onClick={()=>toggleZoneCard(zKey)} className="sm-zcard" role="button" tabIndex={0}
+                        onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggleZoneCard(zKey);}}}
+                        title={zOpen?"Hide the costing":"Show the costing"}
+                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:border}`,background:isDark?"rgba(255,255,255,0.03)":"#fff"}}>
+                        {z.photo
+                          ? <img src={z.photo} alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
+                          : <div style={{width:"100%",aspectRatio:"4 / 3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:isDark?"#0A0A14":"#F3EFE9",color:textS}}>{z.icon||"📦"}</div>}
+                        <div style={{padding:"9px 11px",display:"flex",alignItems:"center",gap:7}}>
+                          <div style={{fontSize:13,fontWeight:700,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{z.icon} {z.label}</div>
+                          <span style={{marginLeft:"auto",fontSize:10,color:textS,flexShrink:0}}>{zOpen?"▲":"▼"}</span>
+                        </div>
+                      </div>
+                      {/* Full width, so the item table keeps the room it needs. Grid auto-placement
+                          drops it onto the row under the card it belongs to. */}
+                      {zOpen&&<div style={{gridColumn:"1/-1",borderRadius:12,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#FBFAF7",overflow:"hidden"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 18px",background:isDark?"rgba(201,169,110,0.04)":"#F9F7F3"}}>
                         <div><div style={{fontSize:14,fontWeight:700}}>{z.icon} {z.label}</div>{z.dimLabel&&<div style={{fontSize:11,color:textS,marginTop:2}}>{"📐"} {z.dimLabel}</div>}</div>
                         <div style={{fontSize:16,fontWeight:700,color:accentText}}>{fmt(z.zoneTotal)}</div>
                       </div>
-                      {/* Zone photo */}
-                      {z.photo&&<div style={{padding:12,background:isDark?"rgba(0,0,0,0.2)":"#FAFAF7"}}>
-                        <img src={z.photo} alt={z.photoName} style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,display:"block"}} onError={e=>{e.target.style.display="none"}}/>
-                        {z.photoName&&<div style={{fontSize:10,color:textS,marginTop:6,textAlign:"center"}}>Reference: {z.photoName}</div>}
-                      </div>}
+                      {z.photoName&&<div style={{fontSize:10,color:textS,padding:"6px 18px 0"}}>Reference: {z.photoName}</div>}
                       {/* Structure items (not editable) */}
                       {z.structItems.length>0&&<div style={{padding:"8px 18px",borderTop:`1px solid ${border}`}}>
                         {z.structItems.map((si,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12,color:textS,fontStyle:"italic"}}><span>{si.name}</span><span style={{fontWeight:600}}>{fmt(si.total)}</span></div>)}
@@ -2466,19 +2519,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                       </div>}
                       {/* Note */}
                       {z.note&&<div style={{padding:"0 18px 12px"}}><div style={{background:isDark?"rgba(201,169,110,0.06)":"#FFFDF7",borderRadius:8,padding:"8px 12px",fontSize:11,color:accentText}}>{"📝"} {z.note}</div></div>}
-                    </div>
-                  ))}
-                  {/* Per-function transport (read-only). One line, total only — the truck-by-truck
-                      breakdown is internal working, and it read badly here anyway ("Carpet —
-                      0.0426666666666 trucks"). The full split still lives in Build and Deal Check. */}
-                  {fnObj.transport&&(
-                    <div style={{borderTop:`1px solid ${border}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 18px",background:isDark?"rgba(99,102,241,0.04)":"#F0F4FF"}}>
-                        <div style={{fontSize:14,fontWeight:700}}>{"🚛"} Transport & Power</div>
-                        <div style={{fontSize:16,fontWeight:700,color:"#4F46E5"}}>{fmt(fnObj.transport.total)}</div>
-                      </div>
-                    </div>
-                  )}
+                      </div>}
+                    </Fragment>
+                    );
+                  })}
+                  </div>
+                  {/* The Transport & Power line is off this screen. It is still CHARGED — it is part
+                      of the function total above and of every export — it is simply not itemised
+                      here any more. The full truck-by-truck split lives in Build and Deal Check. */}
                 </>
               )}
             </div>
