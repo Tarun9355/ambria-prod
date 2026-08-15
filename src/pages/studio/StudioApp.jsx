@@ -98,6 +98,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
+import { registerFlushBeforeReload, unregisterFlushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -5359,9 +5360,14 @@ export default function StudioApp() {
     }
     setActiveClientId(client.id);
     const finalLedger = updated.slice(0, 200);
-    saveClientLedger(finalLedger);
+    // saveClientLedger is async (a real Supabase upsert) but every existing caller here is
+    // fire-and-forget — timers and unmount handlers that can't await anyway. Handing back the
+    // promise costs them nothing (they just don't read it) and lets a caller that DOES need to
+    // know the write actually landed — the update banner flushing before it reloads — await it
+    // instead of racing a reload against an in-flight network request.
+    const savePromise = saveClientLedger(finalLedger);
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
-    return { client, ledger: finalLedger };
+    return { client, ledger: finalLedger, savePromise };
   }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
@@ -5420,6 +5426,20 @@ export default function StudioApp() {
     window.addEventListener("pagehide", autoSaveBuild);
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); autoSaveBuild(); /* save on unmount → covers Studio↔IMS route switch (no pagehide fires) */ };
   }, [autoSaveBuild]);
+  // 4) On-demand flush for the "new version available" banner (App.jsx), which lives above the
+  // router and reloads the page on click. pagehide fires on reload too, but a reload can cancel an
+  // in-flight fetch before it lands — the same network write that pagehide kicks off has no guarantee
+  // of finishing before the browser tears the page down. Registering a flush the banner can AWAIT
+  // (via saveSession's savePromise) closes that race instead of hoping pagehide wins it.
+  useEffect(() => {
+    const flush = async () => {
+      if (switchingRef.current || !buildHasDataRef.current) return;
+      const result = saveSessionRef.current({ auto: true });
+      if (result?.savePromise) await result.savePromise;
+    };
+    registerFlushBeforeReload(flush);
+    return () => unregisterFlushBeforeReload(flush);
+  }, []);
 
   // ── Mark sold (writes Event Order) — VERBATIM ──
   const markSold = useCallback(() => {

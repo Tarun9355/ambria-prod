@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { landingPath, userApps } from "./lib/auth";
 import { useVersionCheck } from "./lib/useVersionCheck";
+import { flushBeforeReload } from "./lib/pendingSaveRegistry";
 import { canvaHandleOAuthRedirect } from "./lib/canva";
 import Login from "./pages/Login.jsx";
 import Studio from "./pages/Studio.jsx";
@@ -33,15 +34,35 @@ function CanvaOAuthBanner() {
 // One-click "a newer build is live" banner — so the team never has to hard-refresh manually.
 function UpdateBanner() {
   const updateReady = useVersionCheck();
+  const [updating, setUpdating] = useState(false);
   if (!updateReady) return null;
+  // This banner sits above the router (it has to — it's shown regardless of which page is open),
+  // so it can't reach into Studio's own save function directly. It used to just reload immediately:
+  // Studio's autosave IS wired to fire on pagehide, but pagehide firing doesn't mean its network
+  // write actually finishes — a reload can and does cancel a fetch that's still in flight, which is
+  // exactly how clicking Update mid-edit lost work. flushBeforeReload asks whichever page is mounted
+  // (via a small registry — see lib/pendingSaveRegistry.js) to save and AWAITS that landing before
+  // reloading. A hard 4s cap means a slow network never turns "Update now" into "stuck now" — this
+  // is best-effort insurance on top of autosave, not the only thing standing between the user and
+  // losing work.
+  const onUpdate = async () => {
+    if (updating) return;
+    setUpdating(true);
+    await Promise.race([
+      flushBeforeReload(),
+      new Promise((resolve) => setTimeout(resolve, 4000)),
+    ]);
+    window.location.reload();
+  };
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 rounded-full bg-gray-900 text-white text-sm px-4 py-2 shadow-xl">
       <span>A new version of Ambria is available.</span>
       <button
-        onClick={() => window.location.reload()}
-        className="rounded-full bg-indigo-500 hover:bg-indigo-400 px-3 py-1 font-semibold transition"
+        onClick={onUpdate}
+        disabled={updating}
+        className="rounded-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-70 px-3 py-1 font-semibold transition"
       >
-        Update now
+        {updating ? "Saving…" : "Update now"}
       </button>
     </div>
   );
