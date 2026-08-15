@@ -68,6 +68,32 @@ const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone
 const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
 
 const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, createdAt: row.created_at });
+// ═══ A STABLE ORDER FOR THE USERS TABLE ═══
+// fetchAll is a bare select("*") with no ORDER BY, so Postgres hands back rows in physical order.
+// An UPDATE does not edit a row in place — it writes a NEW tuple, usually at the end of the table
+// — so editing a user or changing their role sent them to the BOTTOM of the list the moment the
+// realtime refetch landed. Nothing was wrong with the save; the list simply had no order to keep.
+//
+// Anyone just edited goes to the TOP, most recent first; everyone else stays alphabetical beneath
+// them, because the rest of the table is read to find a person.
+//
+// Recency is tracked in the browser, not read from the row: `users` has created_at and no
+// updated_at, so the database cannot answer "who changed last" without a migration and a trigger.
+// The trade is that the order resets on reload — which is the right behaviour anyway. "Show me who
+// I just touched" is about this sitting, not a property of the user that should outlive it.
+//
+// localeCompare rather than < so accented and non-ASCII names land where a reader expects, and the
+// id as a tiebreak so two people sharing a name hold a fixed order instead of swapping on refetch.
+const sortUsers = (list, recentIds = []) => {
+  const rank = new Map(recentIds.map((id, i) => [id, i]));
+  return [...list].sort((a, b) => {
+    const ra = rank.has(a.id) ? rank.get(a.id) : Infinity;
+    const rb = rank.has(b.id) ? rank.get(b.id) : Infinity;
+    if (ra !== rb) return ra - rb;
+    return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
+      || String(a.id || "").localeCompare(String(b.id || ""));
+  });
+};
 // Passwords live in Supabase Auth now — NEVER write a `password` column (it was dropped in migration
 // 005). Sending it makes every users upsert fail ("Could not find the 'password' column"). Password
 // changes go through the user-admin edge function instead.
@@ -181,6 +207,10 @@ export default function IMS() {
   const overheadsRef = useRef([]);
   const supervisorsRef = useRef([]);
   const usersRef = useRef([]);
+  // Ids of users edited this session, most recent first — see sortUsers. A ref, not state, because
+  // the realtime subscription's callback is created once and would otherwise close over an empty
+  // array forever, sorting every refetch as though nothing had been touched.
+  const recentUsersRef = useRef([]);
   const prodRequestsRef = useRef([]);
   const eventOrdersRef = useRef([]);
   const blocksRef = useRef({});
@@ -588,7 +618,7 @@ export default function IMS() {
         setPurchaseState(poRows.map(rowToPurchase));
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
-        setUsersState(userRows.map(rowToUser));
+        setUsersState(sortUsers(userRows.map(rowToUser), recentUsersRef.current));
         setProdRequestsState(prodRows.map(rowToProd));
         setEventOrdersState(eoRows.map(rowToEO));
         setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
@@ -667,7 +697,7 @@ export default function IMS() {
     liveTable("vendors", (rows) => setVendorsState(rows.map(rowToVendor)));
     liveTable("purchase_orders", (rows) => setPurchaseState(rows.map(rowToPurchase)));
     liveTable("production_requests", (rows) => setProdRequestsState(rows.map(rowToProd)));
-    liveTable("users", (rows) => setUsersState(rows.map(rowToUser)));
+    liveTable("users", (rows) => setUsersState(sortUsers(rows.map(rowToUser), recentUsersRef.current)));
     liveTable("overheads", (rows) => setOverheadsState(rows.map(rowToOverhead)));
 
     return () => { active = false; supabase.removeChannel(channel); extraChannels.forEach((ch) => supabase.removeChannel(ch)); };
@@ -962,10 +992,21 @@ export default function IMS() {
   // Users — row-level diff persistence to the users table (incl. per-user apps + role/perms).
   const setUsers = useCallback((updater) => {
     const prev = usersRef.current;
-    const next = typeof updater === "function" ? updater(prev) : updater;
+    const raw = typeof updater === "function" ? updater(prev) : updater;
+    const prevMap = new Map(prev.map((u) => [u.id, u]));
+    // Whoever actually changed goes to the front of the recency list. Compared against the previous
+    // state rather than assumed, so re-saving with no edits doesn't reshuffle the table.
+    const touched = raw
+      .filter((u) => { const b = prevMap.get(u.id); return b && JSON.stringify(b) !== JSON.stringify(u); })
+      .map((u) => u.id);
+    if (touched.length) {
+      recentUsersRef.current = [...touched, ...recentUsersRef.current.filter((id) => !touched.includes(id))];
+    }
+    // Sorted here as well as on the refetch. Without it the row settles into its new position a
+    // moment AFTER you save, when the realtime echo lands — so it appears to move on its own.
+    const next = sortUsers(raw, recentUsersRef.current);
     usersRef.current = next;
     setUsersState(next);
-    const prevMap = new Map(prev.map((u) => [u.id, u]));
     const nextIds = new Set(next.map((u) => u.id));
     (async () => {
       for (const u of next) {
@@ -984,7 +1025,10 @@ export default function IMS() {
   // Pure INSERT for a brand-new user — never diffs/updates/deletes existing rows. Used by the
   // "Add User" flow so adding one user can't touch any other row in the table.
   const addUser = useCallback(async (newUser) => {
-    const next = [...(usersRef.current || []), newUser];
+    // Sorted, so a new user appears in their alphabetical place rather than at the end and then
+    // hopping once the refetch arrives.
+    recentUsersRef.current = [newUser.id, ...recentUsersRef.current];
+    const next = sortUsers([...(usersRef.current || []), newUser], recentUsersRef.current);
     usersRef.current = next;
     setUsersState(next);
     const { error: e } = await supabase.from("users").insert(userToRow(newUser));
