@@ -951,11 +951,17 @@ export default function StudioEventInfo({ ctx }) {
                   // Each Studio client is tagged to whoever created it (createdBy); each LMS lead/contract
                   // is tagged to whoever entered it there (entryByName). Default to showing only the
                   // logged-in salesperson's own — showAllReps is the escape hatch for covering a colleague's
-                  // meeting. An UNTAGGED record (no createdBy, or an LMS row whose entry-by field isn't
-                  // populated yet — true for every decor LEAD today, see lmsContractToLead) always shows
-                  // regardless of the toggle: hiding something nobody could tell was or wasn't "theirs"
-                  // would just make it look lost, not filtered.
-                  const mine = (name) => !name || String(name).toLowerCase() === String(authUser?.name || "").toLowerCase();
+                  // meeting.
+                  //
+                  // An earlier version treated an UNTAGGED record (no createdBy, or an LMS row whose
+                  // entry-by field isn't populated — true for every decor LEAD today, see
+                  // lmsContractToLead) as always "mine", reasoning that hiding something nobody could
+                  // tell was or wasn't theirs would look like data loss rather than filtering. In
+                  // practice that meant every decor lead — which is most of what this search surfaces —
+                  // showed to every salesperson regardless of the toggle, which is exactly the gap this
+                  // gating was supposed to close. Untagged now defaults to hidden like everything else;
+                  // "Show all" is the one way to see it, same as anyone else's leads.
+                  const mine = (name) => String(name || "").toLowerCase() === String(authUser?.name || "").toLowerCase();
                   const rawLmsLeads = lmsLeads || [];
                   const visibleLmsLeads = showAllReps ? rawLmsLeads : rawLmsLeads.filter(l => mine(l.entryByName));
                   const hiddenLmsCount = rawLmsLeads.length - visibleLmsLeads.length;
