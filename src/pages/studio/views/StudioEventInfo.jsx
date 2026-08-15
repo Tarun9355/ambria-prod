@@ -8,6 +8,10 @@ import { IconClipboard } from "../../../components/icons.jsx";
 // either side of the waist are near-vertical, which is what keeps the join smooth instead of
 // showing a kink at the narrowest point.
 const BRAND_CURVE = "M0,0 H1 C1,0.18 0.81,0.28 0.80,0.46 C0.79,0.66 1,0.82 1,1 H0 Z";
+// The same edge turned on its side, for tablet portrait — there the panel is a band across the top
+// rather than a column down the left, so the curve has to run along its BOTTOM. Same gesture, same
+// proportions, rotated: full height at the left and right, drawn up to a waist at 80% down.
+const BRAND_CURVE_H = "M0,0 H1 V1 C0.82,1 0.72,0.79 0.54,0.80 C0.34,0.81 0.18,1 0,1 Z";
 // The yellow from the supplied logo artwork, kept separate from the app's #C9A96E accent. Only the
 // two marks that are yellow in the logo use it — the dot over the I, and DESIGN & DECOR. The rim,
 // rule, blobs and motes stay on the app accent so the panel still reads as one piece.
@@ -355,7 +359,7 @@ export default function StudioEventInfo({ ctx }) {
    overflow-x:clip and not hidden: hidden would make .ei-split a scroll container of its own. */
 /* Panel width lives here and nowhere else — the panel, its cast shadow, the brief's left offset and
    the wash blobs' anchors all read it, so widening the panel is this one number. */
-.ei-view{--ei-pw:560px}
+.ei-view{--ei-pw:560px;--ei-iw:360px}
 /* THE PAGE DOES NOT SCROLL. Locked to exactly one viewport, so the panel, the wash and the whole
    frame hold still. The brief is the only thing that moves, and it moves inside its own column —
    which it has to, because a deal with four functions and a list of LMS matches is taller than any
@@ -499,7 +503,10 @@ export default function StudioEventInfo({ ctx }) {
    Ken Burns: a 46s drift so slow you register it as depth rather than movement. It never scales
    below 1.06, because at 1.0 a fractional rounding on the transform can expose a hairline of panel
    down one edge. */
-.ei-brand-img{position:absolute;inset:0;z-index:0;background-size:cover;background-position:center;
+/* inset:-4%, not 0. The layer is deliberately larger than the panel so no rounding on the scale
+   transform, and no sub-pixel edge, can leave a strip of the dark gradient showing down one side.
+   The panel's overflow:hidden and clip-path trim the excess, so nothing escapes the curve. */
+.ei-brand-img{position:absolute;inset:-4%;z-index:0;background-size:cover;background-position:center;
   animation:eiKen 46s ease-in-out infinite alternate}
 @keyframes eiKen{0%{transform:scale(1.06)}100%{transform:scale(1.17) translateY(-2%)}}
 /* Candlelight. Irregular keyframe spacing on purpose — evenly spaced stops read as a pulse, and a
@@ -547,15 +554,21 @@ export default function StudioEventInfo({ ctx }) {
 .ei-brand-photo .ei-brand-blob{opacity:.3}
 /* Centred in what survives at the waist, not in the full panel. BRAND_CURVE pulls the edge in to
    0.80 of the width there, so the usable band is 0.8 * --ei-pw and the block is centred in that.
-   Derived rather than hard-coded, so changing --ei-pw re-centres the logo on its own. */
-.ei-brand-inner{position:relative;z-index:2;text-align:center;width:360px;
-  margin-left:calc((var(--ei-pw) * 0.8 - 360px) / 2)}
+   BOTH numbers are variables. The block width used to be hard-coded at 360 inside this formula as
+   well as declared on the rule, so narrowing the panel for a tablet without also editing the
+   formula computed a NEGATIVE offset and pushed the logo off the left edge of the screen. */
+.ei-brand-inner{position:relative;z-index:2;text-align:center;width:var(--ei-iw);
+  margin-left:calc((var(--ei-pw) * 0.8 - var(--ei-iw)) / 2)}
 /* The artwork. The supplied PNG is a 4258x2838 canvas with the logo occupying only the middle
    ~60% wide by ~27% tall — the rest is transparent margin. Rendered plain it would sit tiny in a
    tall empty box, so the negative vertical margins pull the surrounding layout back in over that
    dead space (they don't crop — transparent pixels simply overlap nothing). Re-export the artwork
    tightly cropped and this can go back to margin:0. */
-.ei-logo-img{display:block;width:100%;height:auto;margin:-80px auto}
+/* A PERCENTAGE margin, not px. Percentage margins resolve against the containing block's WIDTH, so
+   this tracks the artwork's own transparent padding (~24% of the rendered width) at any size. It
+   was -80px, tuned for the 360px desktop block — at the 220px block portrait uses, the image is
+   only ~147px tall and -160px of margin collapsed it out of existence. */
+.ei-logo-img{display:block;width:100%;height:auto;margin:-23% auto}
 /* ── FALLBACK LOGO ── Heavy geometric caps, barely tracked, with a lowercase I carrying a round dot,
    over a gold DESIGN & DECOR set tight beneath it on wide tracking. Outfit at 800 is the nearest
    geometric the app already loads, so this costs no extra font request.
@@ -683,9 +696,29 @@ export default function StudioEventInfo({ ctx }) {
 /* ── RESPONSIVE ── the panel goes first: below this width it would eat the room the form needs,
    and it carries no information you can't do without. Then the paired fields unstack — the old
    column never had breakpoints at all, and a 1fr 1fr grid at 380px wide is unusable. */
-@media (max-width: 1200px){
-  .ei-brand,.ei-brand-shadow{display:none}
-  .ei-view{--ei-pw:0px}
+/* ── TABLET LANDSCAPE ── The panel stays. It was hidden outright below 1200px, which threw the
+   whole design away on every tablet — and a 1180px landscape iPad has plenty of room for it, just
+   not for 560px of it. Narrowed to 340, and the mark re-centred on the narrower waist. */
+@media (max-width: 1200px) and (min-width: 841px){
+  .ei-view{--ei-pw:340px;--ei-iw:236px}
+  .ei-shell{padding:20px 22px 40px}
+}
+/* ── TABLET PORTRAIT ── A column down the left cannot work at 820px: any width that fits the logo
+   leaves the form unusable. So the panel becomes a BAND across the top — same photograph, same
+   logo, same gold, with the curve turned to run along its bottom edge.
+   It stays position:fixed and the split is padded down by its height, rather than putting it in
+   flow: the form column scrolls inside itself, and a band in that flow would scroll away with it. */
+@media (max-width: 840px){
+  .ei-view{--ei-pw:0px;--ei-iw:220px}
+  .ei-brand{width:100%;height:170px;justify-content:center;clip-path:url(#eiBrandCurveH)}
+  .ei-brand-inner{margin-left:0}
+  .ei-brand-shadow{display:none}
+  /* Traces the vertical curve, so it would cut across the band diagonally. */
+  .ei-brand-edge{display:none}
+  .ei-split{padding-top:170px;box-sizing:border-box}
+  .ei-formside{height:100%}
+  /* Sized for a full-height column — in a 170px band they read as a wash rather than motion. */
+  .ei-ember{display:none}
 }
 /* ── TABLET PORTRAIT (iPad 820, mini 744, older 768) ──
    The paired fields survive down to ~700px, so the work here is room, not reflow: the shell keeps
@@ -747,6 +780,11 @@ export default function StudioEventInfo({ ctx }) {
         <defs>
           <clipPath id="eiBrandCurve" clipPathUnits="objectBoundingBox">
             <path d={BRAND_CURVE}/>
+          </clipPath>
+          {/* Portrait's clip. Defined always, used only by the ≤840 rules — a clipPath costs
+              nothing until something references it. */}
+          <clipPath id="eiBrandCurveH" clipPathUnits="objectBoundingBox">
+            <path d={BRAND_CURVE_H}/>
           </clipPath>
           <linearGradient id="eiBrandEdge" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor={accent} stopOpacity="0"/>

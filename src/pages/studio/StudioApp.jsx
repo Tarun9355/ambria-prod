@@ -7490,6 +7490,22 @@ export default function StudioApp() {
   // whole palette mid-session. One light theme throughout now. `isDark` stays as the switch every
   // component already reads — the dark branches are kept, just never taken, so restoring a dark
   // mode later is this one line rather than a rewrite.
+  // ═══ SAFARI'S TOOLBAR ═══
+  // iOS Safari paints its own chrome above the page and draws a hairline under it once you scroll.
+  // Against the header's ink that hairline reads as a dark GAP between the browser and the app —
+  // it isn't one, nothing shows through it, but nothing had told Safari what colour this page is.
+  // theme-color tints the chrome to match the header, so the seam stops registering as an edge.
+  // Restored on unmount, or IMS — whose header is light — would be left wearing Studio's ink.
+  useEffect(() => {
+    const existing = document.querySelector('meta[name="theme-color"]');
+    const prev = existing?.getAttribute("content") ?? null;
+    const tag = existing || document.head.appendChild(
+      Object.assign(document.createElement("meta"), { name: "theme-color" }),
+    );
+    tag.setAttribute("content", "#0F0F1A");
+    return () => { if (prev !== null) tag.setAttribute("content", prev); else tag.remove(); };
+  }, []);
+
   const isDark = false;
   const S = makeS(isDark);
   // Event Info (step 0) runs chrome-free: it's where a deal is STARTED, so the bar above it offers
