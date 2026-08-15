@@ -7593,7 +7593,17 @@ export default function StudioApp() {
   const applyZoneUpload = () => {
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    const libImg = { id: libId, url: r.url, name: r.name, tags: r.tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
+    // A custom ("Other") zone isn't in the taxonomy the Areas & elements chips offer, so there was
+    // no way to tag a photo INTO one — picking "Lounge" or any fixed chip never surfaced it there,
+    // and the zone's own name wasn't even an option to pick. The zone selector at the top of this
+    // modal already says exactly where this photo belongs; auto-include that zone's name in the
+    // tag instead of asking for a second, redundant confirmation the taxonomy can't actually offer.
+    // Whatever else was picked in Areas & elements still applies too — this only adds, never replaces.
+    const customOther = customZones.find((cz) => cz.id === r.elKey && !cz.sourceType);
+    const tags = customOther
+      ? { ...r.tags, areasElements: [...new Set([...(r.tags?.areasElements || []), customOther.name])] }
+      : r.tags;
+    const libImg = { id: libId, url: r.url, name: r.name, tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
     // NOT mergeLibItems first: that writes libItemsRef, which is exactly what saveLib diffs against
     // to decide what changed. Pre-merging made saveLib compare the new photo to itself, find no
     // difference, and skip the upsert entirely — so every Build upload since this was written lived

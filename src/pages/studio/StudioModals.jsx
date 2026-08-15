@@ -313,6 +313,19 @@ export default function StudioModals({ ctx }) {
                 areas until someone reopened it from Manage. */}
             <div style={{marginBottom:16,padding:12,background:isDark?"#0F0F1A":"#F9FAFB",borderRadius:10,border:`1px solid ${border}`}}>
               <div style={{fontSize:12,fontWeight:700,color:accent,marginBottom:8}}>{"🏷️"} Tags</div>
+              {/* A custom ("Other") zone isn't part of this taxonomy — it's a per-deal zone someone
+                  typed a name for, so there's no chip here that could ever point a photo at it. The
+                  zone picked above already says exactly where this photo belongs, so that name is
+                  included automatically on Save; this just makes the automatic part visible instead
+                  of silent. Areas & elements below still works normally on top of it, for a photo
+                  that should ALSO show under a standard zone. */}
+              {(() => {
+                const customTarget = (customZones||[]).find(cz => cz.id === zoneUploadReview.elKey && !cz.sourceType);
+                return customTarget && <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,padding:"6px 10px",borderRadius:8,background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.25)"}}>
+                  <span style={{fontSize:12}}>📍</span>
+                  <span style={{fontSize:11,color:"#059669",fontWeight:600}}>Also tagged for your custom zone "{customTarget.name}" — automatic, from the zone picked above.</span>
+                </div>;
+              })()}
               <PhotoTagFields
                 tags={zoneUploadReview.tags||{}}
                 onChange={(next)=>setZoneUploadReview(p=>({...p,tags:next}))}

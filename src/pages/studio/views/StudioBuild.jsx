@@ -1099,7 +1099,15 @@ export default function StudioBuild({ ctx }) {
   //    parent was swallowing their photos. Aliases nobody else claims stay ("Entry Passage" /
   //    "Entry & Passage" are two spellings of one zone, not two zones).
   const areaNamesFor = (elKey) => {
-    const label = (zoneLabelsD[elKey]?.label) || elKey || "";
+    // A true custom ("Other") zone has no zoneLabelsD entry at all — it isn't part of the admin
+    // zone taxonomy, just a per-deal zone the salesperson typed a name for. Without this, `label`
+    // fell through to the raw internal id (customZones' generated `id`, e.g. "cz1723..."), which no
+    // photo's "Areas & elements" tags could ever match — a custom zone's own photo strip was
+    // structurally unfillable by tagging, no matter what was picked. (Duplicate zones — the ones
+    // with `sourceType` — never hit this: the caller resolves them to their source's standard zone
+    // key before calling areaNamesFor at all.)
+    const customOther = customZones.find((cz) => cz.id === elKey && !cz.sourceType);
+    const label = (zoneLabelsD[elKey]?.label) || customOther?.name || elKey || "";
     const raw = ZONE_TYPE_TO_AREA[elKey];
     const names = Array.isArray(raw) ? [...raw] : (raw ? [raw] : []);
     if (!names.length) return label ? [label] : [];
@@ -3360,10 +3368,18 @@ undefined
         // but shouldn't steal the "verified by" attribution from whoever verified it first.
         const wasVerified=!!master?._verified;
         const stamp=wasVerified?{_lastEditedBy:authUser?.name||"—",_lastEditedAt:Date.now()}:{_verifiedBy:authUser?.name||"—",_verifiedAt:Date.now()};
+        // A true custom ("Other") zone isn't in the taxonomy this chip editor offers below, so there
+        // was no way to tag a photo as belonging to one — see the matching note on applyZoneUpload
+        // (StudioApp.jsx). This zone IS where the photo is being corrected FOR, so include its name
+        // alongside whatever was picked, same as a fresh upload does.
+        const czSrcThis = customZones.find(cz => cz.id === zk && !cz.sourceType);
+        const tags = czSrcThis
+          ? { ...correctPhoto.tags, areasElements: [...new Set([...(correctPhoto.tags?.areasElements || []), czSrcThis.name])] }
+          : correctPhoto.tags;
         if(isNewMaster){
           // This photo wasn't a Library photo yet (fresh upload / event photo) — create one now.
           const newId="LIB"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-          const created={id:newId,url:correctPhoto.draftSrc,name:correctPhoto.name||"Untitled",tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,addedAt:Date.now(),source:"build",_verified:true,...stamp,_correctedOn:"build"};
+          const created={id:newId,url:correctPhoto.draftSrc,name:correctPhoto.name||"Untitled",tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,addedAt:Date.now(),source:"build",_verified:true,...stamp,_correctedOn:"build"};
           // No mergeLibItems first — it writes libItemsRef, which saveLib diffs against to work out
           // what changed, so pre-merging made it compare `created` to itself and skip the write.
           // saveLib does the merge itself. Same bug as the Build photo upload in StudioApp.
@@ -3379,7 +3395,7 @@ undefined
           logVerificationEvent?.({photoId:newId,photoName:created.name,source:"build"});
           showMsg("✅ Saved as a new Library photo — thanks!","green");
         } else {
-          const corrected={...master,name:correctPhoto.name||master.name,tags:correctPhoto.tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
+          const corrected={...master,name:correctPhoto.name||master.name,tags,elements:elems,dims:libDims,zoneConfigByType:zoneCfgMap,_verified:true,...stamp,_correctedOn:"build"};
           const res=await saveLib(libItems.map(i=>i.id===correctPhoto.libId?corrected:i));
           if(!res?.ok) return; // see comment above — don't claim success on a failed write
           // Only the first verification counts as a contribution — re-corrections of an already-
@@ -3398,7 +3414,7 @@ undefined
         {
           const czSrcZ = customZones.find(cz => cz.id === zk);
           const areas = areaNamesFor(czSrcZ?.sourceType || zk);
-          const tagged = correctPhoto.tags?.areasElements || [];
+          const tagged = tags?.areasElements || [];
           const stillInZone = areas.length ? tagged.some(a => areas.includes(a)) : true;
           if (!stillInZone) setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
         }
