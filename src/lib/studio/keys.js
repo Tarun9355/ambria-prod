@@ -110,3 +110,16 @@ export const TR_TIERS = [
 // The Studio-owned settings rows the IMS panel has to read directly: IMS strips every "ambria-"
 // key out of its own settings object on purpose, so these two are fetched by the panel itself.
 export const VENUES_SK = STORAGE_KEY + "-venues";
+
+// ═══ CUSTOM ZONE PHOTO MATCHING ═══
+// A standard zone's photo strip matches library photos by a shared, admin-curated NAME
+// (tags.areasElements), which is deliberately global — every deal's "Stage" is the same idea, so
+// tagging a photo "Stage" once makes it visible everywhere. A custom ("Other") zone is the
+// opposite: it's a name one salesperson typed for one deal, with no company-wide agreement on what
+// it means, so two unrelated deals both naming a zone "Selfie Booth" must NOT end up sharing
+// photos just because the strings match. Matching a custom zone by its own generated `id` instead
+// (stored in tags.customZoneIds, never the visible areasElements) makes that impossible — this
+// prefix marks an areaNames entry as "match customZoneIds by this id", not "match areasElements by
+// this literal string", everywhere the two are threaded through the same plumbing (StudioBuild.jsx's
+// areaNamesFor, StudioApp.jsx's getLibPhotosForZone, zone photo-group pinning).
+export const CUSTOM_ZONE_TAG_PREFIX = "__customzone__:";

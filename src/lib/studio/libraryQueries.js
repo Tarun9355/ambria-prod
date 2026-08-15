@@ -287,6 +287,22 @@ export async function fetchZoneLibraryPhotos(zoneList) {
   return (data || []).map(rowToLibItem);
 }
 
+/** Photos privately tagged to ONE specific custom-zone instance (tags.customZoneIds contains the
+ * zone's own generated id, e.g. "cz_1723710193847") — a separate channel from areasElements so a
+ * custom zone never shares photos with an unrelated deal's differently-instantiated zone that
+ * happens to have the same display name. customZoneIds is never shown as a tag/chip anywhere;
+ * it exists purely for this lookup. See CUSTOM_ZONE_TAG_PREFIX (lib/studio/keys.js) for how a
+ * caller signals "this id", not "this literal areasElements string". */
+export async function fetchCustomZoneLibraryPhotos(zoneId) {
+  if (!zoneId) return [];
+  const { data, error } = await supabase.from("library")
+    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
+    .or(`tags->customZoneIds.cs.${pgArrayLit(zoneId)}`)
+    .limit(1000);
+  if (error) throw error;
+  return (data || []).map(rowToLibItem);
+}
+
 /** Bounded pool of recently-tagged photos, used as last-resort zone-overflow filler
  * (replaces the old "scan the whole library for filler" behavior). */
 export async function fetchRecentLibraryPhotos(limit = 200) {

@@ -71,7 +71,7 @@ import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rate
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
-  fetchZoneLibraryPhotos, fetchUntaggedLibraryTargets,
+  fetchZoneLibraryPhotos, fetchCustomZoneLibraryPhotos, fetchUntaggedLibraryTargets,
   fetchVerifiedLibraryPhotos, checkExistingLibraryUrls, TAG_SOURCE,
 } from "../../lib/studio/libraryQueries";
 import { rowToItem } from "../../lib/inventory/adapter";
@@ -84,7 +84,7 @@ import {
   DC_RUN_COUNTER_SK, DC_CACHE_SK, FLORAL_HARDPROP_MAP_SK, SOFT_HOLDS_SK,
   TRUSS_ALLOC_SK, FILTER_PRIORITY_SK, DEFAULT_FILTER_PRIORITY,
   RC_SK_CATS, RC_SK_TR, TR_TIERS, TC_UNITS, TPL_SK, ZONE_DEF_SK, TEAM_SK, TAX_SK, TAX_BOTH_MIG_SK, TAG_KB_SK,
-  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, ZONE_GROUPS_SK,
+  TAG_HIDDEN_SUBS_SK, PREMIA_CFG_SK, ZONE_GROUPS_SK, CUSTOM_ZONE_TAG_PREFIX,
 } from "../../lib/studio/keys.js";
 import { normaliseZoneGroups, groupIdsForZones, setGroupIds } from "../../lib/studio/zoneGroups.js";
 import { rowToVideoTag, videoTagToRow, rowsToVideoTagMap } from "../../lib/studio/videoTags.js";
@@ -4194,6 +4194,17 @@ export default function StudioApp() {
     // not automatic taxonomy scoring.
     const zoneList = (Array.isArray(zone) ? zone : [zone]).filter(Boolean);
     if (!zoneList.length) return [];
+    // A true custom zone's "area name" (from areaNamesFor, StudioBuild.jsx) is a
+    // CUSTOM_ZONE_TAG_PREFIX-marked id, not a real areasElements string — match tags.customZoneIds
+    // by that exact id instead, so it can never collide with an unrelated deal's differently-
+    // instantiated zone that happens to share the same display name. areaNamesFor never mixes a
+    // marker with plain names in one call, so checking the first entry is enough.
+    if (zoneList[0].startsWith(CUSTOM_ZONE_TAG_PREFIX)) {
+      const zoneId = zoneList[0].slice(CUSTOM_ZONE_TAG_PREFIX.length);
+      const candidates = await fetchCustomZoneLibraryPhotos(zoneId);
+      mergeLibItems(candidates);
+      return candidates.filter(li => (li.tags?.customZoneIds || []).includes(zoneId) && (!filterFn || filterFn(li)));
+    }
     const zoneCandidates = await fetchZoneLibraryPhotos(zoneList);
     mergeLibItems(zoneCandidates);
     const tagged = zoneCandidates.filter(li => {
@@ -7594,14 +7605,15 @@ export default function StudioApp() {
     const r = zoneUploadReview; if (!r) return;
     const libId = "LIB" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     // A custom ("Other") zone isn't in the taxonomy the Areas & elements chips offer, so there was
-    // no way to tag a photo INTO one — picking "Lounge" or any fixed chip never surfaced it there,
-    // and the zone's own name wasn't even an option to pick. The zone selector at the top of this
-    // modal already says exactly where this photo belongs; auto-include that zone's name in the
-    // tag instead of asking for a second, redundant confirmation the taxonomy can't actually offer.
-    // Whatever else was picked in Areas & elements still applies too — this only adds, never replaces.
+    // no way to tag a photo INTO one — picking "Lounge" or any fixed chip never surfaced it there.
+    // The zone selector at the top of this modal already says exactly where this photo belongs, so
+    // tag it there automatically — by the zone's own generated id (tags.customZoneIds), NOT its
+    // display name, so an unrelated deal's differently-instantiated zone that happens to share the
+    // same name never inherits this photo. Whatever else was picked in Areas & elements still
+    // applies too — this only adds a private channel, it never touches the visible tags.
     const customOther = customZones.find((cz) => cz.id === r.elKey && !cz.sourceType);
     const tags = customOther
-      ? { ...r.tags, areasElements: [...new Set([...(r.tags?.areasElements || []), customOther.name])] }
+      ? { ...r.tags, customZoneIds: [...new Set([...(r.tags?.customZoneIds || []), customOther.id])] }
       : r.tags;
     const libImg = { id: libId, url: r.url, name: r.name, tags, elements: r.elements, dims: r.dims, prints: r.prints || [], addedAt: Date.now(), source: "client-upload", tagSource: TAG_SOURCE.BUILD, _aiTagged: true, _aiTaggedAt: Date.now() };
     // NOT mergeLibItems first: that writes libItemsRef, which is exactly what saveLib diffs against
