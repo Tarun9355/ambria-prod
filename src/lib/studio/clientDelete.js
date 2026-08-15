@@ -12,6 +12,60 @@
 // they outlive the row — but they are IMS's copy of the job, not ours to remove. The confirm counts
 // them and says they will be orphaned, so the decision is made with open eyes rather than silently.
 
+/**
+ * The same delete, for a selection.
+ *
+ * Not a loop over makeDeleteClient: that would ask N times, and — worse — write the ledger N times.
+ * Each write is a full save, so ten deletes would be ten racing saves of a list each copy believed
+ * it knew the shape of, and the last one home would restore whatever the others had removed. One
+ * confirm, one write, one deleted-id list.
+ */
+export function makeDeleteClients({
+  clientLedger,
+  saveClientLedger,
+  eventOrders,
+  activeClientId,
+  setActiveClientId,
+  startNewDeal,
+  askConfirm,
+  showMsg,
+  onDeleted,
+}) {
+  return (list) => {
+    const clients = (list || []).filter((c) => c?.id);
+    if (!clients.length) return;
+    const ids = new Set(clients.map((c) => c.id));
+    const n = clients.length;
+
+    const sessions = clients.reduce((sum, c) => sum + (c.sessions || []).length, 0);
+    const booked = clients.filter((c) => c.status === "booked").length;
+    const orders = (eventOrders || []).filter((e) => ids.has(e.clientId)).length;
+
+    const bits = [sessions ? `${sessions} saved session${sessions === 1 ? "" : "s"} in total` : "no saved sessions"];
+    // Booked means signed. Deleting one in a batch is the mistake this line exists to catch.
+    if (booked) bits.push(`${booked} of them ${booked === 1 ? "is" : "are"} marked BOOKED`);
+    if (orders) bits.push(`${orders} event order${orders === 1 ? "" : "s"} will be left without a client`);
+
+    askConfirm(
+      `Delete ${n} client${n === 1 ? "" : "s"} permanently?`,
+      () => {
+        // Same resurrection guard as the single delete: if the open deal is in the batch, the deal
+        // has to be CLOSED, not just unlinked, or the auto-save mints it straight back.
+        if (ids.has(activeClientId)) {
+          if (startNewDeal) startNewDeal(); else setActiveClientId?.(null);
+        }
+        saveClientLedger((clientLedger || []).filter((x) => !ids.has(x.id)), [...ids]);
+        showMsg?.(`Deleted ${n} client${n === 1 ? "" : "s"}`, "green");
+        onDeleted?.(clients);
+      },
+      {
+        yesLabel: `Delete ${n} forever`,
+        note: `${bits.join(" · ")}. This cannot be undone — mark them Dead instead if you only want them out of the way.`,
+      },
+    );
+  };
+}
+
 export function makeDeleteClient({
   clientLedger,
   saveClientLedger,

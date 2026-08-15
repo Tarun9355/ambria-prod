@@ -3,7 +3,7 @@ import { SPACES, TAX_LABELS, DEFAULT_TAX_KEYS, taxOr, ZONE_META } from "../../..
 import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
 import { supabase } from "../../../lib/supabase";
 import { findZoneForArea } from "../../../lib/studio/pricing";
-import { makeDeleteClient } from "../../../lib/studio/clientDelete";
+import { makeDeleteClient, makeDeleteClients } from "../../../lib/studio/clientDelete";
 
 // getTaxLabel — module-scope helper in the reference (App_latest.jsx:1267). Local here.
 const getTaxLabel = (k) => TAX_LABELS[k] || k.replace(/_/g, " ").replace(/([A-Z])/g, " $1").replace(/\s+/g, " ").replace(/^./, s => s.toUpperCase()).trim();
@@ -72,6 +72,9 @@ export default function ManageSettings({ ctx }) {
 
   // Drag-and-drop zone reordering — same target shape as moveZone (rebuild zoneDefs.meta in the
   // new key order) but moves a zone directly from fromIdx to toIdx instead of swapping neighbours.
+  // Client Tracker multi-select. Ids, not rows — a row object is re-created on every ledger save
+  // and a selection holding stale objects would quietly stop matching.
+  const [ctSel, setCtSel] = useState([]);
   const [dragZoneIdx, setDragZoneIdx] = useState(null);
   const [dragOverZoneIdx, setDragOverZoneIdx] = useState(null);
   const reorderZone = (fromIdx, toIdx) => {
@@ -708,6 +711,11 @@ export default function ManageSettings({ ctx }) {
           // the auto-save re-created the client a few seconds later. See clientDelete.js.
           startNewDeal,
         });
+        const deleteClients = makeDeleteClients({
+          clientLedger, saveClientLedger, eventOrders, activeClientId, setActiveClientId, askConfirm, showMsg,
+          startNewDeal,
+          onDeleted: () => setCtSel([]),
+        });
         const setClientStatus = (c, next) => {
           if (!c || c.status === next) return;
           const dead = next === "dead";
@@ -751,9 +759,38 @@ export default function ManageSettings({ ctx }) {
             <input type="date" value={ctFilterTo} onChange={e=>{setCtFilterTo(e.target.value);}} style={{...S.select,fontSize:11,padding:"6px 10px"}} placeholder="To"/>
             {(ctFilterSp||ctFilterStatus!=="all"||ctFilterFrom||ctFilterTo||clientSearch)&&<button onClick={()=>{setCtFilterSp("");setCtFilterStatus("all");setCtFilterFrom("");setCtFilterTo("");setClientSearch("");}} style={{fontSize:10,color:accent,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear</button>}
           </div>
+          {/* ═══ BULK SELECT (admin) ═══
+              Selection is held as ids and is scoped to what is CURRENTLY FILTERED: any id that
+              scrolls out of the filter is dropped from it. Selecting ten rows, changing the filter
+              and then pressing Delete must not remove rows you can no longer see. */}
+          {(() => {
+            if (!isAdmin) return null;
+            const visibleIds = filtered.map(c=>c.id);
+            const sel = ctSel.filter(id=>visibleIds.includes(id));
+            if (sel.length !== ctSel.length) { /* pruned below on the next toggle; render off `sel` */ }
+            if (!sel.length) return null;
+            return <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10,padding:"9px 13px",borderRadius:10,background:"rgba(225,29,72,0.08)",border:"1px solid rgba(225,29,72,0.28)"}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#E11D48"}}>{sel.length} selected</span>
+              <button onClick={()=>deleteClients(filtered.filter(c=>sel.includes(c.id)))}
+                style={{fontSize:11,fontWeight:700,padding:"5px 12px",borderRadius:7,border:"none",background:"#E11D48",color:"#fff",cursor:"pointer"}}>{"🗑"} Delete selected</button>
+              <button onClick={()=>setCtSel([])}
+                style={{fontSize:11,fontWeight:600,padding:"5px 10px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:textS,cursor:"pointer"}}>Clear</button>
+            </div>;
+          })()}
           {filtered.length===0?<div style={{padding:24,textAlign:"center",color:textS,fontSize:13}}>No clients found</div>
           :<div style={{borderRadius:12,overflow:"hidden",border:`1px solid ${border}`}}>
-            <div style={{display:"grid",gridTemplateColumns:"1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr",gap:0,padding:"10px 14px",background:isDark?"rgba(201,169,110,0.08)":"#FAF9F6",fontSize:10,fontWeight:600,color:textS,textTransform:"uppercase",letterSpacing:0.5}}>
+            <div style={{display:"grid",gridTemplateColumns:`${isAdmin?"34px ":""}1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr`,gap:0,padding:"10px 14px",background:isDark?"rgba(201,169,110,0.08)":"#FAF9F6",fontSize:10,fontWeight:600,color:textS,textTransform:"uppercase",letterSpacing:0.5}}>
+              {isAdmin&&(()=>{
+                const visibleIds = filtered.map(c=>c.id);
+                const selCount = ctSel.filter(id=>visibleIds.includes(id)).length;
+                const all = selCount>0 && selCount===visibleIds.length;
+                return <div><input type="checkbox" checked={all}
+                  // Indeterminate is a DOM property, not an attribute — React won't set it from JSX,
+                  // so it goes on via the ref. Without it a partial selection looks like none.
+                  ref={el=>{ if(el) el.indeterminate = selCount>0 && !all; }}
+                  onChange={()=>setCtSel(all?[]:visibleIds)}
+                  title={all?"Clear selection":"Select all shown"} style={{cursor:"pointer"}}/></div>;
+              })()}
               <div>Client</div><div>Phone</div><div>Date</div><div>Venue</div><div>Function</div><div>Shift</div><div>Salesperson</div><div>Status</div><div>Created</div><div>Actions</div>
             </div>
             {filtered.map(c=>{
@@ -761,7 +798,13 @@ export default function ManageSettings({ ctx }) {
                        : c.status==="dead"   ? {bg:"rgba(239,68,68,0.14)", fg:"#EF4444",t:"🔴 Dead"}
                        :                       {bg:"rgba(245,158,11,0.15)",fg:"#F59E0B",t:"🟡 Ongoing"};
               return <div key={c.id}>
-              <div onClick={()=>{setCtExpandedId(ctExpandedId===c.id?null:c.id);}} style={{display:"grid",gridTemplateColumns:"1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr",gap:0,padding:"10px 14px",borderTop:`1px solid ${border}`,cursor:"pointer",background:ctExpandedId===c.id?(isDark?"rgba(201,169,110,0.05)":"#FFFDF7"):"transparent",transition:"background 0.15s"}}>
+              <div onClick={()=>{setCtExpandedId(ctExpandedId===c.id?null:c.id);}} style={{display:"grid",gridTemplateColumns:`${isAdmin?"34px ":""}1.7fr 1fr 0.8fr 1fr 0.85fr 0.6fr 1fr 0.75fr 0.75fr 1fr`,gap:0,padding:"10px 14px",borderTop:`1px solid ${border}`,cursor:"pointer",background:ctSel.includes(c.id)?"rgba(225,29,72,0.07)":ctExpandedId===c.id?(isDark?"rgba(201,169,110,0.05)":"#FFFDF7"):"transparent",transition:"background 0.15s"}}>
+                {/* stopPropagation, or ticking a row also expands it. */}
+                {isAdmin&&<div onClick={e=>e.stopPropagation()}>
+                  <input type="checkbox" checked={ctSel.includes(c.id)}
+                    onChange={()=>setCtSel(s=>s.includes(c.id)?s.filter(x=>x!==c.id):[...s,c.id])}
+                    title={`Select ${c.name}`} style={{cursor:"pointer"}}/>
+                </div>}
                 <div style={{fontSize:13,fontWeight:600,color:textP}}>{c.name}{c.brideGroom&&<div style={{fontSize:10,color:textS}}>💑 {c.brideGroom}</div>}</div>
                 <div style={{fontSize:12,color:textS}}>{c.phone||"—"}</div>
                 <div style={{fontSize:11,color:textP}}>{c.eventDate?new Date(c.eventDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short"}):"—"}</div>
