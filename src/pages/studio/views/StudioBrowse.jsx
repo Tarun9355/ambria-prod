@@ -408,6 +408,24 @@ export default function StudioBrowse({ ctx }) {
 .sb-bnr-out:hover{background:color-mix(in srgb, currentColor 14%, transparent) !important}
 .sb-bnr-solid:hover{filter:brightness(1.10);box-shadow:0 7px 15px -9px rgba(0,0,0,0.6)}
 .sb-bnr-btn:active{transform:translateY(0) scale(0.97)}
+/* ══ TABLET ══
+   The video grid is already auto-fill/minmax(260px), so it reflows on its own. What doesn't is the
+   248px filter rail: at 820px it leaves ~550px for the grid, which is two cramped columns.
+   Landscape just narrows the rail. Portrait unpins it and lays it across the top instead — a
+   sticky full-height rail beside a 550px grid is worse than one you scroll past once. Its own
+   max-height (set inline from the viewport) is overridden there, or it would keep a tall scroll
+   region in a strip that is now only a few rows deep. */
+@media (max-width:1180px){
+  .sb-layout{gap:16px}
+  .sb-rail{width:210px !important}
+}
+@media (max-width:840px){
+  .sb-layout{flex-direction:column}
+  .sb-rail{width:100% !important;position:static !important;max-height:none !important}
+}
+@media (pointer: coarse){
+  .sb-pill{min-height:34px}
+}
 @media (prefers-reduced-motion: reduce){
   .sb-pill,.sb-head,.sb-card,.sb-thumb,.sb-play,.sb-title,.sb-cta,.sb-alt,.sb-gate,.sb-rcard,.sb-bnr-btn{transition:none}
   .sb-pill:hover,.sb-card:hover,.sb-cta:hover,.sb-alt:hover,.sb-pill:active,.sb-bnr-btn:hover,.sb-bnr-btn:active,.sb-rcard:hover{transform:none}
@@ -423,7 +441,7 @@ export default function StudioBrowse({ ctx }) {
         {/* The "Active function" strip is gone. On a multi-function event the function pills in the
             sticky header already show which one is selected, so this was a full-width bar restating
             it — and it pushed the filters and the first row of videos down to say so. */}
-        <div style={{display:"flex",gap:24,alignItems:"flex-start"}}>
+        <div className="sb-layout" style={{display:"flex",gap:24,alignItems:"flex-start"}}>
 
         {/* ═══ SIDEBAR FILTERS ═══ */}
         {/* top is dynamic: +50 when Row 2 function pills are visible (multi-function event) to avoid overlap with sticky header */}
@@ -446,7 +464,7 @@ export default function StudioBrowse({ ctx }) {
             <span style={{display:"flex",color:textS,transform:"rotate(-90deg)"}}><IconChevron size={11}/></span>
           </div>
         )}
-        {filtersOpen && <div ref={railRef} style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
+        {filtersOpen && <div ref={railRef} className="sb-rail" style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
           maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:10}}>
           {/* Saved-session banner. Lives under the filters rather than above the grid: it is a way
               back into a build, not a property of the results, and at the top it pushed the first

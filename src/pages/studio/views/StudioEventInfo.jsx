@@ -362,9 +362,9 @@ export default function StudioEventInfo({ ctx }) {
    screen. Without this the entire page scrolled as one, dragging the panel and the background up
    with it. Nothing here may use min-height: the moment the content can push the frame taller than
    100vh, the document scrolls again and we're back to the same behaviour. */
-.ei-split{position:relative;height:100vh;overflow:hidden}
+.ei-split{position:relative;height:100vh;height:100dvh;overflow:hidden}
 .ei-formside{margin-left:var(--ei-pw);min-width:0;position:relative;z-index:1;
-  height:100vh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+  height:100vh;height:100dvh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
 /* Bottom padding is breathing room at the end of the column's own scroll, not clearance for a
    page scrollbar any more — 110px of it just read as dead space. */
 .ei-shell{max-width:720px;margin:0 auto;padding:22px 26px 44px;position:relative;z-index:1}
@@ -475,10 +475,10 @@ export default function StudioEventInfo({ ctx }) {
    and in front of the page. Nothing in it animates, so it costs nothing after first paint.
    Sits at z-index 2 — above the form column (1) so the shadow actually falls on the page, below
    the panel (3) so the panel covers everything but the bleed past its edge. */
-.ei-brand-shadow{position:fixed;top:0;left:0;width:var(--ei-pw);height:100vh;z-index:2;pointer-events:none;
+.ei-brand-shadow{position:fixed;top:0;left:0;width:var(--ei-pw);height:100vh;height:100dvh;z-index:2;pointer-events:none;
   filter:blur(20px);opacity:.45;transform:translateX(7px)}
 .ei-brand-shadow svg{display:block;width:100%;height:100%}
-.ei-brand{position:fixed;top:0;left:0;width:var(--ei-pw);height:100vh;overflow:hidden;z-index:3;
+.ei-brand{position:fixed;top:0;left:0;width:var(--ei-pw);height:100vh;height:100dvh;overflow:hidden;z-index:3;
   background:linear-gradient(150deg,#0F0F1A 0%,#191430 46%,#2d1b69 100%);
   display:flex;align-items:center;justify-content:flex-start;isolation:isolate;
   clip-path:url(#eiBrandCurve)}
@@ -686,6 +686,25 @@ export default function StudioEventInfo({ ctx }) {
 @media (max-width: 1200px){
   .ei-brand,.ei-brand-shadow{display:none}
   .ei-view{--ei-pw:0px}
+}
+/* ── TABLET PORTRAIT (iPad 820, mini 744, older 768) ──
+   The paired fields survive down to ~700px, so the work here is room, not reflow: the shell keeps
+   a 720px cap it can no longer reach, and the hero is set for a desktop column. */
+@media (max-width: 840px){
+  .ei-shell{max-width:100%;padding:20px 20px 40px}
+  .ei-hero-face{font-size:40px !important}
+}
+/* ── TOUCH ──
+   Not a width query: a tablet with a keyboard and a trackpad still wants the compact desktop
+   controls. pointer:coarse asks the real question — is this being driven by a finger — so it
+   catches a phone and an iPad and leaves a touchscreen laptop alone.
+   The controls on this page were sized for a mouse: Reset, Collapse, Remove and Edit are 9-10px
+   type on ~5px padding, which is a comfortable click and an unreliable tap. 34px is short of the
+   44px guideline but is what fits without redrawing the rows; the inputs go to 44. */
+@media (pointer: coarse){
+  .ei-root button{min-height:34px}
+  .ei-root input,.ei-root select{min-height:44px;font-size:16px}
+  .ei-two{gap:16px}
 }
 @media (max-width: 640px){
   .ei-shell{padding:16px 15px 32px}
