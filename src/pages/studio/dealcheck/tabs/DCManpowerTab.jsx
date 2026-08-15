@@ -17,7 +17,7 @@ export default function DCManpowerTab({ ctx }) {
     // build / fn state
     collectAllFunctionData,
     // settings + zone meta + rate card
-    dealCheckData, rcItems, zoneMeta, dcCards,
+    dealCheckData, rcItems, zoneMeta, dcCards, dcInventoryCache,
     // pricing helpers (module-exposed via ctx)
     calcZoneTrussPreview,
     // manpower state
@@ -115,6 +115,16 @@ export default function DCManpowerTab({ ctx }) {
                             const n = (i.name || "").toLowerCase().trim();
                             return n && (elNm.includes(n) || n.includes(elNm));
                           });
+                        }
+                        // el.invId is Build's THIRD identity source — the normal path for anything
+                        // added via "+ Add element" today, and the one this walker had no branch for
+                        // at all: an IMS-inventory-sourced element only counted here if its name also
+                        // happened to match a Rate Card row, silently undercounting manpower for most
+                        // of a real build. Hand consumers a minimal stand-in from the inventory item
+                        // itself so their rc.cat/rc.sub reads stay valid.
+                        if (!rc && el.invId) {
+                          const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
+                          if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
                         }
                         // No rate-card row but a recipe of its own: still a floral element. Hand the
                         // consumers a minimal stand-in so their rc.cat / rc.sub reads stay valid.

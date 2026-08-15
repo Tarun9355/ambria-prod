@@ -420,11 +420,21 @@ export default function DealCheckOverlay({ ctx }) {
               mpRateByType = rateByType;
               const shiftToTiming = (s) => { const sl = String(s||"").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening")||sl.includes("night")) return "evening"; return "day"; };
               const sizeFromMode = (mode, sz) => { if (mode === "flat" || !sz) return "medium"; return String(sz).toLowerCase() || "medium"; };
+              // Same resolution as DCManpowerTab.jsx's walkFnElements (MUST match — this bottom-bar
+              // Manpower figure and the tab's own numbers are supposed to agree, and didn't: an
+              // exact-only rate-card name match dropped anything IMS-inventory-sourced (el.invId —
+              // the normal path for anything added via "+ Add element" today) or recipe-only
+              // (el.patternId), silently undercounting crew for most of a real build.
               const walkFn = (fn, cb) => {
                 const en = fn.enabledEls || {};
                 const ze = fn.zoneElements || {};
                 Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk]||[]).forEach(el => {
-                  const rc = rcItems.find(r => String(r.name||"").toLowerCase() === String(el.name||"").toLowerCase());
+                  let rc = rcItems.find(r => String(r.name||"").toLowerCase() === String(el.name||"").toLowerCase());
+                  if (!rc && el.invId) {
+                    const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
+                    if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
+                  }
+                  if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
                   if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1), zk });
                 }); });
               };

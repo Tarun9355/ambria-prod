@@ -133,7 +133,6 @@ const PREMIA_DEFAULTS = {
 
 const TAX_LABELS = { eventType: "Event type", venueType: "Venue type", areasElements: "Areas & elements", colorPalette: "Color palette", tier: "Tier", categoryTier: "Category tier (legacy)", designStyle: "Design style", timeSetting: "Time / setting" };
 
-const RC_UNITS = [{ id: "sqft", l: "/sqft" }, { id: "truss_sqft", l: "/truss sqft" }, { id: "rft", l: "/RFT" }, { id: "pc", l: "/pc" }, { id: "setup", l: "/setup" }, { id: "trip", l: "/trip" }, { id: "event", l: "/event" }, { id: "string", l: "/string" }, { id: "included", l: "Included" }, { id: "multiplier", l: "× mult" }];
 // TC_UNITS and TR_TIERS moved to lib/studio/keys.js — IMS mounts this same Transport editor now,
 // so both apps read one definition instead of keeping a second copy that drifts.
 
@@ -1073,7 +1072,6 @@ export default function StudioApp() {
 
   // ═══ LIBRARY STATE ═══
   const [libView, setLibView] = useState("images");
-  const [pricingView, setPricingView] = useState("rates");
   const [settingsView, setSettingsView] = useState("venues");
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
@@ -1621,7 +1619,6 @@ export default function StudioApp() {
   // Blocks for just the active function's date — warms once loadAvailability/activeFnMeta exist
   // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
   const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
-  const [rcCatEditMode, setRcCatEditMode] = useState(false);
   const [libElSearch, setLibElSearch] = useState("");
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
@@ -1641,9 +1638,6 @@ export default function StudioApp() {
   const [bufferTiers, setBufferTiers] = useState(TR_DBT);
   const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
   const [newTC, setNewTC] = useState({ item: "", perTruck: 0, unit: "pc" });
-  const [rcAddMode, setRcAddMode] = useState(false);
-  const [rcSubOpen, setRcSubOpen] = useState(false);
-  const [rcNewForm, setRcNewForm] = useState({ cat: "truss", sub: "", name: "", unit: "pc", inhouseMode: "flat", inhouseFlat: 0, inhouseS: 0, inhouseM: 0, inhouseB: 0, outEnabled: false, outS: 0, outM: 0, outB: 0, notes: "", artificialFlat: 0, artificialS: 0, artificialM: 0, artificialB: 0, defaultRealPct: 100, floralMode: "ratio" });
 
   // ═══ TEMPLATE STATE ═══
   const [templates, setTemplates] = useState(TPL_DEFAULTS);
@@ -2307,36 +2301,15 @@ export default function StudioApp() {
     ...Object.fromEntries((customOutdoor || []).filter(v => v.name).map(v => [v.name, v.name])),
   }), [customInhouse, customOutdoor]);
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
-  // Row-level rate-card persistence (off the whole-blob save; shared table with IMS). Upserts only
-  // changed rows + deletes only explicit ids (rcDel passes the id) — never deletes on absence.
+  // The Rate Card admin editor (Studio's RateCard.jsx, IMS's RateCardPanel.jsx) is gone — nobody
+  // edits `rate_card` by hand anymore, recipes are IMS-native (flowerPatterns), and every element
+  // Studio creates today carries an invId or patternId, never a bare Rate Card reference. This ref
+  // + subscription sync stay only because `rcItems` is still read as a LEGACY pricing fallback (see
+  // getElPrice et al.) for elements saved before that migration — truss_sqft-billed decorative
+  // elements in particular have no IMS-inventory equivalent at all. saveRC/saveRcCats (the human-
+  // edit save paths) had zero callers left with the editor gone and are removed.
   const rcItemsRef = useRef([]);
   useEffect(() => { rcItemsRef.current = rcItems; }, [rcItems]);
-  const saveRC = useCallback(async (ni, deletedIds) => {
-    const prev = rcItemsRef.current || [];
-    const prevById = {}; prev.forEach((i) => { if (i && i.id) prevById[i.id] = i; });
-    rcItemsRef.current = ni; setRcItems(ni);
-    const changed = (ni || []).filter((i) => i && i.id && JSON.stringify(prevById[i.id]) !== JSON.stringify(i));
-    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
-    try {
-      if (changed.length) {
-        const rows = changed.map((i) => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
-      }
-      for (const id of dels) await deleteRow("rate_card", id);
-    } catch (e) {
-      // Roll back the optimistic update — a failed save must not leave local state ahead of the DB.
-      rcItemsRef.current = prev; setRcItems(prev);
-      showMsg?.("Rate card save failed: " + (e?.message || e), "red");
-    }
-  }, [showMsg]);
-  const saveRcCats = useCallback(async (nc) => {
-    const prev = rcCats;
-    setRcCats(nc);
-    const r = await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories");
-    if (r && r.ok === false) { setRcCats(prev); } // roll back on failure, same as saveRC
-    return r;
-  }, [rcCats]);
   // Tagging-hidden sub-categories — keyed "cat::sub". Set for O(1) lookup; toggle flips one sub.
   const tagSubKey = useCallback((cat, sub) => `${String(cat || "").trim()}::${String(sub || "").trim()}`, []);
   const tagHiddenSubSet = useMemo(() => new Set(tagHiddenSubs), [tagHiddenSubs]);
@@ -3925,7 +3898,27 @@ export default function StudioApp() {
     if (!types.length || !(allFns || []).length) return [];
     const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
     const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
-    const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => { const rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase()); if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) }); }); }); };
+    // An element's cat/sub/inhouseMode used to come ONLY from a legacy Rate-Card name match — the
+    // same gap already fixed for pricing, transport and florals elsewhere in this file. Every
+    // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
+    // element" today) and pure flower-recipe element (el.patternId) never matched by name, so `rc`
+    // came back undefined and EVERY manpower calculator below (Flowerists, Electricians, Labours,
+    // Fabric Bangali, Truss Labour, any Tier-2 labour type) silently skipped it — undercounting crew
+    // for any build that isn't old-style Rate-Card-only, which is most builds today. Synthesizing an
+    // rc-shaped view from whichever identity actually resolves means every consumer below (all of
+    // which read rc.cat/rc.sub/rc.inhouseMode/rc.name) keeps working unchanged.
+    const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
+      let rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase());
+      if (!rc && el.invId) {
+        const invItem = imsInventory.find(i => i.id === el.invId);
+        if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" };
+      }
+      if (!rc && el.patternId) {
+        const pat = fps.find(p => p.id === el.patternId);
+        if (pat) rc = { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" };
+      }
+      if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) });
+    }); }); };
     const calc = (fn, type) => {
       if (type === "Flowerists") {
         let t = 0; const agg = {}; walk(fn, ({ rc, el, qty }) => {
@@ -3986,7 +3979,7 @@ export default function StudioApp() {
       (allFns || []).forEach(fn => { const r = calc(fn, type); if (r.count > best.count) best = r; });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
-  }, [dealCheckData, rcItems]);
+  }, [dealCheckData, rcItems, imsInventory]);
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
@@ -7655,7 +7648,7 @@ export default function StudioApp() {
     // admin / library state
     photoUrl, setPhotoUrl, evEditPhotoIdx, setEvEditPhotoIdx, tagInput, setTagInput, bulkUrls, setBulkUrls,
     bulkTarget, setBulkTarget, adminSearch, setAdminSearch, adminFilterV, setAdminFilterV, adminFilterC, setAdminFilterC, previewImg, setPreviewImg,
-    libView, setLibView, pricingView, setPricingView, settingsView, setSettingsView,
+    libView, setLibView, settingsView, setSettingsView,
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
@@ -7702,10 +7695,11 @@ export default function StudioApp() {
     inspQ, setInspQ, inspResults, setInspResults, inspLoading, setInspLoading, aiPrompt, setAiPrompt, aiResult, setAiResult, aiLoading, setAiLoading,
     pptLoading, setPptLoading, pptDone, setPptDone, savedInsps, setSavedInsps, copied, setCopied,
     pinResults, setPinResults, pinLoading, setPinLoading, pinQuery, setPinQuery, inspSource, setInspSource,
-    // rate card / transport
-    rcItems, setRcItems, saveRC, rcCats, setRcCats, saveRcCats, rcCatEditMode, setRcCatEditMode,
-    rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen, rcNewForm, setRcNewForm,
-    RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
+    // rate card / transport — read-only now (legacy pricing fallback + category/sub-category
+    // labels several screens still read); the human editors and their save paths are gone (see the
+    // rcItemsRef comment above).
+    rcItems, setRcItems, rcCats, setRcCats,
+    TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — Library's per-element Print section
