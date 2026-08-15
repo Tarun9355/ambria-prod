@@ -36,6 +36,65 @@ const BG_BY_EVENT = Object.fromEntries(
   Object.entries(BG_ASSETS).map(([path, url]) => [(path.match(/([^/]+)-bg\.\w+$/) || [, ""])[1].toLowerCase(), url])
 );
 
+// ═══ DECK WATERMARK ═══
+// The Ambria mark, sat quietly in the corner of every design-deck slide.
+// Same glob-not-import reasoning as the backgrounds above: no file, no watermark, deck still builds.
+const LOGO_ASSET = Object.values(
+  import.meta.glob("../../../assets/ambria-logo.{png,svg,webp,jpg,jpeg}", { eager: true, query: "?url", import: "default" })
+)[0] || null;
+
+// The artwork can't be dropped onto a slide as-is, for two reasons:
+//   1. Its wordmark is WHITE (it's the variant drawn for a dark ground) and every design-deck slide
+//      is warm ivory — it would be invisible.
+//   2. It's a 4258x2838 canvas whose mark occupies only the middle ~60% x ~27%; the rest is
+//      transparent. Placed by its box it would sit nowhere near where the box says it is.
+// So: trim to the real ink, recolour it, and fade it, once. source-in is what does the work —
+// it keeps the existing alpha and replaces the colour, so the fill's own alpha multiplies through
+// and recolour + fade happen in a single pass. Same-origin asset, so the canvas is never tainted.
+let watermarkCache = null;
+const deckWatermark = (hex, alpha) => {
+  if (!LOGO_ASSET) return Promise.resolve(null);
+  if (watermarkCache) return watermarkCache;
+  watermarkCache = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        // Alpha bounding box. Threshold at 8 rather than 0 so PNG anti-aliasing fringe doesn't
+        // report as content and defeat the trim.
+        const d = ctx.getImageData(0, 0, w, h).data;
+        let x0 = w, y0 = h, x1 = -1, y1 = -1;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            if (d[(y * w + x) * 4 + 3] > 8) {
+              if (x < x0) x0 = x; if (x > x1) x1 = x;
+              if (y < y0) y0 = y; if (y > y1) y1 = y;
+            }
+          }
+        }
+        if (x1 < 0) return resolve(null);                 // fully transparent file
+        const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+        const o = document.createElement("canvas");
+        o.width = cw; o.height = ch;
+        const octx = o.getContext("2d");
+        octx.drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+        const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+        octx.globalCompositeOperation = "source-in";
+        octx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        octx.fillRect(0, 0, cw, ch);
+        resolve({ data: o.toDataURL("image/png"), aspect: cw / ch });
+      } catch { resolve(null); }                          // a watermark is never worth failing a deck over
+    };
+    img.onerror = () => resolve(null);
+    img.src = LOGO_ASSET;
+  });
+  return watermarkCache;
+};
+
 // Functions that only ever happen INSIDE a wedding. The deck cannot ask what kind of event it is —
 // there is no such field, only a list of function types, and the admin can add any type they like
 // (Birthday is not in the built-in taxonomy). So the rituals are what get named, and a deal holding
@@ -180,19 +239,36 @@ export default function StudioSummary({ ctx }) {
   // Stored as JSON now that the cover thumbnail is kept beside the link. Decks remembered before
   // this was a JSON blob are a bare URL string, and are still read — a salesperson mid-deal should
   // not lose the link they already have because the shape of the record changed under them.
-  const rememberDeck = (url, thumb) => {
+  // Canva's own id for the design. Kept because the export endpoint wants it and the edit URL is
+  // not a reliable place to find it — see canvaDesignId in lib/canva.js.
+  const [canvaDeckId, setCanvaDeckId] = useState("");
+  const rememberDeck = (url, thumb, designId) => {
     try {
-      if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "" }));
+      if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "", designId: designId || "" }));
     } catch { /* private mode */ }
   };
   const readDeck = (id) => {
     let raw = "";
     try { raw = localStorage.getItem(canvaKey(id)) || ""; } catch { /* private mode */ }
-    if (!raw) return { url: "", thumb: "" };
-    if (raw[0] !== "{") return { url: raw, thumb: "" };
-    try { const o = JSON.parse(raw); return { url: o.url || "", thumb: o.thumb || "" }; }
-    catch { return { url: "", thumb: "" }; }
+    if (!raw) return { url: "", thumb: "", pdf: "", pdfAt: 0, designId: "" };
+    if (raw[0] !== "{") return { url: raw, thumb: "", pdf: "", pdfAt: 0, designId: "" };
+    try { const o = JSON.parse(raw); return { url: o.url || "", thumb: o.thumb || "", pdf: o.pdf || "", pdfAt: o.pdfAt || 0, designId: o.designId || "" }; }
+    catch { return { url: "", thumb: "", pdf: "", pdfAt: 0, designId: "" }; }
   };
+  // The exported PDF, kept beside the deck link so opening the viewer a second time is instant.
+  // Merged into the existing record rather than written over it — the link and the cover are what
+  // the deck actually IS; the export is a cached view of it.
+  const rememberDeckPdf = (pdf) => {
+    try {
+      if (!activeClientId || !pdf) return;
+      const cur = readDeck(activeClientId);
+      localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ ...cur, pdf, pdfAt: Date.now() }));
+    } catch { /* private mode */ }
+  };
+  // Canva's export URLs are signed and time-limited, so the cache is deliberately short. This is
+  // not about surviving days — it is about the second, third and fourth time someone opens the
+  // deck in one meeting not costing a 30-to-60 second re-export each time.
+  const PDF_CACHE_MS = 15 * 60 * 1000;
   const forgetDeck = () => {
     try { if (activeClientId) localStorage.removeItem(canvaKey(activeClientId)); } catch { /* private mode */ }
   };
@@ -209,19 +285,50 @@ export default function StudioSummary({ ctx }) {
   useEffect(() => { setDeckPdf({ state: "idle", url: "", error: "" }); }, [canvaEditUrl]);
   const showDeckPdf = async () => {
     if (deckPdf.state === "loading") return;
+    // A still-fresh export opens straight away. Without this, viewing the deck twice in a meeting
+    // means waiting out Canva's export twice, which is what made this feel like an export button
+    // rather than a viewer.
+    const cached = readDeck(activeClientId);
+    if (cached.pdf && cached.pdfAt && Date.now() - cached.pdfAt < PDF_CACHE_MS) {
+      setDeckPdf({ state: "ready", url: cached.pdf, error: "" });
+      return;
+    }
     setDeckPdf({ state: "loading", url: "", error: "" });
     try {
-      const url = await canvaExportPdfUrl(canvaEditUrl);
+      const url = await canvaExportPdfUrl(canvaEditUrl, { designId: canvaDeckId || cached.designId });
+      rememberDeckPdf(url);
       setDeckPdf({ state: "ready", url, error: "" });
     } catch (e) {
       setDeckPdf({ state: "error", url: "", error: e.message || "Could not export the deck" });
     }
   };
+  // Full-screen for showing a client, via the browser's own Fullscreen API rather than a CSS
+  // overlay — this panel is already fixed-position, and stacking a second fixed layer inside it
+  // fights the scroll container. Ref'd on the wrapper so the toolbar goes full-screen with the
+  // page, keeping Download and Close reachable.
+  const deckViewRef = useRef(null);
+  // Tracked as state, not read off document at render time: leaving full screen with Esc is a
+  // browser action React never hears about, so the frame would keep its full-screen height after
+  // the page had already come back.
+  const [deckFull, setDeckFull] = useState(false);
+  useEffect(() => {
+    const onFs = () => setDeckFull(document.fullscreenElement === deckViewRef.current);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleDeckFullscreen = () => {
+    const el = deckViewRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else el.requestFullscreen?.();
+    } catch { /* older browser — the inline viewer still works */ }
+  };
   useEffect(() => {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
     if (canvaState !== "idle") return;
     const saved = readDeck(activeClientId);
-    if (saved.url) { setCanvaEditUrl(saved.url); setDeckThumb(saved.thumb); setCanvaState("ready"); }
+    if (saved.url) { setCanvaEditUrl(saved.url); setDeckThumb(saved.thumb); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); }
   }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
@@ -1364,10 +1471,28 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
     //
     // The dark master and palette stay defined — the alternation is a two-line change to bring back,
     // and it has already been asked for once in each direction.
+    // Prepared once, before any slide exists, because newSlide() is synchronous and every slide
+    // needs it. GOLD_DK, not GOLD — the pale gold reads on the dark ground and vanishes on ivory,
+    // which is the only ground this deck actually uses. 0.42 alpha: present on a second look,
+    // never competing with the photographs.
+    const watermark = await deckWatermark(GOLD_DK, 0.42);
+    // Bottom-right, in the margin. Checked against every placement in this deck — nothing else
+    // reaches past x:11.4 / y:6.3, so it sits in genuinely empty space on every slide rather than
+    // over a photograph. Width is fixed and the height follows the trimmed artwork's own aspect,
+    // so the mark can never be stretched.
+    const WM_W = 1.15;
+    const stampWatermark = (slide) => {
+      if (!watermark) return;
+      const h = WM_W / watermark.aspect;
+      slide.addImage({ data: watermark.data, x: SLIDE_W - WM_W - 0.5, y: SLIDE_H - h - 0.42, w: WM_W, h });
+    };
+
     let t = LIGHT;
     const newSlide = () => {
       t = LIGHT;
-      return pptx.addSlide({ masterName: "AMBRIA_LIGHT" });
+      const slide = pptx.addSlide({ masterName: "AMBRIA_LIGHT" });
+      stampWatermark(slide);
+      return slide;
     };
 
     // A photograph is a CARD on the ground, never a full-bleed background — the thing that makes the
@@ -1773,7 +1898,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setDeckThumb(res.thumbnailUrl || ""); rememberDeck(res.editUrl, res.thumbnailUrl); return; }
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setDeckThumb(res.thumbnailUrl || ""); setCanvaDeckId(res.designId || ""); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId); return; }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
@@ -1859,6 +1984,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   transform:translateY(-1.5px);box-shadow:0 4px 14px ${isDark?"rgba(0,0,0,0.4)":"rgba(201,169,110,0.28)"}}
 .sh-nav:active{transform:translateY(0) scale(.985)}
 .sh-nav:focus-visible{outline:2px solid ${accent};outline-offset:2px}
+/* ══ TABLET ══
+   Summary is a single centred column under S.main's 1200px cap, so it already fits a tablet — the
+   trouble is the per-item cost tables. Those are five fr-sized columns (item, qty, rate, unit,
+   total): fr shrinks rather than overflows, so nothing breaks, but at 820px each column is ~150px
+   and the item names start wrapping to three lines. Tightening the type and gutters keeps them on
+   one line, which is what makes the table scannable.
+   The deck/PDF export builds its own standalone HTML earlier in this file; nothing here reaches
+   it, so an exported deck is untouched by any of this. */
+@media (max-width:840px){
+  .sm-costgrid{font-size:11px !important}
+  .sm-costgrid > *{padding-left:2px;padding-right:2px}
+}
+@media (pointer: coarse){
+  .sh-nav{min-height:38px}
+}
 @media (prefers-reduced-motion: reduce){
   .sh-badge,.sh-1,.sh-2,.sh-3,.sh-4{animation:none;opacity:1;transform:none}
   .sh-rule{animation:none;opacity:1;width:56px}
@@ -2200,7 +2340,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                 <>
                   <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
                     title="Show the design deck as it stands in Canva, and hand it over as a PDF"
-                    style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Exporting…":"👁 Deck PDF"}</button>
+                    style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Opening…":"👁 View deck"}</button>
                   <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>
                   <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
                     title="Design a fresh deck — the current link stays open in Canva either way"
@@ -2219,18 +2359,24 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             already pages, zooms and prints, and the export is a single PDF anyway. Sits above the
             cost sheet instead of replacing it, so the deck and its figures stay one screen apart. */}
         {deckPdf.state==="ready"&&deckPdf.url&&(
-          <div style={{flexShrink:0,borderBottom:"1px solid rgba(255,255,255,0.12)",background:"#111827"}}>
+          <div ref={deckViewRef} style={{flexShrink:0,borderBottom:"1px solid rgba(255,255,255,0.12)",background:"#111827"}}>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 20px"}}>
               <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"#a5b4fc"}}>Design deck</span>
+              <button onClick={toggleDeckFullscreen} title="Full screen — for showing a client"
+                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:600}}>{"⛶"} Full screen</button>
               {/* A plain link, not a fetch-then-save: the export URL is signed and cross-origin, so
                   reading it into a blob is at the mercy of Canva's CORS headers, while letting the
                   browser follow the link is not. */}
               <a href={deckPdf.url} target="_blank" rel="noreferrer" download
-                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:7,background:"#E11D48",color:"#fff",fontSize:11,fontWeight:600,textDecoration:"none"}}>{"⬇"} Download PDF</a>
+                style={{padding:"5px 12px",borderRadius:7,background:"#E11D48",color:"#fff",fontSize:11,fontWeight:600,textDecoration:"none"}}>{"⬇"} Download PDF</a>
               <button onClick={()=>setDeckPdf({state:"idle",url:"",error:""})}
                 style={{padding:"5px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:11}}>{"✕"}</button>
             </div>
-            <iframe title="Design deck preview" src={deckPdf.url} style={{width:"100%",height:"52vh",border:"none",background:"#1f2937"}} />
+            {/* 68vh, not 52 — this is the deck being READ on the page, often with a client looking
+                at it, and half a viewport made every slide a scroll. In full screen the toolbar is
+                ~34px, so the frame takes the rest. */}
+            <iframe title="Design deck" src={deckPdf.url}
+              style={{width:"100%",height:deckFull?"calc(100vh - 34px)":"68vh",border:"none",background:"#1f2937"}} />
           </div>
         )}
         {/* ── The deck this deal already has, said on the page rather than only in a button ──
@@ -2245,10 +2391,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               : <div style={{width:104,height:59,borderRadius:6,border:"1px dashed rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{"🎨"}</div>}
             <div style={{minWidth:0}}>
               <div style={{fontSize:12.5,fontWeight:700,color:"#fff"}}>Design deck ready</div>
-              <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>Preview it here as a PDF, or open it in Canva to edit.</div>
+              <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>Read it right here — no Canva needed unless you want to edit it.</div>
             </div>
             <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
-              style={{marginLeft:"auto",padding:"7px 14px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:11.5,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Exporting…":"👁 Preview deck"}</button>
+              style={{marginLeft:"auto",padding:"7px 14px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:11.5,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Opening…":"👁 View deck"}</button>
           </div>
         )}
         {/* Scrollable body */}
@@ -2301,11 +2447,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                       </div>}
                       {/* Editable items table */}
                       {z.items.length>0&&<div style={{padding:"0 18px 12px",borderTop:`1px solid ${border}`}}>
-                        <div style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"8px 0 4px",borderBottom:`1px solid ${border}`,fontSize:9,textTransform:"uppercase",letterSpacing:0.5,color:textS,fontWeight:600}}>
+                        <div className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"8px 0 4px",borderBottom:`1px solid ${border}`,fontSize:9,textTransform:"uppercase",letterSpacing:0.5,color:textS,fontWeight:600}}>
                           <div>Item</div><div style={{textAlign:"center"}}>Size</div><div style={{textAlign:"center"}}>Qty</div><div style={{textAlign:"right"}}>Rate</div><div style={{textAlign:"right"}}>Amount</div>
                         </div>
                         {z.items.map((it,ii)=>(
-                          <div key={ii} style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
+                          <div key={ii} className="sm-costgrid" style={{display:"grid",gridTemplateColumns:"2.5fr 0.8fr 1fr 1.2fr 1.5fr",gap:0,padding:"6px 0",borderBottom:`1px solid ${isDark?"rgba(255,255,255,0.04)":"#F3EDE4"}`,alignItems:"center",fontSize:12}}>
                             <div style={{fontWeight:500}}>{it.name}</div>
                             <div style={{textAlign:"center",color:textS}}>{it.size||"—"}</div>
                             <div style={{textAlign:"center"}}><input type="number" min="0" value={it.qty} onChange={e=>csUpdateQty(fi,zi,ii,parseInt(e.target.value)||0)} style={{width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>

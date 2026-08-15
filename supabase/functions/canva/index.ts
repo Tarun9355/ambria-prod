@@ -219,6 +219,12 @@ Deno.serve(async (req) => {
       const design = job.result?.designs?.[0];
       return json({
         status: job.status,
+        // The design's REAL id, which the export endpoint wants. It was dropped here before, so the
+        // client had to recover it by regexing the edit URL — and that broke the moment Canva put
+        // its JWE edit token first in the path: the export was sent the token as a designId and
+        // Canva answered "does not match expected format for designId". Carry the id instead of
+        // reconstructing it.
+        designId: design?.id || null,
         editUrl: design?.urls?.edit_url || null,
         thumbnailUrl: design?.thumbnail?.url || null,
         error: job.error ? (job.error.message || job.error.code) : null,
@@ -258,10 +264,22 @@ Deno.serve(async (req) => {
       const data = await resp.json();
       if (!resp.ok) return json({ error: "Canva export poll failed: " + JSON.stringify(data) }, resp.status || 502);
       const job = data.job || {};
+      // One URL per exported file. A PDF export is a single file holding every page.
+      //
+      // Read from BOTH shapes. Imports nest their payload under job.result (see poll_import), and
+      // this assumed exports matched — they don't, the urls sit directly on the job. The export
+      // then reported success with an empty array and the client said "finished but returned no
+      // file", which reads like Canva's fault rather than ours. Accepting either shape means a
+      // future move between them can't break it again.
+      const urls = job.result?.urls || job.urls
+        || (job.result?.url ? [job.result.url] : null) || [];
       return json({
         status: job.status,
-        // One URL per exported file. A PDF export is a single file holding every page.
-        urls: job.result?.urls || [],
+        urls,
+        // When a success genuinely carries nothing, hand back the job's own keys — enough to see
+        // where Canva put the payload, without dumping signed URLs into an error string.
+        debug: job.status === "success" && urls.length === 0
+          ? { jobKeys: Object.keys(job), resultKeys: Object.keys(job.result || {}) } : undefined,
         error: job.error ? (job.error.message || job.error.code) : null,
       });
     }

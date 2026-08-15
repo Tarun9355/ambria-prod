@@ -102,12 +102,23 @@ export const canvaCreateImport = (fileBase64, title) => callCanvaFn("create_impo
 export const canvaPollImport = (jobId) => callCanvaFn("poll_import", { jobId });
 
 /**
- * The design id inside a Canva edit URL: canva.com/design/<ID>/<token>/edit
+ * The design id inside a Canva edit URL — the FALLBACK path, for decks remembered before the id
+ * was stored alongside the link. New decks carry the real id from poll_import and never come here.
  *
- * Only the URL is remembered against a deal, and the export API wants the id — so rather than
- * making every deck already out there un-exportable, the id is read back out of the link.
+ * Canva ids are DA-prefixed, and the edit URL also carries a JWE edit token (eyJhbGci…). Taking
+ * "the segment after /design/" assumed the id came first and silently handed the export that token
+ * instead once Canva reordered the path — which Canva rejects with "does not match expected format
+ * for designId". Matching the id by its own shape doesn't care where in the URL it sits.
  */
-export const canvaDesignId = (editUrl) => (String(editUrl || "").match(/\/design\/([^/]+)/) || [])[1] || "";
+export const canvaDesignId = (editUrl) => {
+  const s = String(editUrl || "");
+  const byShape = s.match(/\b(DA[A-Za-z0-9_-]{6,})\b/);
+  if (byShape) return byShape[1];
+  // Last resort for any link that doesn't look like either — excludes a leading "eyJ" so a token
+  // is never passed off as an id, since a clear error beats a confusing one from Canva.
+  const seg = (s.match(/\/design\/([^/?#]+)/) || [])[1] || "";
+  return seg.startsWith("eyJ") ? "" : seg;
+};
 
 export const canvaCreateExport = (designId) => callCanvaFn("create_export", { designId }).then((d) => d.jobId);
 export const canvaPollExport = (jobId) => callCanvaFn("poll_export", { jobId });
@@ -119,15 +130,18 @@ export const canvaPollExport = (jobId) => callCanvaFn("poll_export", { jobId });
  * Roughly a minute of patience at 2s: a long deck takes a while, and failing early would leave the
  * salesperson with a spinner that stopped for no visible reason.
  */
-export async function canvaExportPdfUrl(editUrl, { tries = 30, waitMs = 2000 } = {}) {
-  const designId = canvaDesignId(editUrl);
-  if (!designId) throw new Error("Could not read the design id from the Canva link");
+export async function canvaExportPdfUrl(editUrl, { tries = 30, waitMs = 2000, designId: knownId = "" } = {}) {
+  // The stored id wins. Parsing the URL is only for decks made before the id was kept.
+  const designId = knownId || canvaDesignId(editUrl);
+  if (!designId) throw new Error("Could not read the design id from the Canva link — remake the deck so it is stored with one");
   const jobId = await canvaCreateExport(designId);
   for (let i = 0; i < tries; i++) {
     const res = await canvaPollExport(jobId);
     if (res.status === "success") {
       const url = (res.urls || [])[0];
-      if (!url) throw new Error("Canva finished the export but returned no file");
+      // The edge function reports where Canva actually put the payload when it isn't where we
+      // looked, so this says what to fix instead of just that it broke.
+      if (!url) throw new Error("Canva finished the export but returned no file" + (res.debug ? ` (job had: ${(res.debug.jobKeys || []).join(", ")})` : ""));
       return url;
     }
     if (res.status === "failed") throw new Error(res.error || "Canva could not export this design");
