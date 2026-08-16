@@ -118,9 +118,31 @@ export default function StudioBrowse({ ctx }) {
   // function. The rail's height is measured rather than derived from it — see useRailMaxHeight.
   const railTop = extraFunctions.length > 0 ? 120 : 70;
   const railRef = useRef(null);
+  // ═══ THE REAL HEADER HEIGHT ═══
+  // railTop above is a guess at it — 70, or 120 when the function pills show. On a tablet the bar
+  // wraps its step nav onto a second row and stands about 110px tall, so the guess was short and
+  // the panel's first control (Hide) came out on top of the navbar. Measured instead, and observed,
+  // so it re-reads when the bar wraps, unwraps, or gains the function row.
+  const [hdrH, setHdrH] = useState(railTop);
+  useEffect(() => {
+    const el = document.querySelector(".sa-header");
+    if (!el) return undefined;
+    const read = () => setHdrH(el.getBoundingClientRect().height || railTop);
+    read();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [railTop]);
   // Browse had no way to fold its filters, unlike Build. Same behaviour here: a Hide in the
   // panel header, and a slim tab on the edge to bring it back.
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  // Open on a desktop, closed on a tablet. On a narrow screen the panel is an overlay (see the
+  // ≤840 block in browseCSS), and an overlay that is up before you ask for it hides the thing you
+  // came to look at. Read once at mount rather than on every resize: this is a starting position,
+  // not a binding — once you have opened or closed it, that choice stands.
+  const [filtersOpen, setFiltersOpen] = useState(() => {
+    try { return !window.matchMedia("(max-width: 840px)").matches; } catch { return true; }
+  });
   // My favourites, as a set — the tier pill on each card reads and writes this. favVideos is keyed
   // videoId → userId → true, so a favourite is per salesperson: mine and a colleague's are
   // independent, and browseVideos already floats them to the top of their group.
@@ -784,9 +806,15 @@ export default function StudioBrowse({ ctx }) {
    time it reaches the bottom of the bar, so within this band the edge IS vertical.
    The bottom border goes transparent — a gold hairline carrying on across the panel would read as
    a seam cutting it in half. */
-:root[data-sb-rail="1"] .sa-header{border-bottom-color:transparent !important;
+/* The bar's drifting sheen has to stop where the bar's background stops. It is a full-width layer
+   inside the header, so over the transparent window it was painting its violet straight onto the
+   panel — which is exactly why the logo area came out purple while the panel below it was black.
+   Same offset as the background, same var() fallback. */
+:root[data-sb-rail="1"] .sa-sheen{left:var(--sb-pw,0px) !important}
+/* The inset top highlight would draw a hairline across the panel too. */
+:root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
   background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) var(--sb-pw,0px),
-    ${isDark?"#101020":"#100A22"} var(--sb-pw,0px),${isDark?"#0B0B14":"#1C1242"} 100%) !important}
+    ${isDark?"#0A0A14":"#0A0619"} var(--sb-pw,0px),${isDark?"#07070D":"#130A2E"} 100%) !important}
 /* Hidden panel, no reserved gutter. The offset above is plain CSS keyed to --sb-pw, so folding the
    rail used to leave its 392px behind as empty page — the grid stayed exactly where it was and the
    only thing Hide achieved was removing the filters. Zeroing the variable hands that width to the
@@ -798,44 +826,28 @@ export default function StudioBrowse({ ctx }) {
   :root{--sb-pw:300px}
   .sb-rail{padding:14px 52px 16px 16px}
 }
+/* Desktop never sees the scrim: there, the panel has its own column and nothing is behind it. */
+.sb-scrim{display:none}
 @media (max-width:840px){
-  /* Portrait: a fixed column can't work, so the panel returns to the flow as a full-width block
-     and the curve is dropped — a vertical curve across a horizontal band cuts it diagonally. The
-     cast shadow goes with the curve it was tracing. */
-  /* Portrait puts the rail back in the flow as a full-width block, so --sb-pw goes to 0 — which
-     also, correctly, closes the hole in the header: there is no fixed panel for it to show. */
-  :root{--sb-pw:0px}
-  /* The gold line traces the curve, so it goes wherever the curve goes. */
-  .sb-rail-shadow,.sb-rail-edge{display:none}
-  .sb-rail::after{display:none}
-  .sb-layout{flex-direction:column;margin-left:0}
-  /* relative, NOT static. Both take the rail out of its fixed position and put it back in the
-     flow, which is all this rule was after — but the rail carries two absolutely-positioned
-     children, the photograph and its dark veil, and static stops it being their containing block.
-     They would have escaped to .sb-layout (the nearest positioned ancestor) and stretched the
-     panel's picture and a near-black scrim across the entire page. relative keeps the same layout
-     and keeps them inside.
-     height:auto matters for the same pair: inset:-4% resolves against the rail, and at 100dvh they
-     would run a viewport-tall image behind a strip only a few rows deep. */
-  .sb-rail{width:100% !important;position:relative !important;height:auto !important;
-    clip-path:none;border-radius:0 0 26px 26px;padding:14px 18px 16px}
-  /* ── ONE SURFACE WITH THE BAR ──
-     On the stacked layout the header has no transparent window (--sb-pw is 0, correctly — there is
-     no fixed column for it to reveal), so the bar is solid across its full width. Directly under it
-     the panel was showing the TOP of its photograph, which is the near-black half of a night shot —
-     so a purple bar sat on an almost-black block and the two read as different surfaces.
-     The photo comes off here. It is a viewport-tall image being asked to fill a strip a few rows
-     deep, which is meaningless anyway, and its veil goes with it. What is left is the same gradient
-     the header uses, so the bar and the panel are one continuous piece. */
-  .sb-rail-img,.sb-rail-veil{display:none}
-  .sb-rail{background:${isDark?"linear-gradient(180deg,#121220,#0B0B14)":"linear-gradient(135deg,#0A0A12,#1C1242)"} !important}
-  /* Folded, on a stacked layout. A 38px vertical sliver is the right shape beside a column and the
-     wrong one on top of it: it eats a whole row to say one word sideways, and it is a small target
-     for a finger. Here it becomes a full-width bar with the label the right way up. */
-  .sb-foldstrip{width:100% !important;flex-direction:row !important;justify-content:center;
-    gap:8px !important;padding:12px 14px !important;min-height:46px}
-  .sb-foldlabel{writing-mode:horizontal-tb !important;font-size:11px !important;letter-spacing:1.4px !important}
-  .sb-foldchev{transform:rotate(0deg) !important}
+  /* ── PORTRAIT: THE PANEL BECOMES A DRAWER ──
+     It keeps everything that makes it the panel — fixed, curved, photographed, gold edge, its own
+     scroll. What changes is that it stops RESERVING space and starts OVERLAYING it.
+     Reserving was the problem. At 284px against an 834px tablet the grid was left ~470px, which is
+     two cramped columns of clipped titles beside a panel whose own pills had nowhere to wrap —
+     everything on screen squeezed at once so that both could be visible at once. Neither actually
+     was. As a drawer the grid gets the full width and the panel gets its real width back, and only
+     one of them is in front of you at a time, which is how you use them anyway.
+     It also starts closed here (see the filtersOpen initialiser) so the videos are what you land on. */
+  :root{--sb-pw:322px}
+  .sb-layout{margin-left:0 !important;gap:0}
+  /* The curve's true minimum sits inside the waist figure (~0.854), so at 322px the edge reaches
+     about 275px — the right padding has to clear that or the pill rows get their ends shaved. */
+  .sb-rail{padding:13px 54px 14px 15px}
+  /* Full width back, so the cards return to a comfortable size instead of the 190px they had to
+     shrink to when the panel was taking a third of the screen. */
+  .sb-grid{grid-template-columns:repeat(auto-fill,minmax(215px,1fr)) !important;gap:12px !important}
+  .sb-scrim{display:block;position:fixed;inset:0;z-index:38;
+    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px)}
 }
 @media (pointer: coarse){
   .sb-pill{min-height:34px}
@@ -890,7 +902,7 @@ export default function StudioBrowse({ ctx }) {
             strip stays narrow, matching Build's folded rail. */}
         {!filtersOpen && (
           <div className="sb-foldstrip" onClick={()=>setFiltersOpen(true)} title="Show filters"
-            style={{width:38,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",cursor:"pointer",
+            style={{width:38,flexShrink:0,position:"sticky",top:hdrH + 12,alignSelf:"flex-start",cursor:"pointer",
               display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"12px 0 14px",
               borderRadius:10,border:`1px solid ${border}`,background:cardBg}}>
             <span style={{display:"flex",color:accent}}><IconSearch size={13}/></span>
@@ -904,6 +916,10 @@ export default function StudioBrowse({ ctx }) {
             filter:drop-shadow on the panel either — that re-rasterises a full-height column holding
             a photograph and a scrolling filter list on every frame. This is the same path, filled
             once and blurred, sitting between the page and the panel. */}
+        {/* Tablet only (display:none above 840). The panel overlays the grid there, so it needs a
+            way out that is not the Hide button behind it, and the page behind needs to read as
+            parked rather than as competing. */}
+        {filtersOpen && <div className="sb-scrim" onClick={()=>setFiltersOpen(false)} aria-hidden="true"/>}
         {filtersOpen && <div className="sb-rail-shadow" aria-hidden="true">
           <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false"><path d={SB_CURVE} fill="#0B0B16"/></svg>
         </div>}
@@ -934,7 +950,7 @@ export default function StudioBrowse({ ctx }) {
           // instead. Starting it at railTop left a seam whenever the header's real height wasn't
           // exactly that guess — and it isn't, once the step nav wraps to a second row. This way
           // there is no edge to line up, so there is no gap to get wrong.
-          top:0, height:"100dvh", paddingTop:railTop + 16,
+          top:0, height:"100dvh", paddingTop:hdrH + 14,
           maxHeight:"none",display:"flex",flexDirection:"column",gap:10}}>
           {/* The curve and the photograph, exactly as Event Info draws them, so moving between the
               two steps doesn't feel like moving between two products. */}
@@ -1310,19 +1326,19 @@ export default function StudioBrowse({ ctx }) {
             </div>;
             const rule = <div style={{height:1,background:border,margin:"22px 0 14px"}}/>;
             // No venue picked (or nothing matched it) — one plain grid, exactly as before.
-            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div style={grid}>{pageVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
+            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div className="sb-grid" style={grid}>{pageVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
             return <>
               {heading(browseVenues.length===1?browseVenues[0]:"Selected venues",`${preferred.length} tagged here`)}
-              <div style={grid}>{preferred.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+              <div className="sb-grid" style={grid}>{preferred.map(v=><VideoCard key={v.id} v={v}/>)}</div>
               {otherVenues.length>0&&<>
                 {rule}
                 {heading("More references",`${otherVenues.length} from other venues`)}
-                <div style={grid}>{otherVenues.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+                <div className="sb-grid" style={grid}>{otherVenues.map(v=><VideoCard key={v.id} v={v}/>)}</div>
               </>}
               {noVenue.length>0&&<>
                 {rule}
                 {heading("Not tagged to a venue",`${noVenue.length} — still usable, but nobody has said where they were shot`)}
-                <div style={grid}>{noVenue.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+                <div className="sb-grid" style={grid}>{noVenue.map(v=><VideoCard key={v.id} v={v}/>)}</div>
               </>}
             </>;
           })()}

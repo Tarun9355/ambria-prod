@@ -31,7 +31,7 @@ export const makeS = (isDark = false) => {
     // washed next to the near-black it starts from — the right-hand half of the bar, which is where
     // every control lives, was the palest part of it. Darker ground is also what lets the chips
     // below sit as recessed wells rather than as pale blocks floating on a pale field.
-    header: { background:isDark?"linear-gradient(180deg,#121220,#0B0B14)":"linear-gradient(135deg,#0A0A12,#1C1242)", padding:"11px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, flexWrap:"wrap", gap:10, borderBottom:`1px solid ${accent}26`, boxShadow:"0 1px 0 rgba(255,255,255,0.04) inset, 0 6px 20px -8px rgba(0,0,0,0.45)" },
+    header: { background:isDark?"linear-gradient(180deg,#0D0D18,#07070D)":"linear-gradient(135deg,#08080F,#130A2E)", padding:"11px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, flexWrap:"wrap", gap:10, borderBottom:`1px solid ${accent}26`, boxShadow:"0 1px 0 rgba(255,255,255,0.04) inset, 0 6px 20px -8px rgba(0,0,0,0.45)" },
     main: { maxWidth:1200, margin:"0 auto", padding:"24px 20px 100px" },
     card: { background:cardBg, borderRadius:14, border:`1px solid ${border}`, overflow:"hidden" },
     pill: a => ({ padding:"6px 14px", borderRadius:16, fontSize:11, fontWeight:a?600:400, cursor:"pointer", border:a?`1px solid ${accentText}30`:`1px solid ${border}`, background:a?accentBg:"transparent", color:a?accentText:textS, transition:"all 0.15s", display:"inline-block" }),
