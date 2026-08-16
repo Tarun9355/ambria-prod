@@ -821,10 +821,21 @@ export default function StudioBrowse({ ctx }) {
    grid, which is the entire point of the control. Two classes deep so it beats the tablet
    breakpoints below, whichever order they land in. */
 .sb-view.sb-folded{--sb-pw:0px}
+/* ── TABLET, LANDSCAPE ──
+   The panel stays a real side column here, which is what the reference shows and what the width
+   affords. Only the proportions needed work: at a 260px card minimum an iPad's ~860px of content
+   fits three columns and leaves a ragged gap, where 200px fits four and fills the row. Titles come
+   down half a step with them, so a four-word name still lands on two lines instead of three.
+   The page's own gutter tightens too — S.main's 20px was set for a phone-to-desktop range and is
+   the difference between the grid breathing and the grid touching the panel's curve. */
 @media (max-width:1180px){
   .sb-layout{gap:16px}
   :root{--sb-pw:300px}
   .sb-rail{padding:14px 52px 16px 16px}
+  .sb-view{padding-left:16px !important;padding-right:16px !important}
+  .sb-grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr)) !important;gap:12px !important}
+  .sb-title{font-size:13.5px !important}
+  .sb-hero-face{letter-spacing:-0.3px}
 }
 /* Desktop never sees the scrim: there, the panel has its own column and nothing is behind it. */
 .sb-scrim{display:none}
@@ -950,8 +961,11 @@ export default function StudioBrowse({ ctx }) {
           // instead. Starting it at railTop left a seam whenever the header's real height wasn't
           // exactly that guess — and it isn't, once the step nav wraps to a second row. This way
           // there is no edge to line up, so there is no gap to get wrong.
+          // gap 14, not 10. The rail stacks four unrelated things — a control, a saved deal, its
+          // history, and the filter card — and at 10 they read as one run of blocks with no idea
+          // where one ends and the next begins. The extra 4px is what separates them into items.
           top:0, height:"100dvh", paddingTop:hdrH + 14,
-          maxHeight:"none",display:"flex",flexDirection:"column",gap:10}}>
+          maxHeight:"none",display:"flex",flexDirection:"column",gap:14}}>
           {/* The curve and the photograph, exactly as Event Info draws them, so moving between the
               two steps doesn't feel like moving between two products. */}
           <svg width="0" height="0" style={{position:"absolute",pointerEvents:"none"}} aria-hidden="true" focusable="false">
@@ -1010,7 +1024,7 @@ export default function StudioBrowse({ ctx }) {
               </div>
             </div>
           ) : (bannerSaved.length > 0 || bannerShowCurrent) && (
-            <div style={{display:"flex",flexDirection:"column",gap:8,flexShrink:0}}>
+            <div style={{display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
               {bannerSaved.map(s => {
                 const vid = allVideos.find(v => v.id === s.sourceVideoId);
                 // "Continue" only when this really is the build in front of you — same video AND
@@ -1020,7 +1034,7 @@ export default function StudioBrowse({ ctx }) {
                 const videoTitle = s.sourceVideoTitle || vid?.title || "Video";
                 const unavailable = !vid && !s.sourceVideoTitle;
                 return (
-                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
                     {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
                       style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
                     <div style={{display:"flex",alignItems:"flex-start",gap:9,paddingRight:16}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
@@ -1053,7 +1067,7 @@ export default function StudioBrowse({ ctx }) {
                 const vid = allVideos.find(v => v.id === bannerCurrentId);
                 const videoTitle = sourceVideo?.title || vid?.title || "Video";
                 return (
-                  <div className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.10)":"rgba(99,102,241,0.06)",border:`1px solid ${isDark?"rgba(99,102,241,0.30)":"rgba(99,102,241,0.25)"}`}}>
+                  <div className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(99,102,241,0.10)":"rgba(99,102,241,0.06)",border:`1px solid ${isDark?"rgba(99,102,241,0.30)":"rgba(99,102,241,0.25)"}`}}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:9}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconPalette size={15}/></div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:11.5,fontWeight:600,color:PANEL_INK,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{videoTitle}</div>
@@ -1074,7 +1088,7 @@ export default function StudioBrowse({ ctx }) {
               {bannerHistory.length > 0 && (
                 <div className="sb-hist" style={{borderRadius:10,border:`1px solid ${pBorder}`,overflow:"hidden",background:pCard}}>
                   <button type="button" onClick={()=>setBannerHistoryOpen(v=>!v)} aria-expanded={bannerHistoryOpen}
-                    style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"7px 10px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"10px 12px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
                     <span style={{display:"inline-flex",transform:bannerHistoryOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
                     <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Last {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
                   </button>
