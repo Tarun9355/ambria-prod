@@ -811,6 +811,13 @@ export default function StudioBrowse({ ctx }) {
   .sb-layout{flex-direction:column;margin-left:0}
   .sb-rail{width:100% !important;position:static !important;height:auto !important;
     clip-path:none;border-radius:0 0 26px 26px;padding:14px 18px 16px}
+  /* Folded, on a stacked layout. A 38px vertical sliver is the right shape beside a column and the
+     wrong one on top of it: it eats a whole row to say one word sideways, and it is a small target
+     for a finger. Here it becomes a full-width bar with the label the right way up. */
+  .sb-foldstrip{width:100% !important;flex-direction:row !important;justify-content:center;
+    gap:8px !important;padding:12px 14px !important;min-height:46px}
+  .sb-foldlabel{writing-mode:horizontal-tb !important;font-size:11px !important;letter-spacing:1.4px !important}
+  .sb-foldchev{transform:rotate(0deg) !important}
 }
 @media (pointer: coarse){
   .sb-pill{min-height:34px}
@@ -864,14 +871,14 @@ export default function StudioBrowse({ ctx }) {
         {/* Folded: a slim edge strip that brings the rail back. The label reads vertically so the
             strip stays narrow, matching Build's folded rail. */}
         {!filtersOpen && (
-          <div onClick={()=>setFiltersOpen(true)} title="Show filters"
+          <div className="sb-foldstrip" onClick={()=>setFiltersOpen(true)} title="Show filters"
             style={{width:38,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",cursor:"pointer",
               display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"12px 0 14px",
               borderRadius:10,border:`1px solid ${border}`,background:cardBg}}>
             <span style={{display:"flex",color:accent}}><IconSearch size={13}/></span>
-            <span style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:9.5,fontWeight:700,
+            <span className="sb-foldlabel" style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:9.5,fontWeight:700,
               letterSpacing:1,textTransform:"uppercase",color:textS,whiteSpace:"nowrap"}}>Filters{activeTotal>0?` · ${activeTotal}`:""}</span>
-            <span style={{display:"flex",color:textS,transform:"rotate(-90deg)"}}><IconChevron size={11}/></span>
+            <span className="sb-foldchev" style={{display:"flex",color:textS,transform:"rotate(-90deg)"}}><IconChevron size={11}/></span>
           </div>
         )}
         {/* The shadow the curved edge throws onto the page. Not box-shadow: the clip-path cuts that
@@ -1220,6 +1227,12 @@ export default function StudioBrowse({ ctx }) {
             <div className="sb-title-rule" aria-hidden="true">
               <span className="sb-tr-seg"/><span className="sb-tr-dia"/><span className="sb-tr-fade"/>
             </div>
+            {/* main moved the guest/date/venue line out of the header and put a copy here, beside
+                the title. This branch moved the same line out of the header too, to a strip
+                directly under the bar (StudioApp). Both survived the merge, which would have
+                rendered it twice on this page — keeping the one under the bar, which is where it
+                was asked for, and because it then appears on Build and Summary as well rather than
+                on Browse alone. */}
           </div>
           {/* ── SEARCH ──
               Just the search. A Filters button sat here for a while, duplicating the fold the panel

@@ -745,6 +745,12 @@ export default function StudioBuild({ ctx }) {
   const zpVenueChoices = zpWantIndoor && !zpWantOutdoor ? zpIndoorVenues
     : zpWantOutdoor && !zpWantIndoor ? zpOutdoorVenues
     : Array.from(new Set([...zpIndoorVenues, ...zpOutdoorVenues]));
+  // Ownership grouping (Inhouse/Outside) — the same Venue filter Browse has, layered on top of the
+  // Indoor/Outdoor/Semi-Outdoor narrowing above. The two are unrelated axes: venueType describes the
+  // function's physical setting (banquet vs lawn), this describes who owns the venue.
+  const zpFilterVenuesByGroup = (list, group) => group === "inhouse" ? list.filter(v => allInhouseVenues.includes(v))
+    : group === "outside" ? list.filter(v => !allInhouseVenues.includes(v))
+    : list;
   // "Correct photo tags" modal target — { libId, zoneKey, name, tags } (Phase 1b: full-tag correction)
   // Whole-build shortcut for the per-zone 🔍 photo filter — zpFilters/zpToggleFilter are already
   // shared app-wide state (every zone's own filter button reads/writes the exact same values), so
@@ -844,6 +850,9 @@ export default function StudioBuild({ ctx }) {
   // rest behind "See all", and give the group the same smart search the palette group has.
   const [zpVenueQ, setZpVenueQ] = useState("");
   const [zpVenueAll, setZpVenueAll] = useState(false);
+  // Inhouse/Outside — same grouping chips as Browse's Venue filter, own state since it's a "narrow
+  // the picker" convenience like the search box above, not a persisted zpFilters value.
+  const [zpVenueGroup, setZpVenueGroup] = useState("all");
   const ZP_VENUE_CAP = 8;
   // Palette gets the same cap for the same reason — 33 entries pushed every group below it off the
   // rail. 12 is four rows at three columns, matching Browse.
@@ -858,6 +867,9 @@ export default function StudioBuild({ ctx }) {
   // only one zone's popup is ever open at once, but it's still a separate surface from the rail.
   const [zpInlinePaletteQ, setZpInlinePaletteQ] = useState("");
   const [zpInlineVenueQ, setZpInlineVenueQ] = useState("");
+  // Same Inhouse/Outside grouping as the rail's Venue group, own state — this popover is its own
+  // surface (per-zone, one open at a time), same reasoning as zpInlineVenueQ above.
+  const [zpInlineVenueGroup, setZpInlineVenueGroup] = useState("all");
   // Fabric Palette combobox (Deal Check's fabric colour input, not a photo filter) — collapsed to a
   // single trigger chip, same toggle-by-click-again model as the per-zone filter icon (no outside-
   // click handling needed): open shows a search box + dropdown, picking a value closes it.
@@ -1299,7 +1311,7 @@ export default function StudioBuild({ ctx }) {
       // the Browse sidebar, which already opens with Venue. `last` is derived from the index below,
       // so the section divider follows the order rather than being pinned to a particular group.
       const groups = [
-        { key:"venue",        cols:2, label:`Venue${zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}`, opts: zpVenueChoices, empty:"No venues configured yet" },
+        { key:"venue",        cols:2, label:`Venue${zpVenueGroup==="inhouse"?" — Inhouse":zpVenueGroup==="outside"?" — Outside":""}${zpWantIndoor&&!zpWantOutdoor?" · Indoor":zpWantOutdoor&&!zpWantIndoor?" · Outdoor":""}`, opts: zpFilterVenuesByGroup(zpVenueChoices, zpVenueGroup), empty:"No venues configured yet" },
         { key:"eventType",    label:"Event type",    opts: taxOr(taxonomy.eventType, FUNCTIONS) },
         { key:"venueType",    label:"Venue type",    opts: taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]) },
         { key:"designStyle",  label:"Design style",  opts: taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]) },
@@ -1345,6 +1357,14 @@ export default function StudioBuild({ ctx }) {
           const optPill = (v) => <FPill key={v} on={sel.includes(v)} align={align} onClick={()=>zpToggleFilter(g.key,v)}>{optLabel(v)}</FPill>;
           return <FSection key={g.key} id={g.key} label={g.label} count={sel.length} last={gi===groups.length-1}
             cols={g.cols || 3} open={!!zpOpen[g.key]} onToggle={()=>zpToggleOpen(g.key)}>
+            {/* Inhouse/Outside — narrows which venue names are offered below, same chips + same
+                reset-on-switch behaviour as Browse's Venue filter (clears the name pick, the search
+                and "see all" so nothing from the old group lingers hidden). */}
+            {isVenue&&<div style={{gridColumn:"1/-1",display:"flex",gap:4,marginBottom:2}}>
+              {["all","inhouse","outside"].map(gr=>
+                <FPill key={gr} on={zpVenueGroup===gr} align={align} onClick={()=>{setZpVenueGroup(gr);setZpFilters(p=>({...p,venue:[]}));setZpVenueQ("");setZpVenueAll(false);}}>{gr==="all"?"All":gr==="inhouse"?"Inhouse":"Outside"}</FPill>
+              )}
+            </div>}
             {searchable&&<div style={{gridColumn:"1/-1"}}>
               <FSearchBox value={q} onChange={setQ} placeholder={isVenue?"Search venues…":"Search palettes…"}
                 noun={isVenue?"venues":"palettes"} resultCount={matched.length} totalCount={all.length}/>
@@ -2184,10 +2204,10 @@ undefined
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>
-                    Venue{zpWantIndoor&&!zpWantOutdoor?" — Indoor":zpWantOutdoor&&!zpWantIndoor?" — Outdoor":""}
+                    Venue{zpInlineVenueGroup==="inhouse"?" — Inhouse":zpInlineVenueGroup==="outside"?" — Outside":""}{zpWantIndoor&&!zpWantOutdoor?" · Indoor":zpWantOutdoor&&!zpWantIndoor?" · Outdoor":""}
                   </div>
                   {(()=>{
-                    const all=azSort(zpVenueChoices);
+                    const all=azSort(zpFilterVenuesByGroup(zpVenueChoices, zpInlineVenueGroup));
                     const matched=paletteSearch(all,zpInlineVenueQ);
                     const capped=!zpInlineVenueAll&&!zpInlineVenueQ.trim()&&matched.length>ZP_VENUE_CAP;
                     const shown=capped?matched.slice(0,ZP_VENUE_CAP):matched;
@@ -2195,6 +2215,11 @@ undefined
                     const selectedHidden=sel.filter(v=>all.includes(v)&&!shown.includes(v));
                     const optPill=(v)=><span key={v} onClick={()=>zpToggleFilter("venue",v)} style={zpPill(sel.includes(v))}>{v}</span>;
                     return <>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:5}}>
+                        {["all","inhouse","outside"].map(gr=>
+                          <span key={gr} onClick={()=>{setZpInlineVenueGroup(gr);setZpFilters(p=>({...p,venue:[]}));setZpInlineVenueQ("");setZpInlineVenueAll(false);}} style={zpPill(zpInlineVenueGroup===gr)}>{gr==="all"?"All":gr==="inhouse"?"Inhouse":"Outside"}</span>
+                        )}
+                      </div>
                       {all.length>0&&<div style={{marginBottom:5,maxWidth:340}}><FSearchBox value={zpInlineVenueQ} onChange={setZpInlineVenueQ} placeholder="Search venues…" noun="venues" resultCount={matched.length} totalCount={all.length}/></div>}
                       <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
                         <span onClick={()=>setZpFilters(p=>({...p,venue:[]}))} style={zpPill(sel.length===0)}>All</span>

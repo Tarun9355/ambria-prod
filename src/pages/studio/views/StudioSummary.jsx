@@ -180,6 +180,13 @@ function AnimatedTotal({ value, fmt }) {
 
 export default function StudioSummary({ ctx }) {
   const [txOpen, setTxOpen] = useState({}); // per-function transport detail expand (collapsed by default)
+  // The full zone/item cost breakdown used to render open by default (expandedSummaryFnIdx starts
+  // at 0) — every zone, every element, every price, right under the hero total. That's the same
+  // detail "👁 Preview" already surfaces in its own overlay, just permanently on the page too, which
+  // read as clutter for a screen whose main job is the headline number and the SOLD button. Hidden
+  // by default behind one discreet toggle; expandedSummaryFnIdx still remembers which function was
+  // open underneath, so reopening this doesn't reset that.
+  const [showSummaryDetails, setShowSummaryDetails] = useState(false);
   // ═══ WHICH ENGINE DESIGNS THE DECK ═══
   // The built-in one. Flip to true and Gamma takes over instead; both paths are kept because the
   // choice has already gone back and forth twice, and neither is wrong in the abstract:
@@ -2116,6 +2123,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         })()}
         </div>
       </div>
+      {/* Discreet gate for everything below — the full "Design based on" line, and the whole
+          per-function zone/item breakdown. See the showSummaryDetails declaration above for why. */}
+      <div style={{display:"flex",justifyContent:"center",marginBottom:showSummaryDetails?14:22}}>
+        <span onClick={()=>setShowSummaryDetails(v=>!v)} style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,fontWeight:600,color:textS,padding:"4px 12px",borderRadius:20,border:`1px solid ${border}`,userSelect:"none"}}>
+          <span style={{display:"inline-flex",transition:"transform 0.15s",transform:showSummaryDetails?"rotate(180deg)":"none"}}>▾</span>
+          {showSummaryDetails?"Hide":"Show"} cost breakdown
+        </span>
+      </div>
+      {showSummaryDetails&&<>
       {sourceEvent&&<div style={{...S.card,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}><div style={{fontSize:11,color:textS}}>Design based on:</div><div style={{fontSize:13,fontWeight:600}}>{sourceEvent.name}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:accentBg,color:accentText}}>{sourceEvent.venue}</span>{sourceEvent.venue!==venue&&<><span style={{fontSize:11,color:textS}}>{"→"}</span><span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:transportCalc.isNew?"rgba(245,158,11,0.15)":"rgba(99,102,241,0.15)",color:transportCalc.isNew?"#F59E0B":"#818cf8"}}>{"📍"} Function at {venue}</span></>}</div>}
 
       {/* ═══ MULTI-FUNCTION SUMMARY — ACCORDION PER FUNCTION ═══ */}
@@ -2275,6 +2291,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         });
       })()}
       {/* ═══ END MULTI-FUNCTION SUMMARY ═══ */}
+      </>}
       {(() => {
         // Aggregate notes across all functions (elNotes may differ per function snapshot)
         const allFns = collectAllFunctionData();

@@ -165,7 +165,6 @@ const PREMIA_DEFAULTS = {
 
 const TAX_LABELS = { eventType: "Event type", venueType: "Venue type", areasElements: "Areas & elements", colorPalette: "Color palette", tier: "Tier", categoryTier: "Category tier (legacy)", designStyle: "Design style", timeSetting: "Time / setting" };
 
-const RC_UNITS = [{ id: "sqft", l: "/sqft" }, { id: "truss_sqft", l: "/truss sqft" }, { id: "rft", l: "/RFT" }, { id: "pc", l: "/pc" }, { id: "setup", l: "/setup" }, { id: "trip", l: "/trip" }, { id: "event", l: "/event" }, { id: "string", l: "/string" }, { id: "included", l: "Included" }, { id: "multiplier", l: "× mult" }];
 // TC_UNITS and TR_TIERS moved to lib/studio/keys.js — IMS mounts this same Transport editor now,
 // so both apps read one definition instead of keeping a second copy that drifts.
 
@@ -886,7 +885,7 @@ function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // Each truckCap entry is keyed by sub-category name (`item`), with `perTruck` (capacity) + `unit`
 // (pcs / sqft per truck). Capacity 0 → that sub-category is skipped. Deal items are aggregated by
 // their rate-card sub-category; truss / platform / carpet contribute sqft via the zone config.
-function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap) {
+function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns) {
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
   const subAgg = {}; // subLower → { label, qty, perTruck, unit }
@@ -898,11 +897,21 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   Object.entries(zoneElements || {}).forEach(([zk, elems]) => {
     if (!enabledEls[zk] || !elems) return;
     elems.forEach(el => {
-      const rc = rcItems.find(i => String(i.name || "").toLowerCase() === String(el.name || "").toLowerCase());
-      if (!rc) return;
-      const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
-      if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
-      else addSub(rc.sub, Number(el.qty) || 0);
+      // An element's sub-category used to come ONLY from a legacy Rate-Card name match. Every
+      // IMS-inventory-backed element (el.invId — the normal path for anything added via the "+ Add
+      // element" search today) and every pure flower-recipe element (el.patternId) never matches by
+      // name, so `rc` came back undefined and this silently dropped it from the truck count — most
+      // of a real build, not an edge case, same gap already fixed for pricing (see
+      // calcFunctionBreakdown's zones loop, StudioApp.jsx). Resolve the sub-category the same way
+      // getElPriceForFn's own sources do, falling back to the legacy name match only when neither
+      // an inventory item nor a pattern applies.
+      const invItem = el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+      const pattern = (!invItem && el.patternId) ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
+      const rc = (!invItem && !pattern) ? rcItems.find(i => String(i.name || "").toLowerCase() === String(el.name || "").toLowerCase()) : null;
+      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+      const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+      if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
+      else addSub(sub, Number(el.qty) || 0);
     });
   });
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
@@ -1095,7 +1104,6 @@ export default function StudioApp() {
 
   // ═══ LIBRARY STATE ═══
   const [libView, setLibView] = useState("images");
-  const [pricingView, setPricingView] = useState("rates");
   const [settingsView, setSettingsView] = useState("venues");
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
@@ -1643,7 +1651,6 @@ export default function StudioApp() {
   // Blocks for just the active function's date — warms once loadAvailability/activeFnMeta exist
   // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
   const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
-  const [rcCatEditMode, setRcCatEditMode] = useState(false);
   const [libElSearch, setLibElSearch] = useState("");
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
@@ -1663,9 +1670,6 @@ export default function StudioApp() {
   const [bufferTiers, setBufferTiers] = useState(TR_DBT);
   const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
   const [newTC, setNewTC] = useState({ item: "", perTruck: 0, unit: "pc" });
-  const [rcAddMode, setRcAddMode] = useState(false);
-  const [rcSubOpen, setRcSubOpen] = useState(false);
-  const [rcNewForm, setRcNewForm] = useState({ cat: "truss", sub: "", name: "", unit: "pc", inhouseMode: "flat", inhouseFlat: 0, inhouseS: 0, inhouseM: 0, inhouseB: 0, outEnabled: false, outS: 0, outM: 0, outB: 0, notes: "", artificialFlat: 0, artificialS: 0, artificialM: 0, artificialB: 0, defaultRealPct: 100, floralMode: "ratio" });
 
   // ═══ TEMPLATE STATE ═══
   const [templates, setTemplates] = useState(TPL_DEFAULTS);
@@ -2329,36 +2333,15 @@ export default function StudioApp() {
     ...Object.fromEntries((customOutdoor || []).filter(v => v.name).map(v => [v.name, v.name])),
   }), [customInhouse, customOutdoor]);
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
-  // Row-level rate-card persistence (off the whole-blob save; shared table with IMS). Upserts only
-  // changed rows + deletes only explicit ids (rcDel passes the id) — never deletes on absence.
+  // The Rate Card admin editor (Studio's RateCard.jsx, IMS's RateCardPanel.jsx) is gone — nobody
+  // edits `rate_card` by hand anymore, recipes are IMS-native (flowerPatterns), and every element
+  // Studio creates today carries an invId or patternId, never a bare Rate Card reference. This ref
+  // + subscription sync stay only because `rcItems` is still read as a LEGACY pricing fallback (see
+  // getElPrice et al.) for elements saved before that migration — truss_sqft-billed decorative
+  // elements in particular have no IMS-inventory equivalent at all. saveRC/saveRcCats (the human-
+  // edit save paths) had zero callers left with the editor gone and are removed.
   const rcItemsRef = useRef([]);
   useEffect(() => { rcItemsRef.current = rcItems; }, [rcItems]);
-  const saveRC = useCallback(async (ni, deletedIds) => {
-    const prev = rcItemsRef.current || [];
-    const prevById = {}; prev.forEach((i) => { if (i && i.id) prevById[i.id] = i; });
-    rcItemsRef.current = ni; setRcItems(ni);
-    const changed = (ni || []).filter((i) => i && i.id && JSON.stringify(prevById[i.id]) !== JSON.stringify(i));
-    const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
-    try {
-      if (changed.length) {
-        const rows = changed.map((i) => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
-      }
-      for (const id of dels) await deleteRow("rate_card", id);
-    } catch (e) {
-      // Roll back the optimistic update — a failed save must not leave local state ahead of the DB.
-      rcItemsRef.current = prev; setRcItems(prev);
-      showMsg?.("Rate card save failed: " + (e?.message || e), "red");
-    }
-  }, [showMsg]);
-  const saveRcCats = useCallback(async (nc) => {
-    const prev = rcCats;
-    setRcCats(nc);
-    const r = await reliableSave(RC_SK_CATS, JSON.stringify(nc), "Categories");
-    if (r && r.ok === false) { setRcCats(prev); } // roll back on failure, same as saveRC
-    return r;
-  }, [rcCats]);
   // Tagging-hidden sub-categories — keyed "cat::sub". Set for O(1) lookup; toggle flips one sub.
   const tagSubKey = useCallback((cat, sub) => `${String(cat || "").trim()}::${String(sub || "").trim()}`, []);
   const tagHiddenSubSet = useMemo(() => new Set(tagHiddenSubs), [tagHiddenSubs]);
@@ -3607,7 +3590,7 @@ export default function StudioApp() {
       return { trucks: 0, tripRate, total: 0, isNew, tier: tierId, tierLabel, breakdown: [], floralTrucks: 0, bufferTrucks: 0, itemTrucks: 0, totalFloralCost: 0, gensets: 0, venueGensets: venueOnly.genset125, venueGenset62: venueOnly.genset62, gensetCost: 0, gensetRate, gensetRate62, genset62: 0, truckTotal: 0 };
     }
     const breakdown = [];
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap);
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, (dealCheckData || studioFloralData)?.flowerPatterns);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -3618,7 +3601,7 @@ export default function StudioApp() {
     const truckTotal = allTrucks * tripRate * 2;
     const total = truckTotal + plan.gensetCost;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: plan.gensetCost, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal };
-  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig]);
+  }, [venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData]);
 
   const grandTotal = useMemo(() => totalCost() + transportCalc.total, [totalCost, transportCalc]);
 
@@ -3703,14 +3686,21 @@ export default function StudioApp() {
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {};
       const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { perTruck: Number(tc.perTruck) || 0, qty: 0 }; subAgg[k].qty += qty; };
+      // Same fix as calcFunctionBreakdown's identical loop below — an element's sub-category used to
+      // come ONLY from a legacy Rate-Card name match, so every IMS-inventory-backed element, kit
+      // line, and pure flower-recipe element silently never counted toward the truck total feeding
+      // THIS total (Summary's top banner, Deal Check's quote).
+      const fcFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
-          const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-          if (!rc) return;
-          const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
-          else addSub(rc.sub, Number(el.qty) || 0);
+          const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+          const pattern = (!invItem && el.patternId) ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
+          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+          const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
+          else addSub(sub, Number(el.qty) || 0);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
@@ -3732,7 +3722,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, activeFnIdx]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, activeFnIdx, imsInventory, dealCheckData, studioFloralData]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -3778,36 +3768,54 @@ export default function StudioApp() {
         // no rate-card row at all. Both were costed as plain rental instead.
         const elNm = (el.name || "").toLowerCase().trim();
         let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elNm);
-        if (!rc) {
+        // Same leniency gate DCFloralsTab.jsx uses: BOTH names need ≥4 chars before substring
+        // matching is attempted. This rollup was missing the elNm-length half of that guard, so a
+        // short element name (e.g. "Pot") could spuriously substring-match an unrelated florals
+        // Rate Card row here while the tab correctly left it unmatched — the two disagreeing on
+        // which elements even counted as priced florals, not just on the price.
+        if (!rc && elNm.length >= 4) {
           rc = rcItems.find(i => {
             if (String(i.cat || "").toLowerCase() !== "florals") return false;
             const n = (i.name || "").toLowerCase().trim();
-            return n && (elNm.includes(n) || n.includes(elNm));
+            return n && n.length >= 4 && (elNm.includes(n) || n.includes(elNm));
           });
         }
+        // el.invId is Build's THIRD identity source (getElPrice/getElPriceForFn check invId before
+        // patternId before falling back to the Rate Card by name — Rate Card is never even consulted
+        // for an invId element). This rollup had no branch for it at all: an IMS-inventory-sourced
+        // floral element — the common case for a real physical product; patternId is reserved for
+        // pure recipe-only elements with no inventory backing — only counted here if its name also
+        // happened to match a Rate Card row, so most of a real build's florals silently contributed
+        // NOTHING to this total, while DCFloralsTab.jsx (which resolves invId directly) kept showing
+        // the correct, much larger figure. Same fix as that tab, ported here so the two agree.
+        const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+        const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
         const elPat = el.patternId ? fp.find(p => p.id === el.patternId) : null;
-        if (!el.patternId && String(rc?.cat || "").toLowerCase() !== "florals") return;
+        if (!el.patternId && !invIsFloral && String(rc?.cat || "").toLowerCase() !== "florals") return;
         const q = el.qty || 0; if (q <= 0) return;
         const rp = resRP(el, rc) / 100, ap = 1 - rp;
         // Billed income split — EVERY floral arrangement bills (recipe-driven or not): the real
         // portion at the inhouse rate, the artificial portion at the artificial rate (mirrors
         // getElPrice's blend). Computed at element level, before the recipe gate below.
-        // Guarded: rc can be null now (element priced from its own patternId with no rate-card row).
-        // resolveRcRate reads rc.inhouseFlat unguarded and would throw. No rate-card row means no
-        // billed rate to split, so income simply has nothing to add here — the sourcing COST below
+        // Guarded: rc can be null now (element priced from its own patternId/invId with no rate-card
+        // row). resolveRcRate reads rc.inhouseFlat unguarded and would throw. No rate-card row means
+        // no billed rate to split, so income simply has nothing to add here — the sourcing COST below
         // still computes from the recipe, which is the number this function exists to produce.
         if (rc) { const szU = String(el.size || "").toUpperCase(); const { realRate: rr, artRate: ar } = resolveRcRate(rc, szU);
           realIncome += q * rp * rr; artIncome += q * ap * ar; }
-        // The element's OWN recipe wins — that is what Build priced it with. Name matching is only
-        // the fallback, and could otherwise land on a different recipe than the one chosen.
-        let pat = elPat;
-        if (!pat) {
-          const tn = (rc?.name || el.name || "").toLowerCase().trim();
-          pat = fp.find(p => (p.name || "").toLowerCase().trim() === tn);
-          if (!pat) pat = fp.find(p => { const n = (p.name || "").toLowerCase().trim(); return n && tn && (n.includes(tn) || tn.includes(n)); });
-        }
+        // Prefer the recipe Build actually priced this element with, in Build's own priority order
+        // (invId, then patternId, then Rate Card by name) — re-deriving it a different way could land
+        // on a different recipe than Build/the salesperson actually used, or on none at all.
+        // matchFlowerPattern is the same sub-category-first matcher Build itself prices from; for an
+        // invId element it's fed the real IMS inventory item (matching getElPriceFromInventory
+        // exactly) instead of a coincidental Rate Card name-match.
+        let pat = elPat || (invItem ? matchFlowerPattern(invItem, fp) : null) || matchFlowerPattern({ subcategory: rc?.sub, name: rc?.name || el.name }, fp);
         if (!pat) return;
-        const sk = szMap(pat?.mode || rc?.inhouseMode, el.size);
+        // Build sizes an invId floral element the same way regardless of any Rate Card "smb" mode —
+        // sizeFromMode/szMap below requires rc.inhouseMode==="smb" to honour el.size at all, which an
+        // invId element (no rc, or an unrelated coincidental match) would never have, silently always
+        // pricing at "medium" regardless of the S/M/B toggle actually picked on Build.
+        const sk = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : szMap(pat?.mode || rc?.inhouseMode, el.size);
         const sizes = pat.sizes || {};
         let comp = sizes[sk] || sizes.medium;
         if (!comp && sk === "big" && sizes.large) comp = sizes.large;
@@ -3819,6 +3827,18 @@ export default function StudioApp() {
         const season = sMap[fn.fnDate] || "non_saya";
         const sMult = mults[season] || 1;
         comp.flowers.forEach(fl => {
+          // A direct IMS Inventory ingredient in the recipe (fl.invItemId set, no flowerId at all) —
+          // a physical rented piece bundled into the recipe (a vase, a wire base), not a mandi
+          // flower. DCFloralsTab.jsx counts it in FULL as real cost, never scaled by the real/
+          // artificial slider (there's no "artificial" version of a physical prop) — this rollup had
+          // no branch for it, so resolveMandiFlower(undefined, ...) below returned null and the whole
+          // line silently dropped out of both totalReal and totalArtificial.
+          if (fl.invItemId) {
+            const item = imsInventory.find(i => i.id === fl.invItemId);
+            const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
+            fixedExtras += (fl.qty || 0) * q * rawPrice;
+            return;
+          }
           const resolved = resolveMandiFlower(fl.flowerId, mc);
           const parent = resolved?.parent || null;
           const parentId = parent?.id || fl.flowerId;
@@ -3890,7 +3910,7 @@ export default function StudioApp() {
       fbreak[v.name].qty += v.totalQty; fbreak[v.name].cost += cost;
     });
     return { totalReal: tReal, totalArtificial: tArt, grandTotal: tReal + tArt, breakdown: Object.values(fbreak).map(f => ({ ...f, qty: Math.ceil(f.qty), cost: Math.round(f.cost) })).sort((a, b) => b.cost - a.cost), artFlowerBunches, artGreenBunches, income: { real: realIncome, art: artIncome } };
-  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs]);
+  }, [dealCheckData, rcItems, floralRatio, resolveRcRate, rcFloralModeByKey, dcFloralColorPrefs, imsInventory]);
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
@@ -3915,7 +3935,27 @@ export default function StudioApp() {
     if (!types.length || !(allFns || []).length) return [];
     const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
     const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
-    const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => { const rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase()); if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) }); }); }); };
+    // An element's cat/sub/inhouseMode used to come ONLY from a legacy Rate-Card name match — the
+    // same gap already fixed for pricing, transport and florals elsewhere in this file. Every
+    // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
+    // element" today) and pure flower-recipe element (el.patternId) never matched by name, so `rc`
+    // came back undefined and EVERY manpower calculator below (Flowerists, Electricians, Labours,
+    // Fabric Bangali, Truss Labour, any Tier-2 labour type) silently skipped it — undercounting crew
+    // for any build that isn't old-style Rate-Card-only, which is most builds today. Synthesizing an
+    // rc-shaped view from whichever identity actually resolves means every consumer below (all of
+    // which read rc.cat/rc.sub/rc.inhouseMode/rc.name) keeps working unchanged.
+    const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
+      let rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase());
+      if (!rc && el.invId) {
+        const invItem = imsInventory.find(i => i.id === el.invId);
+        if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" };
+      }
+      if (!rc && el.patternId) {
+        const pat = fps.find(p => p.id === el.patternId);
+        if (pat) rc = { name: pat.name, cat: "florals", sub: pat.sub, inhouseMode: pat.mode === "smb" ? "smb" : "flat" };
+      }
+      if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1) });
+    }); }); };
     const calc = (fn, type) => {
       if (type === "Flowerists") {
         let t = 0; const agg = {}; walk(fn, ({ rc, el, qty }) => {
@@ -3976,7 +4016,7 @@ export default function StudioApp() {
       (allFns || []).forEach(fn => { const r = calc(fn, type); if (r.count > best.count) best = r; });
       return { type, count: best.count, basis: best.basis, rate: Number(dihari[type]?.rate) || 0, trace: best.trace || null };
     }).filter(r => r.count > 0);
-  }, [dealCheckData, rcItems]);
+  }, [dealCheckData, rcItems, imsInventory]);
 
   const eventGrandTotal = useMemo(() => {
     const all = collectAllFunctionData();
@@ -4040,26 +4080,41 @@ export default function StudioApp() {
       const breakdown = [];
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {}; const totalFloralCost = 0;
-      const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0 }; subAgg[k].qty += qty; };
+      // items[]: the zone/element lines that made up this sub-category's qty — lets the Transport
+      // tab show WHAT is filling each truck-capacity row, not just its aggregate qty.
+      const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
+      // An element's sub-category used to come ONLY from a legacy Rate-Card name match — the exact
+      // same gap already fixed for pricing above (see the zones-loop comment a few lines up). Every
+      // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
+      // element" today), kit line, and pure flower-recipe element (el.patternId) never matches by
+      // name, so `rc` came back undefined and this silently dropped it from the truck count — most
+      // of a real build's elements, which is why Transport's per-item breakdown could look like
+      // barely anything was contributing. Resolve the sub-category the same three ways
+      // getElPriceForFn does, falling back to the legacy name match only when neither an inventory
+      // item nor a pattern applies.
+      const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
-          const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
-          if (!rc) return;
-          const tc = capBySub[String(rc.sub || "").toLowerCase().trim()]; if (!tc) return;
-          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(rc.sub, L * W * (Number(el.qty) || 1)); }
-          else addSub(rc.sub, Number(el.qty) || 0);
+          const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
+          const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
+          const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
+          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+          const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
+          const elLabel = el.name || invItem?.name || pattern?.name || sub;
+          if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel); }
+          else addSub(sub, Number(el.qty) || 0, zk, elLabel);
         });
       });
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
       let truckFrac = 0;
-      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck }); } });
+      Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
       const bt = bufferTiers.find(b => decorTotal >= b.minBudget && decorTotal < b.maxBudget);
@@ -4075,7 +4130,7 @@ export default function StudioApp() {
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
 
@@ -7638,7 +7693,7 @@ export default function StudioApp() {
     // admin / library state
     photoUrl, setPhotoUrl, evEditPhotoIdx, setEvEditPhotoIdx, tagInput, setTagInput, bulkUrls, setBulkUrls,
     bulkTarget, setBulkTarget, adminSearch, setAdminSearch, adminFilterV, setAdminFilterV, adminFilterC, setAdminFilterC, previewImg, setPreviewImg,
-    libView, setLibView, pricingView, setPricingView, settingsView, setSettingsView,
+    libView, setLibView, settingsView, setSettingsView,
     calYear, setCalYear, calMonth, setCalMonth, calSelDate, setCalSelDate, calEditMode, setCalEditMode, calSelectedDates, setCalSelectedDates,
     calLmsData, setCalLmsData, calView, setCalView, calSeasonData, setCalSeasonData,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus, ctFilterFrom, setCtFilterFrom, ctFilterTo, setCtFilterTo, ctExpandedId, setCtExpandedId,
@@ -7685,10 +7740,11 @@ export default function StudioApp() {
     inspQ, setInspQ, inspResults, setInspResults, inspLoading, setInspLoading, aiPrompt, setAiPrompt, aiResult, setAiResult, aiLoading, setAiLoading,
     pptLoading, setPptLoading, pptDone, setPptDone, savedInsps, setSavedInsps, copied, setCopied,
     pinResults, setPinResults, pinLoading, setPinLoading, pinQuery, setPinQuery, inspSource, setInspSource,
-    // rate card / transport
-    rcItems, setRcItems, saveRC, rcCats, setRcCats, saveRcCats, rcCatEditMode, setRcCatEditMode,
-    rcAddMode, setRcAddMode, rcSubOpen, setRcSubOpen, rcNewForm, setRcNewForm,
-    RC_UNITS, TC_UNITS, RC_CATS_DEFAULT,
+    // rate card / transport — read-only now (legacy pricing fallback + category/sub-category
+    // labels several screens still read); the human editors and their save paths are gone (see the
+    // rcItemsRef comment above).
+    rcItems, setRcItems, rcCats, setRcCats,
+    TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — Library's per-element Print section
