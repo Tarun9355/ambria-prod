@@ -809,8 +809,26 @@ export default function StudioBrowse({ ctx }) {
   .sb-rail-shadow,.sb-rail-edge{display:none}
   .sb-rail::after{display:none}
   .sb-layout{flex-direction:column;margin-left:0}
-  .sb-rail{width:100% !important;position:static !important;height:auto !important;
+  /* relative, NOT static. Both take the rail out of its fixed position and put it back in the
+     flow, which is all this rule was after — but the rail carries two absolutely-positioned
+     children, the photograph and its dark veil, and static stops it being their containing block.
+     They would have escaped to .sb-layout (the nearest positioned ancestor) and stretched the
+     panel's picture and a near-black scrim across the entire page. relative keeps the same layout
+     and keeps them inside.
+     height:auto matters for the same pair: inset:-4% resolves against the rail, and at 100dvh they
+     would run a viewport-tall image behind a strip only a few rows deep. */
+  .sb-rail{width:100% !important;position:relative !important;height:auto !important;
     clip-path:none;border-radius:0 0 26px 26px;padding:14px 18px 16px}
+  /* ── ONE SURFACE WITH THE BAR ──
+     On the stacked layout the header has no transparent window (--sb-pw is 0, correctly — there is
+     no fixed column for it to reveal), so the bar is solid across its full width. Directly under it
+     the panel was showing the TOP of its photograph, which is the near-black half of a night shot —
+     so a purple bar sat on an almost-black block and the two read as different surfaces.
+     The photo comes off here. It is a viewport-tall image being asked to fill a strip a few rows
+     deep, which is meaningless anyway, and its veil goes with it. What is left is the same gradient
+     the header uses, so the bar and the panel are one continuous piece. */
+  .sb-rail-img,.sb-rail-veil{display:none}
+  .sb-rail{background:${isDark?"linear-gradient(180deg,#121220,#0B0B14)":"linear-gradient(135deg,#0A0A12,#1C1242)"} !important}
   /* Folded, on a stacked layout. A 38px vertical sliver is the right shape beside a column and the
      wrong one on top of it: it eats a whole row to say one word sideways, and it is a small target
      for a finger. Here it becomes a full-width bar with the label the right way up. */
