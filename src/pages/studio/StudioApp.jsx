@@ -10,7 +10,7 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
-import { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
+import { Fragment, useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
@@ -42,13 +42,23 @@ const NAV_ICON = 15;
 const NAV_META = { fontSize: NAV_META_FS, fontWeight: 700, letterSpacing: 1.1, textTransform: "uppercase", lineHeight: 1.4 };
 // Segmented container shared by the mode switch, step nav and manage tabs, so all three
 // read as one control family instead of three different pill shapes.
-const NAV_GROUP = { display: "flex", alignItems: "center", gap: 3, background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 3 };
-const NAV_CHIP_BASE = { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, border: "none", background: "transparent", fontSize: NAV_FS, fontWeight: 500, lineHeight: 1, whiteSpace: "nowrap", transition: "all 0.15s" };
+// A recessed WELL, not a pale tint. It used to be a 6% white wash, which on a dark bar barely
+// separated from it and left the tray reading as a smudge behind the chips. Sunk instead — darker
+// than the bar, with a hairline lip — so the group looks cut into the surface and the chips sitting
+// in it are unmistakably a set.
+const NAV_GROUP = { display: "flex", alignItems: "center", gap: 3, background: "rgba(0,0,0,0.32)", borderRadius: 11, padding: 3, border: "1px solid rgba(255,255,255,0.07)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.45)" };
+// 600, not 500. At 12px on a dark ground a 500 reads thin and slightly blurred; the weight is what
+// makes the labels legible at a glance rather than something you have to look at twice.
+const NAV_CHIP_BASE = { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 8, border: "none", background: "transparent", fontSize: NAV_FS, fontWeight: 600, lineHeight: 1, whiteSpace: "nowrap", transition: "all 0.15s" };
 // Square icon-only buttons (Deal Check, Logout) — equal footprint so they don't read as
 // mis-sized text buttons next to the labelled chips.
-const NAV_ICON_BTN = { ...NAV_CHIP_BASE, padding: 0, width: 31, height: 31, justifyContent: "center", borderRadius: 9, border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.55)", cursor: "pointer" };
+const NAV_ICON_BTN = { ...NAV_CHIP_BASE, padding: 0, width: 32, height: 32, justifyContent: "center", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.30)", color: "rgba(255,255,255,0.72)", cursor: "pointer" };
 // Hairline between right-hand clusters, so each change of meaning is visible.
 const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", flexShrink: 0 };
+// No wave wash in the bar. Event Info's ground works on a full page, where the bands are large and
+// slow and there is room for them to be atmosphere. Compressed into a 60px strip they have to move
+// fast and sit bright to register at all, and at that point they are competing with the one row of
+// controls the whole app navigates by.
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
@@ -114,6 +124,28 @@ const ROLES = ["admin", "manager", "sales"];
 const PERM_LABELS = { canViewPricing: "View pricing & costs", canEditEvents: "Add / edit events", canManageTemplates: "Manage templates", canManageLibrary: "Manage library", canExport: "Export data", canManageVenues: "Manage venues", canManageUsers: "Manage users" };
 const ROLE_DEFAULTS = { admin: { canViewPricing: true, canEditEvents: true, canManageTemplates: true, canManageLibrary: true, canExport: true, canManageVenues: true, canManageUsers: true }, manager: { canViewPricing: true, canEditEvents: true, canManageTemplates: false, canManageLibrary: true, canExport: false, canManageVenues: false, canManageUsers: false }, sales: { canViewPricing: false, canEditEvents: false, canManageTemplates: false, canManageLibrary: false, canExport: false, canManageVenues: false, canManageUsers: false } };
 const DEFAULT_TEAM = Object.fromEntries(Object.entries(TEAM).map(([id, u]) => ([id, { ...u, active: true, perms: { ...(ROLE_DEFAULTS[u.role] || ROLE_DEFAULTS.sales) }, assignedVenues: [], venueScope: u.role === "admin" ? "all" : "outside", defaultVenue: "" }])));
+
+// ══ THE BRAND MARK ══
+// Same asset and same glob-not-import reasoning as Event Info and Browse: if the file isn't there
+// the glob resolves to {}, the header falls back to the lettermark below, and the build still runs.
+const LOGO_ASSET = Object.values(
+  import.meta.glob("../../assets/ambria-logo.{svg,png,webp,jpg,jpeg}", { eager: true, query: "?url", import: "default" })
+)[0] || null;
+// MEASURED opaque bounds of ambria-logo.png — the artwork is 4258×2838 but the mark itself is only
+// 2530×733 at (869,1045): roughly 37% of the canvas is transparent padding above and below, and 20%
+// either side. Dropped into a header row as-is, the visible wordmark comes out about a third the
+// height of the space it occupies, which is why the panel copies of it carry hand-tuned negative
+// margins. These numbers crop that padding by measurement instead, so the lockup is sized by the
+// one number that actually matters: how tall the wordmark should be.
+const LOGO_BOX = { w: 4258, h: 2838, x: 869, y: 1045, cw: 2530, ch: 733 };
+const logoCrop = (markH) => {
+  const k = markH / LOGO_BOX.ch;
+  return {
+    box: { position: "relative", width: Math.round(LOGO_BOX.cw * k), height: markH, overflow: "hidden", flexShrink: 0 },
+    img: { position: "absolute", left: -LOGO_BOX.x * k, top: -LOGO_BOX.y * k,
+      width: LOGO_BOX.w * k, height: LOGO_BOX.h * k, maxWidth: "none", display: "block" },
+  };
+};
 
 // ══ AMBRIA PREMIA (Platinum gate) — fully editable copy & CTA ══
 // The point of this gate is a sales one, not a policy one: a Platinum look isn't one designer
@@ -7524,12 +7556,17 @@ export default function StudioApp() {
   const accentText = isDark ? "#C9A96E" : "#6D28D9";
 
   // Header chip factory — needs `accent`, so it lives here rather than at module scope.
+  // The inactive label was rgba(255,255,255,0.55) — around 4:1 on this bar, and it read as disabled
+  // rather than as "the other option". Lifted to 0.74, and the active chip's fill doubled so the
+  // selected one still clearly leads. Both weights are 600 now (see NAV_CHIP_BASE); the difference
+  // between them is colour and fill, which is a stronger signal than half a weight step.
   const navChip = (active) => ({
     ...NAV_CHIP_BASE,
     cursor: "pointer",
-    fontWeight: active ? 600 : 500,
-    background: active ? `${accent}22` : "transparent",
-    color: active ? accent : "rgba(255,255,255,0.55)",
+    fontWeight: active ? 700 : 600,
+    background: active ? `${accent}2E` : "transparent",
+    color: active ? accent : "rgba(255,255,255,0.74)",
+    ...(active ? { boxShadow: `inset 0 0 0 1px ${accent}3D` } : null),
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -7775,6 +7812,34 @@ export default function StudioApp() {
            S.main caps at 1200 and centres, so the content column itself never needed capping;
            what breaks on a tablet is the header (three zones competing on one row), fixed side
            rails, and grids with hard column counts. */
+        /* Only steps you can actually reach light up. An unreachable one that highlights on hover
+           promises a click that does nothing. */
+        .sa-step-on:hover { background: rgba(255,255,255,0.07) !important; color: #fff !important; }
+
+        /* ══ THE SHEEN ══
+           A slow gradient drifting across the bar, in place of the wave bands that were here. Waves
+           have a shape, and a shape in a 60px strip has to move fast and sit bright to read at all —
+           at which point it competes with the one row of controls the whole app navigates by. A
+           gradient has no shape to notice: it only changes the colour of the light on the surface,
+           which is the part that felt premium without ever asking to be looked at.
+           z-index -1 puts it above the header's own background and below everything in it. Safe
+           here precisely because the header HAS a background of its own.
+           Violet and gold because the bar's own gradient already runs to violet and the accent is
+           gold — this moves the light that is in the surface rather than adding a new colour to it. */
+        .sa-sheen { position: absolute; inset: 0; z-index: -1; pointer-events: none;
+          background: linear-gradient(100deg,
+            rgba(124,92,214,0) 0%,
+            rgba(124,92,214,0.26) 20%,
+            rgba(201,169,110,0.15) 45%,
+            rgba(124,92,214,0.24) 68%,
+            rgba(124,92,214,0) 100%);
+          background-size: 230% 100%;
+          animation: saSheen 26s ease-in-out infinite alternate; }
+        /* 26s and no transform. There is nothing with an edge here, so slow is free — the eye never
+           catches it moving, it just finds the bar a slightly different colour than a minute ago. */
+        @keyframes saSheen { from { background-position: 0% 50% } to { background-position: 100% 50% } }
+        @media (prefers-reduced-motion: reduce) { .sa-sheen { animation: none } }
+
         @media (max-width: 1180px) {
           .sa-header { padding: 10px 14px !important; gap: 8px !important; }
           .sa-nav-left { gap: 10px !important; }
@@ -7869,16 +7934,31 @@ export default function StudioApp() {
           Type is on two tiers only: NAV_FS for everything clickable, META_FS for the uppercase
           micro-labels. The old header mixed 8/9/10/11/12/13px in one row. ═══ */}
       {!bareEventInfo && <div className="sa-header" style={S.header}>
+        {/* The drifting sheen — see .sa-sheen. */}
+        <div className="sa-sheen" aria-hidden="true" />
         {/* ── LEFT: brand, then the cross-app switcher. Both answer "where am I?", so they belong
                together at the start of the bar; a rule separates identity from navigation.
                flex:1 so the centre zone stays optically centred rather than content-pushed. */}
         <div className="sa-nav-left" style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 0", minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg,${accent},#8B7355)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#0F0F1A", letterSpacing: -0.3, flexShrink: 0 }}>A</div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: -0.2, lineHeight: 1.2 }}>Ambria</div>
-              <div style={{ ...NAV_META, color: accent, marginTop: 1 }}>{mode === "manage" ? "Manage" : "Design Studio"}</div>
-            </div>
+          {/* The real wordmark, cropped to its own bounds (see logoCrop). It is white + gold on
+              transparent, which is exactly what this navy bar wants — the lettermark and typed
+              "Ambria / Design Studio" beside it were a stand-in for this file.
+              The mark reads "DESIGN & DECOR", so it no longer doubles as the mode indicator the
+              old subtitle was; Manage gets its own chip rather than losing that signal. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+            {LOGO_ASSET ? (() => { const L = logoCrop(32); return (
+              <div style={L.box}><img src={LOGO_ASSET} alt="Ambria Design &amp; Decor" style={L.img} /></div>
+            ); })() : (
+              <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg,${accent},#8B7355)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#0F0F1A", letterSpacing: -0.3, flexShrink: 0 }}>A</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: -0.2, lineHeight: 1.2 }}>Ambria</div>
+                  <div style={{ ...NAV_META, color: accent, marginTop: 1 }}>{mode === "manage" ? "Manage" : "Design Studio"}</div>
+                </div>
+              </div>
+            )}
+            {LOGO_ASSET && mode === "manage" && <span style={{ ...NAV_META, color: accent, flexShrink: 0,
+              padding: "2px 8px", borderRadius: 6, border: `1px solid ${accent}55`, background: "rgba(201,169,110,0.12)" }}>Manage</span>}
           </div>
           {/* Cross-app switcher (only renders for users granted both Studio + IMS) */}
           <div style={NAV_RULE} />
@@ -7889,16 +7969,58 @@ export default function StudioApp() {
                account controls the way it was when everything shared one right-hand run. */}
         <div className="sa-nav-mid" style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
           {/* Studio step nav — completed steps carry a tick, upcoming ones stay inert */}
-          {mode === "studio" && <div style={NAV_GROUP}>{["Event Info", "Browse", "Build", "Summary"].map((l, i) => {
+          {/* ═══ THE FLOW ═══
+              No segmented container any more. A shared tray says "pick one of these", which is what
+              the mode switch and the Manage tabs are — but this is a route through four stops, and
+              the connectors between them say that where a tray could not. The connector is also
+              live: it is gold behind you and grey ahead, so the bar shows progress along its whole
+              length rather than only at the chip you are standing on. */}
+          {mode === "studio" && <div style={{ display: "flex", alignItems: "center", gap: 0 }}>{["Event Info", "Browse", "Build", "Summary"].map((l, i) => {
             const done = i < step, active = i === step, reachable = i <= step;
+            // The step's ordinal, as its own token. A four-stop flow that only marks "you are here"
+            // makes you count the chips to work out how far along you are; the number says it, and
+            // the tick then modifies it from "ahead of you" to "done".
+            const num = String(i + 1).padStart(2, "0");
             return (
-              <div key={i} onClick={() => { if (reachable) setStep(i); }}
-                style={{ ...NAV_CHIP_BASE, cursor: reachable ? "pointer" : "default",
-                  fontWeight: active ? 600 : 500,
-                  background: active ? "rgba(255,255,255,0.14)" : "transparent",
-                  color: active ? "#fff" : done ? "rgba(255,255,255,0.62)" : "rgba(255,255,255,0.28)" }}>
-                {done && <IconCheck size={NAV_ICON - 2} />}{l}
-              </div>
+              <Fragment key={i}>
+                {i > 0 && <span aria-hidden="true" style={{ width: 17, height: 1, flexShrink: 0, margin: "0 3px",
+                  background: i <= step ? `${accent}8C` : "rgba(255,255,255,0.13)", transition: "background .18s ease" }} />}
+                <div onClick={() => { if (reachable) setStep(i); }}
+                  className={reachable && !active ? "sa-step sa-step-on" : "sa-step"}
+                  style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 9,
+                    padding: "5px 15px 5px 5px", borderRadius: 13, whiteSpace: "nowrap", border: "none",
+                    fontSize: NAV_FS, lineHeight: 1, cursor: reachable ? "pointer" : "default",
+                    fontWeight: active ? 600 : 500,
+                    background: active ? "rgba(255,255,255,0.085)" : "transparent",
+                    // Ring plus a wide soft gold cast, rather than a brighter fill. A fill competes
+                    // with the gold numeral inside it; a glow sits behind both and lifts the pair.
+                    boxShadow: active ? `0 0 0 1px ${accent}3D, 0 8px 26px -8px ${accent}66` : "none",
+                    color: active ? "#fff" : done ? "rgba(255,255,255,0.66)" : "rgba(255,255,255,0.30)",
+                    transition: "background .16s ease, color .16s ease, box-shadow .18s ease" }}>
+                  {/* A rounded square, not a circle. Two digits in a circle have to shrink to clear
+                      the curve at the corners of their own bounding box; a squircle gives the
+                      numerals their width back and lets them sit at a readable size. */}
+                  <span aria-hidden="true" style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11.5, fontWeight: 700, letterSpacing: 0.3, lineHeight: 1,
+                    background: active ? `linear-gradient(150deg,#EBD3A0,${accent})` : "transparent",
+                    color: active ? "#171021" : done ? accent : "rgba(255,255,255,0.34)",
+                    border: active ? "none" : `1px solid ${done ? `${accent}59` : "rgba(255,255,255,0.14)"}`,
+                    boxShadow: active ? "inset 0 1px 0 rgba(255,255,255,0.5)" : "none",
+                    transition: "all .16s ease" }}>{num}</span>
+                  {l}
+                  {/* The tick sits AFTER the label. In front of it, it pushed each completed chip's
+                      text sideways, so a row of four steps had four different left edges for its
+                      words — the fixed-width numeral is what lines them all up. */}
+                  {done && <span style={{ display: "inline-flex", color: accent, marginLeft: -3 }}><IconCheck size={NAV_ICON - 3} /></span>}
+                  {/* The marker under the active step. The chip's own tint is deliberately faint so
+                      it does not shout over the rest of the bar, and this is what makes "you are
+                      here" unmistakable at a glance without raising that tint. */}
+                  {active && <span aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: -8,
+                    width: 5, height: 5, marginLeft: -2.5, transform: "rotate(45deg)",
+                    background: accent, boxShadow: `0 0 8px ${accent}` }} />}
+                </div>
+              </Fragment>
             );
           })}</div>}
           {/* Manage tabs */}
@@ -7924,19 +8046,36 @@ export default function StudioApp() {
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {authUser && mode === "studio" && (isAdmin || studioSub("design", "dealcheck")) && <button onClick={() => setDcFullPageOpen(true)} title="Deal Check" aria-label="Deal Check" style={NAV_ICON_BTN}><IconClipboardCheck size={NAV_ICON} /></button>}
             {authUser && <>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                <div style={{ ...NAV_CHIP_BASE, background: "rgba(255,255,255,0.06)", color: "#fff", fontWeight: 500 }}>
+              {/* ── WHO YOU ARE ──
+                  Avatar, then the name. The name is no longer in a filled chip: it is a label, not
+                  a control, and sitting in a chip next to real buttons made it read as the fourth
+                  one in the row. The only clickable thing here is the sign-out beside it.
+                  This block is a single row now — the deal line that used to stack under it lives
+                  below the bar, which is what gave the zone room for the avatar. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+                <div style={{ position: "relative", flexShrink: 0 }}>
+                  <div aria-hidden="true" style={{ width: 34, height: 34, borderRadius: "50%",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "linear-gradient(150deg,#2A1F52,#12101F)", border: `1px solid ${accent}59`,
+                    color: accent, fontSize: 14, fontWeight: 700, letterSpacing: 0.2,
+                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)" }}>
+                    {(authUser.name || "?").trim().charAt(0).toUpperCase() || "?"}
+                  </div>
+                  {/* A status dot that means something. The reference had a green "online" pip, but
+                      a light that is always on is decoration dressed as data — everyone is online,
+                      they are looking at the page. This reads saveError instead: green while writes
+                      are landing, red the moment one fails. That is the one fact worth having
+                      permanently in the corner of a tool that autosaves. */}
+                  <span title={saveError ? "Changes are not saving — see the banner above" : "Saving normally"}
+                    style={{ position: "absolute", right: -1, bottom: -1, width: 10, height: 10, borderRadius: "50%",
+                      background: saveError ? "#EF4444" : "#22C55E", border: "2px solid #12101F" }} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: NAV_FS, fontWeight: 600,
+                  color: "#fff", lineHeight: 1.15, whiteSpace: "nowrap" }}>
                   {authUser.name}
                   {isAdmin && <span style={{ ...NAV_META, color: accent }}>Admin</span>}
                   {!isAdmin && authUser.role === "manager" && <span style={{ ...NAV_META, color: "#38BDF8" }}>Mgr</span>}
                 </div>
-                {/* Which deal this session is on — guest, date, venue — so the account zone still
-                    answers "who am I looking at?" once Event Info scrolls out of view (Browse/Build). */}
-                {mode === "studio" && (() => {
-                  const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
-                  const parts = [clientName.trim(), fmtDate(clientDate), venue].filter(Boolean);
-                  return parts.length > 0 ? <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", fontWeight: 500, whiteSpace: "nowrap" }}>{parts.join(" · ")}</div> : null;
-                })()}
               </div>
               <button onClick={doLogout} title="Log out" aria-label="Log out" style={NAV_ICON_BTN}><IconLogout size={NAV_ICON} /></button>
             </>}
@@ -7972,6 +8111,40 @@ export default function StudioApp() {
           );
         })()}
       </div>}
+
+      {/* ═══ THE DEAL LINE ═══
+          Which deal this session is on — guest, date, venue — so you can always answer "who am I
+          looking at?" once Event Info has scrolled out of view. It sat inside the header, stacked
+          under the account chip, which is what made that zone two rows tall and left it the first
+          thing to get squeezed whenever the bar ran short of room.
+          Out here it is on the page instead, on its own line, and the bar goes back to one row.
+          Step 0 is excluded: on Event Info these three fields are the form you are looking at. */}
+      {!bareEventInfo && mode === "studio" && authUser && step !== 0 && (() => {
+        const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
+        const parts = [clientName.trim(), fmtDate(clientDate), venue].filter(Boolean);
+        if (!parts.length) return null;
+        // position/z-index below are not decoration. Browse paints its page wash as a FIXED layer
+        // at z-index 0 across the whole viewport, and a positioned layer at 0 sits above the inline
+        // content of un-positioned blocks — so in normal flow this line was painted over and
+        // vanished completely. .sb-layout carries z-index 1 for exactly this reason; this needs the
+        // same or it is invisible on the step it matters most.
+        return (
+          <div style={{ position: "relative", zIndex: 1, display: "flex", justifyContent: "flex-end", padding: "12px 24px 0" }}>
+            {/* Plain text, no pill. It is a note about what you are looking at, not a control — and
+                everything else on this page that carries a border or a fill (Clear all, the filter
+                chips, the cards) is clickable. Giving this one the same treatment made it look like
+                a button that does nothing. */}
+            {/* Not textS. That is #8b8fa3, which the filter kit already measured at ~3.1:1 on this
+                page — below AA, and it showed: the line was there but you had to look for it.
+                Darker and heavier, since this is the one thing on screen naming whose event you
+                are building. */}
+            <div style={{ color: isDark ? "rgba(255,255,255,0.72)" : "#474D5E", fontSize: 12,
+              fontWeight: 700, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
+              {parts.join(" · ")}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MANAGE MODE — permission-gated */}
       {mode === "manage" && authUser && (() => {

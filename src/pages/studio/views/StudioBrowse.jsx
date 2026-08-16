@@ -1,10 +1,38 @@
-import { Fragment, useState, useRef } from "react";
+import { Fragment, useState, useRef, useEffect } from "react";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
   IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
 import { venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
+import { makeS } from "../../../lib/studio/styles";
+import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+
+// The panel's right edge. Event Info's gesture, but a FLATTER waist — 0.90 rather than 0.80.
+// Event Info's panel holds a logo and nothing else, so it can afford to lose a fifth of its width
+// at the middle. This one holds the whole filter list, and at 0.80 the curve ate the right edge of
+// every pill row. A shallower waist costs far less usable width, and at this narrower panel the
+// deeper curve read as a hard diagonal anyway rather than the soft sweep it is on a 560px column.
+// Waist deepened from 0.90 to 0.86. The right padding below goes 58 → 68 to pay for it: the curve's
+// true minimum sits a little inside the waist figure (the second cubic pulls to 0.845 before coming
+// back), so at 392px the edge reaches ~335px and the card has to stop short of that or the pill
+// rows get their right ends shaved — which is exactly what killed the 0.80 version.
+const SB_CURVE = "M0,0 H1 C1,0.18 0.875,0.28 0.86,0.46 C0.845,0.66 1,0.82 1,1 H0 Z";
+// The same edge as an OPEN path, for the gold line that traces it. It has to be separate: a
+// clip-path cuts a shape out, it does not draw one, so there is no border to colour — and a path
+// inside the clipped element would be sliced in half down its own middle. This one is drawn outside
+// the rail entirely, over the seam.
+const SB_EDGE = "M1,0 C1,0.18 0.875,0.28 0.86,0.46 C0.845,0.66 1,0.82 1,1";
+// The photograph behind it. Browse looks for its OWN file first and falls back to the shared panel
+// image — the two panels are the same height but not the same job (Event Info's holds a logo and
+// nothing else; this one holds a filter list under a glass card), so they get to differ. Naming the
+// Browse one separately also means changing it can never silently restyle Event Info.
+// Drop a file at src/assets/ambria-panel-browse.jpg to use it here; delete it and this falls
+// straight back to the shared one. Neither existing is fine too — the panel keeps its gradient.
+const PANEL_BG =
+  Object.values(import.meta.glob("../../../assets/ambria-panel-browse.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
+  Object.values(import.meta.glob("../../../assets/ambria-panel.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
+  null;
 
 export default function StudioBrowse({ ctx }) {
   // Which filter sections are expanded. All closed by default: six open sections made the panel
@@ -93,6 +121,36 @@ export default function StudioBrowse({ ctx }) {
   // Browse had no way to fold its filters, unlike Build. Same behaviour here: a Hide in the
   // panel header, and a slim tab on the edge to bring it back.
   const [filtersOpen, setFiltersOpen] = useState(true);
+  // My favourites, as a set — the tier pill on each card reads and writes this. favVideos is keyed
+  // videoId → userId → true, so a favourite is per salesperson: mine and a colleague's are
+  // independent, and browseVideos already floats them to the top of their group.
+  const myFavIds = new Set(Object.keys(favVideos || {}).filter(id => !!favVideos[id]?.[authUser?.id]));
+  // ═══ PAGINATION ═══
+  // 377 videos in one grid is 377 YouTube thumbnails and 377 cards on the page at once. 40 a page.
+  const PER_PAGE = 40;
+  const [page, setPage] = useState(1);
+  // Back to page 1 whenever the result set changes underneath — narrowing to 12 results while
+  // sitting on page 6 would otherwise show an empty grid. Keyed off a STRING of the filter state,
+  // not the arrays themselves: those are new identities on every render and would loop the effect.
+  const filterSig = JSON.stringify([
+    vq, venueGroup, outsideSub, browseVenues, filterFn, filterCat, filterSpace, filterMood,
+    filterPalette, activeFnIdx,
+  ]);
+  useEffect(() => { setPage(1); }, [filterSig]);
+  // ═══ THE HEADER, WHILE THE RAIL IS UP ═══
+  // The panel has always run from y=0 to the bottom of the viewport — it just painted BEHIND an
+  // opaque header (z-index 40 against 50), so its top 70-odd pixels were invisible and it read as
+  // starting under the bar. The header goes see-through across exactly the panel's width so the
+  // column reads as one piece from the very top. That needs a flag the header can see, and the
+  // header is a SIBLING of this view rather than an ancestor — so it goes on the root element
+  // instead of through ctx, and is removed on unmount so Build and Summary, which have no panel,
+  // never inherit a bar with a hole in it.
+  useEffect(() => {
+    const el = document.documentElement;
+    if (filtersOpen) el.setAttribute("data-sb-rail", "1");
+    else el.removeAttribute("data-sb-rail");
+    return () => el.removeAttribute("data-sb-rail");
+  }, [filtersOpen]);
   const railMaxH = useRailMaxHeight(railRef, railTop);
   // With nothing typed, search narrows what the left-rail filters already produced. The moment
   // something IS typed, the relationship flips: the search stands on its own, over the full
@@ -139,11 +197,16 @@ export default function StudioBrowse({ ctx }) {
       return ev.video; // fallback to generic playlist
     };
 
+    // Tier badge palette. Hoisted out of VideoCard because the featured banner badges the same
+    // three tiers — two copies of this drift the first time a tier is recoloured.
+    const tierColors = (t) => t === "Platinum" ? {bg:"#EDE9FE",color:"#7C3AED"}
+      : t === "Gold" ? {bg:"#FFFBEB",color:"#D97706"} : {bg:"#ECFDF5",color:"#059669"};
+
     // ═══ VIDEO CARD — browse tile sourced from ytVideoTags ═══
     const VideoCard = ({v}) => {
       const isPlatinum = v.tierCat === "Platinum";
       const priceTBD = v.price === null || v.price === undefined;
-      const tierColor = v.tierCat === "Platinum" ? {bg:"#EDE9FE",color:"#7C3AED"} : v.tierCat === "Gold" ? {bg:"#FFFBEB",color:"#D97706"} : {bg:"#ECFDF5",color:"#059669"};
+      const tierColor = tierColors(v.tierCat);
       const videoUrl = `https://www.youtube.com/embed/${v.id}`;
       return (
         <div className="sb-card" style={{...S.card,cursor:"default",display:"flex",flexDirection:"column",boxShadow:tileShadow}}>
@@ -154,19 +217,21 @@ export default function StudioBrowse({ ctx }) {
                 favFirst) — it then leads that venue's results ahead of every filter except function
                 type. Per salesperson (favVideos[id][myUserId]) — my favourites and a colleague's are
                 independent. Deliberately subtle (a thin red ring, no icon/label change): this can be
-                on screen in front of a guest, and the point is the salesperson recognising it, not them. */}
-            {v.tierCat&&(()=>{ const isFav = !!favVideos[v.id]?.[authUser?.id]; return (
+                on screen in front of a guest, and the point is the salesperson recognising it, not them.
+                The Saved button in the toolbar reads this same store, so the shortlist built here is
+                the list that button shows. */}
+            {v.tierCat&&(()=>{ const isFav = myFavIds.has(v.id); return (
               <div onClick={(e)=>{e.stopPropagation();saveFavVideos({[v.id]:{[authUser?.id]:isFav?null:true}});}}
                 title={isFav?"Favourited for this venue — click to remove":"Favourite for this venue (ranks first here, past every filter but function type)"}
                 style={{position:"absolute",top:10,right:10,background:tierColor.bg,color:tierColor.color,padding:"3px 10px",borderRadius:10,fontSize:10,fontWeight:600,zIndex:3,cursor:"pointer",boxShadow:isFav?"0 0 0 2px #EF4444":"none"}}>{v.tierCat}</div>
             ); })()}
-            {/* Fix tags takes the corner the AI badge used to hold. Below the fold it had a row to
-                itself holding one small control, which was mostly empty space; up here it costs
-                nothing. Dark translucent pill so it stays legible over any thumbnail, and it stops
-                propagation so it never opens the video. */}
+            {/* Fix tags is internal — this screen gets turned toward a client, and "Fix tags" on
+                every tile is the one thing on it that says the library might be wrong. It now
+                appears on hover only, in the corner the price doesn't use. Forced visible on touch,
+                where there is no hover and it would otherwise be unreachable. */}
             <button className="sb-fix" onClick={(e)=>{e.stopPropagation();setTaxVenueGroup("");setTaxOutsideSub("all");setTaxFixVid(v.id);}}
               title="This video is tagged wrong? Fix its taxonomy"
-              style={{position:"absolute",top:10,left:10,zIndex:3,padding:"3px 9px",borderRadius:10,
+              style={{position:"absolute",bottom:10,right:10,zIndex:3,padding:"3px 9px",borderRadius:10,
                 border:"1px solid rgba(255,255,255,0.35)",background:"rgba(0,0,0,0.55)",backdropFilter:"blur(4px)",
                 color:"#fff",fontSize:9.5,fontWeight:600,cursor:"pointer",lineHeight:1.5}}>Fix tags</button>
             <div style={{position:"absolute",bottom:10,left:10,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:600,zIndex:3}}>
@@ -174,20 +239,32 @@ export default function StudioBrowse({ ctx }) {
             </div>
           </div>
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
-            <div className="sb-title" style={{fontSize:14,fontWeight:600,marginBottom:3,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
+            <div className="sb-title" style={{fontSize:15.5,fontWeight:600,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
             <div style={{fontSize:11,color:textS,marginBottom:6}}>{[v.venue, v.fn, v.space].filter(Boolean).join(" · ") || "Untagged"}</div>
             {/* The style/palette chips and the "needs zone photos" strip both came off the card —
                 three stacked rows of metadata between the title and the buttons made the grid read
                 as dense text rather than as pictures. The tags are still on the video (and still
                 filterable from the rail); the unpriced state still shows as the "Price TBD" badge
                 on the thumbnail, and Fix tags moved up onto the thumbnail with it. */}
-            <div style={{marginTop:"auto",display:"flex",gap:6}}>
+            {/* ── ACTIONS ──
+                Two filled buttons per tile, forty tiles to a page, was eighty solid rectangles on
+                one screen — the grid read as a control panel rather than as photographs. Same two
+                actions, far less weight: the primary becomes a text link, and Exact Look becomes
+                the icon beside it. Nothing was dropped, and the Platinum gate still takes the
+                whole row because it is a refusal, not an option. */}
+            <div style={{marginTop:"auto",paddingTop:10,borderTop:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
               {isPlatinum?(
-                <div onClick={(e)=>{e.stopPropagation();setPremiaGate({ev:{id:v.id,name:v.title,video:`https://www.youtube.com/embed/${v.id}`}});}} className="sb-gate" style={{width:"100%",padding:"8px 12px",borderRadius:8,background:"linear-gradient(135deg,#EDE9FE,#F5F3FF)",textAlign:"center",fontSize:11,color:"#7C3AED",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCrown size={13}/>Sr. Designer Only</div>
+                <div onClick={(e)=>{e.stopPropagation();setPremiaGate({ev:{id:v.id,name:v.title,video:`https://www.youtube.com/embed/${v.id}`}});}} className="sb-gate" style={{width:"100%",padding:"7px 12px",borderRadius:8,background:"linear-gradient(135deg,#EDE9FE,#F5F3FF)",textAlign:"center",fontSize:11,color:"#7C3AED",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCrown size={13}/>Sr. Designer Only</div>
               ):(
                 <Fragment>
-                  <button className="sb-cta" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}} style={{flex:1,padding:"8px 0",borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#B8944F)",color:"#fff",border:"none",fontSize:11,fontWeight:700,cursor:"pointer"}}>Customize</button>
-                  {!priceTBD&&<button className="sb-alt" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}} style={{flex:1,padding:"8px 0",borderRadius:8,border:`1.5px solid ${accentText}`,background:"transparent",color:accentText,fontSize:11,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><IconClipboard size={13}/>Exact Look</button>}
+                  <button className="sb-vc" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}}
+                    title="Load this as the reference and start building"
+                    style={{border:"none",background:"transparent",padding:0,color:accentText,fontSize:11.5,fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6,letterSpacing:0.2}}>
+                    Customize<span className="sb-vc-arrow" style={{display:"inline-block"}}>→</span>
+                  </button>
+                  {!priceTBD&&<button className="sb-icb" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}}
+                    title="Exact Look — load this build as-is and jump straight to the summary"
+                    style={{width:28,height:28,flexShrink:0,borderRadius:8,padding:0,border:`1px solid ${border}`,background:"transparent",color:textS,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><IconClipboard size={13}/></button>}
                 </Fragment>
               )}
             </div>
@@ -328,7 +405,42 @@ export default function StudioBrowse({ ctx }) {
     // ═══ FILTER PANEL PRESENTATION ═══
     // Now sourced from components/studio/filterUI.jsx so Browse and Build share one panel
     // implementation and cannot drift apart. Emits identical markup to the previous inline copy.
-    const { hairline, gold, textM, ghostPill, seeMorePill, Pill, Section: FSection, SearchBox: FSearchBox, css: filterCSS } = makeFilterUI({ isDark, accent, textP, S });
+    // ═══ THE FILTER KIT, DARK ═══
+    // The filters now live on the panel's ink rather than on the cream page. makeFilterUI is
+    // already parameterised by isDark and caches per (isDark, accent, textP), so asking it for the
+    // dark skin re-colours every pill, header, count chip and search box WITHOUT touching a line of
+    // the filter markup below — and therefore without touching any filter logic. S comes from
+    // makeS(true) so the kit's inputs and cards match.
+    const PANEL_INK = "#F5F1E7";
+    const { hairline, gold, textM, ghostPill, seeMorePill, Pill, Section: FSection, SearchBox: FSearchBox, css: filterCSS } =
+      makeFilterUI({ isDark: true, accent, textP: PANEL_INK, S: makeS(true) });
+    // Panel-local tokens for the markup in THIS file that doesn't come from the kit.
+    // The card ground used to be rgba(255,255,255,0.04) — a 4% white wash over a photograph of
+    // candles and flowers, which is no surface at all: the picture read straight through it and the
+    // whole filter list looked like text floating on the panel. This is an actual ground, dark
+    // enough to sit the labels on and translucent enough (with the blur below) to keep the
+    // photograph as depth behind it rather than losing it.
+    // Glass is a LIGHT surface, not a dark one. The previous pass made this a dark translucent
+    // ground, which on an almost-black panel is a darker rectangle on a dark rectangle — the exact
+    // problem it was trying to fix, inverted. Over near-black ink a pale film is what separates,
+    // and it is also what glass actually is: it picks up light, it does not absorb it.
+    const pBorder = "rgba(255,255,255,0.17)";
+    const pCard   = "rgba(255,255,255,0.06)";
+    const pTextS  = "rgba(245,241,231,0.62)";
+    // ═══ GOLD, ON THE PAGE ═══
+    // The kit's `gold` is #D9BE86 because it was asked for the DARK skin — correct inside the ink
+    // panel, and far too pale the moment it is used on the cream page, where it sits at roughly 2:1
+    // and reads as a smudge. Everything on the light side needs its own value: same hue, dropped
+    // far enough to actually hold against the background.
+    const pageGold = isDark ? "#D9BE86" : "#8A6A2F";
+    // Same story for the muted text and the ghost pill. The kit's textM is #A6ADC0 and its hairline
+    // is 8% WHITE — both correct on ink, both close to invisible on cream. That is why the filter
+    // count read as a whisper and the Clear all pill looked borderless on the page while the
+    // identical pill inside the panel looked fine.
+    const pageTextM = isDark ? "#A6ADC0" : "#4F5568";
+    const pageGhost = { ...ghostPill, color: pageTextM,
+      border: `1px dashed ${isDark ? "rgba(255,255,255,0.20)" : "rgba(26,26,46,0.30)"}`, fontWeight: 700 };
+
 
     // How many filters each section is applying — surfaced as a count chip on the section header
     // so you can tell at a glance which groups are narrowing the results.
@@ -339,6 +451,53 @@ export default function StudioBrowse({ ctx }) {
       mood: filterMood.length, palette: filterPalette.length,
     };
     const activeTotal = Object.values(sectionCounts).reduce((a, b) => a + b, 0);
+
+    // ═══ THE CURRENT PAGE ═══
+    // Clamped, so a filter that shrinks the results below the page you were on lands you on the
+    // last real page instead of an empty grid.
+    const totalPages = Math.max(1, Math.ceil(shownVideos.length / PER_PAGE));
+    const safePage = Math.min(page, totalPages);
+    const pageVideos = shownVideos.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+    const pageFrom = shownVideos.length ? (safePage - 1) * PER_PAGE + 1 : 0;
+    const pageTo = Math.min(safePage * PER_PAGE, shownVideos.length);
+
+    // There is deliberately no featured banner here. The reference design had one, but it carried a
+    // hand-written blurb under a curated title — editorial content this app has no way to author.
+    // Filling that shape with shownVideos[0] meant a ~340px banner promoting whichever video
+    // happened to be tagged first, frequently one with no zone photos (so: "Price TBD", and a dead
+    // end in Build). This page's job is scanning many options to pick one, and a large card
+    // repeating the first result costs the most valuable space on it to help with none of that.
+
+    const Pager = () => {
+      if (totalPages <= 1) return null;
+      // A window of five around the current page, with first/last always reachable — 377 videos is
+      // 10 pages today and a numbered strip of every page would only get longer as the library does.
+      const win = [];
+      for (let p = Math.max(1, safePage - 2); p <= Math.min(totalPages, safePage + 2); p++) win.push(p);
+      if (win[0] > 1) win.unshift(1);
+      if (win[win.length - 1] < totalPages) win.push(totalPages);
+      const btn = (on) => ({ minWidth: 30, padding: "5px 9px", borderRadius: 8, fontSize: 11.5,
+        fontWeight: on ? 700 : 500, cursor: "pointer", whiteSpace: "nowrap",
+        border: `1px solid ${on ? accent : border}`, background: on ? accent : cardBg,
+        color: on ? (isDark ? "#1a1a2e" : "#fff") : textP });
+      // Back to the top of the grid on every page change — landing halfway down page 3 because
+      // that is where you were on page 2 reads as the page not having changed at all.
+      const go = (p) => { setPage(p); try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { window.scrollTo(0, 0); } };
+      return (
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"center",padding:"4px 0"}}>
+          <button type="button" onClick={()=>go(safePage-1)} disabled={safePage<=1}
+            style={{...btn(false),opacity:safePage<=1?0.4:1,cursor:safePage<=1?"default":"pointer"}}>← Prev</button>
+          {win.map((p,i)=>(
+            <Fragment key={p}>
+              {i>0 && win[i-1] !== p-1 && <span style={{color:textM,fontSize:11,padding:"0 2px"}}>…</span>}
+              <button type="button" onClick={()=>go(p)} style={btn(p===safePage)}>{p}</button>
+            </Fragment>
+          ))}
+          <button type="button" onClick={()=>go(safePage+1)} disabled={safePage>=totalPages}
+            style={{...btn(false),opacity:safePage>=totalPages?0.4:1,cursor:safePage>=totalPages?"default":"pointer"}}>Next →</button>
+        </div>
+      );
+    };
 
     const clearAllFilters = () => {
       setVenueGroup("all"); setBrowseVenues([]); setOutsideSub("all"); setShowMoreOutside(false);
@@ -387,19 +546,46 @@ export default function StudioBrowse({ ctx }) {
 .sb-play{transition:transform .22s ease, background .22s ease, box-shadow .22s ease}
 .sb-card:hover .sb-play{transform:scale(1.16);background:rgba(255,255,255,0.5) !important;
   box-shadow:0 6px 18px rgba(0,0,0,0.35)}
-.sb-card:hover .sb-title{color:${gold}}
-.sb-title{transition:color .18s ease}
-/* Actions had no hover at all — the primary now brightens and casts, the outline fills. */
-.sb-cta,.sb-alt,.sb-gate{transition:filter .16s ease, background .16s ease, box-shadow .18s ease, transform .14s ease}
-.sb-cta:hover{filter:brightness(1.09);box-shadow:0 8px 18px -7px rgba(201,169,110,0.95) !important;transform:translateY(-1px)}
-.sb-alt:hover{background:${isDark?"rgba(201,169,110,0.14)":"#F6E7C8"} !important;transform:translateY(-1px)}
+.sb-card:hover .sb-title{color:${pageGold}}
+/* ══ TYPOGRAPHY ══
+   Card titles stay in the SANS. They were briefly set in Playfair to match Event Info's card
+   headings, and it was wrong for this content: those headings are two clean words ("Client
+   Details"), while these are 15-word YouTube titles carrying pipes, quotation marks and ampersands.
+   A high-contrast display serif makes that look messier, not more considered.
+   The size and spacing from that attempt are worth keeping — 15.5px with a tighter measure reads
+   as a title rather than a filename. The serif is reserved for the page title, where it belongs. */
+.sb-title{transition:color .18s ease;letter-spacing:-0.1px;line-height:1.34}
+/* Section headings and the count line: wider tracking, and the gold rather than grey, so they read
+   as labels on a designed page rather than as debug text above a grid. */
+.sb-sect-head{font-family:'Outfit',system-ui,sans-serif !important;
+  letter-spacing:1.6px;text-transform:uppercase;font-weight:700}
+/* ══ CARD ACTIONS ══
+   A text link and an icon, so forty tiles are forty photographs rather than eighty buttons. The
+   link's arrow travels on hover — the only motion it needs to read as clickable at this weight. */
+.sb-vc,.sb-icb,.sb-gate{transition:filter .16s ease, background .16s ease, border-color .16s ease, color .16s ease, box-shadow .18s ease, transform .14s ease}
+.sb-vc-arrow{transition:transform .18s ease}
+.sb-vc:hover .sb-vc-arrow{transform:translateX(4px)}
+.sb-icb:hover{border-color:${accent} !important;color:${accent} !important;
+  background:${isDark?"rgba(201,169,110,0.14)":"#FCF7EC"} !important}
+.sb-icb:active{transform:scale(0.94)}
 .sb-gate:hover{filter:brightness(0.97);box-shadow:0 8px 18px -8px rgba(124,58,237,0.5) !important}
-.sb-cta:active,.sb-alt:active{transform:translateY(0) scale(0.98)}
-/* Fix tags now sits on the thumbnail, where the card's own :hover lift is the only feedback it
-   would otherwise get — it needs its own so it reads as a control and not a label. */
-.sb-fix{transition:background .15s ease, border-color .15s ease}
+/* Hide, in the panel's top-right. Quiet until you go near it — it sits over a photograph and a
+   solid control up there would compete with the logo. */
+.sb-hide-top{transition:background .16s ease, border-color .16s ease, color .16s ease}
+.sb-hide-top:hover{background:rgba(0,0,0,0.62) !important;border-color:rgba(255,255,255,0.34) !important;
+  color:#F5F1E7 !important}
+.sb-hide-top:active{transform:scale(0.96)}
+/* ══ FIX TAGS ══
+   Internal, on a screen that gets turned toward a client — so it appears on hover and nowhere
+   else. Touch has no hover, so it stays put there (see the coarse-pointer block below), and
+   keyboard focus brings it back for anyone who never uses a mouse. */
+.sb-fix{opacity:0;transition:opacity .18s ease, background .15s ease, border-color .15s ease}
+.sb-card:hover .sb-fix,.sb-fix:focus-visible{opacity:1}
 .sb-fix:hover{background:rgba(0,0,0,0.78) !important;border-color:rgba(255,255,255,0.7) !important}
 .sb-fix:active{transform:scale(0.96)}
+/* The featured banner's styles went with the banner itself — see the note where it used to be
+   computed. .sb-hero-face stays: it is the display serif, and the page title and the section
+   heading both still use it. */
 /* The session banner cards use .sb-rcard, which now lives in makeFilterUI so Build's reference
    banner shares one definition with it. Only the banner's ACTIONS are Browse-specific: the outline
    button tints with its OWN colour via currentColor, so one rule serves the amber and indigo card. */
@@ -415,29 +601,253 @@ export default function StudioBrowse({ ctx }) {
    sticky full-height rail beside a 550px grid is worse than one you scroll past once. Its own
    max-height (set inline from the viewport) is overridden there, or it would keep a tall scroll
    region in a strip that is now only a few rows deep. */
+/* Same display serif as Event Info's title, so the two steps are set in one voice. !important
+   because StudioApp sets font-family on the universal selector with !important. */
+.sb-hero-face{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;font-style:italic}
+/* The ◇ divider from Event Info's title — solid run, diamond, then a fade so it does not read as
+   an underline that got cut off. Weighted up from 1.5px to 2.5px and set in the page gold rather
+   than the panel's: at a hairline in #D9BE86 on cream it was closer to a scuff on the screen than
+   to a rule. The diamond grew with it — a 6px lozenge on a 2.5px line looked like a kink in the
+   line rather than a mark on it. */
+.sb-title-rule{display:flex;align-items:center;gap:9px;margin-top:15px;width:100%;max-width:520px}
+.sb-tr-seg{height:2.5px;border-radius:2px;width:80px;flex-shrink:0;background:${pageGold}}
+.sb-tr-dia{width:8px;height:8px;flex-shrink:0;transform:rotate(45deg);background:${pageGold}}
+.sb-tr-fade{height:2.5px;border-radius:2px;flex:1;background:linear-gradient(90deg,${pageGold},${pageGold}A6 58%,transparent)}
+/* ══ THE PAGE WASH ══
+   Event Info's warm ground, brought across so the two steps share one surface. Fixed rather than
+   absolute: this view scrolls the whole page, and an absolute layer would scroll its colour away
+   and leave the lower half on bare cream. z-index -1 and no pointer events — it sits under
+   everything and can never take a click. */
+/* z-index 0, NOT -1. A negative index put this behind S.app's own opaque cream background, which
+   painted straight over it — the ground was being drawn and then buried. At 0 it sits above that
+   background, and .sb-layout below is lifted to 1 so the content still clears it. */
+.sb-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:${isDark?"#0F0F1A":"#FAF9F6"}}
+.sb-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+.sb-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--sb-pw) - 150px);
+  border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
+  background:radial-gradient(circle,rgba(201,169,110,0.38) 0%,rgba(201,169,110,0) 70%)}
+.sb-wash-b{width:640px;height:700px;top:110px;right:-170px;
+  border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
+  background:radial-gradient(circle,rgba(214,158,140,0.32) 0%,rgba(214,158,140,0) 72%)}
+.sb-wash-c{width:740px;height:660px;top:540px;left:calc(var(--sb-pw) + 12%);
+  border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
+  background:radial-gradient(circle,rgba(124,92,214,0.20) 0%,rgba(124,92,214,0) 74%)}
+/* ══ THE TOP SHEEN ══
+   The strip directly under the bar was bare cream. Every blob starts at or below y=110 and the
+   band SVG's first path sits at y=50 of 960, so the first ~110px of the page had nothing in it at
+   all — which is exactly the band the eye lands on first, and where the deal line and the filter
+   count sit. Same drifting gradient the header carries, so the two read as one surface across the
+   seam. A div, not a span, so the blob rule above does not also catch it and blur it to 80px.
+   multiply because the page is light: it tints the cream rather than laying a film over it. */
+.sb-wash-top{position:absolute;top:0;left:0;right:0;height:330px;pointer-events:none;
+  mix-blend-mode:multiply;filter:blur(34px);
+  background:linear-gradient(100deg,
+    rgba(124,92,214,0) 0%,
+    rgba(201,169,110,0.22) 22%,
+    rgba(214,158,140,0.17) 50%,
+    rgba(124,92,214,0.19) 76%,
+    rgba(124,92,214,0) 100%);
+  background-size:230% 100%;
+  animation:sbSheen 30s ease-in-out infinite alternate}
+@keyframes sbSheen{from{background-position:0% 50%}to{background-position:100% 50%}}
+/* Blurred hard, which is what turns five stroked paths into folds of light rather than five fat
+   curves. Static, so the blur is rasterised once. An svg, not a span, so the blob rule above
+   (which targets spans) does not also catch it. */
+.sb-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
+/* Over the bands, so the chalk falls on them and the surface reads as printed rather than airbrushed. */
+.sb-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
+  background-image:${GRAIN_URL};background-size:220px 220px}
+/* Each band drifts on its own clock, same as Event Info's. transform-box:view-box pins the
+   transform to the SVG's own units, so the travel means user units and not screen pixels.
+   alternate plays the keyframes backwards on the return leg, so the motion reverses smoothly and
+   never has to land back on its start — and the durations share no common factor, so the five
+   never line up into a single pulse. */
+.sb-band{transform-box:view-box;transform-origin:center;will-change:transform}
+.sb-band-0{animation:sbBand0 34s ease-in-out infinite alternate}
+.sb-band-1{animation:sbBand1 45s ease-in-out infinite alternate}
+.sb-band-2{animation:sbBand2 38s ease-in-out infinite alternate}
+.sb-band-3{animation:sbBand3 53s ease-in-out infinite alternate}
+.sb-band-4{animation:sbBand4 41s ease-in-out infinite alternate}
+@keyframes sbBand0{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-72px,18px) scaleY(1.1)}}
+@keyframes sbBand1{from{transform:translate(0,0) scaleY(1.06)}to{transform:translate(86px,-24px) scaleY(0.94)}}
+@keyframes sbBand2{from{transform:translate(0,0) scaleY(0.96)}to{transform:translate(-94px,14px) scaleY(1.12)}}
+@keyframes sbBand3{from{transform:translate(0,0) scaleY(1.08)}to{transform:translate(64px,-30px) scaleY(0.95)}}
+@keyframes sbBand4{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-78px,22px) scaleY(1.09)}}
+/* ══ THE PANEL ══
+   The filter rail is now the dark column from the reference. It keeps every behaviour it already
+   had — sticky, capped to the viewport, scrolling its own body — and only gains a ground, a curve
+   and padding. Extra right padding because the curve eats into that edge and controls sitting
+   under it would be unreachable.
+   The scrollbar is hidden rather than styled: a light scrollbar track down the middle of the ink
+   cuts the panel in half, and the panel already scrolls to its content. */
+/* Fixed to the viewport's left edge and full height, like Event Info's — a panel that stops short
+   of the screen edge, or ends where its content ends, reads as a sidebar rather than as the page's
+   own ground. It keeps its internal scroll, so a long filter list still scrolls inside it.
+   Extra right padding: the curve eats that edge, and a pill sitting under it would be unclickable. */
+/* top, height and padding-top are set INLINE — see the note there. The panel deliberately runs the
+   full height of the viewport and passes behind the header, so no edge has to be aligned. */
+/* box-sizing explicitly: the width is --sb-pw and the content is offset by --sb-pw, so the padding
+   HAS to be inside that width. Left to content-box the 84px of horizontal padding made the real
+   panel 84px wider than the offset, and the curve sat on top of the first column of cards. */
+.sb-rail{position:fixed !important;left:0;box-sizing:border-box;
+  max-height:none !important;border-radius:0;clip-path:url(#sbBrandCurve);z-index:40;
+  background:linear-gradient(160deg,#0F0F1A 0%,#191430 52%,#241a46 100%);
+  padding:18px 68px 20px 22px;overflow-y:auto;scrollbar-width:none;isolation:isolate}
+.sb-rail::-webkit-scrollbar{display:none}
+.sb-rail > *{position:relative;z-index:2}
+/* The photograph sits behind everything, overflowing by 4% so no scale rounding can leave a strip
+   of gradient down an edge. */
+.sb-rail-img{position:absolute;inset:-4%;z-index:0;background-size:cover;background-position:center}
+/* A scrim, not a vignette: the picture is busy and bright in places, and the filter labels have to
+   stay readable wherever they land on it. */
+/* Tuned to THIS photograph rather than to a generic one, and the stops run the opposite way to
+   where they started. The image is a night shot whose top half is essentially pure black and whose
+   candles, roses and glassware all sit in the bottom 45% — so the old heavy-at-both-ends scrim was
+   darkening a region that was already black, and then smothering the only part worth showing.
+   It now stays light where the picture lives. Nothing sits directly on the panel but the Hide
+   button (the filter card brings its own ground), so the veil only has to stop the photograph
+   competing with the grid — it does not have to carry type. */
+.sb-rail-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:linear-gradient(180deg,rgba(9,9,20,0.52) 0%,rgba(11,9,24,0.44) 40%,rgba(9,9,20,0.34) 72%,rgba(9,9,20,0.46) 100%)}
+/* ══ DEPTH ══
+   The cast shadow: z-index 39 — above the page so the shadow actually lands on it, below the panel
+   (40) so the panel covers everything but the bleed past its edge. Nudged right so the light reads
+   as coming from the left. Nothing in it animates, so the blur is rasterised once. */
+.sb-rail-shadow{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:39;
+  pointer-events:none;filter:blur(24px);opacity:.55;transform:translateX(9px)}
+.sb-rail-shadow svg{display:block;width:100%;height:100%}
+/* The gold line on the seam. drop-shadow rather than a second wider path: it follows the stroke's
+   own alpha, so the bloom tracks the gradient's fade at both ends instead of glowing evenly along a
+   line that is meant to be dying out. overflow visible because the path sits ON x=1 — half the
+   stroke falls outside the viewBox and would otherwise be clipped away down its length. */
+.sb-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:41;
+  pointer-events:none;filter:drop-shadow(0 0 5px rgba(201,169,110,0.45)) drop-shadow(0 0 14px rgba(201,169,110,0.22))}
+.sb-rail-edge svg{display:block;width:100%;height:100%;overflow:visible}
+/* A lit edge down the left, and the cards inside lifted off the photograph. Together these are
+   what stop the panel reading as a flat cut-out: something catching light on one side, and
+   contents sitting ABOVE the surface rather than printed onto it. */
+.sb-rail::after{content:"";position:absolute;top:0;bottom:0;left:0;width:1px;z-index:3;
+  pointer-events:none;background:linear-gradient(180deg,transparent,rgba(255,255,255,0.14) 22%,rgba(255,255,255,0.14) 78%,transparent)}
+/* ══ GLASS ══
+   Four things together make this read as glass rather than as a translucent box, and it needs all
+   four: a heavy blur so what shows through is colour and not detail; saturation pushed past 100 so
+   the warm light behind it stays warm instead of going grey the way a plain blur leaves it; a
+   diagonal sheen, because real glass is lit unevenly and a flat fill never looks like a pane; and a
+   bright top edge with a dark cast below, which is what puts it ABOVE the panel instead of in it.
+   background-image carries !important because the inline background shorthand that sets the tint
+   also resets background-image to none, and inline beats a plain stylesheet rule. */
+.sb-rail .sb-panel{
+  backdrop-filter:blur(26px) saturate(165%);-webkit-backdrop-filter:blur(26px) saturate(165%);
+  background-image:linear-gradient(147deg,rgba(255,255,255,0.11) 0%,rgba(255,255,255,0.025) 46%,rgba(255,255,255,0.06) 100%) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.24), inset 0 -1px 0 rgba(255,255,255,0.05),
+    0 2px 6px rgba(0,0,0,0.34), 0 22px 48px -16px rgba(0,0,0,0.8)}
+.sb-rail .sb-panel:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -1px 0 rgba(255,255,255,0.05),
+  0 2px 6px rgba(0,0,0,0.38), 0 26px 56px -16px rgba(0,0,0,0.85) !important}
+/* The warm catch in the top-left corner — the one thing that stops a glass panel reading as flat
+   plastic. Gold, because that is the light the rest of the app is lit by. Sits over the whole card
+   including its header, which is correct: a sheen falls across a pane, not around its contents. */
+.sb-rail .sb-panel::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
+  border-radius:inherit;
+  background:radial-gradient(130% 62% at 0% 0%,rgba(201,169,110,0.15) 0%,rgba(201,169,110,0.04) 38%,transparent 68%)}
+/* Section rows get a radius so the kit's hover fill reads as a tile on the pane rather than a band
+   running edge to edge across it. */
+.sb-rail .sb-panel .sb-head{border-radius:8px}
+/* The kit's 8%-white section rules were drawn for a solid dark card. On a pale pane they vanish and
+   the six sections run together as one list. Only the colour is touched — the last section sets
+   border-style:none inline, so it stays borderless. */
+.sb-rail .sb-panel .sb-scroll > div{border-bottom-color:rgba(255,255,255,0.13) !important}
+/* The small cards that share the rail — the session banner and its history — get the same
+   treatment at a lighter weight, so the panel holds one family of surfaces rather than three. */
+.sb-rail .sb-rcard,.sb-rail .sb-hist{backdrop-filter:blur(16px) saturate(150%);
+  -webkit-backdrop-filter:blur(16px) saturate(150%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.14), 0 10px 26px -12px rgba(0,0,0,0.7)}
+/* The content clears the fixed panel. --sb-pw is the one number: panel width and content offset.
+   The offset is the panel width PLUS a gutter, not equal to it — the curve reaches the panel's full
+   width at its top and bottom, so content starting exactly at --sb-pw touches it there. */
+/* --sb-pw lives on :root, not on .sb-view, because the HEADER needs it too and the header is a
+   sibling of this view rather than a descendant. Only defined while Browse is mounted — this whole
+   stylesheet unmounts with the view. */
+:root{--sb-pw:392px}
+.sb-layout{margin-left:calc(var(--sb-pw) + 30px);position:relative;z-index:1}
+/* ══ THE HEADER, OVER THE PANEL ══
+   The bar is see-through across the panel's width so the panel shows through and the column reads
+   as one piece from the top of the screen.
+   The FIRST attempt at this set background:transparent on the header and repainted the navy with a
+   pseudo-element — which left the bar with no background of its own, so the one thing that could
+   go wrong took the whole header down onto the cream page, account block and all. This does it in
+   the header's OWN background instead: one gradient, transparent up to --sb-pw and solid after it.
+   The var() fallback is the safety. If --sb-pw ever fails to resolve it reads 0px, both stops
+   collapse to the left edge, and the bar paints solid across its full width — the old, correct
+   header. There is no state in which this produces a transparent navbar.
+   A straight vertical cut is honest here: the curve is still at 99.4% of the panel's width by the
+   time it reaches the bottom of the bar, so within this band the edge IS vertical.
+   The bottom border goes transparent — a gold hairline carrying on across the panel would read as
+   a seam cutting it in half. */
+:root[data-sb-rail="1"] .sa-header{border-bottom-color:transparent !important;
+  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) var(--sb-pw,0px),
+    ${isDark?"#101020":"#100A22"} var(--sb-pw,0px),${isDark?"#0B0B14":"#1C1242"} 100%) !important}
+/* Hidden panel, no reserved gutter. The offset above is plain CSS keyed to --sb-pw, so folding the
+   rail used to leave its 392px behind as empty page — the grid stayed exactly where it was and the
+   only thing Hide achieved was removing the filters. Zeroing the variable hands that width to the
+   grid, which is the entire point of the control. Two classes deep so it beats the tablet
+   breakpoints below, whichever order they land in. */
+.sb-view.sb-folded{--sb-pw:0px}
 @media (max-width:1180px){
   .sb-layout{gap:16px}
-  .sb-rail{width:210px !important}
+  :root{--sb-pw:300px}
+  .sb-rail{padding:14px 52px 16px 16px}
 }
 @media (max-width:840px){
-  .sb-layout{flex-direction:column}
-  .sb-rail{width:100% !important;position:static !important;max-height:none !important}
+  /* Portrait: a fixed column can't work, so the panel returns to the flow as a full-width block
+     and the curve is dropped — a vertical curve across a horizontal band cuts it diagonally. The
+     cast shadow goes with the curve it was tracing. */
+  /* Portrait puts the rail back in the flow as a full-width block, so --sb-pw goes to 0 — which
+     also, correctly, closes the hole in the header: there is no fixed panel for it to show. */
+  :root{--sb-pw:0px}
+  /* The gold line traces the curve, so it goes wherever the curve goes. */
+  .sb-rail-shadow,.sb-rail-edge{display:none}
+  .sb-rail::after{display:none}
+  .sb-layout{flex-direction:column;margin-left:0}
+  .sb-rail{width:100% !important;position:static !important;height:auto !important;
+    clip-path:none;border-radius:0 0 26px 26px;padding:14px 18px 16px}
 }
 @media (pointer: coarse){
   .sb-pill{min-height:34px}
+  /* No hover on touch — Fix tags would be unreachable, and the heart and icon button need a
+     finger-sized target rather than a 28px one. */
+  .sb-fix{opacity:1}
+  .sb-icb{width:34px;height:34px}
 }
 @media (prefers-reduced-motion: reduce){
-  .sb-pill,.sb-head,.sb-card,.sb-thumb,.sb-play,.sb-title,.sb-cta,.sb-alt,.sb-gate,.sb-rcard,.sb-bnr-btn{transition:none}
-  .sb-pill:hover,.sb-card:hover,.sb-cta:hover,.sb-alt:hover,.sb-pill:active,.sb-bnr-btn:hover,.sb-bnr-btn:active,.sb-rcard:hover{transform:none}
-  .sb-card:hover .sb-thumb,.sb-card:hover .sb-play{transform:none}
+  /* The ground keeps its colour, it just stops drifting. */
+  .sb-band,.sb-wash-top{animation:none}
+  .sb-pill,.sb-head,.sb-card,.sb-thumb,.sb-play,.sb-title,.sb-vc,.sb-icb,.sb-gate,.sb-rcard,.sb-bnr-btn,.sb-vc-arrow{transition:none}
+  .sb-pill:hover,.sb-card:hover,.sb-icb:hover,.sb-pill:active,.sb-bnr-btn:hover,.sb-bnr-btn:active,.sb-rcard:hover{transform:none}
+  .sb-card:hover .sb-thumb,.sb-card:hover .sb-play,.sb-vc:hover .sb-vc-arrow{transform:none}
   .sb-head span[style*="rotate"]{transition:none}}
 `;
 
     return (
       // maxWidth was S.main's 1200, which left ~350px of dead gutter either side on a desktop
       // monitor and pushed the filter panel far off the left edge. Wider cap + a roomier sidebar.
-      <div style={{...S.main,maxWidth:1800,display:"flex",flexDirection:"column",gap:0}}>
+      <div className={filtersOpen?"sb-view":"sb-view sb-folded"} style={{...S.main,maxWidth:1800,display:"flex",flexDirection:"column",gap:0}}>
         <style>{browseCSS}</style>
+        {/* The page's own ground — see .sb-wash. Never receives a click. */}
+        <div className="sb-wash" aria-hidden="true">
+          <span className="sb-wash-a"/><span className="sb-wash-b"/><span className="sb-wash-c"/>
+          {/* Fills the bare strip under the header — see .sb-wash-top. */}
+          <div className="sb-wash-top"/>
+          {/* The same wave bands and chalk grain Event Info is drawn on, from the shared module —
+              the colour fields alone left this page looking flatter than that one. */}
+          <svg className="sb-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
+            {WASH_BANDS.map((b,i)=>(
+              <path key={i} className={`sb-band sb-band-${i}`} d={b.d} fill="none" stroke={b.c}
+                strokeOpacity={b.o} strokeWidth={b.w} strokeLinecap="round"/>
+            ))}
+          </svg>
+          <i className="sb-grain"/>
+        </div>
         {/* The "Active function" strip is gone. On a multi-function event the function pills in the
             sticky header already show which one is selected, so this was a full-width bar restating
             it — and it pushed the filters and the first row of videos down to say so. */}
@@ -464,8 +874,79 @@ export default function StudioBrowse({ ctx }) {
             <span style={{display:"flex",color:textS,transform:"rotate(-90deg)"}}><IconChevron size={11}/></span>
           </div>
         )}
-        {filtersOpen && <div ref={railRef} className="sb-rail" style={{width:248,flexShrink:0,position:"sticky",top:railTop,alignSelf:"flex-start",
-          maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:10}}>
+        {/* The shadow the curved edge throws onto the page. Not box-shadow: the clip-path cuts that
+            away with the shape, so it would trace a rectangle rather than the curve. Not
+            filter:drop-shadow on the panel either — that re-rasterises a full-height column holding
+            a photograph and a scrolling filter list on every frame. This is the same path, filled
+            once and blurred, sitting between the page and the panel. */}
+        {filtersOpen && <div className="sb-rail-shadow" aria-hidden="true">
+          <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false"><path d={SB_CURVE} fill="#0B0B16"/></svg>
+        </div>}
+        {/* ── THE GOLD EDGE ──
+            Drawn OVER the panel (z-index 41 against its 40) and outside it, so the rail's own
+            clip-path can't halve it. preserveAspectRatio none stretches a 1×1 box to the panel, which
+            would normally stretch the stroke with it into a wedge — vector-effect pins the width to
+            screen pixels instead, so the line stays even from top to bottom.
+            The gradient is the light: faint at the ends, brightest through the middle where the
+            curve turns, which is where a real bevel would catch. */}
+        {filtersOpen && <div className="sb-rail-edge" aria-hidden="true">
+          <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false">
+            <defs>
+              <linearGradient id="sbEdgeGold" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stopColor="#C9A96E" stopOpacity="0.30"/>
+                <stop offset="0.16" stopColor="#E4C88F" stopOpacity="0.80"/>
+                <stop offset="0.44" stopColor="#F0DCAC" stopOpacity="1"/>
+                <stop offset="0.72" stopColor="#D9BE86" stopOpacity="0.82"/>
+                <stop offset="1" stopColor="#C9A96E" stopOpacity="0.26"/>
+              </linearGradient>
+            </defs>
+            <path d={SB_EDGE} fill="none" stroke="url(#sbEdgeGold)" strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>
+          </svg>
+        </div>}
+        {filtersOpen && <div ref={railRef} className="sb-rail" style={{width:"var(--sb-pw)",flexShrink:0,position:"sticky",alignSelf:"flex-start",
+          // Runs from the very top of the viewport to the bottom, and simply passes BEHIND the
+          // header (z-index 40 against the header's 50). Its content is pushed clear with padding
+          // instead. Starting it at railTop left a seam whenever the header's real height wasn't
+          // exactly that guess — and it isn't, once the step nav wraps to a second row. This way
+          // there is no edge to line up, so there is no gap to get wrong.
+          top:0, height:"100dvh", paddingTop:railTop + 16,
+          maxHeight:"none",display:"flex",flexDirection:"column",gap:10}}>
+          {/* The curve and the photograph, exactly as Event Info draws them, so moving between the
+              two steps doesn't feel like moving between two products. */}
+          <svg width="0" height="0" style={{position:"absolute",pointerEvents:"none"}} aria-hidden="true" focusable="false">
+            <defs><clipPath id="sbBrandCurve" clipPathUnits="objectBoundingBox"><path d={SB_CURVE}/></clipPath></defs>
+          </svg>
+          {PANEL_BG && <div className="sb-rail-img" style={{backgroundImage:`url(${PANEL_BG})`}} aria-hidden="true"/>}
+          <div className="sb-rail-veil" aria-hidden="true"/>
+          {/* Hide, on the panel's own top-right rather than inside the Filters card header — it
+              closes the whole panel, not the card it used to sit in, and a control belongs on the
+              thing it acts on.
+              In the FLOW, not absolutely positioned. It was absolute so it would cost no vertical
+              space, but the panel's content begins at the same offset it was pinned to, so it
+              simply landed on top of the first card — over that card's own delete button, no less.
+              It cannot sit in the header band either: the bar is only transparent there, the
+              element is still present and still swallows the click. A 26px row it is. */}
+          <div style={{flexShrink:0,display:"flex",justifyContent:"flex-end"}}>
+            <button type="button" onClick={()=>setFiltersOpen(false)} className="sb-hide-top"
+              title="Hide the filters and give the whole width to the videos"
+              style={{display:"inline-flex",alignItems:"center",gap:5,
+                padding:"5px 11px",borderRadius:8,cursor:"pointer",whiteSpace:"nowrap",
+                border:`1px solid ${pBorder}`,background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",
+                color:pTextS,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
+              {/* Rotated to point left — the direction the panel collapses in. */}
+              <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
+            </button>
+          </div>
+          {/* No logo in the panel. It was put back when the header stopped being transparent here,
+              on the reasoning that the header's own mark would be hidden behind the bar — but the
+              bar sits ABOVE this column, not over it, so the header's wordmark is fully visible
+              directly above this spot. The panel's copy just stacked a second identical wordmark a
+              few pixels under the first.
+              No event summary here either: the header pills already say which function is active,
+              and repeating the couple, venue and date down the panel was information twice over. */}
+          {/* No "Refine your vision" heading. The card below it is already titled Filters, so it
+              was a label on a label — and it sat directly on the panel photograph, which is the one
+              place in this column where type has the least to hold on to. */}
           {/* Saved-session banner. Lives under the filters rather than above the grid: it is a way
               back into a build, not a property of the results, and at the top it pushed the first
               row of videos below the fold. Re-stacked for the 248px column — title, then buttons. */}
@@ -503,7 +984,7 @@ export default function StudioBrowse({ ctx }) {
                       style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
                     <div style={{display:"flex",alignItems:"flex-start",gap:9,paddingRight:16}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:11.5,fontWeight:600,color:textP,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                      <div style={{fontSize:11.5,fontWeight:600,color:PANEL_INK,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                         {videoTitle}
                         {unavailable && <span style={{marginLeft:8,fontSize:10,color:textS,fontWeight:400}}>(no longer in library)</span>}
                         {isCurrent && <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",letterSpacing:0.3}}>LIVE</span>}
@@ -534,7 +1015,7 @@ export default function StudioBrowse({ ctx }) {
                   <div className="sb-rcard" style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:10,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(99,102,241,0.10)":"rgba(99,102,241,0.06)",border:`1px solid ${isDark?"rgba(99,102,241,0.30)":"rgba(99,102,241,0.25)"}`}}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:9}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconPalette size={15}/></div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:11.5,fontWeight:600,color:textP,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{videoTitle}</div>
+                      <div style={{fontSize:11.5,fontWeight:600,color:PANEL_INK,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{videoTitle}</div>
                       <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4}}>Current selection — not yet saved</div>
                     </div>
                     </div>
@@ -550,7 +1031,7 @@ export default function StudioBrowse({ ctx }) {
               {/* Collapsed history — the raw last-5, not the pill-aware single "continue" card above.
                   A safety net for "I want an older save back", not something needed on every visit. */}
               {bannerHistory.length > 0 && (
-                <div style={{borderRadius:9,border:`1px solid ${border}`,overflow:"hidden",background:cardBg}}>
+                <div className="sb-hist" style={{borderRadius:10,border:`1px solid ${pBorder}`,overflow:"hidden",background:pCard}}>
                   <button type="button" onClick={()=>setBannerHistoryOpen(v=>!v)} aria-expanded={bannerHistoryOpen}
                     style={{width:"100%",display:"flex",alignItems:"center",gap:6,padding:"7px 10px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
                     <span style={{display:"inline-flex",transform:bannerHistoryOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
@@ -578,23 +1059,27 @@ export default function StudioBrowse({ ctx }) {
           {/* sb-panel is the shared filter-panel class from makeFilterUI — Build gets it for free via
               FPanel, and Browse hand-rolls this shell, so it opts in explicitly. Same hover on both
               pages rather than a second lookalike rule that drifts. */}
-          <div className="sb-panel" style={{...S.card,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden",flex:"1 1 auto"}}>
+          {/* flex 0 1 auto, NOT 1 1 auto. Stretching to fill the rail meant the card ran to the
+              bottom of the screen no matter how little was in it — with every section collapsed
+              that is six rows of glass followed by 400px of empty glass, which reads as something
+              failed to load. It now ends where its content ends, and still SHRINKS (the 1 in the
+              middle) with its own scrollport when the sections are open and the rail runs out. */}
+          <div className="sb-panel" style={{...S.card,background:pCard,border:`1px solid ${pBorder}`,padding:0,width:"100%",display:"flex",flexDirection:"column",minHeight:0,overflow:"hidden",flex:"0 1 auto"}}>
             {/* Panel header — total active count + one-click reset. Outside the scrollport, so it
                 stays visible while the sections below scroll. */}
-            <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:8,
-              padding:"13px 16px",borderBottom:`1px solid ${hairline}`,
-              background:isDark?"#1A1A2E":"linear-gradient(180deg,#FEFCF8,#fff)"}}>
-              <div style={{fontSize:13.5,fontWeight:700,color:textP,letterSpacing:-0.1}}>Filters</div>
+            {/* The card's own header. A gold rule under it rather than the kit's hairline, and a
+                short gold bar before the word — on a frosted surface a 13px label with a 7% white
+                line under it is not a header, it is just the first row. */}
+            <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:9,
+              padding:"13px 16px",borderBottom:`1px solid ${accent}38`,
+              background:"linear-gradient(180deg,rgba(201,169,110,0.13),rgba(201,169,110,0.03))"}}>
+              <span aria-hidden="true" style={{width:3,height:14,borderRadius:2,background:accent,flexShrink:0}}/>
+              <div style={{fontSize:13.5,fontWeight:700,color:PANEL_INK,letterSpacing:0.2}}>Filters</div>
               {activeTotal > 0 && <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,
                 background:isDark?"rgba(201,169,110,0.18)":"#F6E7C8",color:gold,border:`1px solid ${accent}44`}}>{activeTotal}</span>}
+              {/* Hide moved out to the panel's own top-right corner — see below. */}
               {activeTotal > 0 && <div className="sb-pill sb-ghost" onClick={clearAllFilters} title="Reset every filter"
                 style={{...ghostPill,marginLeft:"auto"}}>Clear all</div>}
-              {/* Same fold Build has. marginLeft only when "Clear all" has not already claimed the
-                  gap, so the two never fight over it. */}
-              <span className="sb-pill sb-ghost" onClick={()=>setFiltersOpen(false)} title="Hide the filters and widen the grid"
-                style={{...ghostPill,marginLeft:activeTotal>0?0:"auto",display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
-                <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
-              </span>
             </div>
             <div className="sb-scroll" style={{flex:1,minHeight:0,overflowY:"auto",overscrollBehavior:"contain",padding:"14px 16px 16px"}}>
 
@@ -724,16 +1209,37 @@ export default function StudioBrowse({ ctx }) {
 
         {/* ═══ MAIN CONTENT — VIDEO CARDS ═══ */}
         <div style={{flex:1,minWidth:0}}>
-          {/* Session banner — per-pill Resume/Continue entry points. Hidden entirely when pill has no saved sessions and no current selection. */}
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-            <div style={{position:"relative",flex:1,maxWidth:360}}>
-              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",display:"flex",color:textM,pointerEvents:"none"}}><IconSearch size={13}/></span>
-              <input value={vq} onChange={e=>setVq(e.target.value)} placeholder="Search videos by name, venue, style…"
-                style={{...S.input,marginBottom:0,padding:"7px 30px 7px 30px",fontSize:12.5}}/>
-              {vq&&<span onClick={()=>setVq("")} title="Clear the search" style={{position:"absolute",right:9,top:"50%",transform:"translateY(-50%)",cursor:"pointer",color:textM,fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>}
+          {/* ── PAGE TITLE ──
+              The step used to open straight onto a search box and a count. It is the moment a
+              salesperson turns the screen toward a client, so it gets a title that says what the
+              screen is for. Set in the same display serif as Event Info's. */}
+          <div style={{marginBottom:16}}>
+            <div className="sb-hero-face" style={{fontSize:34,fontWeight:600,color:textP,letterSpacing:-0.2,lineHeight:1.1}}>Find Your Inspiration</div>
+            {/* No strapline. It restated the title in more words and said nothing the salesperson
+                did not already know — the title carries the moment on its own. */}
+            <div className="sb-title-rule" aria-hidden="true">
+              <span className="sb-tr-seg"/><span className="sb-tr-dia"/><span className="sb-tr-fade"/>
             </div>
           </div>
-          <div style={{display:"flex",alignItems:"baseline",gap:9,marginBottom:12,flexWrap:"wrap"}}>
+          {/* ── SEARCH ──
+              Just the search. A Filters button sat here for a while, duplicating the fold the panel
+              header already has, and a Saved button beside it — both came off: the rail is the one
+              place filtering happens, and a second set of controls opposite it only made you decide
+              which of the two to reach for. */}
+          <div className="sb-toolbar" style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+            <div style={{position:"relative",flex:"1 1 260px",maxWidth:420}}>
+              <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",display:"flex",color:textM,pointerEvents:"none"}}><IconSearch size={13}/></span>
+              <input value={vq} onChange={e=>setVq(e.target.value)} placeholder="Search by name, venue, style, mood…"
+                style={{...S.input,marginBottom:0,padding:"9px 32px 9px 34px",fontSize:12.5,borderRadius:10}}/>
+              {vq&&<span onClick={()=>setVq("")} title="Clear the search" style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",cursor:"pointer",color:textM,fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>}
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"baseline",gap:11,marginBottom:14,flexWrap:"wrap"}}>
+            {/* The section this grid is. Same display serif as the page title, which is what ties
+                the two together — and it names what changed when you searched. */}
+            <div className="sb-hero-face" style={{fontSize:20,fontWeight:600,color:textP,letterSpacing:-0.1}}>
+              {vq.trim() ? "Search Results" : "Curated for Your Event"}
+            </div>
             {/* The headline number is always what is ON SCREEN. It used to read "130 videos at
                 Aura", which was false — 130 was the whole Inhouse group while only 12 are tagged
                 Aura. No venue clause here any more: the section headings below carry the per-venue
@@ -741,32 +1247,39 @@ export default function StudioBrowse({ ctx }) {
             {/* While searching, shownVideos comes from browseVideosAll (filters ignored), so the
                 "of N" comparison has to be against that same full catalog, not the filtered count —
                 otherwise a search matching more than the filters currently allow read as broken. */}
-            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideosAll.length!==shownVideos.length&&<span style={{fontWeight:400,color:textM}}> of {browseVideosAll.length}</span>}</div>
-            <div style={{fontSize:12,color:textM}}>{browseVenues.length===0&&venueGroup!=="all"?`(${venueGroup})`:""}</div>
+            <div style={{fontSize:13,fontWeight:600,color:textP}}>{shownVideos.length} video{shownVideos.length===1?"":"s"}{vq.trim()&&browseVideosAll.length!==shownVideos.length&&<span style={{fontWeight:500,color:pageTextM}}> of {browseVideosAll.length}</span>}
+              {totalPages>1&&<span style={{fontWeight:500,color:pageTextM}}> · showing {pageFrom}–{pageTo}</span>}</div>
+            <div style={{fontSize:12,color:pageTextM}}>{browseVenues.length===0&&venueGroup!=="all"?`(${venueGroup})`:""}</div>
             {activeTotal>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:11,color:textM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
-              <div className="sb-pill sb-ghost" onClick={clearAllFilters} style={ghostPill}>Clear all</div>
+              <span style={{fontSize:11.5,fontWeight:600,color:pageTextM}}>{activeTotal} filter{activeTotal===1?"":"s"} applied</span>
+              <div className="sb-pill sb-ghost" onClick={clearAllFilters} style={pageGhost}>Clear all</div>
             </div>}
           </div>
           {/* Picking a venue ranks rather than filters (see browseVideos), so the grid holds the
               chosen venue's videos followed by everything else. Split them under headings —
               unlabelled, a list that still shows other venues just looks like a broken filter. */}
+          {/* One pager, at the bottom. Two sets of controls on one screen made you decide which to
+              press, and the top one sat between the count and the grid it was counting. */}
           {(()=>{
-            const preferred = shownVideos.filter(v=>v._venueMatch);
+            // Paginate the FLAT list, then re-split the page into its three groups. Paginating each
+            // group separately would mean three sets of controls and pages of wildly different
+            // lengths; this way every page is 40 and the headings still describe what is under them
+            // — a page can simply run out of "tagged here" partway down and continue into the rest.
+            const preferred = pageVideos.filter(v=>v._venueMatch);
             // Three groups, not two. The tail used to be labelled "from other venues", but ~191 of
             // the library has no venue tag at all, so that heading was describing them wrongly. They
             // are worth showing AND worth naming: an untagged video is a usable reference and a
             // to-do at the same time, and lumping it in with real venues hides both facts.
-            const otherVenues = shownVideos.filter(v=>!v._venueMatch && v.venue);
-            const noVenue = shownVideos.filter(v=>!v._venueMatch && !v.venue);
+            const otherVenues = pageVideos.filter(v=>!v._venueMatch && v.venue);
+            const noVenue = pageVideos.filter(v=>!v._venueMatch && !v.venue);
             const grid = {display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14};
-            const heading = (text,sub)=><div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 10px"}}>
-              <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textM}}>{text}</span>
-              {sub&&<span style={{fontSize:10.5,color:textM,fontWeight:400}}>{sub}</span>}
+            const heading = (text,sub)=><div style={{display:"flex",alignItems:"baseline",gap:9,margin:"6px 0 12px"}}>
+              <span className="sb-sect-head" style={{fontSize:10,color:pageGold}}>{text}</span>
+              {sub&&<span style={{fontSize:10.5,color:pageTextM,fontWeight:500}}>{sub}</span>}
             </div>;
             const rule = <div style={{height:1,background:border,margin:"22px 0 14px"}}/>;
             // No venue picked (or nothing matched it) — one plain grid, exactly as before.
-            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div style={grid}>{shownVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
+            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div style={grid}>{pageVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
             return <>
               {heading(browseVenues.length===1?browseVenues[0]:"Selected venues",`${preferred.length} tagged here`)}
               <div style={grid}>{preferred.map(v=><VideoCard key={v.id} v={v}/>)}</div>
@@ -782,13 +1295,14 @@ export default function StudioBrowse({ ctx }) {
               </>}
             </>;
           })()}
+          {totalPages>1&&<div style={{marginTop:18}}><Pager/></div>}
           {shownVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textM,background:cardBg,borderRadius:14,border:`1px dashed ${border}`}}>
             <div style={{fontSize:14,fontWeight:600,color:textP,marginBottom:4}}>No videos match these filters</div>
             <div style={{fontSize:12,marginBottom:activeTotal>0?14:12}}>Try changing filters, or tag more videos in Manage → Library</div>
             {/* The dead end is almost always a filter left on in a section scrolled out of view —
                 so offer the reset right where the user hits it. */}
             {activeTotal>0&&<button className="sb-pill sb-ghost" onClick={clearAllFilters}
-              style={{...ghostPill,display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",fontSize:11.5,borderStyle:"solid",borderColor:accent,color:gold,background:isDark?"transparent":"#FFFCF4"}}>
+              style={{...ghostPill,display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",fontSize:11.5,borderStyle:"solid",borderColor:accent,color:pageGold,background:isDark?"transparent":"#FFFCF4"}}>
               Clear all {activeTotal} filter{activeTotal===1?"":"s"}
             </button>}
           </div>}
