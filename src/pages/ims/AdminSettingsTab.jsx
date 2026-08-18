@@ -9,6 +9,7 @@ import ImsTransportPanel from "./ImsTransportPanel.jsx";
 import { INV_CATS } from "../../lib/inventory/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
+import VenuesEditor from "./VenuesEditor.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
@@ -226,6 +227,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
   const panels = forcedMode ? [] : [
     { id: "labourtiers", label: "👷 Workforce" },
+    { id: "venues", label: "🌆 Venues" },
     { id: "venuemin", label: "🏛️ Fixed Venues" },
     { id: "venuedumping", label: "🚛 Venue Dumping" },
     { id: "dihari", label: "💰 Dihari Timings" },
@@ -580,6 +582,11 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {activePanel === "venues" && (
+        <div className="space-y-4">
+          <VenuesEditor settings={settings} setSettings={setSettings} />
         </div>
       )}
       {activePanel === "venuemin" && (

@@ -7,6 +7,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
 import { VENUES_SK } from "../../lib/studio/keys";
+import { migrateVenues, normVenueName } from "../../lib/ims/venueProperties";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 
@@ -20,15 +21,22 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // normal settings load (see IMS.jsx's applySettingsRows) — same self-contained fetch
   // ImsTransportPanel.jsx already does for the same reason, mirrored here rather than widening
   // that filter and pulling every Studio blob into IMS's shared settings state.
-  const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
+  // migrateVenues also runs here (not just in VenuesEditor.jsx) so the stable-id property list
+  // this screen links against exists from the FIRST time anyone opens Fixed Venues, without
+  // depending on someone having visited the new Venues panel first — see VENUE_MIGRATION_PLAN.md.
+  const [venues, setVenues] = useState({ inhouse: [], outdoor: [], properties: [] });
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       const { data } = await supabase.from("settings").select("value").eq("key", VENUES_SK).maybeSingle();
       if (cancelled) return;
-      let v = data?.value;
-      if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = null; } }
-      if (v) setVenues(v);
+      let raw = data?.value;
+      if (typeof raw === "string") { try { raw = JSON.parse(raw); } catch { raw = null; } }
+      const migrated = migrateVenues(raw || { inhouse: [], outdoor: [] });
+      if (JSON.stringify(migrated) !== JSON.stringify(raw || { inhouse: [], outdoor: [] })) {
+        await supabase.from("settings").upsert({ key: VENUES_SK, value: JSON.stringify(migrated) }, { onConflict: "key" });
+      }
+      setVenues(migrated);
     };
     load();
     // Live: adding/renaming/deleting an in-house venue in Studio → Manage → Settings should show
@@ -40,19 +48,15 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
       .subscribe();
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
-  // PROPERTY (parent) names — "Manaktala", "Exotica", "Pushpanjali", "Restro" — not each individual
+  // Stable-id property list — "Manaktala", "Exotica", "Pushpanjali", "Restro" — not each individual
   // room/sub-venue under them ("Aura", "Valencia", "Poolside", "Emerald Green"...). Standing
   // inventory belongs to the property (a console installed "at Pushpanjali" isn't tied to one
   // specific hall there), and fixedVenueFor's own venue-matching (lib/ims/fixedVenues.js) already
   // resolves a function's specific sub-venue up to its parent property before comparing against a
-  // configured Fixed Venue — so configuring at the property level is what the matching logic
-  // already expects, not just what's wanted here. Same derivation as Studio's own
-  // inhouseParentNames (StudioApp.jsx).
-  const inhouseParentNames = useMemo(() => {
-    const parents = new Set();
-    (venues.inhouse || []).forEach((v) => { if (v.parent && v.parent !== "Custom") parents.add(v.parent); });
-    return [...parents];
-  }, [venues]);
+  // configured Fixed Venue. Once a Fixed Venue links to one of these by id (propertyId), its
+  // displayed/matched name is read live from here, so a rename in IMS's own Venues editor shows up
+  // immediately instead of needing a manual re-pick.
+  const properties = venues.properties || [];
   // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
   // item bills at its sub-category %; a sub-category with no % → full rental. No other fixed-venue formula.
   const subDisc = (settings.fixedVenueSubcatDiscount && typeof settings.fixedVenueSubcatDiscount === "object") ? settings.fixedVenueSubcatDiscount : {};
@@ -102,7 +106,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // in Studio can't silently orphan an existing Fixed Venue config here — no existing data is
   // hidden or lost by narrowing this list, only what's offered for NEW picks changes.
   const venueOptions = [...new Set([
-    ...inhouseParentNames,
+    ...properties.map((p) => p.name),
     ...fixedVenues.map((v) => v.name).filter(Boolean),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
@@ -112,10 +116,31 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const cfg = settings.venueMinLabour?.[name];
     const min = (cfg && typeof cfg === "object" ? cfg.min : (typeof cfg === "number" ? cfg : null)) || 4;
     const id = "fv_" + Date.now().toString(36).slice(-6);
-    save([...fixedVenues, { id, name, minLabour: min, items: [] }]);
+    const property = properties.find((p) => p.name === name);
+    save([...fixedVenues, { id, name, propertyId: property?.id || null, minLabour: min, items: [] }]);
     setActiveId(id); // jump to the new venue's tab
   };
   const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  // One-time backfill (VENUE_MIGRATION_PLAN.md Phase 1): a Fixed Venue saved before properties[]
+  // existed only carries a bare .name. Link it to a property by matching that name once properties
+  // load — same normalization fixedVenueFor uses for this exact match — so it starts tracking
+  // renames instead of staying a static string forever. Never touches an already-linked entry, and
+  // never guesses when a name can't be matched (it just stays as it is today, same as before).
+  useEffect(() => {
+    if (!properties.length) return;
+    const needsLink = fixedVenues.some((v) => !v.propertyId);
+    if (!needsLink) return;
+    let changed = false;
+    const linked = fixedVenues.map((v) => {
+      if (v.propertyId) return v;
+      const match = properties.find((p) => normVenueName(p.name) === normVenueName(v.name));
+      if (!match) return v;
+      changed = true;
+      return { ...v, propertyId: match.id, name: match.name };
+    });
+    if (changed) save(linked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [properties]);
   const updCrew = (vid, type, val) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { fixedCrew: { ...(v.fixedCrew || {}), [type]: Math.max(0, parseInt(val) || 0) } }); };
   const delVenue = (id) => { const v = fixedVenues.find((x) => x.id === id); if (!window.confirm(`Remove fixed venue "${v?.name}"? Its standing inventory config is deleted.`)) return; if (activeId === id) setActiveId(null); save(fixedVenues.filter((x) => x.id !== id)); };
 
@@ -248,7 +273,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
         {active && [active].map((v) => (
           <div key={v.id} className="border rounded-xl p-4 bg-gray-50">
             <div className="flex items-center gap-3 flex-wrap mb-3">
-              <select value={v.name} onChange={(e) => updVenue(v.id, { name: e.target.value })} className="border rounded-lg px-3 py-1.5 text-sm font-semibold flex-1 min-w-[160px] bg-white">
+              <select value={v.name} onChange={(e) => { const n = e.target.value; const property = properties.find((p) => p.name === n); updVenue(v.id, { name: n, propertyId: property?.id || null }); }} className="border rounded-lg px-3 py-1.5 text-sm font-semibold flex-1 min-w-[160px] bg-white">
                 {venueOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                 {!venueOptions.includes(v.name) && <option value={v.name}>{v.name} (not in venue list)</option>}
               </select>

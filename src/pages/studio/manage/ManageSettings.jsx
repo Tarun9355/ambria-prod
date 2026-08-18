@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { SPACES, TAX_LABELS, DEFAULT_TAX_KEYS, taxOr, ZONE_META } from "../../../lib/studio/taxonomy";
+import { TAX_LABELS, DEFAULT_TAX_KEYS, ZONE_META } from "../../../lib/studio/taxonomy";
 import { DEFAULT_FILTER_PRIORITY } from "../../../lib/studio/keys";
 import { supabase } from "../../../lib/supabase";
 import { findZoneForArea } from "../../../lib/studio/pricing";
@@ -25,8 +25,8 @@ export default function ManageSettings({ ctx }) {
     authUser, isAdmin, hasPerm, studioSettingsAllowed,
     // venues
     customInhouse, customOutdoor, saveVenues, ytVideoTags, saveYtTags, trVenues, saveTR,
-    newIH, setNewIH, newOD, setNewOD, adminOdSearch, setAdminOdSearch, editIH, setEditIH, editOD, setEditOD,
-    allInhouseVenues, allOutdoorDB, allInhouseGroups, allVenueData,
+    newOD, setNewOD, adminOdSearch, setAdminOdSearch, editOD, setEditOD,
+    allOutdoorDB, allInhouseGroups, allVenueData,
     // clients
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, startNewDeal, eventOrders,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
@@ -90,16 +90,6 @@ export default function ManageSettings({ ctx }) {
   // ═══ ADMIN VENUES (settingsView "venues") — App_latest.jsx:7990 ═══
   const AdminVenues = () => {
 
-    const addInhouse = () => {
-      if(!newIH.name.trim()){showMsg("Venue name required","red");return;}
-      if(allInhouseVenues.includes(newIH.name.trim())){showMsg("Venue already exists","red");return;}
-      const parent = (newIH.parent||"").trim();
-      if(!parent){showMsg("Parent property is required — pick one or create new","red");return;}
-      const venue = {...newIH, name:newIH.name.trim(), base:parseInt(newIH.base)||0, parent};
-      saveVenues([...customInhouse, venue], customOutdoor);
-      setNewIH({name:"",label:"",type:"Outdoor",base:"",parent:"",newParentMode:false});
-    };
-
     const addOutdoor = () => {
       if(!newOD.name.trim()) return;
       if(allOutdoorDB.some(v=>v.name===newOD.name.trim())){showMsg("Venue already exists","red");return;}
@@ -107,7 +97,6 @@ export default function ManageSettings({ ctx }) {
       setNewOD({name:"",empanelled:true});
     };
 
-    const removeInhouse = (name) => saveVenues(customInhouse.filter(v=>v.name!==name), customOutdoor);
     const removeOutdoor = (name) => saveVenues(customInhouse, customOutdoor.filter(v=>v.name!==name));
 
     // ═══ VENUE RENAME → EVERYTHING KEYED BY THE NAME ═══
@@ -123,6 +112,12 @@ export default function ManageSettings({ ctx }) {
     // Past EVENTS are deliberately excluded — client_ledger and event_orders record where a job
     // actually happened, and rewriting that would falsify history. Reference data has no such
     // reason, so it follows the rename.
+    //
+    // CURRENTLY UNREACHABLE for in-house venues — renaming an in-house PROPERTY now happens in
+    // IMS → Admin → Settings → 🌆 Venues (VenuesEditor.jsx), not here (see the read-only In-house
+    // Venues card above and VENUE_MIGRATION_PLAN.md). This function stays, unwired, as the logic
+    // Phase 2 of that plan ports/re-triggers from the IMS side — it is not dead code to delete, it
+    // is the reference implementation for what Phase 2 still needs to do.
     const renameVenueEverywhere = async (oldName, newName) => {
       const from = (oldName || "").trim(), to = (newName || "").trim();
       const out = { videos: 0, transport: 0, photos: 0 };
@@ -176,36 +171,6 @@ export default function ManageSettings({ ctx }) {
       return bits.length ? ` — ${bits.join(" · ")} updated` : "";
     };
 
-    const updateInhouse = () => {
-      if(!editIH) return;
-      const newName = (editIH.name||"").trim();
-      if(!newName){showMsg("Venue name required","red");return;}
-      const parent = (editIH.parent||"").trim();
-      if(!parent){showMsg("Parent property is required","red");return;}
-      // Name must be unique (unless unchanged)
-      if(newName!==editIH.origName && customInhouse.some(v=>v.name===newName)){
-        showMsg("Venue name already exists","red"); return;
-      }
-      const updated = customInhouse.map(v => v.name===editIH.origName ? {
-        ...v,
-        name: newName,
-        label: editIH.label||"",
-        type: editIH.type||"Outdoor",
-        base: parseInt(editIH.base)||0,
-        parent,
-      } : v);
-      saveVenues(updated, customOutdoor);
-      const renamed = newName !== editIH.origName;
-      const origName = editIH.origName;
-      setEditIH(null);
-      if (renamed) {
-        showMsg("✓ Venue renamed — updating references…", "green");
-        renameVenueEverywhere(origName, newName).then((r) => {
-          showMsg(`✓ Venue renamed${renameSummary(r)}. Past events keep their original venue name for audit.`, "green");
-        });
-      }
-    };
-
     const updateOutdoor = () => {
       if(!editOD) return;
       const newName = (editOD.name||"").trim();
@@ -232,115 +197,34 @@ export default function ManageSettings({ ctx }) {
       <div>
         <div style={{fontSize:20,fontWeight:700,color:accent,marginBottom:20}}>Venue Management</div>
 
-        {/* ═══ IN-HOUSE VENUES ═══ */}
+        {/* ═══ IN-HOUSE VENUES — read-only (VENUE_MIGRATION_PLAN.md Phase 1) ═══
+            IMS → Admin → Settings → 🌆 Venues is now the sole place a property or its sub-venues
+            get added, renamed, or deleted — so a rename is a single, unambiguous "same id, new
+            name" edit instead of Studio and IMS each guessing whether a name that vanished from
+            one side is the same venue as a new one that appeared. This view still shows the live
+            list, it just doesn't edit it. */}
         <div style={{...S.card,marginBottom:20}}>
           <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`}}>
             <div style={{fontSize:16,fontWeight:600,color:accent}}>🏛️ In-house Venues</div>
-            <div style={{fontSize:11,color:textS,marginTop:2}}>Fixed venues under Ambria properties</div>
+            <div style={{fontSize:11,color:textS,marginTop:2}}>Fixed venues under Ambria properties — added, renamed, or removed in IMS → Admin → Settings → 🌆 Venues</div>
           </div>
           <div style={{padding:20}}>
-            {/* Existing venues grouped by parent */}
             {allInhouseGroups.map(g=>(
               <div key={g.parent} style={{marginBottom:16}}>
                 <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>{g.icon} {g.parent} <span style={{fontWeight:400,color:textS,fontSize:11}}>({g.manager})</span></div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                   {g.subVenues.map(sv=>{
                     const vd = allVenueData[sv];
-                    const venueObj = customInhouse.find(c=>c.name===sv);
-                    const isEditing = editIH && editIH.origName===sv;
-                    if (isEditing) {
-                      return (
-                      <div key={sv+"-edit"} style={{padding:"12px 14px",borderRadius:10,background:isDark?"rgba(201,169,110,0.08)":"#FFFBEA",border:`1px solid ${accent}60`,width:"100%",boxSizing:"border-box"}}>
-                        <div style={{fontSize:11,color:accent,fontWeight:600,marginBottom:8}}>✏️ Editing: {editIH.origName}</div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                          <div><div style={S.label}>Venue Name *</div><input value={editIH.name} onChange={e=>setEditIH(p=>({...p,name:e.target.value}))} style={S.input}/></div>
-                          <div>
-                            <div style={S.label}>Parent Property *</div>
-                            {!editIH.newParentMode ? (
-                              <select value={editIH.parent} onChange={e=>{const v=e.target.value;if(v==="__new__"){setEditIH(p=>({...p,parent:"",newParentMode:true}));}else setEditIH(p=>({...p,parent:v}));}} style={{...S.select,width:"100%"}}>
-                                <option value="">— Select property —</option>
-                                {allInhouseGroups.map(gg=><option key={gg.parent} value={gg.parent}>{gg.parent}</option>)}
-                                <option value="__new__">+ Create new property…</option>
-                              </select>
-                            ) : (
-                              <div style={{display:"flex",gap:6}}>
-                                <input autoFocus value={editIH.parent} onChange={e=>setEditIH(p=>({...p,parent:e.target.value}))} placeholder="New property name…" style={{...S.input,flex:1}}/>
-                                <button onClick={()=>setEditIH(p=>({...p,parent:"",newParentMode:false}))} style={{padding:"0 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:11,cursor:"pointer"}} title="Pick existing">↩</button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
-                          <div><div style={S.label}>Label</div><input value={editIH.label} onChange={e=>setEditIH(p=>({...p,label:e.target.value}))} style={S.input}/></div>
-                          <div><div style={S.label}>Type</div><select value={editIH.type} onChange={e=>setEditIH(p=>({...p,type:e.target.value}))} style={{...S.select,width:"100%"}}>{taxOr(taxonomy.venueType, SPACES).map(s=><option key={s}>{s}</option>)}</select></div>
-                          <div><div style={S.label}>Base Price ₹</div><input type="number" value={editIH.base} onChange={e=>setEditIH(p=>({...p,base:e.target.value}))} style={S.input}/></div>
-                        </div>
-                        <div style={{display:"flex",gap:8}}>
-                          <button onClick={updateInhouse} style={S.btn(true)}>{"💾"} Save</button>
-                          <button onClick={()=>setEditIH(null)} style={{...S.btn(false),color:textS}}>Cancel</button>
-                        </div>
-                      </div>);
-                    }
                     return (
-                    <div key={sv} style={{padding:"10px 14px",borderRadius:10,background:isDark?"rgba(255,255,255,0.04)":"#F9FAFB",border:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
-                      <div>
-                        <div style={{fontSize:13,fontWeight:600}}>{sv}</div>
-                        <div style={{fontSize:10,color:textS}}>{vd?.label||""} · {vd?.type||""} · Base {fmt(vd?.base||0)}</div>
-                      </div>
-                      <button onClick={()=>setEditIH({origName:sv,name:sv,label:venueObj?.label||"",type:venueObj?.type||"Outdoor",base:String(venueObj?.base||0),parent:venueObj?.parent||"",newParentMode:false})} style={{fontSize:11,color:accent,background:"none",border:"none",cursor:"pointer"}} title="Edit">✏️</button>
-                      <button onClick={()=>{if(confirm(`Delete venue "${sv}"? This cannot be undone. Past events keep their original venue name.`))removeInhouse(sv);}} style={{fontSize:10,color:"#F87171",background:"none",border:"none",cursor:"pointer"}} title="Delete">✕</button>
+                    <div key={sv} style={{padding:"10px 14px",borderRadius:10,background:isDark?"rgba(255,255,255,0.04)":"#F9FAFB",border:`1px solid ${border}`}}>
+                      <div style={{fontSize:13,fontWeight:600}}>{sv}</div>
+                      <div style={{fontSize:10,color:textS}}>{vd?.label||""} · {vd?.type||""} · Base {fmt(vd?.base||0)}</div>
                     </div>);
                   })}
                 </div>
               </div>
             ))}
-
-            {/* Add new in-house venue */}
-            <div style={{marginTop:20,padding:16,background:isDark?"rgba(201,169,110,0.04)":"#FFFDF7",borderRadius:12,border:`1px dashed ${accent}40`}}>
-              <div style={{fontSize:13,fontWeight:600,color:accent,marginBottom:12}}>+ Add In-house Venue</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                <div>
-                  <div style={S.label}>Venue Name *</div>
-                  <input value={newIH.name} onChange={e=>setNewIH(p=>({...p,name:e.target.value}))} placeholder="e.g. Banquet Hall" style={S.input}/>
-                </div>
-                <div>
-                  <div style={S.label}>Parent Property *</div>
-                  {!newIH.newParentMode ? (
-                    <select value={newIH.parent} onChange={e=>{
-                      const v=e.target.value;
-                      if(v==="__new__"){setNewIH(p=>({...p,parent:"",newParentMode:true}));}
-                      else setNewIH(p=>({...p,parent:v}));
-                    }} style={{...S.select,width:"100%"}}>
-                      <option value="">— Select property —</option>
-                      {allInhouseGroups.map(g=><option key={g.parent} value={g.parent}>{g.parent}</option>)}
-                      <option value="__new__">+ Create new property…</option>
-                    </select>
-                  ) : (
-                    <div style={{display:"flex",gap:6}}>
-                      <input autoFocus value={newIH.parent} onChange={e=>setNewIH(p=>({...p,parent:e.target.value}))} placeholder="e.g. Sohna Farm, New Property…" style={{...S.input,flex:1}}/>
-                      <button onClick={()=>setNewIH(p=>({...p,parent:"",newParentMode:false}))} style={{padding:"0 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:11,cursor:"pointer"}} title="Pick existing property instead">↩</button>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
-                <div>
-                  <div style={S.label}>Label</div>
-                  <input value={newIH.label} onChange={e=>setNewIH(p=>({...p,label:e.target.value}))} placeholder="e.g. Premium Banquet" style={S.input}/>
-                </div>
-                <div>
-                  <div style={S.label}>Type</div>
-                  <select value={newIH.type} onChange={e=>setNewIH(p=>({...p,type:e.target.value}))} style={{...S.select,width:"100%"}}>
-                    {taxOr(taxonomy.venueType, SPACES).map(s=><option key={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div style={S.label}>Base Price ₹</div>
-                  <input type="number" value={newIH.base} onChange={e=>setNewIH(p=>({...p,base:e.target.value}))} placeholder="80000" style={S.input}/>
-                </div>
-              </div>
-              <button onClick={addInhouse} style={S.btn(true)}>+ Add Venue</button>
-            </div>
+            {allInhouseGroups.length===0 && <div style={{fontSize:12,color:textS,fontStyle:"italic"}}>No in-house venues yet — add one in IMS → Admin → Settings → 🌆 Venues.</div>}
           </div>
         </div>
 
