@@ -723,7 +723,8 @@ export default function StudioBrowse({ ctx }) {
 .sb-rail{position:fixed !important;left:0;box-sizing:border-box;
   max-height:none !important;border-radius:0;clip-path:url(#sbBrandCurve);z-index:40;
   background:linear-gradient(160deg,#0F0F1A 0%,#191430 52%,#241a46 100%);
-  padding:18px 68px 20px 22px;overflow-y:auto;scrollbar-width:none;isolation:isolate}
+  padding:18px 68px 20px 22px;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;isolation:isolate}
 .sb-rail::-webkit-scrollbar{display:none}
 .sb-rail > *{position:relative;z-index:2}
 /* The photograph sits behind everything, overflowing by 4% so no scale rounding can leave a strip

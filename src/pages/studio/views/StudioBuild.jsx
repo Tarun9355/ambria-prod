@@ -1651,8 +1651,15 @@ export default function StudioBuild({ ctx }) {
    it — no padding to scroll away, and nothing to get the sums wrong.
    Horizontal padding moved here with it; the right side stays generous because the curve eats that
    edge and a control under it would be unreachable. */
+/* overscroll-behavior:contain is the important one. Without it, reaching the end of the panel's
+   scroll CHAINS the gesture to the page — so scrolling the filters up carried on into the document
+   and took the whole screen with it, which on iOS the rubber-band then exaggerates. contain stops
+   the scroll at this box's own ends.
+   -webkit-overflow-scrolling:touch restores momentum inside the panel on iOS; without it a nested
+   scrollport there feels stuck compared to the page. */
 .bd-rail-scroll{position:absolute;left:0;right:0;bottom:0;z-index:2;
-  overflow-y:auto;scrollbar-width:none;
+  overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
   padding:14px 68px 20px 22px;display:flex;flex-direction:column;gap:14px}
 .bd-rail-scroll::-webkit-scrollbar{display:none}
 .bd-rail-img{position:absolute;inset:-4%;z-index:0;background-size:cover;background-position:center}
