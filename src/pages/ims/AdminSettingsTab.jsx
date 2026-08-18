@@ -209,6 +209,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // Materials" is exactly why nobody could find where it was set.
   const MASTER_DATA = [
     { id: "subcats", label: "📂 Sub-Categories" },
+    { id: "venues", label: "🌆 Venues" },
     { id: "printmaterials", label: "🖨️ Print Materials" },
     { id: "carpetmaterials", label: "🟫 Carpet & Platform" },
     { id: "structurerates", label: "🏗️ Truss & Masking" },
@@ -227,7 +228,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
   const panels = forcedMode ? [] : [
     { id: "labourtiers", label: "👷 Workforce" },
-    { id: "venues", label: "🌆 Venues" },
     { id: "venuemin", label: "🏛️ Fixed Venues" },
     { id: "venuedumping", label: "🚛 Venue Dumping" },
     { id: "dihari", label: "💰 Dihari Timings" },

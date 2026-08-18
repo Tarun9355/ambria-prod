@@ -85,7 +85,7 @@ export default function ManageSettings({ ctx }) {
 
   // ═══ ADMIN VENUES — REMOVED (VENUE_MIGRATION_PLAN.md) ═══
   // The entire venue catalogue (in-house properties + sub-venues + outdoor venues) is now owned
-  // and edited in IMS → Admin → Settings → 🌆 Venues (VenuesEditor.jsx), including the rename
+  // and edited in IMS → Admin → Settings → 🗂️ Master Data → 🌆 Venues (VenuesEditor.jsx), including the rename
   // cascade into video tags / transport tier / library photo tags this screen used to do
   // (renameVenueEverywhere) — ported there directly against Supabase, since none of those three
   // actually needed Studio's runtime. Studio is a pure reader of the venue list now, same as it

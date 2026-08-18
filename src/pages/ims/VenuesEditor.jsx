@@ -1,4 +1,4 @@
-// IMS → Admin → Settings → 🌆 Venues.
+// IMS → Admin → Settings → 🗂️ Master Data → 🌆 Venues.
 // Sole editor for the ENTIRE venue catalogue — in-house properties + their sub-venues, AND outdoor
 // venues. Studio's own "Venue Management" screen is fully decommissioned once this ships (see
 // VENUE_MIGRATION_PLAN.md) — same "IMS owns editing, Studio reads" pattern the Rate Card migration
