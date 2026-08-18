@@ -3448,9 +3448,17 @@ export default function StudioApp() {
     return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail).lineCost, 0);
   }, [getElPriceForFn]);
 
+  // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
+  // photo instead. Its whole job is to be compared against the selected tile's number, which comes
+  // from zoneTotal — and zoneTotal prices with {checkAvailability:true}, so anything short in stock
+  // for this date is charged at the shortfall rate rather than the full one.
+  // Without the same flag here, the two sides of that comparison were priced by different rules:
+  // every preview quoted the full rate, so a photo needing short stock advertised a number nobody
+  // would ever be charged, and selecting it changed the price the moment you clicked. Same bug the
+  // "By zone" row already carries a note about in StudioBuild — this was the remaining call site.
   const calcPhotoCost = useCallback((zoneKey, photo) => {
     const zc = (photo?.dims && Object.values(photo.dims).some(v => v > 0)) ? buildZoneConfig(zoneKey, photo.dims) : null;
-    const elCost = calcElsCost(photo?.elements, true, zc);
+    const elCost = calcElsCost(photo?.elements, true, zc, { checkAvailability: true });
     const structCost = zc ? calcStructCost(zoneKey, zc, structRates).total : 0;
     return elCost + structCost;
   }, [calcElsCost, structRates]);

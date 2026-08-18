@@ -2088,6 +2088,32 @@ undefined
             {/* Photo-strip controls. They live up here rather than in the strip's own header so the
                 zone's whole control set sits in one row. stopPropagation because an OFF zone's
                 header toggles the zone — but these only render when it is already on. */}
+            {/* ── UPDATE MASTER ──
+                Moved here from the far right under the photo strip, where it sat on its own away
+                from every other control for this zone. It acts on the SELECTED photo, so it belongs
+                with the rest of the zone's controls, immediately left of the grid toggle.
+                Permanent correction (Phase 1b) — pushes the corrected tags + element list back to
+                the master library photo so the fix sticks for everyone. Shown for ANY selected photo
+                while CORRECTION_MODE is on: if the photo isn't a Library photo yet (fresh upload,
+                event photo), the save path creates a new Library entry rather than updating one.
+                stopPropagation because an OFF zone's header toggles the zone. */}
+            {isOn&&CORRECTION_MODE&&elSelectedPhoto[k]?.src&&(()=>{
+              const selP = elSelectedPhoto[k];
+              const isLib = selP.isLibrary && selP.eventId;
+              const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
+              const verified = !!master?._verified;
+              return <button onClick={e=>{
+                e.stopPropagation();
+                if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
+                // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
+                const mv=master.tags?.venue||"";
+                setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
+                setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
+              }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+                style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
+                <IconPencil size={11}/>Update master
+              </button>;
+            })()}
             {/* Entering the grid pre-loads the ticks from whatever's already pinned, so tick/untick
                 always acts on the FULL current membership, not a blank slate — ticking more adds,
                 unticking a pinned one removes, both auto-saved. Leaving the grid hides the ticks, so
@@ -2457,32 +2483,8 @@ undefined
                   </button>
                   <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+PH_PER_PAGE,matchedPhotos.length)} of {matchedPhotos.length}</span>
                 </div>}
-                {/* Photo-level actions, moved up from the Element card header. Gated on the zone
-                    having photos rather than on the panel being open: up here they are outside the
-                    Elements panel, and vanishing with it would read as a bug. */}
-                <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
-                  {/* Permanent correction (Phase 1b) — push the corrected element list back to the
-                      master library photo so the fix sticks for everyone. Visible for ANY selected
-                      photo while CORRECTION_MODE is on, so it can be tagged whenever — if the photo
-                      isn't a Library photo yet (fresh upload, event photo), save() below creates a
-                      new Library entry for it instead of updating an existing one. */}
-                  {CORRECTION_MODE && elSelectedPhoto[k]?.src && (()=>{
-                    const selP = elSelectedPhoto[k];
-                    const isLib = selP.isLibrary && selP.eventId;
-                    const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
-                    const verified = !!master?._verified;
-                    return <button onClick={()=>{
-                      if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
-                      // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
-                      const mv=master.tags?.venue||"";
-                      setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
-                      setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
-                    }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
-                      style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
-                      <IconPencil size={11}/>{verified?"Correct & update master":"Correct & save to master"}
-                    </button>;
-                  })()}
-                </div>
+                {/* Update master used to sit here, at the far right under the photo strip. It has
+                    moved up into the zone's header row, beside the grid toggle — see there. */}
               </div>
               </>);
               })() : (
