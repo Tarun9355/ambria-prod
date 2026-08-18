@@ -32,12 +32,19 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     })();
     return () => { cancelled = true; };
   }, []);
-  // Same derivation Studio itself uses (StudioApp.jsx's allInhouseVenues) — a sub-venue with a
-  // real parent group, not filed under the "Custom" catch-all.
-  const allInhouseVenues = useMemo(
-    () => (venues.inhouse || []).filter((v) => v.parent && v.parent !== "Custom").map((v) => v.name),
-    [venues],
-  );
+  // PROPERTY (parent) names — "Manaktala", "Exotica", "Pushpanjali", "Restro" — not each individual
+  // room/sub-venue under them ("Aura", "Valencia", "Poolside", "Emerald Green"...). Standing
+  // inventory belongs to the property (a console installed "at Pushpanjali" isn't tied to one
+  // specific hall there), and fixedVenueFor's own venue-matching (lib/ims/fixedVenues.js) already
+  // resolves a function's specific sub-venue up to its parent property before comparing against a
+  // configured Fixed Venue — so configuring at the property level is what the matching logic
+  // already expects, not just what's wanted here. Same derivation as Studio's own
+  // inhouseParentNames (StudioApp.jsx).
+  const inhouseParentNames = useMemo(() => {
+    const parents = new Set();
+    (venues.inhouse || []).forEach((v) => { if (v.parent && v.parent !== "Custom") parents.add(v.parent); });
+    return [...parents];
+  }, [venues]);
   // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
   // item bills at its sub-category %; a sub-category with no % → full rental. No other fixed-venue formula.
   const subDisc = (settings.fixedVenueSubcatDiscount && typeof settings.fixedVenueSubcatDiscount === "object") ? settings.fixedVenueSubcatDiscount : {};
@@ -81,12 +88,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const draftKey = (vid, invId, field) => `${vid}:${invId}:${field}`;
 
   // Venue names must match what Studio uses for a function's venue — and, per the comment
-  // above, only an in-house venue can own standing inventory at all. Already-added fixed venues
-  // stay offered too (and selectable even if one somehow drops off the in-house catalogue later —
-  // see the "(not in venue list)" fallback option below), so removing/renaming a venue in Studio
-  // can't silently orphan an existing Fixed Venue config here.
+  // above, only an in-house PROPERTY can own standing inventory at all. Already-added fixed
+  // venues stay offered too (and selectable even if one somehow drops off the property list
+  // later — see the "(not in venue list)" fallback option below), so removing/renaming a venue
+  // in Studio can't silently orphan an existing Fixed Venue config here — no existing data is
+  // hidden or lost by narrowing this list, only what's offered for NEW picks changes.
   const venueOptions = [...new Set([
-    ...allInhouseVenues,
+    ...inhouseParentNames,
     ...fixedVenues.map((v) => v.name).filter(Boolean),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
