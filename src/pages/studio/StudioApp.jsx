@@ -1104,7 +1104,7 @@ export default function StudioApp() {
 
   // ═══ LIBRARY STATE ═══
   const [libView, setLibView] = useState("images");
-  const [settingsView, setSettingsView] = useState("venues");
+  const [settingsView, setSettingsView] = useState("clients");
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
   const [calSelDate, setCalSelDate] = useState(null);
