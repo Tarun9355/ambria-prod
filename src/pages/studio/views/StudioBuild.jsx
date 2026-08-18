@@ -1795,7 +1795,7 @@ export default function StudioBuild({ ctx }) {
   .bd-head{margin-left:0 !important}
   .bd-rail-r{width:100% !important;position:static !important;max-height:none !important}
   .bd-scrim{display:block;position:fixed;inset:0;z-index:38;
-    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px)}
+    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
   .ph-grid-wide{grid-template-columns:repeat(4,minmax(0,1fr)) !important}
   /* The strip's four large tiles become two — at this width four are thumbnails, not references. */
   .ph-grid:not(.ph-grid-wide){grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:10px !important}
@@ -2072,7 +2072,7 @@ undefined
                   title="Hide the filters and widen the build"
                   style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,flexShrink:0,
                     cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${pBorder}`,
-                    background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",
+                    background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
                     color:pTextM,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
                   {/* Rotated to point left — the direction the panel collapses in. */}
                   <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide

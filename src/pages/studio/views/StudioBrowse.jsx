@@ -234,7 +234,7 @@ export default function StudioBrowse({ ctx }) {
         <div className="sb-card" style={{...S.card,cursor:"default",display:"flex",flexDirection:"column",boxShadow:tileShadow}}>
           <div style={{background:"#1a1a2e",height:150,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:v.title, video:videoUrl, venue:v.venue, fn:v.fn});setVideoPlaying(true);}}>
             <img className="sb-thumb" src={v.thumbnail} alt={v.title} loading="lazy" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}} onError={e=>{e.target.style.display="none"}}/>
-            <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
+            <div className="sb-play" style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.25)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",position:"relative",zIndex:2}}><IconPlay size={20}/></div>
             {/* Click the tier pill to favourite this video for its own venue (see browseVideos'
                 favFirst) — it then LEADS that venue's results. It does not survive the filters:
                 favouriting ranks, it does not exempt, so a Wedding favourite stays out of a Cocktail
@@ -254,7 +254,7 @@ export default function StudioBrowse({ ctx }) {
             <button className="sb-fix" onClick={(e)=>{e.stopPropagation();setTaxVenueGroup("");setTaxOutsideSub("all");setTaxFixVid(v.id);}}
               title="This video is tagged wrong? Fix its taxonomy"
               style={{position:"absolute",bottom:10,right:10,zIndex:3,padding:"3px 9px",borderRadius:10,
-                border:"1px solid rgba(255,255,255,0.35)",background:"rgba(0,0,0,0.55)",backdropFilter:"blur(4px)",
+                border:"1px solid rgba(255,255,255,0.35)",background:"rgba(0,0,0,0.55)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
                 color:"#fff",fontSize:9.5,fontWeight:600,cursor:"pointer",lineHeight:1.5}}>Fix tags</button>
             {/* ── PRICE BADGE ──
                 "Price TBD" is commented out for now, not deleted. It means the video has no zone
@@ -794,8 +794,8 @@ export default function StudioBrowse({ ctx }) {
 .sb-rail .sb-panel .sb-scroll > div{border-bottom-color:rgba(255,255,255,0.13) !important}
 /* The small cards that share the rail — the session banner and its history — get the same
    treatment at a lighter weight, so the panel holds one family of surfaces rather than three. */
-.sb-rail .sb-rcard,.sb-rail .sb-hist{backdrop-filter:blur(16px) saturate(150%);
-  -webkit-backdrop-filter:blur(16px) saturate(150%);
+.sb-rail .sb-rcard,.sb-rail .sb-hist{-webkit-backdrop-filter:blur(16px) saturate(150%);
+  backdrop-filter:blur(16px) saturate(150%);
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.14), 0 10px 26px -12px rgba(0,0,0,0.7)}
 /* The content clears the fixed panel. --sb-pw is the one number: panel width and content offset.
    The offset is the panel width PLUS a gutter, not equal to it — the curve reaches the panel's full
@@ -895,7 +895,7 @@ export default function StudioBrowse({ ctx }) {
      shrink to when the panel was taking a third of the screen. */
   .sb-grid{grid-template-columns:repeat(auto-fill,minmax(215px,1fr)) !important;gap:12px !important}
   .sb-scrim{display:block;position:fixed;inset:0;z-index:38;
-    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px)}
+    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 }
 @media (pointer: coarse){
   .sb-pill{min-height:34px}
@@ -1023,7 +1023,7 @@ export default function StudioBrowse({ ctx }) {
               title="Hide the filters and give the whole width to the videos"
               style={{display:"inline-flex",alignItems:"center",gap:5,
                 padding:"5px 11px",borderRadius:8,cursor:"pointer",whiteSpace:"nowrap",
-                border:`1px solid ${pBorder}`,background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",
+                border:`1px solid ${pBorder}`,background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
                 color:pTextS,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
               {/* Rotated to point left — the direction the panel collapses in. */}
               <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
