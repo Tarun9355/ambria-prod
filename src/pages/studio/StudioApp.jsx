@@ -7650,6 +7650,15 @@ export default function StudioApp() {
     // in local state only and vanished on refresh. saveLib already merges into the ref and state.
     saveLib([libImg]);
     logActivity("uploaded client photo", libImg.name + " → " + (zoneLabelsD[r.elKey]?.label || r.elKey));
+    // A custom ("Other") zone that already has a photo selected — a second upload joins it as
+    // another option in the gallery (tagged above, same as the first) instead of silently swapping
+    // the zone's active pricing/elements to whatever the fresh upload happened to detect. The
+    // salesperson clicks it, like any other tile, when they actually want to switch to it.
+    if (customOther && elSelectedPhoto[r.elKey]) {
+      showMsg("✓ Added another photo to " + (customOther.name || zoneLabelsD[r.elKey]?.label || "this zone") + " — click it in the gallery to price from it", "green");
+      setZoneUploadReview(null);
+      return;
+    }
     const photo = { src: r.url, eventName: libImg.name, isLibrary: true, eventId: libId, elements: libImg.elements, dims: libImg.dims, fn: "", space: "", zones: [] };
     selectElPhoto(r.elKey, photo);
     if (r.dims) {
