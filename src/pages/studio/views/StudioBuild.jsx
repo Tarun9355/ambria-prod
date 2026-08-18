@@ -667,9 +667,23 @@ export default function StudioBuild({ ctx }) {
     if (id === "platform") return (fd.W || fd.L) ? `${fd.W || "–"} × ${fd.L || "–"} ft` : "";
     const n = (zc.prints || []).length; return n ? `${n} print${n === 1 ? "" : "s"}` : "None";
   };
+  // What this section actually costs — same calc functions the zone header/live total already use,
+  // so a tile can never show a number the rest of the page disagrees with. Truss's tile absorbs
+  // arches/pillars/glass too (structural extras with no tile of their own); Platform's absorbs
+  // carpet (bundled with the floor it sits on) — between the two, every rupee calcStructCost
+  // produces lands on exactly one tile.
+  const sectionCost = (k, id) => {
+    if (!showCosts) return 0;
+    if (id === "elements") return calcElsCost(zoneElements[k], true, zoneConfig[k], {checkAvailability:true});
+    const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates) : null;
+    if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
+    if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
+    return (zoneConfig[k]?.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); return sum + s * (m?.ratePerSqft || 0); }, 0);
+  };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
     const sub = zoneSectionSub(k, sec.id);
+    const cost = sectionCost(k, sec.id);
     return <div key={sec.id} className="sec-tile" data-on={on?"1":"0"} onClick={()=>openZoneSection(k,sec.id)}
       style={{display:"flex",alignItems:"center",gap:9,padding:"11px 12px",borderRadius:10,cursor:"pointer",
         border:`1px solid ${on?accent:border}`,background:on?`${accent}12`:cardBg}}>
@@ -678,6 +692,7 @@ export default function StudioBuild({ ctx }) {
         <div style={{fontSize:12.5,fontWeight:700,color:on?accent:textP}}>{sec.label}</div>
         {sub&&<div style={{fontSize:10.5,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub}</div>}
       </div>
+      {cost>0&&<div style={{fontSize:11.5,fontWeight:700,color:on?accent:textP,flexShrink:0}}>{fmt(cost)}</div>}
       <span style={{display:"flex",flexShrink:0,color:on?accent:textS,transform:on?"rotate(180deg)":"none",transition:"transform .18s ease"}}><IconChevron size={12}/></span>
     </div>;
   };
