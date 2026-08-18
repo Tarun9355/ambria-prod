@@ -6730,7 +6730,15 @@ export default function StudioApp() {
   // carry the actual combined pricing; only which tiles show as ticked would need re-deriving after
   // a reload, which is cosmetic, not a pricing bug.
   const [elMultiPhotos, setElMultiPhotos] = useState({}); // { [zoneKey]: Array<photo> }
-  const isMultiPhotoZone = (label) => String(label || "").trim().toLowerCase() === "installations";
+  // SINGLE PHOTO EVERYWHERE. Installations was the one zone allowed to tick several photos and merge
+  // their elements into one build — that is what put three tiles in the "Selected" state at once.
+  // Commented out rather than deleted: restoring it is one line, and everything it drives
+  // (toggleMultiElPhoto, elMultiPhotos, the "N photos selected" label, the grid-group seeding in
+  // StudioBuild) is left intact behind this single gate.
+  // Note this is NOT the same feature as the ▦ grid's pin-to-front ticks, which are back on for this
+  // zone — those reorder the picker, they do not add anything to the build.
+  // const isMultiPhotoZone = (label) => String(label || "").trim().toLowerCase() === "installations";
+  const isMultiPhotoZone = () => false;
   const toggleMultiElPhoto = (elKey, photo) => {
     const photoKey = photo.eventId || photo.src;
     const current = elMultiPhotos[elKey] || [];

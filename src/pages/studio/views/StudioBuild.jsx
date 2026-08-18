@@ -2430,15 +2430,12 @@ undefined
       // is for judging one photo; picking a set to pin is a survey job, and that's what the grid is.
       // Keeping the ticks out of the strip also keeps its tiles free of a control that competes
       // with the click that actually selects a photo for pricing.
-      // ── NO GROUPING IN A SINGLE-PHOTO ZONE ──
-      // Turning off isMultiPhotoZone (StudioApp) made Installations pick one photo for the build,
-      // but it left the OTHER way of ticking several: the ▦ grid's pin-to-front selection. Those
-      // ticks pin photos to the head of the picker rather than adding them to the build, which is a
-      // real distinction and not one the checkbox conveys — on screen it is simply a zone where you
-      // can tick many photos. So the grid's grouping is off here too, and Installations has exactly
-      // one way to choose a photo.
-      const noGrouping = String(el.label || "").trim().toLowerCase() === "installations";
-      const grpOn = !!gridZones[k] && !noGrouping;
+      // Grouping is on for every zone, Installations included. It was briefly off there, while the
+      // multi-photo merge was on, because both showed as ticks and one zone offering two different
+      // kinds of tick is genuinely confusing. With the merge now off (see isMultiPhotoZone in
+      // StudioApp) there is only one kind left, and pinning is worth having everywhere: it reorders
+      // the picker, it does not touch the build.
+      const grpOn = !!gridZones[k];
       const grpPicked = grpOn ? grpSelFor(k) : EMPTY_SET;
       const grpArea = groupAreaFor(srcType, el.label);
       // The EXACT list for this function, not groupIdsFor's any-function fallback.
@@ -2525,7 +2522,7 @@ undefined
             // Back to page 1. The two views hold different numbers per page (4 against 80), so a
             // carried-over index means "page 6" lands on a completely different stretch of the same
             // list depending on which view you were in when you set it.
-            setPhPage(p=>({...p,[k]:0}));}} title={gridZones[k]?"Show as strip":(noGrouping?"Show all in a grid":"Show all in a grid — pick photos to pin here")} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            setPhPage(p=>({...p,[k]:0}));}} title={gridZones[k]?"Show as strip":"Show all in a grid — pick photos to pin here"} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
             {/* Clear every tick in this zone in one click — with the auto-save above, this also
                 empties the saved group, same as unticking each photo would. */}
             {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
