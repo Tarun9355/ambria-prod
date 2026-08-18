@@ -37,13 +37,22 @@ export function standingQty(settings, venueName, invId) {
   return it ? Number(it.qty) || 0 : 0;
 }
 
-// Discount % for a standing item (per-item override → venue default → 0).
-export function standingDiscountPct(settings, venueName, invId) {
+// Discount % for a standing item (per-item override → global sub-category default → 0). The
+// per-venue "Default discount" this used to fall back to is gone (FixedVenuesEditor.jsx) — every
+// standing item now defaults from settings.fixedVenueSubcatDiscount, the same table the item's
+// own "% off" field defaults from, matched by ITS OWN sub-category. `inventory` is optional only
+// so existing callers that never pass it keep working (they just lose the sub-category fallback,
+// same as before this change existed).
+export function standingDiscountPct(settings, venueName, invId, inventory) {
   const fv = fixedVenueFor(settings, venueName);
   if (!fv) return 0;
   const it = (fv.items || []).find((i) => i.invId === invId);
   if (!it) return 0;
-  return Number(it.discountPct ?? fv.discountPct ?? 0) || 0;
+  if (typeof it.discountPct === "number") return it.discountPct;
+  const inv = (inventory || []).find((i) => i.id === invId);
+  const key = String(inv?.subCat || inv?.subcategory || "").toLowerCase().trim();
+  const sc = key ? Number((settings?.fixedVenueSubcatDiscount || {})[key]) : NaN;
+  return Number.isFinite(sc) && sc > 0 ? sc : 0;
 }
 
 // Qty of an inventory line that is "built fresh" this event = total minus what's standing here.
@@ -52,11 +61,11 @@ export function builtQty(settings, venueName, invId, qty) {
 }
 
 // Split a line's qty into { standingUnits, freshUnits } for rental pricing at a venue.
-export function rentalSplit(settings, venueName, invId, qty) {
+export function rentalSplit(settings, venueName, invId, qty, inventory) {
   const total = Number(qty) || 0;
   const sQty = standingQty(settings, venueName, invId);
   const standingUnits = Math.min(total, sQty);
-  return { standingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId) };
+  return { standingUnits, freshUnits: total - standingUnits, discountPct: standingDiscountPct(settings, venueName, invId, inventory) };
 }
 
 // Units of an item AVAILABLE to an event at `venueName` = total minus units that are

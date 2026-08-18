@@ -4,11 +4,55 @@
 //   • Labour — reused standing items need no build crew (only what's built extra counts).
 //   • Cost — standing items bill at a discount; extras/other venues bill full rate.
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { supabase } from "../../lib/supabase";
+import { VENUES_SK } from "../../lib/studio/keys";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
+  // In-house venue catalogue — this whole screen only ever applies to Ambria-owned properties (a
+  // client's own outside venue can't have Ambria structure standing there), so the venue picker
+  // below must offer ONLY those, not every venue name IMS has ever seen. venueParents (what the
+  // dropdown used to be built from) mixes those in with outside venues and bare sub-venue names,
+  // with no "is this actually in-house" bit to filter on.
+  // The venues row (`ambria-v13-venues`) is Studio-owned and deliberately stripped out of IMS's
+  // normal settings load (see IMS.jsx's applySettingsRows) — same self-contained fetch
+  // ImsTransportPanel.jsx already does for the same reason, mirrored here rather than widening
+  // that filter and pulling every Studio blob into IMS's shared settings state.
+  const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const { data } = await supabase.from("settings").select("value").eq("key", VENUES_SK).maybeSingle();
+      if (cancelled) return;
+      let v = data?.value;
+      if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = null; } }
+      if (v) setVenues(v);
+    };
+    load();
+    // Live: adding/renaming/deleting an in-house venue in Studio → Manage → Settings should show
+    // up here without needing to reload this panel — refetch this one settings row on any change
+    // to it instead of the one-time-fetch-on-mount ImsTransportPanel.jsx uses for the same row.
+    const ch = supabase
+      .channel(`realtime:settings:${VENUES_SK}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "settings", filter: `key=eq.${VENUES_SK}` }, load)
+      .subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // PROPERTY (parent) names — "Manaktala", "Exotica", "Pushpanjali", "Restro" — not each individual
+  // room/sub-venue under them ("Aura", "Valencia", "Poolside", "Emerald Green"...). Standing
+  // inventory belongs to the property (a console installed "at Pushpanjali" isn't tied to one
+  // specific hall there), and fixedVenueFor's own venue-matching (lib/ims/fixedVenues.js) already
+  // resolves a function's specific sub-venue up to its parent property before comparing against a
+  // configured Fixed Venue — so configuring at the property level is what the matching logic
+  // already expects, not just what's wanted here. Same derivation as Studio's own
+  // inhouseParentNames (StudioApp.jsx).
+  const inhouseParentNames = useMemo(() => {
+    const parents = new Set();
+    (venues.inhouse || []).forEach((v) => { if (v.parent && v.parent !== "Custom") parents.add(v.parent); });
+    return [...parents];
+  }, [venues]);
   // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
   // item bills at its sub-category %; a sub-category with no % → full rental. No other fixed-venue formula.
   const subDisc = (settings.fixedVenueSubcatDiscount && typeof settings.fixedVenueSubcatDiscount === "object") ? settings.fixedVenueSubcatDiscount : {};
@@ -16,6 +60,18 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const key = String(sub || "").toLowerCase().trim(); if (!key) return;
     const pct = Math.max(0, Math.min(100, parseInt(val) || 0));
     setSettings((s) => { const m = { ...(s.fixedVenueSubcatDiscount || {}) }; if (pct > 0) m[key] = pct; else delete m[key]; return { ...s, fixedVenueSubcatDiscount: m }; });
+  };
+  // Default "% off" for a standing item = this global sub-category table, matched by the item's
+  // OWN sub-category — the same lookup the table above edits. There used to be a second,
+  // per-venue "Default discount" in between (and a per-item override on top of THAT), but the
+  // actual repeat-rental billing (DealCheckOverlay's repeatDiscPct) only ever reads this
+  // sub-category table — the venue-level default never fed into a real number, just its own
+  // display. Items still get their own per-item override (editable below); it just now defaults
+  // from the one table that actually drives billing instead of a number that didn't.
+  const subcatDiscFor = (invId) => {
+    const inv = inventory.find((i) => i.id === invId);
+    const key = String(inv?.subCat || inv?.subcategory || "").toLowerCase().trim();
+    return key ? (subDisc[key] ?? 0) : 0;
   };
   const [openDept, setOpenDept] = useState(null); // which department's sub-category list is expanded
   const _catDeptCfg = (settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
@@ -39,15 +95,14 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const [numDraft, setNumDraft] = useState({});
   const draftKey = (vid, invId, field) => `${vid}:${invId}:${field}`;
 
-  // Venue names must match what Studio uses for a function's venue. Source the dropdown
-  // from the Studio venue catalogue (synced as venueParents — sub-venues + parents) plus
-  // inventory locations, legacy venue-min keys, and already-added fixed venues.
-  const parentsObj = (() => { let p = settings?.venueParents; if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = {}; } } return p || {}; })();
+  // Venue names must match what Studio uses for a function's venue — and, per the comment
+  // above, only an in-house PROPERTY can own standing inventory at all. Already-added fixed
+  // venues stay offered too (and selectable even if one somehow drops off the property list
+  // later — see the "(not in venue list)" fallback option below), so removing/renaming a venue
+  // in Studio can't silently orphan an existing Fixed Venue config here — no existing data is
+  // hidden or lost by narrowing this list, only what's offered for NEW picks changes.
   const venueOptions = [...new Set([
-    ...Object.keys(parentsObj),
-    ...Object.values(parentsObj), // parent/group names too (e.g. Exotica)
-    ...Object.keys(settings.venueMinLabour || {}),
-    ...(inventory || []).map((i) => i.loc || i.location).filter(Boolean),
+    ...inhouseParentNames,
     ...fixedVenues.map((v) => v.name).filter(Boolean),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
@@ -57,7 +112,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const cfg = settings.venueMinLabour?.[name];
     const min = (cfg && typeof cfg === "object" ? cfg.min : (typeof cfg === "number" ? cfg : null)) || 4;
     const id = "fv_" + Date.now().toString(36).slice(-6);
-    save([...fixedVenues, { id, name, minLabour: min, discountPct: 70, items: [] }]);
+    save([...fixedVenues, { id, name, minLabour: min, items: [] }]);
     setActiveId(id); // jump to the new venue's tab
   };
   const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
@@ -68,7 +123,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     if (!inv) return;
     const v = fixedVenues.find((x) => x.id === vid);
     if (v.items.some((it) => it.invId === inv.id)) return; // already added
-    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1, discountPct: v.discountPct ?? 70 }] });
+    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1, discountPct: subcatDiscFor(inv.id) }] });
   };
   const updItem = (vid, invId, patch) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.map((it) => (it.invId === invId ? { ...it, ...patch } : it)) }); };
   const delItem = (vid, invId) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
@@ -198,7 +253,6 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 {!venueOptions.includes(v.name) && <option value={v.name}>{v.name} (not in venue list)</option>}
               </select>
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Min labour</span><input type="number" min="0" value={v.minLabour ?? 4} onChange={(e) => updVenue(v.id, { minLabour: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Default discount</span><input type="number" min="0" max="100" value={v.discountPct ?? 70} onChange={(e) => updVenue(v.id, { discountPct: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /><span className="text-xs text-gray-400">%</span></div>
               <button onClick={() => delVenue(v.id)} className="text-red-400 hover:text-red-600 text-sm ml-auto">🗑️</button>
             </div>
 
@@ -263,7 +317,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                   <span className="text-[10px] text-gray-400">/{avail}</span>
                   <span className="text-xs text-gray-400">rent @</span>
                   <input type="number" min="0" max="100"
-                    value={numDraft[draftKey(v.id, it.invId, "disc")] ?? (it.discountPct ?? v.discountPct ?? 70)}
+                    value={numDraft[draftKey(v.id, it.invId, "disc")] ?? (it.discountPct ?? subcatDiscFor(it.invId))}
                     onChange={(e) => {
                       const raw = e.target.value;
                       setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, "disc")]: raw }));

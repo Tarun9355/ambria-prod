@@ -24,7 +24,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
-import { availableAtVenue, isStandingAt } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, isStandingAt, rentalSplit } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
 import { ytApi, ytDuration } from "../../lib/youtube";
@@ -3049,11 +3049,42 @@ export default function StudioApp() {
   // `price` is already the auto-computed total (kitBase + Σ component price×qty, IMS-side) — one
   // formula covers kits and plain items alike.
   //
+  // Fixed Venues config for repeat-rental discounting — same three keys Deal Check's own
+  // repeatAdjustedRental (DealCheckOverlay.jsx) builds. dealCheckData is null until Deal Check
+  // has been opened once for this client; studioFloralData is fetched unconditionally on mount
+  // and carries the same fixedVenues/fixedVenueSubcatDiscount, so a zone marked ♻️ Repeat prices
+  // correctly here even before Deal Check has ever run.
+  const fvCfgForRepeat = useMemo(() => ({
+    fixedVenues: (dealCheckData?.fixedVenues?.length ? dealCheckData.fixedVenues : studioFloralData?.fixedVenues) || [],
+    venueParents: dealCheckData?.venueParents || venueParents || {},
+    fixedVenueSubcatDiscount: (dealCheckData?.fixedVenueSubcatDiscount && Object.keys(dealCheckData.fixedVenueSubcatDiscount).length ? dealCheckData.fixedVenueSubcatDiscount : studioFloralData?.fixedVenueSubcatDiscount) || {},
+  }), [dealCheckData, studioFloralData, venueParents]);
+  // Repeat-billed line cost for `qty` units of `item` at `unitRate` — ports Deal Check's own
+  // repeatAdjustedRental formula (DealCheckOverlay.jsx) into Build's pricing, so a zone marked
+  // ♻️ Repeat actually prices lower here too, matching what the Repeat toggle's own tooltip
+  // already promises ("discounted rental") instead of being a silent no-op. Needs BOTH a repeat
+  // zone (zc?.repeat) and a resolved venue name — omit either and this returns the full price
+  // unchanged, so any call site that doesn't pass them keeps pricing exactly as before.
+  const repeatAdjustedLineCost = (item, qty, unitRate, zc, venueName) => {
+    const full = qty * unitRate;
+    if (!zc?.repeat || !venueName || !item) return full;
+    const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
+    if (standingUnits > 0) return standingUnits * unitRate * (1 - discountPct / 100) + freshUnits * unitRate;
+    // Not registered standing at this specific venue — Repeat still applies (a reused setup can
+    // happen anywhere), just without a venue-specific cap: the sub-category default, same
+    // fallback Deal Check's own repeatAdjustedRental uses.
+    const key = String(item.subCat || item.subcategory || "").toLowerCase().trim();
+    const sc = key ? Number((fvCfgForRepeat.fixedVenueSubcatDiscount || {})[key]) : NaN;
+    const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
+    return full * (1 - pct / 100);
+  };
   // opts.checkAvailability (Build view's live canvas ONLY — explicit opt-in, never a default) turns
   // on the same unavailable-shortfall pricing already built for Deal Check: qty within what's free
   // in stock for the active date bills at the normal rate, qty beyond that bills at item.cost ×
   // the sub-category's cost%. Library's browse-grid cost badges never pass this flag, so they stay
   // exactly as before — no availability context exists there (no event date to check against).
+  // opts.zc (a zone's zoneConfig, carrying .repeat) + opts.venueName turn on the Repeat discount
+  // above; both are optional and default to nothing (full price), same reasoning as checkAvailability.
   const getElPriceFromInventory = useCallback((el, opts) => {
     const item = imsInventory.find((i) => i.id === el.invId);
     if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -3125,7 +3156,7 @@ export default function StudioApp() {
         const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
         const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
     }
 
@@ -3149,7 +3180,7 @@ export default function StudioApp() {
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
         const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
-        return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
@@ -3159,14 +3190,17 @@ export default function StudioApp() {
       const shortQty = Math.max(0, qty - available);
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       const shortRate = (Number(item.cost) || 0) * (rcCostPctForSub(item.subCat || item.subcategory) / 100);
-      const lineCost = ownedQty * ownedRate + shortQty * shortRate;
+      // Repeat discount applies to the owned/available portion only — same ordering Deal Check's
+      // own rollup already uses (DealCheckOverlay.jsx): the shortfall (not actually free in stock)
+      // bills at cost% regardless, never discounted further on top of that.
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName) + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
       return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio]);
+    return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null };
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -3357,8 +3391,12 @@ export default function StudioApp() {
     return Number(comp?.extraCost) || 0;
   }, [dealCheckData, studioFloralData]);
 
-  const getElPrice = useCallback((el, zc, opts) => {
-    if (el.invId) return getElPriceFromInventory(el, opts); // IMS inventory-sourced element — Rate Card never consulted
+  // venueName (optional): defaults to the CURRENTLY ACTIVE function's own venue (activeFnMeta.venue
+  // already resolves that — function 0 or whichever extraFunctions entry is active) — every
+  // existing caller of getElPrice/calcElsCost prices the active function's live canvas, so this
+  // default is always correct for them without having to pass it explicitly at each call site.
+  const getElPrice = useCallback((el, zc, opts, venueName) => {
+    if (el.invId) return getElPriceFromInventory(el, { ...opts, zc, venueName: venueName ?? activeFnMeta.venue }); // IMS inventory-sourced element — Rate Card never consulted
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
@@ -3395,11 +3433,11 @@ export default function StudioApp() {
       return { rc, unitPrice: up, lineCost: area * up, area, warning, isFloralBlend: isFloral, realPct };
     }
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up, area: 0, warning: null, isFloralBlend: isFloral, realPct };
-  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
+  }, [rcItems, getFloralMode, rcFloralModeByKey, floralRatio, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern, activeFnMeta]);
 
-  const calcElsCost = useCallback((elements, withFloral, zc, opts) => {
+  const calcElsCost = useCallback((elements, withFloral, zc, opts, venueName) => {
     return (elements || []).reduce((s, el) => {
-      const { rc, lineCost } = getElPrice(el, zc, opts);
+      const { rc, lineCost } = getElPrice(el, zc, opts, venueName);
       if (!withFloral || !rc) return s + lineCost;
       if (rc.unit === "truss_sqft") return s + applyFloralRatio(lineCost, rc);
       return s + (el.qty || 0) * applyFloralRatio(lineCost / (el.qty || 1), rc);
@@ -3410,8 +3448,12 @@ export default function StudioApp() {
   // CURRENTLY ACTIVE function, since activeBlocksForDate is only ever warmed for that function's
   // own date (see the useEffect that warms it). Callers must gate this to the active function only;
   // passing it for another function's snapshot would check its items against the wrong date's blocks.
-  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail) => {
-    if (el.invId) return getElPriceFromInventory(el, checkAvail ? { checkAvailability: true } : undefined); // IMS inventory-sourced element — Rate Card never consulted
+  // venueName (optional, no default): unlike getElPrice, this variant is explicitly "for a given
+  // function snapshot" — callers iterate their OWN fns/fnData with its own fnVenue, so there is no
+  // single correct default the way activeFnMeta.venue is for the always-active-function getElPrice.
+  // Omit it and a Repeat zone here simply prices at full rate, same as before this existed.
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName) => {
+    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName }); // IMS inventory-sourced element — Rate Card never consulted
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
@@ -3444,8 +3486,8 @@ export default function StudioApp() {
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
 
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail).lineCost, 0);
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName) => {
+    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName).lineCost, 0);
   }, [getElPriceForFn]);
 
   // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
@@ -3676,7 +3718,7 @@ export default function StudioApp() {
     const fCheckAvail = fnData.fnIdx === activeFnIdx;
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, fCheckAvail);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, fCheckAvail, fVenue);
     });
     // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
     // (Summary's accordion), which already scoped this way; this one used to count every custom
@@ -4059,7 +4101,7 @@ export default function StudioApp() {
           // Summary's own per-zone accordion could show a fraction of Build's/Deal Check's total.
           // checkAvail only for the active function (see getElPriceForFn) — keeps this accordion's
           // per-zone total matching Build's own live totalCost() when an item is oversubscribed.
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, fnData.fnIdx === activeFnIdx);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, fnData.fnIdx === activeFnIdx, fVenue);
           ic += priceInfo.lineCost;
           itemCount += (el2.qty || 0);
         });
@@ -6743,6 +6785,7 @@ export default function StudioApp() {
     const fCustomZones = fnData.customZones || [];
     const fElTiers = fnData.elTiers || {};
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
+    const fVenue = fnData.fnVenue || "";
     return Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
       // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
       // custom zone names showing blank in the PDF/PPT export.
@@ -6753,7 +6796,7 @@ export default function StudioApp() {
       let items = [];
       if (ze && ze.length > 0) {
         ze.forEach(el2 => {
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio);
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, false, fVenue);
           const rc = priceInfo.rc;
           const up = priceInfo.unitPrice;
           const lt = priceInfo.lineCost;
