@@ -877,7 +877,13 @@ export default function StudioBuild({ ctx }) {
   // Both side rails fold away together, from the one control in the Photo filters header.
   // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
   // running total off screen — the one thing you want kept while you widen it.
-  const [leftRailOpen, setLeftRailOpen] = useState(true);
+  // Open on a desktop, closed on a tablet or phone. Below 840 the panel becomes an OVERLAY (see the
+  // responsive block in the stylesheet) and an overlay that is up before you ask for it hides the
+  // build you came to work on. Read once at mount: this is a starting position, not a binding —
+  // once you have opened or closed it, that choice stands.
+  const [leftRailOpen, setLeftRailOpen] = useState(() => {
+    try { return !window.matchMedia("(max-width: 840px)").matches; } catch { return true; }
+  });
   // Live Estimate starts folded — the build opens with every zone off and the total at ₹0, so on
   // arrival the rail is a column of zeroes taking width from the zones. Its tab on the right edge
   // brings it back the moment there is a number worth watching.
@@ -1583,7 +1589,7 @@ export default function StudioBuild({ ctx }) {
    date line. Those were being painted over completely, which is a blank page with a pretty
    background on it. Excluding the three decoration layers so they keep their own z-indices (the
    shadow at 39 must stay under the panel, the gold edge at 51 above the header). */
-.bd-view > *:not(.bd-wash):not(.bd-rail-shadow):not(.bd-rail-edge){position:relative;z-index:1}
+.bd-view > *:not(.bd-wash):not(.bd-rail-shadow):not(.bd-rail-edge):not(.bd-scrim){position:relative;z-index:1}
 .bd-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
 .bd-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--sb-pw) - 150px);
   border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
@@ -1726,21 +1732,54 @@ export default function StudioBuild({ ctx }) {
 .sec-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:12px}
 @media (max-width:1200px){.sec-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:700px){.sec-grid{grid-template-columns:minmax(0,1fr)}}
-/* ══ TABLET ══
-   Build is the tightest screen in Studio: two 258px sticky rails either side of the zone column.
-   That is 516px of furniture, which a desktop absorbs and a tablet cannot.
-   Landscape trims both to 208px, leaving the zone column ~700px at 1180 — still workable.
-   Portrait unpins them entirely and stacks the three, in DOM order: filters, zones, estimate.
-   They have to lose position:sticky as well as their width — a sticky element that now spans the
-   full column would otherwise pin a full-width block over the zones as you scroll. The inline
-   maxHeight (computed from the viewport for the scrolling rail) goes too, or the stacked strip
-   keeps a tall internal scrollport it no longer needs. */
+/* ══════════════ RESPONSIVE ══════════════
+   Build is the tightest screen in Studio: a 392px fixed panel on the left and a 258px estimate rail
+   on the right, either side of the zone column. That is 650px of furniture, which a desktop absorbs
+   and nothing smaller can.
+   The panel keeps its whole design at every size — curve, photograph, gold edge. What changes is
+   whether it RESERVES space or OVERLAYS it, and that is the only honest lever: below about 840 there
+   is not enough width for both a column of filters and a column of work.
+   The desktop scrim never renders (display:none) — there is nothing behind the panel there. */
+.bd-scrim{display:none}
+/* ── LANDSCAPE TABLET ──
+   Everything still side by side, just narrower. --sb-pw drives the panel AND the content offset, so
+   one number moves both; the right rail comes down with it. */
 @media (max-width:1180px){
-  .bd-rail{width:208px !important}
+  :root{--sb-pw:300px}
+  .bd-rail-l{padding:14px 52px 16px 16px}
+  .bd-rail-r{width:208px !important}
+  /* The photo grid pays for the rails. At 8 across a ~600px column gives 70px thumbnails, which is
+     not enough to judge a stage from — the whole point of the picker. */
+  .ph-grid-wide{grid-template-columns:repeat(6,minmax(0,1fr)) !important}
 }
+/* ── PORTRAIT TABLET ──
+   The panel stops reserving and starts overlaying: the zone column gets the full width, the panel
+   gets its real width back, and only one of them is in front of you at a time — which is how they
+   are used anyway. It also starts closed here (see the leftRailOpen initialiser).
+   The right rail unpins and stacks: a sticky full-width block would otherwise pin itself over the
+   zones as you scroll past. Its inline maxHeight goes with the sticky it was computed for. */
 @media (max-width:840px){
-  .bd-layout{flex-direction:column;gap:16px !important}
-  .bd-rail{width:100% !important;position:static !important;max-height:none !important}
+  :root{--sb-pw:322px}
+  .bd-layout{flex-direction:column;gap:16px !important;margin-left:0 !important}
+  .bd-head{margin-left:0 !important}
+  .bd-rail-r{width:100% !important;position:static !important;max-height:none !important}
+  .bd-scrim{display:block;position:fixed;inset:0;z-index:38;
+    background:rgba(6,6,14,0.55);backdrop-filter:blur(2px)}
+  .ph-grid-wide{grid-template-columns:repeat(4,minmax(0,1fr)) !important}
+  /* The strip's four large tiles become two — at this width four are thumbnails, not references. */
+  .ph-grid:not(.ph-grid-wide){grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:10px !important}
+  /* The zone header carries a name, a count, Details, Update master and six controls. It has to be
+     allowed to wrap here or the controls run off the card. */
+  .zone-head{flex-wrap:wrap;row-gap:8px}
+}
+/* ── PHONE ──
+   One photo at a time in the strip, three in the grid, and the panel drops to the viewport width so
+   the drawer does not hang off the screen. */
+@media (max-width:620px){
+  :root{--sb-pw:min(322px, 88vw)}
+  .ph-grid-wide{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
+  .ph-grid:not(.ph-grid-wide){grid-template-columns:minmax(0,1fr) !important}
+  .bd-rail-l{padding:13px 44px 14px 14px}
 }
 .sec-tile{transition:transform .14s ease, box-shadow .2s ease, border-color .18s ease}
 .sec-tile:hover{transform:translateY(-2px);border-color:${accent} !important;
@@ -1923,6 +1962,10 @@ undefined
     {/* The panel's cast shadow and its gold edge. Both live OUTSIDE the rail: the rail is clipped by
         the curve, so a shadow inside it would be cut away with the shape and the line would be
         sliced in half down its own middle. */}
+    {/* Tablet and phone only (display:none above 840). Once the panel overlays the build, it needs
+        a way out that is not the Hide button behind it, and the page behind needs to read as parked
+        rather than as competing. */}
+    {leftRailOpen && <div className="bd-scrim" onClick={()=>setLeftRailOpen(false)} aria-hidden="true"/>}
     {leftRailOpen && <div className="bd-rail-shadow" aria-hidden="true">
       <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false"><path d={BD_CURVE} fill="#0B0B16"/></svg>
     </div>}
@@ -2351,7 +2394,7 @@ undefined
             stray click — on the name, the summary text, the empty space — folded the zone away
             mid-edit. An OFF zone still switches on from anywhere in the row, since there is nothing
             to lose there and it makes the row an easy target. */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) toggleEl(k); }}>
+        <div className="zone-head" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 18px",cursor:isOn?"default":"pointer"}} onClick={()=>{ if(!isOn) toggleEl(k); }}>
           <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>{/* zone emoji removed — the label carries the row */}<div style={{fontSize:15,fontWeight:600,letterSpacing:-0.2,color:isOn?textP:textS}}>{el.label}</div>{/* Read-only summary — fills the dead space between the name and the controls so a collapsed
                 row still says what is in the zone. Derived from existing state only. */}
             {(()=>{
@@ -2624,7 +2667,7 @@ undefined
                   where you are. The pager is the one mechanism.
                   Swipe stays off in grid mode — the handlers preventDefault to page, which on a
                   block this tall fights the page's own vertical scroll. */}
-              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:`repeat(${PH_GRID_COLS},minmax(0,1fr))`,gap:8,paddingBottom:6}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...(gridZones[k]?{}:phSwipeHandlers(k,page,pageCount))}>
+              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:`repeat(${PH_GRID_COLS},minmax(0,1fr))`,gap:8,paddingBottom:6}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className={gridZones[k]?"ph-grid ph-grid-wide":"ph-grid"} id={`ph-grid-${k}`} {...(gridZones[k]?{}:phSwipeHandlers(k,page,pageCount))}>
               {renderList.map((ph,pi)=>{
                 // A section heading: a full-width row inside the same grid, so the tiles either
                 // side of it keep one consistent size.
