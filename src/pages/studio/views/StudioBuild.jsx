@@ -2438,16 +2438,6 @@ undefined
                     having photos rather than on the panel being open: up here they are outside the
                     Elements panel, and vanishing with it would read as a bug. */}
                 <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
-                  {/* Once a zone had even one matched photo, the only way to add another was the
-                      reference banner's upload — which targets whichever zone is switched on FIRST,
-                      not necessarily this one. A custom zone especially has no Library backlog to
-                      fall back on, so after its one upload there was nowhere obvious to add a
-                      second. Same per-zone upload the empty state below offers, just available here
-                      too — every click targets THIS zone regardless of what else is switched on. */}
-                  <label title="Upload another client photo for this zone" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:8,border:`1px solid ${accent}60`,background:"transparent",color:accent,fontSize:10.5,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
-                    {zoneUploading===k?"Uploading…":<><IconCamera size={11}/>Add photo</>}
-                    <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>
-                  </label>
                   {/* Permanent correction (Phase 1b) — push the corrected element list back to the
                       master library photo so the fix sticks for everyone. Visible for ANY selected
                       photo while CORRECTION_MODE is on, so it can be tagged whenever — if the photo
