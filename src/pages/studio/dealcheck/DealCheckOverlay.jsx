@@ -75,6 +75,37 @@ export default function DealCheckOverlay({ ctx }) {
     }, 0);
   };
 
+  // Repeat-billed rental for ONE line — the single formula every rental display below uses, so
+  // they can't drift the way three separate copies of a flat "Repeat = subcat %, applied to the
+  // whole qty" formula used to (bottom-bar rollup, sidebar per-fn chip, Inventory tab zone pill).
+  //
+  // rentalSplit (lib/ims/fixedVenues.js) was built to do exactly this — net an item's REAL
+  // standing qty at THIS specific venue, at that item's own IMS-configured discount (edited in
+  // IMS → Admin → Fixed Venues) — but had zero callers anywhere in the app until now; the old
+  // formula ignored which venue, which item, and how many units were actually standing, applying
+  // one global sub-category % to every unit of a Repeat zone regardless.
+  //
+  // Standing qty here at this venue for this item → those units at its own discount (or the
+  // sub-category default, if the item has no override — same fallback the IMS screen itself now
+  // shows), anything beyond that qty at full rate. If the item isn't registered standing at this
+  // venue at all — including a Repeat zone at a venue that isn't a configured Fixed Venue —
+  // Repeat still applies (a reused setup can happen anywhere), just without a venue-specific cap:
+  // the whole line at the sub-category default, same as before Fixed Venues data was read here.
+  const repeatAdjustedRental = (isRepeatZone, venueName, item, qty, baseRental) => {
+    const full = qty * baseRental;
+    if (!isRepeatZone || !item) return full;
+    // fixedVenueSubcatDiscount rides along here too — standingDiscountPct falls back to it when
+    // a standing item has no per-item override of its own, so that fallback needs it on the
+    // same object rentalSplit passes through, not just the two keys fixedVenueFor itself reads.
+    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {}, fixedVenueSubcatDiscount: dealCheckData?.fixedVenueSubcatDiscount || {} };
+    const { standingUnits, freshUnits, discountPct } = rentalSplit(fvCfg, venueName, item.id, qty, dcInventoryCache);
+    if (standingUnits > 0) return standingUnits * baseRental * (1 - discountPct / 100) + freshUnits * baseRental;
+    const key = String(imsField.subcategory(item) || "").toLowerCase().trim();
+    const sc = key ? Number((dealCheckData?.fixedVenueSubcatDiscount || {})[key]) : NaN;
+    const pct = Number.isFinite(sc) && sc > 0 ? sc : 0;
+    return full * (1 - pct / 100);
+  };
+
   // Live soft-blocking: how much of an inventory item is left for THIS deal, netting out both
   // other events' commitments (getStudioAvailable, per fnDate) and whatever sibling
   // functions/zones/cards of this same deal have already used (qtyUsedElsewhereInDealCheck).
@@ -197,12 +228,9 @@ export default function DealCheckOverlay({ ctx }) {
             if (s.includes("arch") || s.includes("prop") || s.includes("wrought") || s.includes("glass") || s.includes("struct") || s.includes("pillar") || s.includes("stage") || s.includes("platform")) return "Structure";
             return "Structure"; // catch-all
           };
-          // Fixed-venue "Repeat" rental: a Repeat zone's items bill at their SUB-CATEGORY discount % (set once
-          // per sub-category, applies to all fixed venues). No sub-cat discount → full rental. Fresh zones bill full.
-          const fvCfgR = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-          const repeatDiscPct = (subcat) => { const sc = Number((dealCheckData?.fixedVenueSubcatDiscount || {})[String(subcat || "").toLowerCase().trim()]); return (Number.isFinite(sc) && sc > 0) ? sc : 0; };
-          // Repeat applies at ANY venue (a repeated setup can happen at outdoor/hotel venues too, for the
-          // same or a different client) — not just configured fixed venues. Discount = sub-category %.
+          // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
+          // (venue-specific standing qty + that item's own IMS discount, falling back to the
+          // sub-category default at any other venue). This just says WHICH zones are Repeat.
           const zoneIsRepeat = (fn, ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
           fns.forEach((fn, fi) => {
             const cards = dcCards[fi] || {};
@@ -218,7 +246,7 @@ export default function DealCheckOverlay({ ctx }) {
                 splitArr.forEach(s => {
                   const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return;
                   const q = Number(s.qty) || 0; const br = imsField.rentalCost(it);
-                  const line = _rep ? q * br * (1 - repeatDiscPct(imsField.subcategory(it)) / 100) : q * br;
+                  const line = repeatAdjustedRental(_rep, fn.fnVenue, it, q, br);
                   rental += line;
                   const dd = catToDept(imsField.category(it));
                   addD(dd, "rental", line);
@@ -243,12 +271,12 @@ export default function DealCheckOverlay({ ctx }) {
               const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
               let lineRental;
               if (isKit) {
-                lineRental = _rep ? qty * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : qty * baseR;
+                lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR);
               } else {
                 const available = getStudioAvailable(item, fnBlocks);
                 const ownedQty = Math.min(qty, available);
                 const shortQty = Math.max(0, qty - available);
-                const ownedRental = _rep ? ownedQty * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : ownedQty * baseR;
+                const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
                 const shortCost = shortQty * (Number(item.cost) || 0) * (costPctFor(imsField.subcategory(item)) / 100);
                 lineRental = ownedRental + shortCost;
               }
@@ -283,7 +311,7 @@ export default function DealCheckOverlay({ ctx }) {
               // A manually added item can be a kit too — price it the same way as a matched card.
               const baseR = effKitRental(item, fi, null);
               const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-              const lineRental = _rep ? q * baseR * (1 - repeatDiscPct(imsField.subcategory(item)) / 100) : q * baseR;
+              const lineRental = repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
               rental += lineRental;
               const dD = catToDept(imsField.category(item));
               addD(dD, "rental", lineRental);
@@ -899,14 +927,13 @@ export default function DealCheckOverlay({ ctx }) {
                       const cards = dcCards[fi] || {};
                       const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
                       const zoneIsRepeatFn = (ck) => { const zk = String(ck || "").split("::")[1]; return !!(zk && fn.zoneConfig?.[zk]?.repeat); };
-                      const repeatDiscPctFn = (subcat) => { const sc = Number((dealCheckData?.fixedVenueSubcatDiscount || {})[String(subcat || "").toLowerCase().trim()]); return (Number.isFinite(sc) && sc > 0) ? sc : 0; };
                       const costPctForFn = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                       let fnDecor = 0;
                       Object.entries(cards).forEach(([ck, c]) => {
                         const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
                         if (splitArr.length) {
                           const _rep = zoneIsRepeatFn(ck);
-                          splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); fnDecor += _rep ? q * br * (1 - repeatDiscPctFn(imsField.subcategory(it)) / 100) : q * br; });
+                          splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, it, q, br); });
                           return;
                         }
                         if (!c?.imsId) return;
@@ -916,11 +943,11 @@ export default function DealCheckOverlay({ ctx }) {
                         const qty = c.qty || 1;
                         const _rep = zoneIsRepeatFn(ck);
                         const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
-                        if (isKit) { fnDecor += _rep ? qty * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : qty * baseR; return; }
+                        if (isKit) { fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, qty, baseR); return; }
                         const available = getStudioAvailable(item, fnBlocks);
                         const ownedQty = Math.min(qty, available);
                         const shortQty = Math.max(0, qty - available);
-                        const ownedRental = _rep ? ownedQty * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : ownedQty * baseR;
+                        const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
                         const shortCost = shortQty * (Number(item.cost) || 0) * (costPctForFn(imsField.subcategory(item)) / 100);
                         fnDecor += ownedRental + shortCost;
                       });
@@ -931,7 +958,7 @@ export default function DealCheckOverlay({ ctx }) {
                         // Same as the rollup above — a manual item may be a kit.
                         const baseR = effKitRental(item, fi, null);
                         const _rep = mi.zoneKey ? !!(fn.zoneConfig?.[mi.zoneKey]?.repeat) : false;
-                        fnDecor += _rep ? q * baseR * (1 - repeatDiscPctFn(imsField.subcategory(item)) / 100) : q * baseR;
+                        fnDecor += repeatAdjustedRental(_rep, fn.fnVenue, item, q, baseR);
                       });
                       // Platform (fatta+stand) + carpet — same math as the bottom-bar rollup (they have
                       // no zone "card" to hang off of, so the sum above never saw them). This used to
@@ -1115,14 +1142,14 @@ export default function DealCheckOverlay({ ctx }) {
                         // platform (fatta/stand) and carpet — real rental cost that already shows as its own
                         // card below but was never added into the "X rental" total above it.
                         const _zoneIsRepeat = (ck) => { const zzk = String(ck || "").split("::")[1]; return !!(zzk && fns[fnIdx]?.zoneConfig?.[zzk]?.repeat); };
-                        const _repeatDiscPct = (subcat) => { const sc = Number((dealCheckData?.fixedVenueSubcatDiscount || {})[String(subcat || "").toLowerCase().trim()]); return (Number.isFinite(sc) && sc > 0) ? sc : 0; };
                         const _costPctFor = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
+                        const _fnVenueForRepeat = fns[fnIdx]?.fnVenue;
                         let zoneRentalTotal = 0;
                         zoneCards.forEach(c => {
                           const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
                           if (splitArr.length) {
                             const _rep = _zoneIsRepeat(c._cardKey);
-                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += _rep ? q * br * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : q * br; });
+                            splitArr.forEach(s => { const it = dcInventoryCache.find(x => x.id === s.imsId); if (!it) return; const q = Number(s.qty) || 0; const br = imsField.rentalCost(it); zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, br); });
                             return;
                           }
                           if (!c.imsId) return;
@@ -1132,15 +1159,15 @@ export default function DealCheckOverlay({ ctx }) {
                           const qty = Number(c.qty) || 1;
                           const _rep = _zoneIsRepeat(c._cardKey);
                           const isKit = Array.isArray(it.subItems) && it.subItems.length > 0;
-                          if (isKit) { zoneRentalTotal += _rep ? qty * baseR * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : qty * baseR; return; }
+                          if (isKit) { zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, qty, baseR); return; }
                           const available = getStudioAvailable(it, fnBlocksForChip);
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
-                          const ownedRental = _rep ? ownedQty * baseR * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : ownedQty * baseR;
+                          const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR);
                           const shortCost = shortQty * (Number(it.cost) || 0) * (_costPctFor(imsField.subcategory(it)) / 100);
                           zoneRentalTotal += ownedRental + shortCost;
                         });
-                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += _rep ? q * baseR * (1 - _repeatDiscPct(imsField.subcategory(it)) / 100) : q * baseR; });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR); });
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += (pi.fattas || 0) * platformFattaR + (pi.stands || 0) * platformStandR; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
