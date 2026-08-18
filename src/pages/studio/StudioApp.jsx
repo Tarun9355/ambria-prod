@@ -611,9 +611,22 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems,
     const subcategory = (rc?.imsAlias ? String(rc.imsAlias).trim() : "") || rc?.sub || "";
     const cat = String(rc?.cat || "").toLowerCase();
     const isFloral = cat === "florals" || /^F\d+$/.test(rcCode);
-    if (isFloral) {
-      const mapping = lookupFloralMapping(rcCode, rcName, hardPropMap);
-      if (!Array.isArray(mapping) || mapping.length === 0) return;  // F01-F04 or unknown floral → no card
+    // ── null and [] ARE NOT THE SAME ANSWER ──
+    // lookupFloralMapping returns [] for a floral it KNOWS has no hard prop (reet, garland, petals,
+    // flower garden — those really are just flowers, and there is nothing to reserve). It returns
+    // null when it does not recognise the floral at all.
+    // Both used to be dropped by the same guard, so any floral outside the six mapped names vanished
+    // from Deal Check entirely and silently — "Wisteria Hanging SQFT 2.5ft" among them. Unknown is
+    // not the same claim as "definitely has no prop", and guessing the stricter one loses work.
+    // An unrecognised floral now falls through to the ordinary element card below, exactly as a
+    // non-floral would: it appears in Deal Check with its Rate Card sub-category, where it can be
+    // matched to an IMS item. If it genuinely has no prop, add it to the [] list in
+    // lookupFloralMapping and it will stop appearing — but that becomes a decision someone made,
+    // not something that happened.
+    const floralMapping = isFloral ? lookupFloralMapping(rcCode, rcName, hardPropMap) : null;
+    if (isFloral && Array.isArray(floralMapping) && floralMapping.length === 0) return;
+    if (isFloral && Array.isArray(floralMapping)) {
+      const mapping = floralMapping;
       mapping.forEach((spec, mIdx) => {
         out.push({
           cardKey: buildFlCardKey(zoneKey, rcName, idx, spec.propType),
