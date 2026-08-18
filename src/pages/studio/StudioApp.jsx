@@ -6680,7 +6680,12 @@ export default function StudioApp() {
   // carry the actual combined pricing; only which tiles show as ticked would need re-deriving after
   // a reload, which is cosmetic, not a pricing bug.
   const [elMultiPhotos, setElMultiPhotos] = useState({}); // { [zoneKey]: Array<photo> }
-  const isMultiPhotoZone = (label) => String(label || "").trim().toLowerCase() === "installations";
+  // SINGLE PHOTO EVERYWHERE, FOR NOW. Installations was the one zone allowed to combine several
+  // reference photos into one build. Commented out rather than deleted — restoring it is one line,
+  // and everything it drives (toggleMultiElPhoto, elMultiPhotos, the "N photos selected" label,
+  // the grid-group seeding in StudioBuild) is left intact behind this single gate.
+  // const isMultiPhotoZone = (label) => String(label || "").trim().toLowerCase() === "installations";
+  const isMultiPhotoZone = () => false;
   const toggleMultiElPhoto = (elKey, photo) => {
     const photoKey = photo.eventId || photo.src;
     const current = elMultiPhotos[elKey] || [];
@@ -8158,7 +8163,7 @@ export default function StudioApp() {
           const fmtDate = (d) => { if (!d) return "—"; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
           const SHIFT_LETTER = { Morning: "M", Lunch: "L", Sundowner: "S", Night: "N" };
           return (
-            <div style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, paddingTop: 10, marginTop: 6, borderTop: `1px solid rgba(201,169,110,0.12)`, flexWrap: "wrap" }}>
+            <div className="sa-fnrow" style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, paddingTop: 10, marginTop: 6, borderTop: `1px solid rgba(201,169,110,0.12)`, flexWrap: "wrap" }}>
               <div style={{ ...NAV_META, color: "rgba(255,255,255,0.45)", marginRight: 2 }}>Function</div>
               {fns.map((f, i) => {
                 // Highlight follows the PENDING pill while a switch renders, so the click lands

@@ -814,6 +814,16 @@ export default function StudioBrowse({ ctx }) {
    time it reaches the bottom of the bar, so within this band the edge IS vertical.
    The bottom border goes transparent — a gold hairline carrying on across the panel would read as
    a seam cutting it in half. */
+/* ── THE FUNCTION ROW STOPS AT THE PANEL TOO ──
+   On a multi-function deal the header grows a second row of pills, and that row spans the full
+   width carrying a gold hairline along its top. Over the transparent window that line ran straight
+   across the panel and the FUNCTION label sat on the panel's ink — a seam cutting the column in
+   half, which is the gap you see under the logo.
+   Offset like everything else keyed to the window, so the row and its rule live on the navy. The
+   basis has to shrink by the same amount: flex-basis:100% plus a left margin overflows the header
+   and can put a horizontal scrollbar on the page. */
+:root[data-sb-rail="1"] .sa-fnrow{margin-left:var(--sb-pw,0px);
+  flex-basis:calc(100% - var(--sb-pw,0px)) !important}
 /* The bar's drifting sheen has to stop where the bar's background stops. It is a full-width layer
    inside the header, so over the transparent window it was painting its violet straight onto the
    panel — which is exactly why the logo area came out purple while the panel below it was black.
