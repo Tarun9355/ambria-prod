@@ -44,6 +44,9 @@ const ALLOWED = /^(image\/(jpeg|png|webp|avif|gif|svg\+xml)|video\/(mp4|webm)|au
 const FOLDERS = new Set([
   "client-uploads", "inventory", "production-ref", "voice-notes", "mandi",
   "Ambria Ref", "inhouse venues", "Outside Venues",
+  // Per-size (S/M/B) reference photos on a flower recipe (src/lib/storage.js's RECIPE_REF) —
+  // added client-side without adding it here, so every upload 400'd with "Folder not allowed".
+  "flower-recipe-ref",
 ]);
 
 const EXT: Record<string, string> = {
