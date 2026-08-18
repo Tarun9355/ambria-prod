@@ -2216,7 +2216,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                               {eb.zl.glass>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>💎 Glass ({eb.zc?.glassT?.toUpperCase()} ×{eb.zc?.glassQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.glass)}</span></div>}
                               <div style={{borderTop:`1px solid ${border}`,marginTop:4,paddingTop:4}}>
                                 {eb.useElementCard ? (eb.elems || []).map((el2, ei) => {
-                                  const priceInfo = getElPriceForFn(el2, eb.zc, typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70);
+                                  const priceInfo = getElPriceForFn(el2, eb.zc, typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70, false, fnData.fnVenue);
                                   const lt = priceInfo.lineCost;
                                   return lt > 0 ? <div key={ei} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>{el2.name} {el2.size ? `(${el2.size})` : ""} ×{el2.qty}</span><span style={{fontWeight:600}}>{fmt(lt)}</span></div> : null;
                                 }) : <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🪑 Items ({eb.itemCount})</span><span style={{fontWeight:600}}>{fmt(eb.ic)}</span></div>}
