@@ -877,12 +877,13 @@ export default function StudioBuild({ ctx }) {
   // Both side rails fold away together, from the one control in the Photo filters header.
   // Each rail folds on its own. One flag meant hiding the filters to widen the build also took the
   // running total off screen — the one thing you want kept while you widen it.
-  // Open on a desktop, closed on a tablet or phone. Below 840 the panel becomes an OVERLAY (see the
-  // responsive block in the stylesheet) and an overlay that is up before you ask for it hides the
-  // build you came to work on. Read once at mount: this is a starting position, not a binding —
-  // once you have opened or closed it, that choice stands.
+  // Open on a desktop, closed once the panel becomes an OVERLAY — an overlay that is up before you
+  // ask for it hides the build you came to work on. 900 has to match the stylesheet's overlay
+  // threshold exactly; the reasoning for that number is written there, beside the arithmetic it
+  // comes out of. Read once at mount: this is a starting position, not a binding — once you have
+  // opened or closed it, that choice stands.
   const [leftRailOpen, setLeftRailOpen] = useState(() => {
-    try { return !window.matchMedia("(max-width: 840px)").matches; } catch { return true; }
+    try { return !window.matchMedia("(max-width: 900px)").matches; } catch { return true; }
   });
   // Live Estimate starts folded — the build opens with every zone off and the total at ₹0, so on
   // arrival the rail is a column of zeroes taking width from the zones. Its tab on the right edge
@@ -1627,8 +1628,22 @@ export default function StudioBuild({ ctx }) {
 /* ── THE COLUMN ──
    --sb-pw is the one number: panel width AND content offset. It lives on :root because the header
    needs it too and the header is a sibling of this view, not a descendant. */
-:root{--sb-pw:392px}
+/* ── FLUID, NOT STEPPED ──
+   --sb-pw used to be 392px with breakpoints stepping it to 300 and 322. Steps have CLIFFS: one pixel
+   either side of a threshold gave completely different layouts, which is exactly how an iPad Pro at
+   1194 ended up with the full desktop panel and a 490px work column while an iPad Air at 1180 was
+   fine. clamp() removes the cliff — the panel is a share of the viewport, bounded at both ends, so
+   every width in between gets something sensible without anyone having to have guessed that width.
+     260px floor  — below this the filter pills stop fitting two to a row
+     26vw         — the share; 310px on an 11" iPad, 374px at 1440, capped by the ceiling above that
+     392px ceiling— what it was designed at; more would just be a wider photograph
+   Only the OVERLAY decision keeps a breakpoint, because that is a change of behaviour rather than of
+   size and there is no continuous version of it. */
+:root{--sb-pw:clamp(260px, 26vw, 392px)}
 .bd-view.bd-folded{--sb-pw:0px}
+/* The estimate rail scales the same way, for the same reason. Inline width:258 is overridden here so
+   there is one rule for it instead of a value repeated per breakpoint. */
+.bd-rail-r{width:clamp(178px, 15vw, 258px) !important}
 /* box-sizing explicitly: the width IS --sb-pw and the content is offset by --sb-pw, so the padding
    has to live inside that width. Left to content-box the horizontal padding makes the real panel
    wider than the offset and the curve sits on top of the first column of cards.
@@ -1763,25 +1778,20 @@ export default function StudioBuild({ ctx }) {
    is not enough width for both a column of filters and a column of work.
    The desktop scrim never renders (display:none) — there is nothing behind the panel there. */
 .bd-scrim{display:none}
-/* ── LANDSCAPE TABLET ──
-   Everything still side by side, just narrower. --sb-pw drives the panel AND the content offset, so
-   one number moves both; the right rail comes down with it. */
-/* 1280, not 1180. An iPad Pro 11" in landscape reports 1194 and an iPad Air 1180 — the old
-   threshold sat right between the two, so the Pro got the full desktop treatment: a 392px panel and
-   a 258px rail on a 1194px screen, leaving the zone column about 490px. That is what looked broken
-   in Safari; nothing had crashed, the furniture had simply eaten the work.
-   1280 clears every iPad landscape width with room to spare and costs a desktop nothing. */
-@media (max-width:1280px){
-  :root{--sb-pw:300px}
-  .bd-rail-scroll{padding:12px 52px 16px 16px}
-  .bd-rail-r{width:208px !important}
-  /* The photo grid pays for the rails. At 8 across a ~600px column gives 70px thumbnails, which is
-     not enough to judge a stage from — the whole point of the picker. */
-  .ph-grid-wide{grid-template-columns:repeat(6,minmax(0,1fr)) !important}
-  /* Filter pills drop to two columns. At three, a 300px panel gives each about 70px, and the labels
-     here are "Ring Ceremony" and "Anniversary" — they were overlapping into each other. */
-  .bd-rail-l [id^="sb-sec-"]{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
-}
+/* ── THE ▦ GRID SIZES ITSELF ──
+   A fixed 8 columns is the same trap as a fixed panel width: right at one screen size, wrong at
+   every other, and it needed a breakpoint per size to paper over. auto-fill with a floor lets the
+   column COUNT fall out of the width that is actually there — 8 across on a desktop, 6 on an 11"
+   iPad, fewer on a narrow one — without anyone naming those widths.
+   The floor protects the photograph: below about 112px a thumbnail is too small to judge a stage
+   from, which is the whole point of the picker. */
+.ph-grid-wide{grid-template-columns:repeat(auto-fill,minmax(112px,1fr)) !important}
+/* Filter pills the same way. Two to a row needs ~112px each, and auto-fill drops to one by itself
+   when the panel is at its 260px floor — which beats three columns of overlapping "Ring Ceremony". */
+.bd-rail-l [id^="sb-sec-"]{grid-template-columns:repeat(auto-fill,minmax(112px,1fr)) !important}
+/* Padding follows the panel: a share of its width rather than three hand-set values, so the gutter
+   the curve needs stays proportional at every size. */
+.bd-rail-scroll{padding:14px calc(var(--sb-pw) * 0.17 + 6px) 20px calc(var(--sb-pw) * 0.055 + 6px)}
 /* ── THE ESTIMATE RAIL GOES FIRST ──
    Below this the zone column is the thing under pressure, and of the two rails the estimate is the
    one you read rather than work in. It unpins and stacks under the build, which hands its 208px
@@ -1796,28 +1806,32 @@ export default function StudioBuild({ ctx }) {
    are used anyway. It also starts closed here (see the leftRailOpen initialiser).
    The right rail unpins and stacks: a sticky full-width block would otherwise pin itself over the
    zones as you scroll past. Its inline maxHeight goes with the sticky it was computed for. */
-@media (max-width:840px){
-  :root{--sb-pw:322px}
+/* 900, and it is DERIVED rather than picked. The panel's clamp floors at 260, the gutter is 30, the
+   estimate rail floors at 178 and a zone card needs about 420 to hold its four photo tiles and its
+   controls: 260 + 30 + 420 + 178 + 22 of gaps = 910. So below roughly 900 the two cannot both have
+   what they need, which is precisely the point at which reserving has to give way to overlaying.
+   The old 840 was a guess, and between 840 and 900 it left the work column about 370px — narrower
+   than the cards inside it. Change the clamp floors above and this number should move with them. */
+@media (max-width:900px){
+  /* Once it overlays, the panel is no longer competing for width, so it takes its own share of the
+     viewport rather than a share of a layout it has left. min() keeps it on screen on a phone. */
+  :root{--sb-pw:min(340px, 86vw)}
   .bd-layout{flex-direction:column;gap:16px !important;margin-left:0 !important}
   .bd-head{margin-left:0 !important}
   .bd-rail-r{width:100% !important;position:static !important;max-height:none !important}
   .bd-scrim{display:block;position:fixed;inset:0;z-index:38;
     background:rgba(6,6,14,0.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
-  .ph-grid-wide{grid-template-columns:repeat(4,minmax(0,1fr)) !important}
-  /* The strip's four large tiles become two — at this width four are thumbnails, not references. */
+  /* The STRIP still needs a count, because PH_PER_PAGE pages it four at a time — auto-fill here
+     would put four items on two ragged rows. The ▦ grid above stays fluid. */
   .ph-grid:not(.ph-grid-wide){grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:10px !important}
   /* The zone header carries a name, a count, Details, Update master and six controls. It has to be
      allowed to wrap here or the controls run off the card. */
   .zone-head{flex-wrap:wrap;row-gap:8px}
 }
 /* ── PHONE ──
-   One photo at a time in the strip, three in the grid, and the panel drops to the viewport width so
-   the drawer does not hang off the screen. */
+   One reference at a time in the strip. Everything else has already scaled itself by now. */
 @media (max-width:620px){
-  :root{--sb-pw:min(322px, 88vw)}
-  .ph-grid-wide{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
   .ph-grid:not(.ph-grid-wide){grid-template-columns:minmax(0,1fr) !important}
-  .bd-rail-scroll{padding:12px 44px 14px 14px}
 }
 .sec-tile{transition:transform .14s ease, box-shadow .2s ease, border-color .18s ease}
 .sec-tile:hover{transform:translateY(-2px);border-color:${accent} !important;
