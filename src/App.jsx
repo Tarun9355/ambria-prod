@@ -52,7 +52,22 @@ function UpdateBanner() {
       flushBeforeReload(),
       new Promise((resolve) => setTimeout(resolve, 4000)),
     ]);
-    window.location.reload();
+    // NOT window.location.reload(). GitHub Pages serves index.html with a ten-minute max-age, and a
+    // plain reload is allowed to satisfy itself from that cache — so "Update now" could hand back the
+    // very build it was offering to replace, the check would fire again, and the banner would
+    // reappear. An update button that does not update is worse than no button.
+    // The version check itself never had this problem because it fetches with cache:"no-store"; only
+    // the reload did. A changing query string makes the document URL one the cache has never seen, so
+    // the fresh index.html — and with it the new hashed bundle — is guaranteed. HashRouter reads the
+    // fragment and ignores the query, so the route survives, and re-using the same key means these
+    // never accumulate.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("v", Date.now().toString(36));
+      window.location.replace(url.toString());
+    } catch {
+      window.location.reload();
+    }
   };
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 rounded-full bg-gray-900 text-white text-sm px-4 py-2 shadow-xl">
