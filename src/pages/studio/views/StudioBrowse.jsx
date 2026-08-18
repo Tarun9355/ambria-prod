@@ -256,9 +256,17 @@ export default function StudioBrowse({ ctx }) {
               style={{position:"absolute",bottom:10,right:10,zIndex:3,padding:"3px 9px",borderRadius:10,
                 border:"1px solid rgba(255,255,255,0.35)",background:"rgba(0,0,0,0.55)",backdropFilter:"blur(4px)",
                 color:"#fff",fontSize:9.5,fontWeight:600,cursor:"pointer",lineHeight:1.5}}>Fix tags</button>
-            <div style={{position:"absolute",bottom:10,left:10,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:600,zIndex:3}}>
-              {priceTBD ? "Price TBD" : fmt(v.price)}
-            </div>
+            {/* ── PRICE BADGE ──
+                "Price TBD" is commented out for now, not deleted. It means the video has no zone
+                photos tagged, so there is nothing for the costing engine to run over — and right
+                now that is nearly every video in the library, so the badge was saying the same
+                thing on every card and reading as a defect rather than as information.
+                The badge still shows a REAL price wherever one exists. To bring the TBD state back,
+                restore the ternary below and drop the !priceTBD guard. */}
+            {!priceTBD && <div style={{position:"absolute",bottom:10,left:10,background:"rgba(0,0,0,0.6)",color:"#fff",padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:600,zIndex:3}}>
+              {/* {priceTBD ? "Price TBD" : fmt(v.price)} */}
+              {fmt(v.price)}
+            </div>}
           </div>
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
             <div className="sb-title" style={{fontSize:15.5,fontWeight:600,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
