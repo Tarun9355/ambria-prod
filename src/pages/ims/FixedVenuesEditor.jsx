@@ -17,6 +17,18 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const pct = Math.max(0, Math.min(100, parseInt(val) || 0));
     setSettings((s) => { const m = { ...(s.fixedVenueSubcatDiscount || {}) }; if (pct > 0) m[key] = pct; else delete m[key]; return { ...s, fixedVenueSubcatDiscount: m }; });
   };
+  // Default "% off" for a standing item = this global sub-category table, matched by the item's
+  // OWN sub-category — the same lookup the table above edits. There used to be a second,
+  // per-venue "Default discount" in between (and a per-item override on top of THAT), but the
+  // actual repeat-rental billing (DealCheckOverlay's repeatDiscPct) only ever reads this
+  // sub-category table — the venue-level default never fed into a real number, just its own
+  // display. Items still get their own per-item override (editable below); it just now defaults
+  // from the one table that actually drives billing instead of a number that didn't.
+  const subcatDiscFor = (invId) => {
+    const inv = inventory.find((i) => i.id === invId);
+    const key = String(inv?.subCat || inv?.subcategory || "").toLowerCase().trim();
+    return key ? (subDisc[key] ?? 0) : 0;
+  };
   const [openDept, setOpenDept] = useState(null); // which department's sub-category list is expanded
   const _catDeptCfg = (settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const _kwDept = (cat) => { const s = String(cat || "").toLowerCase(); if (s.includes("floral") || s.includes("flower")) return "Floral"; if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting"; if (s.includes("truss")) return "Tenting"; if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric"; if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting"; if (s.includes("transport") || s.includes("truck")) return "Transport"; if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture"; return "Structure"; };
@@ -57,7 +69,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const cfg = settings.venueMinLabour?.[name];
     const min = (cfg && typeof cfg === "object" ? cfg.min : (typeof cfg === "number" ? cfg : null)) || 4;
     const id = "fv_" + Date.now().toString(36).slice(-6);
-    save([...fixedVenues, { id, name, minLabour: min, discountPct: 70, items: [] }]);
+    save([...fixedVenues, { id, name, minLabour: min, items: [] }]);
     setActiveId(id); // jump to the new venue's tab
   };
   const updVenue = (id, patch) => save(fixedVenues.map((v) => (v.id === id ? { ...v, ...patch } : v)));
@@ -68,7 +80,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     if (!inv) return;
     const v = fixedVenues.find((x) => x.id === vid);
     if (v.items.some((it) => it.invId === inv.id)) return; // already added
-    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1, discountPct: v.discountPct ?? 70 }] });
+    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1, discountPct: subcatDiscFor(inv.id) }] });
   };
   const updItem = (vid, invId, patch) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.map((it) => (it.invId === invId ? { ...it, ...patch } : it)) }); };
   const delItem = (vid, invId) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
@@ -198,7 +210,6 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                 {!venueOptions.includes(v.name) && <option value={v.name}>{v.name} (not in venue list)</option>}
               </select>
               <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Min labour</span><input type="number" min="0" value={v.minLabour ?? 4} onChange={(e) => updVenue(v.id, { minLabour: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /></div>
-              <div className="flex items-center gap-1"><span className="text-xs text-gray-500">Default discount</span><input type="number" min="0" max="100" value={v.discountPct ?? 70} onChange={(e) => updVenue(v.id, { discountPct: parseInt(e.target.value) || 0 })} className="w-14 border rounded px-2 py-1 text-sm text-center" /><span className="text-xs text-gray-400">%</span></div>
               <button onClick={() => delVenue(v.id)} className="text-red-400 hover:text-red-600 text-sm ml-auto">🗑️</button>
             </div>
 
@@ -263,7 +274,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                   <span className="text-[10px] text-gray-400">/{avail}</span>
                   <span className="text-xs text-gray-400">rent @</span>
                   <input type="number" min="0" max="100"
-                    value={numDraft[draftKey(v.id, it.invId, "disc")] ?? (it.discountPct ?? v.discountPct ?? 70)}
+                    value={numDraft[draftKey(v.id, it.invId, "disc")] ?? (it.discountPct ?? subcatDiscFor(it.invId))}
                     onChange={(e) => {
                       const raw = e.target.value;
                       setNumDraft((d) => ({ ...d, [draftKey(v.id, it.invId, "disc")]: raw }));
