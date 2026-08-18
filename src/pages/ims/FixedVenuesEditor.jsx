@@ -23,14 +23,22 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       const { data } = await supabase.from("settings").select("value").eq("key", VENUES_SK).maybeSingle();
       if (cancelled) return;
       let v = data?.value;
       if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = null; } }
       if (v) setVenues(v);
-    })();
-    return () => { cancelled = true; };
+    };
+    load();
+    // Live: adding/renaming/deleting an in-house venue in Studio → Manage → Settings should show
+    // up here without needing to reload this panel — refetch this one settings row on any change
+    // to it instead of the one-time-fetch-on-mount ImsTransportPanel.jsx uses for the same row.
+    const ch = supabase
+      .channel(`realtime:settings:${VENUES_SK}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "settings", filter: `key=eq.${VENUES_SK}` }, load)
+      .subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
   // PROPERTY (parent) names — "Manaktala", "Exotica", "Pushpanjali", "Restro" — not each individual
   // room/sub-venue under them ("Aura", "Valencia", "Poolside", "Emerald Green"...). Standing
