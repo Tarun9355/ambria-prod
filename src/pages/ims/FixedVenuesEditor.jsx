@@ -4,11 +4,40 @@
 //   • Labour — reused standing items need no build crew (only what's built extra counts).
 //   • Cost — standing items bill at a discount; extras/other venues bill full rate.
 // Match is by SPECIFIC inventory item (design): swap to a different item → full labour + full rental.
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { supabase } from "../../lib/supabase";
+import { VENUES_SK } from "../../lib/studio/keys";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
+  // In-house venue catalogue — this whole screen only ever applies to Ambria-owned properties (a
+  // client's own outside venue can't have Ambria structure standing there), so the venue picker
+  // below must offer ONLY those, not every venue name IMS has ever seen. venueParents (what the
+  // dropdown used to be built from) mixes those in with outside venues and bare sub-venue names,
+  // with no "is this actually in-house" bit to filter on.
+  // The venues row (`ambria-v13-venues`) is Studio-owned and deliberately stripped out of IMS's
+  // normal settings load (see IMS.jsx's applySettingsRows) — same self-contained fetch
+  // ImsTransportPanel.jsx already does for the same reason, mirrored here rather than widening
+  // that filter and pulling every Studio blob into IMS's shared settings state.
+  const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("settings").select("value").eq("key", VENUES_SK).maybeSingle();
+      if (cancelled) return;
+      let v = data?.value;
+      if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = null; } }
+      if (v) setVenues(v);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  // Same derivation Studio itself uses (StudioApp.jsx's allInhouseVenues) — a sub-venue with a
+  // real parent group, not filed under the "Custom" catch-all.
+  const allInhouseVenues = useMemo(
+    () => (venues.inhouse || []).filter((v) => v.parent && v.parent !== "Custom").map((v) => v.name),
+    [venues],
+  );
   // Fixed-venue repeat discount is defined ONCE per sub-category (applies to all fixed venues). A repeat
   // item bills at its sub-category %; a sub-category with no % → full rental. No other fixed-venue formula.
   const subDisc = (settings.fixedVenueSubcatDiscount && typeof settings.fixedVenueSubcatDiscount === "object") ? settings.fixedVenueSubcatDiscount : {};
@@ -51,15 +80,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   const [numDraft, setNumDraft] = useState({});
   const draftKey = (vid, invId, field) => `${vid}:${invId}:${field}`;
 
-  // Venue names must match what Studio uses for a function's venue. Source the dropdown
-  // from the Studio venue catalogue (synced as venueParents — sub-venues + parents) plus
-  // inventory locations, legacy venue-min keys, and already-added fixed venues.
-  const parentsObj = (() => { let p = settings?.venueParents; if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = {}; } } return p || {}; })();
+  // Venue names must match what Studio uses for a function's venue — and, per the comment
+  // above, only an in-house venue can own standing inventory at all. Already-added fixed venues
+  // stay offered too (and selectable even if one somehow drops off the in-house catalogue later —
+  // see the "(not in venue list)" fallback option below), so removing/renaming a venue in Studio
+  // can't silently orphan an existing Fixed Venue config here.
   const venueOptions = [...new Set([
-    ...Object.keys(parentsObj),
-    ...Object.values(parentsObj), // parent/group names too (e.g. Exotica)
-    ...Object.keys(settings.venueMinLabour || {}),
-    ...(inventory || []).map((i) => i.loc || i.location).filter(Boolean),
+    ...allInhouseVenues,
     ...fixedVenues.map((v) => v.name).filter(Boolean),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const addable = venueOptions.filter((n) => !fixedVenues.some((v) => v.name === n));
