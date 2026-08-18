@@ -751,7 +751,12 @@ export default function StudioBrowse({ ctx }) {
    own alpha, so the bloom tracks the gradient's fade at both ends instead of glowing evenly along a
    line that is meant to be dying out. overflow visible because the path sits ON x=1 — half the
    stroke falls outside the viewBox and would otherwise be clipped away down its length. */
-.sb-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:41;
+/* z-index 51 — ABOVE the header (50). It was 41, which sat under the bar and only showed because
+   the bar is transparent over the panel; now that the navy overlaps the seam by 3px it would have
+   buried the line across the whole header band. Up here the gold runs unbroken from the very top of
+   the screen to the bottom, which is the point of it. The element is only --sb-pw wide and the path
+   sits on its right edge, so it can never cover anything in the bar. */
+.sb-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:51;
   pointer-events:none;filter:drop-shadow(0 0 5px rgba(201,169,110,0.45)) drop-shadow(0 0 14px rgba(201,169,110,0.22))}
 .sb-rail-edge svg{display:block;width:100%;height:100%;overflow:visible}
 /* A lit edge down the left, and the cards inside lifted off the photograph. Together these are
@@ -830,9 +835,23 @@ export default function StudioBrowse({ ctx }) {
    Same offset as the background, same var() fallback. */
 :root[data-sb-rail="1"] .sa-sheen{left:var(--sb-pw,0px) !important}
 /* The inset top highlight would draw a hairline across the panel too. */
+/* background-origin:border-box is load-bearing, not tidiness. A gradient is laid out over the
+   PADDING box by default, and this header has 24px of horizontal padding — so the gradient's zero
+   point sat 24px inside the element and the navy began at --sb-pw + 24, while the panel still ended
+   at --sb-pw. The 24px between them painted transparent and showed the cream page: the gap on Mac.
+   With border-box the gradient's coordinates are the element's own, so --sb-pw means the same
+   distance to both the panel and the bar and the two edges meet exactly.
+   Declared AFTER the shorthand on purpose: the background shorthand resets background-origin to
+   padding-box, so putting it first would have it wiped by the very line it exists to correct. */
+   The cut starts 3px EARLY, at --sb-pw minus 3. The panel's edge is a curve and this cut is a
+   straight line: by the bottom of the bar the curve has drawn in to about 99.4% of the panel width,
+   so a straight cut at exactly --sb-pw left a ~2px strip where neither the panel nor the navy
+   painted, and the cream page showed through it. Overlapping by 3px closes that for the whole band —
+   the overlap lands on panel ink, which is dark either way, so it costs nothing to look at. */
 :root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
-  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) var(--sb-pw,0px),
-    ${isDark?"#0A0A14":"#0A0619"} var(--sb-pw,0px),${isDark?"#07070D":"#130A2E"} 100%) !important}
+  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 3px),
+    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
+  background-origin:border-box !important}
 /* Hidden panel, no reserved gutter. The offset above is plain CSS keyed to --sb-pw, so folding the
    rail used to leave its 392px behind as empty page — the grid stayed exactly where it was and the
    only thing Hide achieved was removing the filters. Zeroing the variable hands that width to the
