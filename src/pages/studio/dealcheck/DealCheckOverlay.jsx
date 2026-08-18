@@ -447,24 +447,59 @@ export default function DealCheckOverlay({ ctx }) {
               const rateByType = {};
               labourTypes.forEach(t => { const matches = vendorsMP.filter(v => v.labourType === t); rateByType[t] = matches.length > 0 ? Math.round(matches.reduce((s, v) => s + Number(v.storedRate.amount || 0), 0) / matches.length) : Number(dihariSchemes[t]?.rate || 0); });
               mpRateByType = rateByType;
-              const shiftToTiming = (s) => { const sl = String(s||"").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening")||sl.includes("night")) return "evening"; return "day"; };
-              const sizeFromMode = (mode, sz) => { if (mode === "flat" || !sz) return "medium"; return String(sz).toLowerCase() || "medium"; };
+              // MUST match DCManpowerTab.jsx's shiftToTiming/sizeFromMode exactly (else the bottom
+              // bar and the tab derive different sizeKeys off the same element and disagree on
+              // recipe unitsPerFlowerist/unitsPerElectrician). The previous copies here diverged:
+              // shiftToTiming returned morning/evening/day instead of brunch/lunch/sundowner/dinner,
+              // and sizeFromMode returned the raw lowercase size string instead of small/big/medium
+              // for an "smb" item — so `sizes["b"]` missed and silently fell back to `sizes.medium`.
+              const shiftToTiming = (shift) => {
+                const s = String(shift||"").toLowerCase();
+                if (s.includes("morning") || s.includes("brunch")) return "brunch";
+                if (s.includes("lunch")) return "lunch";
+                if (s.includes("sundowner")) return "sundowner";
+                if (s.includes("night")) return "dinner";
+                return "dinner";
+              };
+              const sizeFromMode = (inhouseMode, elSize) => {
+                if (inhouseMode === "smb") {
+                  const s = (elSize || "M").toUpperCase();
+                  if (s === "S") return "small";
+                  if (s === "B") return "big";
+                  return "medium";
+                }
+                return "medium";
+              };
               // Same resolution as DCManpowerTab.jsx's walkFnElements (MUST match — this bottom-bar
               // Manpower figure and the tab's own numbers are supposed to agree, and didn't: an
               // exact-only rate-card name match dropped anything IMS-inventory-sourced (el.invId —
               // the normal path for anything added via "+ Add element" today) or recipe-only
-              // (el.patternId), silently undercounting crew for most of a real build.
+              // (el.patternId), silently undercounting crew for most of a real build. This copy was
+              // ALSO missing the tab's loose florals-name fallback (dropping elements the tab counts)
+              // and used a looser qty gate (`el.qty || el.count || 1`, defaulting missing/zero qty to
+              // 1) instead of the tab's `el.qty || 0` + skip — both directions of drift.
               const walkFn = (fn, cb) => {
                 const en = fn.enabledEls || {};
                 const ze = fn.zoneElements || {};
                 Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk]||[]).forEach(el => {
-                  let rc = rcItems.find(r => String(r.name||"").toLowerCase() === String(el.name||"").toLowerCase());
+                  const elNm = (el.name || "").toLowerCase().trim();
+                  let rc = rcItems.find(r => (r.name||"").toLowerCase().trim() === elNm);
+                  if (!rc) {
+                    rc = rcItems.find(r => {
+                      if (String(r.cat || "").toLowerCase() !== "florals") return false;
+                      const n = (r.name || "").toLowerCase().trim();
+                      return n && (elNm.includes(n) || n.includes(elNm));
+                    });
+                  }
                   if (!rc && el.invId) {
                     const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
                     if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
                   }
                   if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
-                  if (rc) cb({ rc, el, qty: Number(el.qty || el.count || 1), zk });
+                  if (!rc) return;
+                  const qty = el.qty || 0;
+                  if (qty <= 0) return;
+                  cb({ rc, el, qty, zk });
                 }); });
               };
               // "Repeat" model (ANY venue): a repeat zone reuses an existing setup → no build labour, so we
@@ -491,7 +526,12 @@ export default function DealCheckOverlay({ ctx }) {
                     if (String(rc.cat||"").toLowerCase() !== "florals") return;
                     const rnF = String(rc.name||"").toLowerCase().trim();
                     const inRSF = recipeSubsMP.includes(String(rc.sub||"").toLowerCase().trim());
-                    let pattern = flowerPatternsMP.find(p => String(p?.name||"").toLowerCase().trim() === rnF);
+                    // The element's own recipe first — what Build actually priced it with, and it
+                    // resolves even when there's no rate-card row to name-match against. Matches
+                    // DCManpowerTab.calcPeopleFlowerists; this copy skipped straight to name matching,
+                    // dropping any element whose name differs from its linked recipe's name.
+                    let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
+                    if (!pattern) pattern = flowerPatternsMP.find(p => String(p?.name||"").toLowerCase().trim() === rnF);
                     if (!pattern && inRSF) pattern = flowerPatternsMP.find(p => { const n = String(p?.name||"").toLowerCase().trim(); return n && rnF && (n.includes(rnF) || rnF.includes(n)); });
                     if (!pattern) return;
                     const sz = pattern.sizes || {};
@@ -512,8 +552,12 @@ export default function DealCheckOverlay({ ctx }) {
                     if (upe > 0) total += qty / upe;
                   }); return Math.ceil(total);
                 }
-                if (type === "Labours") {
-                  // MUST match DCManpowerTab.calcPeopleTier3Labours exactly (else bar ≠ tab).
+                // MUST match DCManpowerTab.calcPeopleTier3Labours exactly (else bar ≠ tab). Tab calls
+                // this for "Labours" unconditionally AND for any other type an admin has configured
+                // as tier:3 in IMS Settings (labourTiers[type].tier === 3) — see the fallback below,
+                // which this copy was missing entirely (a non-Labours tier-3 type counted in the tab
+                // and read 0 here).
+                const calcTier3 = (fn) => {
                   const venueName = fn.fnVenue || "";
                   const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
                   // No internal venue floor — the fixed-venue floor is applied uniformly for ALL types in
@@ -532,7 +576,8 @@ export default function DealCheckOverlay({ ctx }) {
                   let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat]||0) - (reduction[her.subCat]||0)); he += heavyExtraLabour(her, count); });
                   // Usage-based labour (Σ qty÷per-unit) with the venue-min (adj+he) as a floor.
                   return labourUsageMode ? Math.max(adj + he, Math.ceil(labourUsageTotal)) : (adj + he);
-                }
+                };
+                if (type === "Labours") return calcTier3(fn);
                 if (type === "Fabric Bangali") {
                   // MUST match DCManpowerTab.calcPeopleFabricBangali — per-zone RFT from truss dims (not element L×W).
                   let total = 0; const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
@@ -567,6 +612,7 @@ export default function DealCheckOverlay({ ctx }) {
                   let need = 0; Object.entries(sc).forEach(([k,v]) => { need += v / (batches[k] || 3); }); // ⌈Σ(count÷batch)⌉ — matches the Deal Check derivation
                   return Math.max(cfg.minimum || 1, Math.ceil(need));
                 }
+                if (cfg && cfg.tier === 3) return calcTier3(fn);
                 if (type === "Supervisors") return 1;
                 return 0;
               };
@@ -578,7 +624,10 @@ export default function DealCheckOverlay({ ctx }) {
                     if (String(rc.cat || "").toLowerCase() !== "florals") return;
                     const rnF = String(rc.name || "").toLowerCase().trim();
                     const inRSF = recipeSubsMP.includes(String(rc.sub || "").toLowerCase().trim());
-                    let pattern = flowerPatternsMP.find(p => String(p?.name || "").toLowerCase().trim() === rnF);
+                    // Same patternId-first resolution as calcPpl above — this "how" trace must explain
+                    // the same number, not a differently-resolved one.
+                    let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
+                    if (!pattern) pattern = flowerPatternsMP.find(p => String(p?.name || "").toLowerCase().trim() === rnF);
                     if (!pattern && inRSF) pattern = flowerPatternsMP.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && rnF && (n.includes(rnF) || rnF.includes(n)); });
                     if (!pattern) return; const sz = pattern.sizes || {}; const sk = sizeFromMode(rc.inhouseMode, el.size);
                     let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
@@ -2365,7 +2414,11 @@ export default function DealCheckOverlay({ ctx }) {
                 { id:"florals",  label:"Florals",  icon:"🌸", value: fmt(florals),   live: true  },
                 { id:"transport",label:"Transport",icon:"🚚", value: fmt(Math.max(0, transport - genset)), live: true  },
                 { id:"genset",   label:"Genset",   icon:"⚡", value: fmt(genset),    live: true  },
-                { id:"manpower", label:"Manpower", icon:"👷", value: fmt(manpower),  live: true  },
+                // "(ADJUSTED)" once a dept head has edited crew in IMS Dept Ops — same flag + label
+                // the GYV Fixed & Buffer tab already uses (line ~2188). Without it this chip silently
+                // showed the reconciled-actuals figure with no sign it had moved off the Manpower
+                // tab's own projected total, which is what the tab itself still shows.
+                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", icon:"👷", value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
                 { id:"buy",      label:"Buy",      icon:"🛒", value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
                 { id:"produce",  label:"Produce",  icon:"🏭", value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
                 { id:"gyv",      label:"GYV 5%",   icon:"🏢", value: fmt(gyvFixed),  live: true  },
@@ -2377,7 +2430,7 @@ export default function DealCheckOverlay({ ctx }) {
                     <div><div style={{fontSize:11,color:"#000",letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Project total</div><div style={{fontSize:18,fontWeight:800,color:"#000",letterSpacing:0.3}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                     <div style={{height:30,width:1,background:border}}/>
                     {chips.map(c => (
-                      <div key={c.id} className="dc-chip" title={`${c.label} — ${c.value}`} style={{padding:"6px 10px",borderRadius:8,background:"rgba(26, 26, 46,0.04)",fontSize:12,color:"#000",minWidth:70,opacity:c.live?1:0.5}}>
+                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"6px 10px",borderRadius:8,background:"rgba(26, 26, 46,0.04)",fontSize:12,color:"#000",minWidth:70,opacity:c.live?1:0.5}}>
                         <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600}}>{c.icon} {c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
                         <div style={{fontSize:14.5,fontWeight:700,color:"#000",marginTop:1}}>{c.value}</div>
                       </div>
