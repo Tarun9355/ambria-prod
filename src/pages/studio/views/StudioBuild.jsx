@@ -891,7 +891,11 @@ export default function StudioBuild({ ctx }) {
   const [rightRailOpen, setRightRailOpen] = useState(false);
   // Element cards widen as each rail folds: 4 with both open, 6 with neither. A kit row spans
   // about half the grid, so it is derived rather than hardcoded against a fixed column count.
-  const elCols = 4 + (leftRailOpen ? 0 : 1) + (rightRailOpen ? 0 : 1);
+  // Four, whatever the rails are doing. It used to be 4 + one per folded rail, on the reasoning that
+  // reclaimed width should buy more columns — but an element card holds a name, a rate, a unit, a
+  // grade row, a stepper and a line total, and at five across those start truncating. The extra room
+  // is better spent making four cards readable than fitting a fifth that isn't.
+  const elCols = 4;
   const kitSpan = Math.ceil(elCols / 2);
   // Palette search in the photo-filter rail. Held here, not in the Section, so it survives the
   // panel re-rendering on every filter change.
