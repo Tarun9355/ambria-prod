@@ -23,10 +23,6 @@ export default function ManageSettings({ ctx }) {
     settingsView, setSettingsView,
     // auth
     authUser, isAdmin, hasPerm, studioSettingsAllowed,
-    // venues
-    customInhouse, customOutdoor, saveVenues, ytVideoTags, saveYtTags, trVenues, saveTR,
-    newOD, setNewOD, adminOdSearch, setAdminOdSearch, editOD, setEditOD,
-    allOutdoorDB, allInhouseGroups, allVenueData,
     // clients
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, startNewDeal, eventOrders,
     ctFilterSp, setCtFilterSp, ctFilterStatus, setCtFilterStatus,
@@ -87,234 +83,13 @@ export default function ManageSettings({ ctx }) {
     saveZD({ ...zoneDefs, meta: newMeta });
   };
 
-  // ═══ ADMIN VENUES (settingsView "venues") — App_latest.jsx:7990 ═══
-  const AdminVenues = () => {
-
-    const addOutdoor = () => {
-      if(!newOD.name.trim()) return;
-      if(allOutdoorDB.some(v=>v.name===newOD.name.trim())){showMsg("Venue already exists","red");return;}
-      saveVenues(customInhouse, [...customOutdoor, {name:newOD.name.trim(),empanelled:newOD.empanelled}]);
-      setNewOD({name:"",empanelled:true});
-    };
-
-    const removeOutdoor = (name) => saveVenues(customInhouse, customOutdoor.filter(v=>v.name!==name));
-
-    // ═══ VENUE RENAME → EVERYTHING KEYED BY THE NAME ═══
-    // Venues are referenced by NAME, not id, in four separate places. Renaming one used to update
-    // only the venue list, silently breaking the other three:
-    //
-    //   • video tags     — the video stops matching the venue filters
-    //   • library photos — same, for stills (604 carry a venue; 131 are already stranded)
-    //   • transport tier — THE COSTLY ONE. transportCalc matches trVenues by name, so a renamed
-    //                      venue falls through to isNew, tier "New venue", and the trip rate drops
-    //                      to customTripRate. The quote changes with nothing on screen saying why.
-    //
-    // Past EVENTS are deliberately excluded — client_ledger and event_orders record where a job
-    // actually happened, and rewriting that would falsify history. Reference data has no such
-    // reason, so it follows the rename.
-    //
-    // CURRENTLY UNREACHABLE for in-house venues — renaming an in-house PROPERTY now happens in
-    // IMS → Admin → Settings → 🌆 Venues (VenuesEditor.jsx), not here (see the read-only In-house
-    // Venues card above and VENUE_MIGRATION_PLAN.md). This function stays, unwired, as the logic
-    // Phase 2 of that plan ports/re-triggers from the IMS side — it is not dead code to delete, it
-    // is the reference implementation for what Phase 2 still needs to do.
-    const renameVenueEverywhere = async (oldName, newName) => {
-      const from = (oldName || "").trim(), to = (newName || "").trim();
-      const out = { videos: 0, transport: 0, photos: 0 };
-      if (!from || !to || from === to) return out;
-
-      // 1. video tags — saveYtTags takes a PATCH keyed by video id, not the whole map. Passing the
-      //    whole map would re-upsert every tagged video (one chained write each) and overwrite any
-      //    tag edited elsewhere since this component rendered. Only the matching ids go in, and each
-      //    value is the function form so it composes onto the freshest tag rather than our snapshot.
-      const tags = ytVideoTags || {};
-      const vids = Object.keys(tags).filter((id) => (tags[id]?.venue || "").trim() === from);
-      if (vids.length) {
-        const patch = {};
-        vids.forEach((id) => { patch[id] = (prev) => ({ ...prev, venue: to }); });
-        saveYtTags(patch);
-        out.videos = vids.length;
-      }
-
-      // 2. transport tier — match case-insensitively, exactly as transportCalc does when it looks
-      //    the venue up, so a tier written with different casing still follows the rename.
-      const tiers = Array.isArray(trVenues) ? trVenues : [];
-      const hitsT = tiers.filter((v) => String(v?.name || "").trim().toLowerCase() === from.toLowerCase());
-      if (hitsT.length) {
-        saveTR(tiers.map((v) => (String(v?.name || "").trim().toLowerCase() === from.toLowerCase() ? { ...v, name: to } : v)));
-        out.transport = hitsT.length;
-      }
-
-      // 3. library photos (a real table) — page through the matches and rewrite tags.venue only,
-      //    leaving every other tag on the row untouched.
-      try {
-        for (let guard = 0; guard < 100; guard++) {
-          const { data, error } = await supabase.from("library").select("id,tags").eq("tags->>venue", from).limit(500);
-          if (error || !data?.length) break;
-          const res = await Promise.all(data.map((r) =>
-            supabase.from("library").update({ tags: { ...r.tags, venue: to } }).eq("id", r.id)));
-          if (res.some((x) => x.error)) break;
-          out.photos += data.length;
-          if (data.length < 500) break;
-        }
-      } catch { /* a failed photo pass must not undo the renames above */ }
-
-      return out;
-    };
-
-    // "3 videos · 2 photos · transport tier" — only the parts that actually moved.
-    const renameSummary = (r) => {
-      const bits = [];
-      if (r.videos) bits.push(`${r.videos} video tag${r.videos === 1 ? "" : "s"}`);
-      if (r.photos) bits.push(`${r.photos} photo${r.photos === 1 ? "" : "s"}`);
-      if (r.transport) bits.push("transport tier");
-      return bits.length ? ` — ${bits.join(" · ")} updated` : "";
-    };
-
-    const updateOutdoor = () => {
-      if(!editOD) return;
-      const newName = (editOD.name||"").trim();
-      if(!newName){showMsg("Venue name required","red");return;}
-      if(newName!==editOD.origName && customOutdoor.some(v=>v.name===newName)){
-        showMsg("Venue name already exists","red"); return;
-      }
-      const updated = customOutdoor.map(v => v.name===editOD.origName ? {
-        ...v, name: newName, empanelled: !!editOD.empanelled,
-      } : v);
-      saveVenues(customInhouse, updated);
-      const renamed = newName !== editOD.origName;
-      const origName = editOD.origName;
-      setEditOD(null);
-      if (renamed) {
-        showMsg("✓ Venue renamed — updating references…", "green");
-        renameVenueEverywhere(origName, newName).then((r) => {
-          showMsg(`✓ Venue renamed${renameSummary(r)}.`, "green");
-        });
-      }
-    };
-
-    return (
-      <div>
-        <div style={{fontSize:20,fontWeight:700,color:accent,marginBottom:20}}>Venue Management</div>
-
-        {/* ═══ IN-HOUSE VENUES — read-only (VENUE_MIGRATION_PLAN.md Phase 1) ═══
-            IMS → Admin → Settings → 🌆 Venues is now the sole place a property or its sub-venues
-            get added, renamed, or deleted — so a rename is a single, unambiguous "same id, new
-            name" edit instead of Studio and IMS each guessing whether a name that vanished from
-            one side is the same venue as a new one that appeared. This view still shows the live
-            list, it just doesn't edit it. */}
-        <div style={{...S.card,marginBottom:20}}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`}}>
-            <div style={{fontSize:16,fontWeight:600,color:accent}}>🏛️ In-house Venues</div>
-            <div style={{fontSize:11,color:textS,marginTop:2}}>Fixed venues under Ambria properties — added, renamed, or removed in IMS → Admin → Settings → 🌆 Venues</div>
-          </div>
-          <div style={{padding:20}}>
-            {allInhouseGroups.map(g=>(
-              <div key={g.parent} style={{marginBottom:16}}>
-                <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>{g.icon} {g.parent} <span style={{fontWeight:400,color:textS,fontSize:11}}>({g.manager})</span></div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                  {g.subVenues.map(sv=>{
-                    const vd = allVenueData[sv];
-                    return (
-                    <div key={sv} style={{padding:"10px 14px",borderRadius:10,background:isDark?"rgba(255,255,255,0.04)":"#F9FAFB",border:`1px solid ${border}`}}>
-                      <div style={{fontSize:13,fontWeight:600}}>{sv}</div>
-                      <div style={{fontSize:10,color:textS}}>{vd?.label||""} · {vd?.type||""} · Base {fmt(vd?.base||0)}</div>
-                    </div>);
-                  })}
-                </div>
-              </div>
-            ))}
-            {allInhouseGroups.length===0 && <div style={{fontSize:12,color:textS,fontStyle:"italic"}}>No in-house venues yet — add one in IMS → Admin → Settings → 🌆 Venues.</div>}
-          </div>
-        </div>
-
-        {/* ═══ OUTDOOR VENUES ═══ */}
-        <div style={S.card}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`}}>
-            <div style={{fontSize:16,fontWeight:600,color:accent}}>🌿 Outdoor Venues</div>
-            <div style={{fontSize:11,color:textS,marginTop:2}}>Empanelled partners + venues we've worked at</div>
-          </div>
-          <div style={{padding:20}}>
-            {/* Empanelled */}
-            <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>⭐ Empanelled</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:20}}>
-              {allOutdoorDB.filter(v=>v.empanelled).map(v=>{
-                const isEditing = editOD && editOD.origName===v.name;
-                if (isEditing) {
-                  return (
-                  <div key={v.name+"-edit"} style={{padding:"10px 14px",borderRadius:8,background:isDark?"rgba(201,169,110,0.08)":"#FFFBEA",border:`1px solid ${accent}60`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <input value={editOD.name} onChange={e=>setEditOD(p=>({...p,name:e.target.value}))} style={{...S.input,maxWidth:180,padding:"5px 10px",fontSize:12}}/>
-                    <div style={{display:"flex",gap:4}}>
-                      {[true,false].map(emp=>(<button key={String(emp)} onClick={()=>setEditOD(p=>({...p,empanelled:emp}))} style={{padding:"5px 10px",borderRadius:6,border:"none",cursor:"pointer",fontSize:10,fontWeight:editOD.empanelled===emp?600:400,background:editOD.empanelled===emp?accent:isDark?"rgba(255,255,255,0.04)":"#F3F4F6",color:editOD.empanelled===emp?"#0F0F1A":textS}}>{emp?"⭐":"🏢"}</button>))}
-                    </div>
-                    <button onClick={updateOutdoor} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:"none",background:accent,color:"#0F0F1A",cursor:"pointer"}}>💾 Save</button>
-                    <button onClick={()=>setEditOD(null)} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,cursor:"pointer"}}>Cancel</button>
-                  </div>);
-                }
-                return (
-                <div key={v.name} style={{padding:"8px 14px",borderRadius:8,background:isDark?"rgba(255,255,255,0.04)":"#F9FAFB",border:`1px solid ${border}`,display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:13}}>{v.name}</span>
-                  <button onClick={()=>setEditOD({origName:v.name,name:v.name,empanelled:!!v.empanelled})} style={{fontSize:11,color:accent,background:"none",border:"none",cursor:"pointer"}} title="Edit">✏️</button>
-                  <button onClick={()=>{if(confirm(`Delete venue "${v.name}"?`))removeOutdoor(v.name);}} style={{fontSize:10,color:"#F87171",background:"none",border:"none",cursor:"pointer"}} title="Delete">✕</button>
-                </div>);
-              })}
-            </div>
-
-            {/* Others — compact searchable */}
-            <div style={{fontSize:13,fontWeight:600,marginBottom:8}}>🏢 Other Venues <span style={{fontWeight:400,color:textS,fontSize:11}}>({allOutdoorDB.filter(v=>!v.empanelled).length})</span></div>
-            <input value={adminOdSearch} onChange={e=>setAdminOdSearch(e.target.value)} placeholder="Search other venues..." style={{...S.input,maxWidth:300,marginBottom:8}}/>
-            <div style={{maxHeight:200,overflowY:"auto",marginBottom:20,border:`1px solid ${border}`,borderRadius:10}}>
-              {(adminOdSearch.trim() ? allOutdoorDB.filter(v=>!v.empanelled && v.name.toLowerCase().includes(adminOdSearch.toLowerCase())) : allOutdoorDB.filter(v=>!v.empanelled)).map(v=>{
-                const isEditing = editOD && editOD.origName===v.name;
-                if (isEditing) {
-                  return (
-                  <div key={v.name+"-edit"} style={{padding:"8px 14px",borderBottom:`1px solid ${border}`,background:isDark?"rgba(201,169,110,0.06)":"#FFFBEA",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <input value={editOD.name} onChange={e=>setEditOD(p=>({...p,name:e.target.value}))} style={{...S.input,maxWidth:200,padding:"5px 10px",fontSize:12,flex:1}}/>
-                    <div style={{display:"flex",gap:4}}>
-                      {[true,false].map(emp=>(<button key={String(emp)} onClick={()=>setEditOD(p=>({...p,empanelled:emp}))} style={{padding:"4px 9px",borderRadius:6,border:"none",cursor:"pointer",fontSize:10,fontWeight:editOD.empanelled===emp?600:400,background:editOD.empanelled===emp?accent:isDark?"rgba(255,255,255,0.04)":"#F3F4F6",color:editOD.empanelled===emp?"#0F0F1A":textS}}>{emp?"⭐":"🏢"}</button>))}
-                    </div>
-                    <button onClick={updateOutdoor} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:"none",background:accent,color:"#0F0F1A",cursor:"pointer"}}>💾</button>
-                    <button onClick={()=>setEditOD(null)} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,cursor:"pointer"}}>Cancel</button>
-                  </div>);
-                }
-                return (
-                <div key={v.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 14px",borderBottom:`1px solid ${border}`}}>
-                  <span style={{fontSize:12}}>{v.name}</span>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>setEditOD({origName:v.name,name:v.name,empanelled:!!v.empanelled})} style={{fontSize:11,color:accent,background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}} title="Edit">✏️ Edit</button>
-                    <button onClick={()=>{if(confirm(`Delete venue "${v.name}"?`))removeOutdoor(v.name);}} style={{fontSize:10,color:"#F87171",background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>✕ Remove</button>
-                  </div>
-                </div>);
-              })}
-              {adminOdSearch.trim()&&allOutdoorDB.filter(v=>!v.empanelled && v.name.toLowerCase().includes(adminOdSearch.toLowerCase())).length===0&&<div style={{padding:"12px 14px",fontSize:11,color:textS}}>No match — add it below</div>}
-            </div>
-
-            {/* Add new outdoor venue */}
-            <div style={{padding:16,background:isDark?"rgba(201,169,110,0.04)":"#FFFDF7",borderRadius:12,border:`1px dashed ${accent}40`}}>
-              <div style={{fontSize:13,fontWeight:600,color:accent,marginBottom:12}}>+ Add Outdoor Venue</div>
-              <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
-                <div style={{flex:1}}>
-                  <div style={S.label}>Venue Name *</div>
-                  <input value={newOD.name} onChange={e=>setNewOD(p=>({...p,name:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addOutdoor()} placeholder="e.g. The Leela Palace" style={S.input}/>
-                </div>
-                <div>
-                  <div style={S.label}>Type</div>
-                  <div style={{display:"flex",gap:4}}>
-                    {[true,false].map(emp=>(
-                      <button key={String(emp)} onClick={()=>setNewOD(p=>({...p,empanelled:emp}))} style={{padding:"8px 14px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:newOD.empanelled===emp?600:400,background:newOD.empanelled===emp?accent:isDark?"rgba(255,255,255,0.04)":"#F3F4F6",color:newOD.empanelled===emp?"#0F0F1A":textS}}>
-                        {emp?"⭐ Empanelled":"🏢 Other"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <button onClick={addOutdoor} style={S.btn(true)}>+ Add</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  // ═══ ADMIN VENUES — REMOVED (VENUE_MIGRATION_PLAN.md) ═══
+  // The entire venue catalogue (in-house properties + sub-venues + outdoor venues) is now owned
+  // and edited in IMS → Admin → Settings → 🌆 Venues (VenuesEditor.jsx), including the rename
+  // cascade into video tags / transport tier / library photo tags this screen used to do
+  // (renameVenueEverywhere) — ported there directly against Supabase, since none of those three
+  // actually needed Studio's runtime. Studio is a pure reader of the venue list now, same as it
+  // already was for Rate Card once that migration finished (RATE_CARD_MIGRATION_PLAN.md).
 
   // ═══ TAG RENAME (the "U" in CRUD) ═══
   // A tag is stored as a bare string inside every library row's tags JSONB, so renaming it in the
@@ -489,7 +264,7 @@ export default function ManageSettings({ ctx }) {
   useEffect(() => {
     if (!studioSettingsAllowed) return;
     if (studioSettingsAllowed(settingsView)) return;
-    const first = ["clients", "venues", "zones", "tags", "priority"].find((v) => studioSettingsAllowed(v));
+    const first = ["clients", "zones", "tags", "priority"].find((v) => studioSettingsAllowed(v));
     if (first && first !== settingsView) setSettingsView(first);
   }, [settingsView, studioSettingsAllowed, setSettingsView]);
 
@@ -498,7 +273,7 @@ export default function ManageSettings({ ctx }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {(() => {
           const allow = (v) => (studioSettingsAllowed ? studioSettingsAllowed(v) : true);
-          const VIEWS = [["clients", "📋 Clients"], ["venues", "🏛️ Venues"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"]];
+          const VIEWS = [["clients", "📋 Clients"], ["zones", "📐 Zones"], ["tags", "🏷️ Tags"], ["priority", "📊 Photo Priority"]];
           return VIEWS.filter(([v]) => allow(v)).map(([v, label]) => (
             <button key={v} onClick={() => setSettingsView(v)} style={{ ...S.btn(settingsView === v), fontSize: 11 }}>{label}</button>
           ));
@@ -736,7 +511,6 @@ export default function ManageSettings({ ctx }) {
           </div>}
         </div>;
       })()}
-      {settingsView === "venues" && AdminVenues()}
       {settingsView === "tags" && AdminTags()}
       {settingsView === "priority" && <div style={{maxWidth:500}}>
         <div style={{fontSize:14,fontWeight:600,color:textP,marginBottom:4}}>Photo filter priority</div>
