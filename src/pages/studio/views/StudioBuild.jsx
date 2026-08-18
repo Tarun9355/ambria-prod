@@ -1633,13 +1633,28 @@ export default function StudioBuild({ ctx }) {
    has to live inside that width. Left to content-box the horizontal padding makes the real panel
    wider than the offset and the curve sits on top of the first column of cards.
    Extra right padding because the curve eats that edge — a control under it would be unreachable. */
+/* The rail itself does NOT scroll — overflow:hidden. Its job is the ground: the gradient, the
+   photograph, the curve, all running the full height of the viewport and passing behind the bar.
+   The SCROLLING happens in .bd-rail-scroll below, which starts beneath the header. */
 .bd-rail-l{position:fixed !important;left:0;top:0;box-sizing:border-box;
-  width:var(--sb-pw) !important;height:100dvh !important;max-height:none !important;
+  width:var(--sb-pw) !important;height:100vh;height:100svh !important;max-height:none !important;
   border-radius:0;clip-path:url(#bdBrandCurve);z-index:40;
   background:linear-gradient(160deg,#0F0F1A 0%,#191430 52%,#241a46 100%);
-  padding:18px 68px 20px 22px;overflow-y:auto;scrollbar-width:none;isolation:isolate}
-.bd-rail-l::-webkit-scrollbar{display:none}
-.bd-rail-l > *{position:relative;z-index:2}
+  padding:0;overflow:hidden;isolation:isolate}
+/* ── WHY THE SCROLLER IS ITS OWN BOX ──
+   The rail used to scroll itself, with padding-top clearing the header. Padding scrolls away with
+   the content — so the moment you moved the panel, "YOUR EVENT" and Hide rode up INTO the header
+   band. The bar is transparent over this column, so nothing hid them: they landed on top of the
+   logo and the Studio/IMS chips.
+   Absolutely positioned with top set to the measured header height, the scrollport simply BEGINS
+   below the bar. Content cannot reach that band because the box it lives in does not extend into
+   it — no padding to scroll away, and nothing to get the sums wrong.
+   Horizontal padding moved here with it; the right side stays generous because the curve eats that
+   edge and a control under it would be unreachable. */
+.bd-rail-scroll{position:absolute;left:0;right:0;bottom:0;z-index:2;
+  overflow-y:auto;scrollbar-width:none;
+  padding:14px 68px 20px 22px;display:flex;flex-direction:column;gap:14px}
+.bd-rail-scroll::-webkit-scrollbar{display:none}
 .bd-rail-img{position:absolute;inset:-4%;z-index:0;background-size:cover;background-position:center}
 .bd-rail-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
   background:linear-gradient(180deg,rgba(9,9,20,0.66) 0%,rgba(11,9,24,0.52) 42%,rgba(9,9,20,0.34) 72%,rgba(9,9,20,0.46) 100%)}
@@ -1651,14 +1666,14 @@ export default function StudioBuild({ ctx }) {
 /* z-index 0, not Browse's 39. Build's panel lives INSIDE .bd-layout, which the lift rule above puts
    at z-index 1 — so the shadow has to be below 1 to stay behind the panel and behind the content it
    bleeds onto. It still lands above the wash, which is also 0 but earlier in the DOM. */
-.bd-rail-shadow{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:0;
+.bd-rail-shadow{position:fixed;top:0;left:0;width:var(--sb-pw);height:100vh;height:100svh;z-index:0;
   pointer-events:none;filter:blur(24px);opacity:.55;transform:translateX(9px)}
 .bd-rail-shadow svg{display:block;width:100%;height:100%}
 /* The gold line on the seam. Above the header (50) so the bar's 3px overlap cannot bury it.
    vector-effect pins the stroke to screen pixels — without it, stretching a 1x1 box to the panel
    stretches the stroke into a wedge. overflow visible because the path sits ON x=1, so half the
    stroke falls outside the viewBox and would be clipped away down its whole length. */
-.bd-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:51;
+.bd-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100vh;height:100svh;z-index:51;
   pointer-events:none;filter:drop-shadow(0 0 5px rgba(201,169,110,0.45)) drop-shadow(0 0 14px rgba(201,169,110,0.22))}
 .bd-rail-edge svg{display:block;width:100%;height:100%;overflow:visible}
 /* ── GLASS ──
@@ -1744,13 +1759,29 @@ export default function StudioBuild({ ctx }) {
 /* ── LANDSCAPE TABLET ──
    Everything still side by side, just narrower. --sb-pw drives the panel AND the content offset, so
    one number moves both; the right rail comes down with it. */
-@media (max-width:1180px){
+/* 1280, not 1180. An iPad Pro 11" in landscape reports 1194 and an iPad Air 1180 — the old
+   threshold sat right between the two, so the Pro got the full desktop treatment: a 392px panel and
+   a 258px rail on a 1194px screen, leaving the zone column about 490px. That is what looked broken
+   in Safari; nothing had crashed, the furniture had simply eaten the work.
+   1280 clears every iPad landscape width with room to spare and costs a desktop nothing. */
+@media (max-width:1280px){
   :root{--sb-pw:300px}
-  .bd-rail-l{padding:14px 52px 16px 16px}
+  .bd-rail-scroll{padding:12px 52px 16px 16px}
   .bd-rail-r{width:208px !important}
   /* The photo grid pays for the rails. At 8 across a ~600px column gives 70px thumbnails, which is
      not enough to judge a stage from — the whole point of the picker. */
   .ph-grid-wide{grid-template-columns:repeat(6,minmax(0,1fr)) !important}
+  /* Filter pills drop to two columns. At three, a 300px panel gives each about 70px, and the labels
+     here are "Ring Ceremony" and "Anniversary" — they were overlapping into each other. */
+  .bd-rail-l [id^="sb-sec-"]{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+}
+/* ── THE ESTIMATE RAIL GOES FIRST ──
+   Below this the zone column is the thing under pressure, and of the two rails the estimate is the
+   one you read rather than work in. It unpins and stacks under the build, which hands its 208px
+   back to the zones while the filter panel is still a column. */
+@media (max-width:1080px){
+  .bd-layout{flex-wrap:wrap}
+  .bd-rail-r{width:100% !important;position:static !important;max-height:none !important;order:2}
 }
 /* ── PORTRAIT TABLET ──
    The panel stops reserving and starts overlaying: the zone column gets the full width, the panel
@@ -1779,7 +1810,7 @@ export default function StudioBuild({ ctx }) {
   :root{--sb-pw:min(322px, 88vw)}
   .ph-grid-wide{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
   .ph-grid:not(.ph-grid-wide){grid-template-columns:minmax(0,1fr) !important}
-  .bd-rail-l{padding:13px 44px 14px 14px}
+  .bd-rail-scroll{padding:12px 44px 14px 14px}
 }
 .sec-tile{transition:transform .14s ease, box-shadow .2s ease, border-color .18s ease}
 .sec-tile:hover{transform:translateY(-2px);border-color:${accent} !important;
@@ -2010,18 +2041,16 @@ undefined
     <div className="bd-layout" style={{display:"flex",gap:leftRailOpen||rightRailOpen?22:12,alignItems:"flex-start",
       marginLeft:leftRailOpen?"calc(var(--sb-pw) + 30px)":0,position:"relative",zIndex:1}}>
       {leftRailOpen
-        ? <div ref={railRef} className="bd-rail bd-rail-l" style={{flexShrink:0,alignSelf:"flex-start",
-            // The panel runs the full height of the viewport and passes BEHIND the header, so no
-            // edge has to be aligned and there is no gap to get wrong. Its content is pushed clear
-            // with padding instead — measured, not the RAIL_TOP guess.
-            paddingTop:hdrH + 14,
-            display:"flex",flexDirection:"column",gap:14}}>
+        ? <div ref={railRef} className="bd-rail bd-rail-l" style={{flexShrink:0,alignSelf:"flex-start"}}>
             {/* The curve and the photograph, exactly as Browse draws them. */}
             <svg width="0" height="0" style={{position:"absolute",pointerEvents:"none"}} aria-hidden="true" focusable="false">
               <defs><clipPath id="bdBrandCurve" clipPathUnits="objectBoundingBox"><path d={BD_CURVE}/></clipPath></defs>
             </svg>
             {PANEL_BG && <div className="bd-rail-img" style={{backgroundImage:`url(${PANEL_BG})`}} aria-hidden="true"/>}
             <div className="bd-rail-veil" aria-hidden="true"/>
+            {/* top is the MEASURED header height, so the scrollport begins below the bar and its
+                contents can never travel into it — see .bd-rail-scroll. */}
+            <div className="bd-rail-scroll" style={{top:hdrH}}>
             {/* ═══ YOUR EVENT ═══
                 Everything that used to be the page's own heading. Restacked as one fact per row:
                 across the main column it was a single wrapping sentence, which at 300px would break
@@ -2173,6 +2202,7 @@ undefined
         </div>
       </div>;
     })()}
+            </div>{/* .bd-rail-scroll */}
           </div>
         : railTab("left","Photo filters",<IconSliders size={14}/>)}
       <div style={{flex:1,minWidth:0}}>

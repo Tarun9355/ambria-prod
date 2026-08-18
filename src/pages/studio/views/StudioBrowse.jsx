@@ -744,7 +744,7 @@ export default function StudioBrowse({ ctx }) {
    The cast shadow: z-index 39 — above the page so the shadow actually lands on it, below the panel
    (40) so the panel covers everything but the bleed past its edge. Nudged right so the light reads
    as coming from the left. Nothing in it animates, so the blur is rasterised once. */
-.sb-rail-shadow{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:39;
+.sb-rail-shadow{position:fixed;top:0;left:0;width:var(--sb-pw);height:100vh;height:100svh;z-index:39;
   pointer-events:none;filter:blur(24px);opacity:.55;transform:translateX(9px)}
 .sb-rail-shadow svg{display:block;width:100%;height:100%}
 /* The gold line on the seam. drop-shadow rather than a second wider path: it follows the stroke's
@@ -756,7 +756,7 @@ export default function StudioBrowse({ ctx }) {
    buried the line across the whole header band. Up here the gold runs unbroken from the very top of
    the screen to the bottom, which is the point of it. The element is only --sb-pw wide and the path
    sits on its right edge, so it can never cover anything in the bar. */
-.sb-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:51;
+.sb-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100vh;height:100svh;z-index:51;
   pointer-events:none;filter:drop-shadow(0 0 5px rgba(201,169,110,0.45)) drop-shadow(0 0 14px rgba(201,169,110,0.22))}
 .sb-rail-edge svg{display:block;width:100%;height:100%;overflow:visible}
 /* A lit edge down the left, and the cards inside lifted off the photograph. Together these are
@@ -1001,7 +1001,7 @@ export default function StudioBrowse({ ctx }) {
           // gap 14, not 10. The rail stacks four unrelated things — a control, a saved deal, its
           // history, and the filter card — and at 10 they read as one run of blocks with no idea
           // where one ends and the next begins. The extra 4px is what separates them into items.
-          top:0, height:"100dvh", paddingTop:hdrH + 14,
+          top:0, height:"100svh", paddingTop:hdrH + 14,
           maxHeight:"none",display:"flex",flexDirection:"column",gap:14}}>
           {/* The curve and the photograph, exactly as Event Info draws them, so moving between the
               two steps doesn't feel like moving between two products. */}
