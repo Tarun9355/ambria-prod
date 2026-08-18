@@ -5063,20 +5063,25 @@ export default function StudioApp() {
       preferredVenues = new Set(browseVenues);
       browseVenues.forEach(bv => { (subVenuesOfParent[bv] || []).forEach(sv => preferredVenues.add(sv)); });
     }
-    // Function type is the one filter a favourited video still has to clear — every other filter
-    // below exempts it. Favouriting a video is a deliberate "always show this for its venue" pin;
-    // the whole point is not having to remember to clear the tier/style/palette filters just to
-    // pull it back up mid-meeting.
+    // ── FAVOURITES OBEY EVERY FILTER ──
+    // Tier, venue type, design style and palette used to carry an `isMyFav(v) ||` escape hatch, so
+    // a favourited video survived those filters whatever it was tagged. The intent was convenience —
+    // pin something and never have to clear filters to find it again. In practice it meant a video
+    // favourited for a Wedding kept leading the results while the salesperson was filtering for a
+    // Cocktail, in front of a client, and there was no filter combination that would put it away.
+    // A pin that cannot be filtered is not a pin, it is a leak.
+    // Favouriting still does what it is for: it RANKS. See favFirst below — a favourite leads
+    // whatever survives the filters, it just no longer smuggles itself past them.
     // Favouriting is per salesperson (see saveFavVideos) — Tarun's picks for a venue are independent
-    // of Krati's, so every check below is against MY OWN flag on the video, never anyone else's.
+    // of Krati's, so the check is against MY OWN flag on the video, never anyone else's.
     const isMyFav = (v) => !!favVideos[v.id]?.[authUser?.id];
     if (filterFn.length > 0) out = out.filter(v => v.fns.some(f => filterFn.includes(f)));
-    if (filterCat.length > 0) out = out.filter(v => isMyFav(v) || (v.tierCat && filterCat.includes(v.tierCat)));
-    if (filterSpace.length > 0) out = out.filter(v => isMyFav(v) || (v.space && filterSpace.includes(v.space)));
-    if (filterMood.length > 0) out = out.filter(v => isMyFav(v) || v.styles.some(s => filterMood.includes(s)));
+    if (filterCat.length > 0) out = out.filter(v => v.tierCat && filterCat.includes(v.tierCat));
+    if (filterSpace.length > 0) out = out.filter(v => v.space && filterSpace.includes(v.space));
+    if (filterMood.length > 0) out = out.filter(v => v.styles.some(s => filterMood.includes(s)));
     // Whitespace/case-insensitive: the pill says "Brown" (trimmed by paletteNames) while the video
     // may be tagged "Brown " — an exact includes() matched neither half of the library reliably.
-    if (filterPalette.length > 0) out = out.filter(v => isMyFav(v) || (v.colors || []).some(c => paletteInList(filterPalette, c)));
+    if (filterPalette.length > 0) out = out.filter(v => (v.colors || []).some(c => paletteInList(filterPalette, c)));
     // Favourited videos lead whichever group they land in (below) rather than jumping across group
     // boundaries — a favourite tagged to a DIFFERENT venue must not outrank the venue you actually
     // selected, it just leads once it's already in the right bucket.
