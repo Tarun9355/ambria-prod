@@ -4,7 +4,7 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
-  IconPlay, IconBox, IconSave, IconSliders, IconStar, IconUsers } from "../../../components/icons.jsx";
+  IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
@@ -1667,6 +1667,17 @@ export default function StudioBuild({ ctx }) {
 .bd-rail-l .sb-panel::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
   border-radius:inherit;
   background:radial-gradient(130% 62% at 0% 0%,rgba(201,169,110,0.15) 0%,rgba(201,169,110,0.04) 38%,transparent 68%)}
+/* ── THE PANEL MUST NOT BE THE SHOCK ABSORBER ──
+   The rail is a fixed-height flex column, and the filter card was its only child that could shrink:
+   the event block and the reference card are both flex-shrink:0. So on a shorter window everything
+   that did not fit came out of the filters, and they collapsed to a single VENUE row with a
+   scrollbar — while the video above them kept every pixel.
+   It no longer shrinks, and its inline max-height (set from the sticky-rail measurement, which
+   stopped meaning anything once the rail became fixed and full-height) is dropped. The rail's own
+   overflow-y handles the overflow, so there is ONE scrollbar for the column instead of a scrollport
+   nested inside a scrollport. */
+.bd-rail-l .sb-panel{max-height:none !important;flex:0 0 auto}
+.bd-rail-l .sb-panel .sb-scroll{overflow:visible !important;max-height:none !important}
 .bd-rail-l .sb-panel .sb-head{border-radius:8px}
 .bd-rail-l .sb-panel .sb-scroll > div{border-bottom-color:rgba(255,255,255,0.13) !important}
 .bd-rail-l .sb-rcard{backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);
@@ -1968,31 +1979,33 @@ undefined
             </svg>
             {PANEL_BG && <div className="bd-rail-img" style={{backgroundImage:`url(${PANEL_BG})`}} aria-hidden="true"/>}
             <div className="bd-rail-veil" aria-hidden="true"/>
-            {/* Hide, on the panel's own top-right — same place Browse puts it. It closes the whole
-                panel, so it belongs on the panel rather than inside the filter card it used to live
-                in. In the FLOW, not absolutely positioned: the rail's content starts at the same
-                offset anything pinned there would use, so an absolute one lands on top of the first
-                block. It cannot sit up in the header band either — the bar is only transparent
-                there, the element is still present and still swallows the click. */}
-            <div style={{flexShrink:0,display:"flex",justifyContent:"flex-end"}}>
-              <button type="button" onClick={()=>setLeftRailOpen(false)}
-                title="Hide the filters and widen the build"
-                style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,
-                  cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${pBorder}`,
-                  background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",
-                  color:pTextM,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
-                {/* Rotated to point left — the direction the panel collapses in. */}
-                <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
-              </button>
-            </div>
             {/* ═══ YOUR EVENT ═══
                 Everything that used to be the page's own heading. Restacked as one fact per row:
                 across the main column it was a single wrapping sentence, which at 300px would break
                 in a different place every time a chip appeared or a date changed. Same values, same
                 conditions — venue/type, date, guests, then the demand notes — only the arrangement
-                differs. */}
+                differs.
+                Hide shares the title's row rather than owning one above it: on its own it spent a
+                whole 26px band on one small control and pushed everything below it down. It closes
+                the panel, so it belongs on the panel — in the FLOW, not absolutely positioned (the
+                rail's content starts where anything pinned there would, so an absolute one lands on
+                top of the first block) and not up in the header band either, where the bar is only
+                transparent and still swallows the click.
+                alignItems:flex-start keeps it level with the eyebrow, not floating beside a 30px
+                serif line. */}
             <div style={{flexShrink:0,paddingBottom:2}}>
-              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",color:accent,marginBottom:6}}>Your event</div>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,marginBottom:6}}>
+                <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",color:accent,paddingTop:3}}>Your event</div>
+                <button type="button" onClick={()=>setLeftRailOpen(false)}
+                  title="Hide the filters and widen the build"
+                  style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,flexShrink:0,
+                    cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${pBorder}`,
+                    background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",
+                    color:pTextM,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
+                  {/* Rotated to point left — the direction the panel collapses in. */}
+                  <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
+                </button>
+              </div>
               <div className="bd-hero-face" style={{fontSize:30,fontWeight:600,color:PANEL_INK,letterSpacing:-0.3,lineHeight:1.08,marginBottom:14}}>
                 {clientName ? <>Welcome, {clientName}</> : "Build Your Decor"}
               </div>
@@ -2003,12 +2016,17 @@ undefined
                     <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{text}</span>
                   </div>
                 );
-                const pax = activeFnMeta?.pax;
                 const dd = dateDemand;
                 return <div style={{display:"flex",flexDirection:"column",gap:9}}>
-                  {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}`)}
-                  {clientDate && row(<IconCalendar size={14}/>, new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
-                  {pax ? row(<IconUsers size={14}/>, `${pax} Guests`) : null}
+                  {/* Venue/type and the date share a row — they are the two halves of "which event",
+                      and stacked they spent two lines saying it. Wraps back to two on a narrow
+                      panel rather than truncating either one.
+                      No guest count: it is set on Event Info and not used anywhere in this step's
+                      work, so in the panel it was a number with nothing to do. */}
+                  <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",rowGap:9}}>
+                    {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}`)}
+                    {clientDate && row(<IconCalendar size={14}/>, new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
+                  </div>
                   {dd?.isHigh && row(<IconAlert size={14}/>, "High demand", "#F87171")}
                   {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
                   {(()=>{
@@ -2032,23 +2050,33 @@ undefined
     {/* ═══ SOURCE EVENT BANNER ═══ */}
     {sourceEvent&&<div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
       <div style={{display:"flex",flexDirection:"column",gap:0}}>
-        <div style={{width:"100%",height:128,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
+        <div style={{width:"100%",height:140,flexShrink:0,position:"relative",background:sourceEvent.gradient,overflow:"hidden"}}>
           <LazyYT src={sourceEvent.video} gradient={sourceEvent.gradient} poster={sourceEvent.img||sourceEvent.photos?.[0]} title={sourceEvent.name} style={{position:"absolute",inset:0}}/>
         </div>
         <div style={{flex:1,padding:"10px 12px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
             <div>
               <div style={{fontSize:9,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:3}}>Building from reference</div>
-              <div style={{fontSize:13,fontWeight:700,lineHeight:1.3}}>{sourceEvent.name}</div>
-              <div style={{fontSize:11,color:textS,marginTop:2}}>{sourceEvent.venue} · {sourceEvent.fn} · {sourceEvent.space}</div>
+              {/* ONE line, ellipsised. These are raw YouTube titles — the one on screen runs to
+                  fifteen words — and left to wrap they took three or four lines of panel to say
+                  something the first few words already identify. nowrap rather than a 1-line clamp:
+                  same result, and it does not depend on the -webkit-box display mode.
+                  The full title is on the element, so hovering still gives you all of it. */}
+              <div title={sourceEvent.name} style={{fontSize:12.5,fontWeight:700,lineHeight:1.4,
+                whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sourceEvent.name}</div>
+              <div style={{fontSize:11,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sourceEvent.venue} · {sourceEvent.fn} · {sourceEvent.space}</div>
             </div>
             {/* The running total lives in the Live Estimate rail, which is on screen the whole
                 time — repeating it here just gave the same number two homes. Only the tier chip
                 stays, since the rail states it once and this is where the reference is judged. */}
-            {/* flex-start, not flex-end: right-aligning made sense when this sat opposite the title
-                in a full-width banner. In the rail the row wraps, so the chip and Upload drop onto
-                their own line and now line up with the title above them instead of floating right. */}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:6,flexShrink:0}}>
+            {/* One row across the full width of the card, not a stacked column: the tier chip on the
+                left and Upload hard against the right edge. flexBasis 100% is what drops it onto its
+                own line — the parent wraps — so the two sit on the card's own axis rather than being
+                squeezed into whatever the title left over.
+                justifyContent follows the chip: with pricing hidden there is no chip, and
+                space-between on a single child would park Upload at the LEFT. */}
+            <div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%",
+              justifyContent:showCosts?"space-between":"flex-end"}}>
               {showCosts&&<span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>}
               {BANNER_UPLOAD}
             </div>
@@ -2071,7 +2099,7 @@ undefined
       const embedUrl=sourceVideo.id?`https://www.youtube.com/embed/${sourceVideo.id}`:null;
       return <div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
         <div style={{display:"flex",flexDirection:"column",gap:0}}>
-          {vid?.thumb&&<div style={{width:"100%",height:128,flexShrink:0,position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}}>
+          {vid?.thumb&&<div style={{width:"100%",height:140,flexShrink:0,position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}}>
             <img src={vid.thumb} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none"}}/>
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.2)"}}>
               <div style={{width:48,height:34,borderRadius:8,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 12px rgba(255,0,0,0.4)"}}><div style={{width:0,height:0,borderLeft:"12px solid #fff",borderTop:"7px solid transparent",borderBottom:"7px solid transparent",marginLeft:2}}/></div>
