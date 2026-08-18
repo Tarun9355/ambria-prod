@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
 import { IconClipboard } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
+import AppSwitcher from "../../../components/AppSwitcher.jsx";
 
 // The brand panel's right edge, in objectBoundingBox units (0–1 on both axes) so it stretches with
 // the panel rather than being fixed to pixels. Full width at top and bottom, drawn in to a waist at
@@ -749,6 +750,21 @@ export default function StudioEventInfo({ ctx }) {
   // logo file in the repo — the mark everywhere in this app (and on the cost-estimate PDF) is the
   // gold "A" tile with the AMBRIA wordmark and "Decorations & Events" under it, so that's what
   // this is, scaled up. Decorative layers are aria-hidden; the wordmark itself is not.
+  // ═══ THE APP SWITCHER ═══
+  // This step has no navbar — it was taken off deliberately, since the page is where a deal starts
+  // and a step nav on it has nothing to navigate yet. That also took the Studio/IMS toggle with it,
+  // which is the one control on the bar that has nothing to do with the flow: it answers "which app
+  // am I in", and that question is just as live here as anywhere else.
+  // Put back at the viewport's top-left, the same corner it occupies in the bar. FIXED and outside
+  // .ei-split for the same reason the brand panel is — an ancestor with non-visible overflow would
+  // otherwise govern it. tone="dark" because it lands on the panel's ink.
+  // The component renders nothing at all for users granted only one app, so it costs those users
+  // nothing.
+  const APP_SWITCH = (
+    <div style={{position:"fixed",top:16,left:22,zIndex:6}}>
+      <AppSwitcher current="studio" tone="dark" />
+    </div>
+  );
   const BRAND_PANEL = (
     <aside className={`ei-brand${PANEL_BG ? " ei-brand-photo" : ""}`}>
       {/* The photograph, when there is one. Sits at the very back; the gradient stays underneath it
@@ -897,6 +913,8 @@ export default function StudioEventInfo({ ctx }) {
         </svg>
       </div>
       {BRAND_PANEL}
+      {/* After the panel, so it paints on top of the ink rather than under it. */}
+      {APP_SWITCH}
       <div className="ei-split">
         {/* Ambient wash — full width of the split, running UNDER the fixed panel as well as the
             brief, so the cream the curve gives back is washed like everything else. No clicks. */}

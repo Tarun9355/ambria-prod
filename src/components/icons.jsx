@@ -126,6 +126,19 @@ export function IconStar({ size = 15, filled = false }) {
   );
 }
 
+// Two figures — a guest count. Drawn at the same 24×24 and 1.75 stroke as the rest so it sits
+// level with the calendar and venue glyphs it is listed beside.
+export function IconUsers({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M9 11.5a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8z" />
+      <path d="M2.8 19.8c0-3.1 2.8-5.2 6.2-5.2s6.2 2.1 6.2 5.2" />
+      <path d="M16.2 5.2a3.2 3.2 0 0 1 0 6.2" />
+      <path d="M17.6 14.9c2.2.5 3.6 2.1 3.6 4.3" />
+    </svg>
+  );
+}
+
 // Sparkle — AI-generated / AI-tagged content.
 export function IconSparkle({ size = 15 }) {
   return (

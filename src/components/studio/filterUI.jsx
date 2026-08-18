@@ -229,10 +229,15 @@ export function makeFilterUI({ isDark, accent, textP, S }) {
       ? "0 1px 2px rgba(0,0,0,0.45), 0 10px 26px -12px rgba(0,0,0,0.6)"
       : "0 1px 2px rgba(26,26,46,0.06), 0 10px 26px -12px rgba(26,26,46,0.2)",
       ...(scroll ? {display:"flex",flexDirection:"column",minHeight:0,maxHeight:scroll,overflow:"hidden"} : null)}}>
-      <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:8,
-        padding:"13px 16px",borderBottom:`1px solid ${hairline}`,
-        background:isDark?"#1A1A2E":"linear-gradient(180deg,#FEFCF8,#fff)"}}>
-        <div style={{fontSize:13.5,fontWeight:700,color:textP,letterSpacing:-0.1}}>{title}</div>
+      {/* A gold rule under the header rather than the section hairline, and a short gold bar before
+          the word. On a frosted card a 13px label with a 7% line beneath it is not a header, it is
+          just the first row — this is the same treatment Browse gives its own panel, so the two
+          read as one component rather than two that happen to hold the same filters. */}
+      <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:9,
+        padding:"13px 16px",borderBottom:`1px solid ${accent}38`,
+        background:isDark?"linear-gradient(180deg,rgba(201,169,110,0.13),rgba(201,169,110,0.03))":"linear-gradient(180deg,#FEFCF8,#fff)"}}>
+        <span aria-hidden="true" style={{width:3,height:14,borderRadius:2,background:accent,flexShrink:0}}/>
+        <div style={{fontSize:13.5,fontWeight:700,color:textP,letterSpacing:0.2}}>{title}</div>
         {total > 0 && <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:6,
           background:isDark?"rgba(201,169,110,0.18)":"#F6E7C8",color:gold,border:`1px solid ${accent}44`}}>{total}</span>}
         {total > 0 && <div className="sb-pill sb-ghost" onClick={onClear} title="Reset every filter"

@@ -4,7 +4,7 @@ import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filte
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
-  IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
+  IconPlay, IconBox, IconSave, IconSliders, IconStar, IconUsers } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
@@ -18,6 +18,21 @@ import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
+import { makeS } from "../../../lib/studio/styles";
+import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+
+// ═══ THE PANEL SHELL ═══
+// Browse's left column, brought to Build so the two steps of the same flow are one product. Every
+// number here is shared with it deliberately: the same curve, the same photograph, the same
+// variable name (--sb-pw) so the header's transparent window works on both without a second set of
+// rules. Only one of the two views is ever mounted, so they cannot collide.
+const BD_CURVE = "M0,0 H1 C1,0.18 0.875,0.28 0.86,0.46 C0.845,0.66 1,0.82 1,1 H0 Z";
+const BD_EDGE  = "M1,0 C1,0.18 0.875,0.28 0.86,0.46 C0.845,0.66 1,0.82 1,1";
+const PANEL_BG =
+  Object.values(import.meta.glob("../../../assets/ambria-panel-browse.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
+  Object.values(import.meta.glob("../../../assets/ambria-panel.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" }))[0] ||
+  null;
+const PANEL_INK = "#F5F1E7";
 import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHelpers";
 import { fixedVenueFor } from "../../../lib/ims/fixedVenues";
 import { itemDimsText } from "../../../lib/ims/helpers";
@@ -743,12 +758,25 @@ export default function StudioBuild({ ctx }) {
 
   // Photo-filter pill. Was 9px in a 2px-tall chip with `textS` (~3.1:1) when inactive — too small
   // to hit and too faint to read. One geometry, used by all 25 call sites on this page.
+  // The filters now sit on the panel's ink rather than on the cream page, so they are asked for in
+  // the DARK skin — exactly as Browse does it. makeFilterUI is already parameterised by isDark and
+  // caches per (isDark, accent, textP), so this re-colours every pill, header, count chip and search
+  // box WITHOUT touching a line of the filter markup below, and therefore without touching any
+  // filter logic. Every one of these components is used only inside ZP_PANEL, which is what makes
+  // the swap safe.
+  // TWO sets, and they are not interchangeable. zpTextM/zpGold are read by zpPill and by the
+  // per-zone filter popovers, which sit on the CREAM PAGE — dressing them for the dark panel makes
+  // them near-invisible there. pTextM is the panel's own muted text, for the handful of labels
+  // inside ZP_PANEL that don't come from the (already dark-skinned) filter kit.
   const zpTextM = textS;
   const zpGold  = isDark ? "#D9BE86" : "#8A6A2F";
-  // Panel / section / pill come from the shared module, so this panel is literally the same
-  // component tree as the Browse filters — the two cannot drift apart.
+  const pTextM  = "rgba(245,241,231,0.72)";
   const { Panel: FPanel, Section: FSection, Pill: FPill, SearchBox: FSearchBox, seeMorePill: fSeeMorePill, css: filterCSS } =
-    makeFilterUI({ isDark, accent, textP, S });
+    makeFilterUI({ isDark: true, accent, textP: PANEL_INK, S: makeS(true) });
+  // Panel-local tokens for the markup in THIS file that doesn't come from the kit — same values
+  // Browse uses, so the two panels are one surface.
+  const pBorder = "rgba(255,255,255,0.17)";
+  const pCard   = "rgba(255,255,255,0.06)";
   const zpPill = (active) => ({ display: "inline-flex", alignItems: "center", padding: "4px 11px", borderRadius: 999, fontSize: 10.5, lineHeight: 1.4, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s", background: active ? accent : "transparent", color: active ? (isDark ? "#1a1a2e" : "#fff") : zpTextM, border: `1px solid ${active ? accent : border}`, fontWeight: active ? 600 : 500 });
   const zpIndoorVenues = allInhouseVenues.filter(v => (allVenueData[v]?.type || "Outdoor") === "Indoor");
   const zpOutdoorVenues = [
@@ -896,10 +924,41 @@ export default function StudioBuild({ ctx }) {
   // opposite of the point — the extra width is meant to make the same four photos bigger, not to
   // fit twice as many and push the zone's own controls off the bottom of the screen.
   const PH_PER_PAGE = 4;
-  const RAIL_W = 258;
+  // ── THE ▦ GRID ──
+  // Eight across, fixed. It was auto-fill/minmax(150px), which on a wide monitor packed ten or more
+  // into a row and made every thumbnail smaller the bigger the screen got — the opposite of what
+  // more room should buy. A fixed count means the photos GROW with the window.
+  const PH_GRID_COLS = 8;
+  const PH_GRID_PER_PAGE = 80;   // ten full rows
+  const RAIL_W = 258;                         // still the RIGHT rail's width (the estimate tile)
   const RAIL_TOP = 70;                        // the rails' sticky offset — clears the page header
   const railRef = useRef(null);
   const railMaxH = useRailMaxHeight(railRef, RAIL_TOP);
+  // ═══ THE REAL HEADER HEIGHT ═══
+  // RAIL_TOP is a guess at it. On a multi-function deal the bar grows a second row of pills and on a
+  // tablet it wraps the step nav, either of which makes the guess short — and the panel's first
+  // control then lands on top of the navbar. Measured and observed instead, same as Browse.
+  const [hdrH, setHdrH] = useState(RAIL_TOP);
+  useEffect(() => {
+    const el = document.querySelector(".sa-header");
+    if (!el) return undefined;
+    const read = () => setHdrH(el.getBoundingClientRect().height || RAIL_TOP);
+    read();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [RAIL_TOP]);
+  // The header goes see-through across the panel's width while the panel is up, so the column reads
+  // as one piece from the top of the screen. Same flag and same variable Browse uses — the header is
+  // a sibling of this view, not an ancestor, so it travels on the root element. Removed on unmount,
+  // so Summary never inherits a bar with a hole in it.
+  useEffect(() => {
+    const el = document.documentElement;
+    if (leftRailOpen) el.setAttribute("data-sb-rail", "1");
+    else el.removeAttribute("data-sb-rail");
+    return () => el.removeAttribute("data-sb-rail");
+  }, [leftRailOpen]);
   // A filter change re-orders the whole matched set, so "page 3" of the old list is meaningless.
   useEffect(() => { setPhPage({}); }, [zpFilters]);
   const phDot = (on) => ({ minWidth: 27, height: 27, padding: "0 7px", borderRadius: 8, cursor: "pointer",
@@ -1335,13 +1394,14 @@ export default function StudioBuild({ ctx }) {
       ];
       const total = Object.values(zpFilters).flat().length;
       const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
-      return <FPanel title="Photo filters" total={total} onClear={clearAll} note="Applies to every zone"
-        scroll={railMaxH}
-        action={<span className="rail-btn" onClick={()=>setLeftRailOpen(false)} title="Hide the filters and widen the build"
-          style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.4,
-            textTransform:"uppercase",color:textS,padding:"3px 7px",borderRadius:7,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>
-          <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
-        </span>}>
+      {/* "Filters", not "Photo filters", and no "Applies to every zone" note. The panel is the only
+          filter surface on the page and it sits under a heading that already says what it filters;
+          the note was a caption on a caption, and at this width it crowded the row.
+          No `action` either — Hide moved OUT of this header to the top of the rail, where Browse
+          keeps it. It closes the whole panel, not the card it was sitting in, and a control belongs
+          on the thing it acts on. */}
+      return <FPanel title="Filters" total={total} onClear={clearAll}
+        scroll={railMaxH}>
         {groups.map((g,gi)=>{
           const sel=zpFilters[g.key]||[];
           // Groups with long values (palette, venue names) get fewer columns and left-aligned rows.
@@ -1389,10 +1449,10 @@ export default function StudioBuild({ ctx }) {
                 venues have no anchor colours, so every hit is a name match. */}
             {(isPalette?shown.filter(v=>paletteMatches(v,q)):shown).map(optPill)}
             {(()=>{if(!isPalette)return null;const byColour=shown.filter(v=>!paletteMatches(v,q));return byColour.length===0?null:<>
-              <div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>Contains this colour</div>
+              <div style={{gridColumn:"1/-1",fontSize:9,color:pTextM,marginTop:2}}>Contains this colour</div>
               {byColour.map(optPill)}
             </>;})()}
-            {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:zpTextM,marginTop:2}}>{q.trim()?"Selected, outside this search":"Selected"}</div>}
+            {selectedHidden.length>0&&<div style={{gridColumn:"1/-1",fontSize:9,color:pTextM,marginTop:2}}>{q.trim()?"Selected, outside this search":"Selected"}</div>}
             {selectedHidden.map(optPill)}
             {/* See all / Show fewer. Hidden while searching — the search already decides what shows. */}
             {searchable&&!q.trim()&&(capped||seeAll)&&matched.length>cap&&
@@ -1401,7 +1461,7 @@ export default function StudioBuild({ ctx }) {
                 style={fSeeMorePill}>
                 {capped?`See all ${matched.length} ${isVenue?"venues":"palettes"}`:"Show fewer"}
               </div>}
-            {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:zpTextM}}>{g.empty}</span>}
+            {g.empty&&g.opts.length===0&&<span style={{gridColumn:"1/-1",fontSize:10,color:pTextM}}>{g.empty}</span>}
           </FSection>;
         })}
       </FPanel>;
@@ -1507,8 +1567,138 @@ export default function StudioBuild({ ctx }) {
   // Wider than S.main's 1200px cap, which left ~350px of dead gutter either side on a desktop
   // monitor and pushed the filter rail far off the left edge. Matches the Browse page.
   return (
-  <div style={{...S.main,maxWidth:1800}}>
+  <div className={leftRailOpen?"bd-view":"bd-view bd-folded"} style={{...S.main,maxWidth:1800}}>
     <style>{filterCSS + `
+/* ═══════════ THE PANEL SHELL ═══════════
+   Browse's ground and column, brought across so the two steps are one product. Every rule here is
+   its counterpart with bd- names; the shared bits (--sb-pw, data-sb-rail) keep their Browse names
+   on purpose, so the header needs one set of rules rather than two that can drift.
+   ── THE PAGE WASH ── fixed, so it does not scroll its colour away and leave the lower half bare.
+   z-index 0, NOT -1: negative would put it behind S.app's opaque background and be painted over. */
+.bd-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:${isDark ? "#0F0F1A" : "#FAF9F6"}}
+/* EVERY sibling of the wash has to be lifted above it. A positioned layer at z-index 0 paints over
+   the inline content of un-positioned blocks, and unlike Browse — where the whole page lives inside
+   one .sb-layout — Build has real content outside its layout row: the step header, the title, the
+   date line. Those were being painted over completely, which is a blank page with a pretty
+   background on it. Excluding the three decoration layers so they keep their own z-indices (the
+   shadow at 39 must stay under the panel, the gold edge at 51 above the header). */
+.bd-view > *:not(.bd-wash):not(.bd-rail-shadow):not(.bd-rail-edge){position:relative;z-index:1}
+.bd-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+.bd-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--sb-pw) - 150px);
+  border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
+  background:radial-gradient(circle,rgba(201,169,110,0.38) 0%,rgba(201,169,110,0) 70%)}
+.bd-wash-b{width:640px;height:700px;top:110px;right:-170px;
+  border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
+  background:radial-gradient(circle,rgba(214,158,140,0.32) 0%,rgba(214,158,140,0) 72%)}
+.bd-wash-c{width:740px;height:660px;top:540px;left:calc(var(--sb-pw) + 12%);
+  border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
+  background:radial-gradient(circle,rgba(124,92,214,0.20) 0%,rgba(124,92,214,0) 74%)}
+/* The strip under the bar had no blob and no band in it — the first thing the eye lands on was the
+   only bare part of the page. Same drifting gradient the header carries, so they read as one. */
+.bd-wash-top{position:absolute;top:0;left:0;right:0;height:330px;pointer-events:none;
+  mix-blend-mode:multiply;filter:blur(34px);
+  background:linear-gradient(100deg,rgba(124,92,214,0) 0%,rgba(201,169,110,0.22) 22%,
+    rgba(214,158,140,0.17) 50%,rgba(124,92,214,0.19) 76%,rgba(124,92,214,0) 100%);
+  background-size:230% 100%;animation:bdSheen 30s ease-in-out infinite alternate}
+@keyframes bdSheen{from{background-position:0% 50%}to{background-position:100% 50%}}
+/* Blurred hard, which is what turns five stroked paths into folds of light rather than five fat
+   curves. An svg, not a span, so the blob rule above does not also catch it. */
+.bd-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
+.bd-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
+  background-image:${GRAIN_URL};background-size:220px 220px}
+.bd-band{transform-box:view-box;transform-origin:center;will-change:transform}
+.bd-band-0{animation:bdBand0 34s ease-in-out infinite alternate}
+.bd-band-1{animation:bdBand1 45s ease-in-out infinite alternate}
+.bd-band-2{animation:bdBand2 38s ease-in-out infinite alternate}
+.bd-band-3{animation:bdBand3 53s ease-in-out infinite alternate}
+.bd-band-4{animation:bdBand4 41s ease-in-out infinite alternate}
+@keyframes bdBand0{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-72px,18px) scaleY(1.1)}}
+@keyframes bdBand1{from{transform:translate(0,0) scaleY(1.06)}to{transform:translate(86px,-24px) scaleY(0.94)}}
+@keyframes bdBand2{from{transform:translate(0,0) scaleY(0.96)}to{transform:translate(-94px,14px) scaleY(1.12)}}
+@keyframes bdBand3{from{transform:translate(0,0) scaleY(1.08)}to{transform:translate(64px,-30px) scaleY(0.95)}}
+@keyframes bdBand4{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-78px,22px) scaleY(1.09)}}
+/* ── THE COLUMN ──
+   --sb-pw is the one number: panel width AND content offset. It lives on :root because the header
+   needs it too and the header is a sibling of this view, not a descendant. */
+:root{--sb-pw:392px}
+.bd-view.bd-folded{--sb-pw:0px}
+/* box-sizing explicitly: the width IS --sb-pw and the content is offset by --sb-pw, so the padding
+   has to live inside that width. Left to content-box the horizontal padding makes the real panel
+   wider than the offset and the curve sits on top of the first column of cards.
+   Extra right padding because the curve eats that edge — a control under it would be unreachable. */
+.bd-rail-l{position:fixed !important;left:0;top:0;box-sizing:border-box;
+  width:var(--sb-pw) !important;height:100dvh !important;max-height:none !important;
+  border-radius:0;clip-path:url(#bdBrandCurve);z-index:40;
+  background:linear-gradient(160deg,#0F0F1A 0%,#191430 52%,#241a46 100%);
+  padding:18px 68px 20px 22px;overflow-y:auto;scrollbar-width:none;isolation:isolate}
+.bd-rail-l::-webkit-scrollbar{display:none}
+.bd-rail-l > *{position:relative;z-index:2}
+.bd-rail-img{position:absolute;inset:-4%;z-index:0;background-size:cover;background-position:center}
+.bd-rail-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:linear-gradient(180deg,rgba(9,9,20,0.66) 0%,rgba(11,9,24,0.52) 42%,rgba(9,9,20,0.34) 72%,rgba(9,9,20,0.46) 100%)}
+/* A lit edge down the left, so the panel catches light on one side instead of reading as a cut-out. */
+.bd-rail-l::after{content:"";position:absolute;top:0;bottom:0;left:0;width:1px;z-index:3;
+  pointer-events:none;background:linear-gradient(180deg,transparent,rgba(255,255,255,0.14) 22%,rgba(255,255,255,0.14) 78%,transparent)}
+/* The cast shadow. Not box-shadow — the clip-path cuts that away with the shape, so it would trace
+   a rectangle rather than the curve. The same path, filled once and blurred. */
+/* z-index 0, not Browse's 39. Build's panel lives INSIDE .bd-layout, which the lift rule above puts
+   at z-index 1 — so the shadow has to be below 1 to stay behind the panel and behind the content it
+   bleeds onto. It still lands above the wash, which is also 0 but earlier in the DOM. */
+.bd-rail-shadow{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:0;
+  pointer-events:none;filter:blur(24px);opacity:.55;transform:translateX(9px)}
+.bd-rail-shadow svg{display:block;width:100%;height:100%}
+/* The gold line on the seam. Above the header (50) so the bar's 3px overlap cannot bury it.
+   vector-effect pins the stroke to screen pixels — without it, stretching a 1x1 box to the panel
+   stretches the stroke into a wedge. overflow visible because the path sits ON x=1, so half the
+   stroke falls outside the viewBox and would be clipped away down its whole length. */
+.bd-rail-edge{position:fixed;top:0;left:0;width:var(--sb-pw);height:100dvh;z-index:51;
+  pointer-events:none;filter:drop-shadow(0 0 5px rgba(201,169,110,0.45)) drop-shadow(0 0 14px rgba(201,169,110,0.22))}
+.bd-rail-edge svg{display:block;width:100%;height:100%;overflow:visible}
+/* ── GLASS ──
+   A light film, not a dark one: on near-black ink a darker card is a darker rectangle on a dark
+   rectangle. Heavy blur so what shows through is colour and not detail, saturation past 100 so the
+   candlelight stays warm, a diagonal sheen because a flat fill never looks like a pane, and a bright
+   top edge over a dark cast to put it ABOVE the panel rather than in it. */
+.bd-rail-l .sb-panel{backdrop-filter:blur(26px) saturate(165%);-webkit-backdrop-filter:blur(26px) saturate(165%);
+  background-image:linear-gradient(147deg,rgba(255,255,255,0.11) 0%,rgba(255,255,255,0.025) 46%,rgba(255,255,255,0.06) 100%) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.24), inset 0 -1px 0 rgba(255,255,255,0.05),
+    0 2px 6px rgba(0,0,0,0.34), 0 22px 48px -16px rgba(0,0,0,0.8)}
+.bd-rail-l .sb-panel::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
+  border-radius:inherit;
+  background:radial-gradient(130% 62% at 0% 0%,rgba(201,169,110,0.15) 0%,rgba(201,169,110,0.04) 38%,transparent 68%)}
+.bd-rail-l .sb-panel .sb-head{border-radius:8px}
+.bd-rail-l .sb-panel .sb-scroll > div{border-bottom-color:rgba(255,255,255,0.13) !important}
+.bd-rail-l .sb-rcard{backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);
+  background:${pCard} !important;border:1px solid ${pBorder} !important;color:${PANEL_INK};
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.14), 0 10px 26px -12px rgba(0,0,0,0.7)}
+/* ── THE HEADER, OVER THE PANEL ──
+   Done in the header's OWN background rather than by blanking it and repainting with a pseudo —
+   that leaves the bar with no background at all, and one thing going wrong drops the whole header
+   onto the page. The var() fallback is the safety: if --sb-pw ever fails to resolve it reads 0px,
+   both stops collapse to the left edge, and the bar paints solid across its full width.
+   The cut starts 3px early because the panel's edge is a CURVE and this cut is a straight line — by
+   the bottom of the bar the curve has drawn in to ~99.4%, and a cut at exactly --sb-pw left a strip
+   of page showing between them. The overlap lands on panel ink, which is dark either way.
+   background-origin AFTER the shorthand, because the shorthand resets it — and it must be
+   border-box, or the 24px of header padding shifts the whole gradient and reopens the gap. */
+:root[data-sb-rail="1"] .sa-sheen{left:var(--sb-pw,0px) !important}
+:root[data-sb-rail="1"] .sa-fnrow{margin-left:var(--sb-pw,0px);flex-basis:calc(100% - var(--sb-pw,0px)) !important}
+:root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
+  background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 3px),
+    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
+  background-origin:border-box !important}
+/* ── THE TITLE ──
+   Same display serif as Event Info's and Browse's, so the four steps are set in one voice.
+   !important because StudioApp sets font-family on the universal selector with !important.
+   The rule beneath is Event Info's: a solid run, a diamond, then a fade, so it does not read as an
+   underline that got cut off. */
+.bd-hero-face{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;font-style:italic}
+.bd-title-rule{display:flex;align-items:center;gap:9px;margin-top:14px;width:100%;max-width:520px}
+.bd-tr-seg{height:2.5px;border-radius:2px;width:80px;flex-shrink:0;background:${isDark?"#D9BE86":"#8A6A2F"}}
+.bd-tr-dia{width:8px;height:8px;flex-shrink:0;transform:rotate(45deg);background:${isDark?"#D9BE86":"#8A6A2F"}}
+.bd-tr-fade{height:2.5px;border-radius:2px;flex:1;
+  background:linear-gradient(90deg,${isDark?"#D9BE86":"#8A6A2F"},${isDark?"#D9BE86":"#8A6A2F"}A6 58%,transparent)}
 /* Element rows are very wide, so name-left / controls-right leaves a long void.
    A hover track lets the eye follow one row across it. */
 /* ═══ RAIL TABS ═══ A folded rail, and the control that folds them. */
@@ -1707,6 +1897,38 @@ undefined
   .el-row:hover::before{transform:scaleY(1)}
 }
 ` + `@media (prefers-reduced-motion: reduce){.sb-pill,.sb-head,.sb-search,.sb-rcard{transition:none}.sb-pill:hover,.sb-pill:active,.sb-rcard:hover{transform:none}}`}</style>
+    {/* The page's own ground — see .bd-wash. Never receives a click. */}
+    <div className="bd-wash" aria-hidden="true">
+      <span className="bd-wash-a"/><span className="bd-wash-b"/><span className="bd-wash-c"/>
+      <div className="bd-wash-top"/>
+      <svg className="bd-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
+        {WASH_BANDS.map((b,i)=>(
+          <path key={i} className={"bd-band bd-band-" + i} d={b.d} fill="none" stroke={b.c}
+            strokeOpacity={b.o} strokeWidth={b.w} strokeLinecap="round"/>
+        ))}
+      </svg>
+      <i className="bd-grain"/>
+    </div>
+    {/* The panel's cast shadow and its gold edge. Both live OUTSIDE the rail: the rail is clipped by
+        the curve, so a shadow inside it would be cut away with the shape and the line would be
+        sliced in half down its own middle. */}
+    {leftRailOpen && <div className="bd-rail-shadow" aria-hidden="true">
+      <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false"><path d={BD_CURVE} fill="#0B0B16"/></svg>
+    </div>}
+    {leftRailOpen && <div className="bd-rail-edge" aria-hidden="true">
+      <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false">
+        <defs>
+          <linearGradient id="bdEdgeGold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#C9A96E" stopOpacity="0.30"/>
+            <stop offset="0.16" stopColor="#E4C88F" stopOpacity="0.80"/>
+            <stop offset="0.44" stopColor="#F0DCAC" stopOpacity="1"/>
+            <stop offset="0.72" stopColor="#D9BE86" stopOpacity="0.82"/>
+            <stop offset="1" stopColor="#C9A96E" stopOpacity="0.26"/>
+          </linearGradient>
+        </defs>
+        <path d={BD_EDGE} fill="none" stroke="url(#bdEdgeGold)" strokeWidth="1.6" vectorEffect="non-scaling-stroke"/>
+      </svg>
+    </div>}
     {customPicker && (
       <InventoryItemPickerModal
         title={customPicker.kind === "ceiling" ? "Custom Ceiling — Fabric › Ceiling" : "Custom Masking — Fabric › Printed Walls"}
@@ -1721,52 +1943,88 @@ undefined
         isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
       />
     )}
-    {/* Step header, left-aligned on the same axis as the content below. The row this replaced was
-        a flex pair holding the title and a "Filter whole build" toggle; with the toggle gone it
-        only ever had one child, so it is a plain block. */}
-    <div style={{marginBottom:6}}>
-      <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",color:accent,marginBottom:4}}>Step 3 of 4 · Décor Build</div>
-      {/* Greets the client by name. Falls back to the old title when there is no name yet — a page
-          heading reading "Welcome," with nothing after it would look broken. */}
-      <div style={{fontSize:26,fontWeight:700,letterSpacing:-0.5,lineHeight:1.1}}>
-        {clientName ? <>Welcome, {clientName}</> : "Build Your Decor"}
-      </div>
-    </div>
-    {/* The date lives on this line, under the title. The day-note banner below is conditional, so
-        this margin can no longer shrink assuming something always follows it. */}
-    <div style={{fontSize:14,color:textS,marginBottom:24,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-      {/* The name moved into the heading above, so it is not repeated here. */}
-      <span>{activeFnMeta.venue || venue} · {activeFnMeta.type || fn}</span>
-      {clientDate&&<span style={{opacity:0.45}}>·</span>}
-      {clientDate&&<span style={{color:textP,fontWeight:600,display:"inline-flex",alignItems:"center",gap:5}}>
-        <IconCalendar size={13}/>
-        {new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}
-      </span>}
-      {dateDemand?.isHigh&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(239,68,68,0.1)",color:"#DC2626",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#EF4444",marginRight:6}}/>High demand</span>}
-      {dateDemand?.isMod&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:6,background:"rgba(245,158,11,0.1)",color:"#B45309",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",marginRight:6}}/>Moderate</span>}
-      {/* Day-type and demand counts sit on this line now, beside the date they describe. They used
-          to be a full-width banner below, which spent a whole row and 16px of margin on what is at
-          most a handful of words — and put them a long way from the date. */}
-      {(() => {
-        if (!clientDate || !dateDemand) return null;
-        const { dt, booked, ongoing } = dateDemand;
-        const dtLabel = dt === "saya" ? "Saya Day" : dt === "competition" ? "Competition Day" : "";
-        if (!dtLabel && !booked && !ongoing) return null;
-        const dot = (c) => ({ display:"inline-block", width:6, height:6, borderRadius:"50%", background:c, marginRight:5 });
-        return <>
-          {dtLabel && <span style={{fontSize:11,fontWeight:600,color:dt==="saya"?"#DC2626":textS}}>{dtLabel}</span>}
-          {booked > 0 && <span style={{fontSize:11,color:"#047857",fontWeight:600,display:"inline-flex",alignItems:"center"}}><span style={dot("#10B981")}/>{booked} booked</span>}
-          {ongoing > 0 && <span style={{fontSize:11,color:"#B45309",display:"inline-flex",alignItems:"center"}}><span style={dot("#F59E0B")}/>{ongoing} ongoing</span>}
-        </>;
-      })()}
-      {extraFunctions.length > 0 && <span style={{padding:"2px 10px",borderRadius:8,fontSize:10,fontWeight:600,background:`${accent}20`,color:accent,letterSpacing:0.3}}>Function {activeFnIdx + 1} of {extraFunctions.length + 1}</span>}
-    </div>
+    {/* The event block that used to live here — greeting, venue, date, demand — has moved INTO the
+        panel (see YOUR_EVENT, rendered at the top of the rail). It is what the panel is for: whose
+        event this is. Out here it was a page heading pushing the zone list down, and it had to be
+        offset past a fixed panel to be visible at all. */}
     {/* ═══ TWO-COLUMN SHELL ═══ Photo filters live permanently in a sticky left rail, exactly
         as on Browse — always visible, no toggle. ═══ */}
-    <div className="bd-layout" style={{display:"flex",gap:leftRailOpen||rightRailOpen?22:12,alignItems:"flex-start"}}>
+    {/* The content clears the fixed panel. --sb-pw is the one number: panel width and content
+        offset. The offset is the panel width PLUS a gutter, not equal to it — the curve reaches the
+        panel's full width at its top and bottom, so content starting exactly at --sb-pw touches it
+        there. z-index 1 lifts the column above the fixed wash, which sits at 0. */}
+    <div className="bd-layout" style={{display:"flex",gap:leftRailOpen||rightRailOpen?22:12,alignItems:"flex-start",
+      marginLeft:leftRailOpen?"calc(var(--sb-pw) + 30px)":0,position:"relative",zIndex:1}}>
       {leftRailOpen
-        ? <div ref={railRef} className="bd-rail bd-rail-l" style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start",
-            maxHeight:railMaxH,display:"flex",flexDirection:"column",gap:12}}>
+        ? <div ref={railRef} className="bd-rail bd-rail-l" style={{flexShrink:0,alignSelf:"flex-start",
+            // The panel runs the full height of the viewport and passes BEHIND the header, so no
+            // edge has to be aligned and there is no gap to get wrong. Its content is pushed clear
+            // with padding instead — measured, not the RAIL_TOP guess.
+            paddingTop:hdrH + 14,
+            display:"flex",flexDirection:"column",gap:14}}>
+            {/* The curve and the photograph, exactly as Browse draws them. */}
+            <svg width="0" height="0" style={{position:"absolute",pointerEvents:"none"}} aria-hidden="true" focusable="false">
+              <defs><clipPath id="bdBrandCurve" clipPathUnits="objectBoundingBox"><path d={BD_CURVE}/></clipPath></defs>
+            </svg>
+            {PANEL_BG && <div className="bd-rail-img" style={{backgroundImage:`url(${PANEL_BG})`}} aria-hidden="true"/>}
+            <div className="bd-rail-veil" aria-hidden="true"/>
+            {/* Hide, on the panel's own top-right — same place Browse puts it. It closes the whole
+                panel, so it belongs on the panel rather than inside the filter card it used to live
+                in. In the FLOW, not absolutely positioned: the rail's content starts at the same
+                offset anything pinned there would use, so an absolute one lands on top of the first
+                block. It cannot sit up in the header band either — the bar is only transparent
+                there, the element is still present and still swallows the click. */}
+            <div style={{flexShrink:0,display:"flex",justifyContent:"flex-end"}}>
+              <button type="button" onClick={()=>setLeftRailOpen(false)}
+                title="Hide the filters and widen the build"
+                style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,
+                  cursor:"pointer",whiteSpace:"nowrap",border:`1px solid ${pBorder}`,
+                  background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",
+                  color:pTextM,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
+                {/* Rotated to point left — the direction the panel collapses in. */}
+                <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
+              </button>
+            </div>
+            {/* ═══ YOUR EVENT ═══
+                Everything that used to be the page's own heading. Restacked as one fact per row:
+                across the main column it was a single wrapping sentence, which at 300px would break
+                in a different place every time a chip appeared or a date changed. Same values, same
+                conditions — venue/type, date, guests, then the demand notes — only the arrangement
+                differs. */}
+            <div style={{flexShrink:0,paddingBottom:2}}>
+              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",color:accent,marginBottom:6}}>Your event</div>
+              <div className="bd-hero-face" style={{fontSize:30,fontWeight:600,color:PANEL_INK,letterSpacing:-0.3,lineHeight:1.08,marginBottom:14}}>
+                {clientName ? <>Welcome, {clientName}</> : "Build Your Decor"}
+              </div>
+              {(()=>{
+                const row=(icon,text,tone)=>(
+                  <div style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5,lineHeight:1.35,color:tone||PANEL_INK}}>
+                    <span style={{display:"inline-flex",flexShrink:0,color:tone||accent}}>{icon}</span>
+                    <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{text}</span>
+                  </div>
+                );
+                const pax = activeFnMeta?.pax;
+                const dd = dateDemand;
+                return <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                  {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}`)}
+                  {clientDate && row(<IconCalendar size={14}/>, new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
+                  {pax ? row(<IconUsers size={14}/>, `${pax} Guests`) : null}
+                  {dd?.isHigh && row(<IconAlert size={14}/>, "High demand", "#F87171")}
+                  {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
+                  {(()=>{
+                    if(!clientDate||!dd) return null;
+                    const {dt,booked,ongoing}=dd;
+                    const dtLabel=dt==="saya"?"Saya Day":dt==="competition"?"Competition Day":"";
+                    return <>
+                      {dtLabel && row(<IconAlert size={14}/>, dtLabel, dt==="saya"?"#F87171":pTextM)}
+                      {booked>0 && row(<IconCheck size={14}/>, `${booked} booked`, "#34D399")}
+                      {ongoing>0 && row(<IconRepeat size={14}/>, `${ongoing} ongoing`, "#FBBF24")}
+                    </>;
+                  })()}
+                  {extraFunctions.length>0 && row(<IconSparkle size={14}/>, `Function ${activeFnIdx+1} of ${extraFunctions.length+1}`, accent)}
+                </div>;
+              })()}
+            </div>
             {ZP_PANEL}
           {/* Reference banner — moved out of the main column into the rail, under the filters, so
               the zones start at the top of the page instead of below a full-width header. Restacked
@@ -2137,7 +2395,11 @@ undefined
                 if(initial.size!==grpSaved.length) scheduleGroupSave(k,srcType,el.label,initial);
               } else hideGrpPick(k);
               return {...g,[k]:on};
-            });}} title={gridZones[k]?"Show as strip":(noGrouping?"Show all in a grid":"Show all in a grid — pick photos to pin here")} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
+            });
+            // Back to page 1. The two views hold different numbers per page (4 against 80), so a
+            // carried-over index means "page 6" lands on a completely different stretch of the same
+            // list depending on which view you were in when you set it.
+            setPhPage(p=>({...p,[k]:0}));}} title={gridZones[k]?"Show as strip":(noGrouping?"Show all in a grid":"Show all in a grid — pick photos to pin here")} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${gridZones[k]?accent:border}`,background:gridZones[k]?`${accent}15`:"transparent",color:gridZones[k]?accent:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>{gridZones[k]?"▭":"▦"}</button>}
             {/* Clear every tick in this zone in one click — with the auto-save above, this also
                 empties the saved group, same as unticking each photo would. */}
             {isOn&&grpOn&&grpPicked.size>0&&<button onClick={e=>{e.stopPropagation();clearGrpPick(k,srcType,el.label);}} title="Clear all ticked photos in this zone" style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Clear</button>}
@@ -2284,13 +2546,16 @@ undefined
                 {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
               {matchedPhotos.length>0 ? (()=>{
-                // Strip view shows PH_PER_PAGE at a time with a pager underneath, so each card is
-                // large enough to judge a stage from. The ▦ grid toggle still shows everything.
-                const paged = !gridZones[k];
-                const pageCount = paged ? Math.max(1, Math.ceil(matchedPhotos.length / PH_PER_PAGE)) : 1;
+                // BOTH views page now. The strip shows PH_PER_PAGE at a time so each card is large
+                // enough to judge a stage from; the ▦ grid used to show the whole matched set at
+                // once, which on a zone with 778 photos is 778 thumbnails in one scroll region —
+                // and a scroll INSIDE a page that also scrolls. It gets PH_GRID_PER_PAGE with the
+                // same pager the strip already uses.
+                const perPage = gridZones[k] ? PH_GRID_PER_PAGE : PH_PER_PAGE;
+                const pageCount = Math.max(1, Math.ceil(matchedPhotos.length / perPage));
                 const page = Math.min(phPage[k] || 0, pageCount - 1);   // clamp: filters can shrink the list
-                const start = paged ? page * PH_PER_PAGE : 0;
-                const shown = paged ? matchedPhotos.slice(start, start + PH_PER_PAGE) : matchedPhotos;
+                const start = page * perPage;
+                const shown = matchedPhotos.slice(start, start + perPage);
                 // ═══ SECTION HEADINGS ═══ Browse splits its ranked list under headings for a
                 // reason: unlabelled, a list that still shows other venues just looks like a broken
                 // filter. Same three sections here, derived from the FINAL order so the pinned
@@ -2326,7 +2591,12 @@ undefined
                       : [])
                   : shown;
                 return (<>
-              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,paddingBottom:6,maxHeight:560,overflowY:"auto"}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...phSwipeHandlers(k,page,pageCount)}>
+              {/* No maxHeight/overflow on the grid any more: with a pager under it, an inner scroll
+                  region is a second way to move through the same list, and the two disagree about
+                  where you are. The pager is the one mechanism.
+                  Swipe stays off in grid mode — the handlers preventDefault to page, which on a
+                  block this tall fights the page's own vertical scroll. */}
+              <div style={gridZones[k]?{display:"grid",gridTemplateColumns:`repeat(${PH_GRID_COLS},minmax(0,1fr))`,gap:8,paddingBottom:6}:{display:"grid",gridTemplateColumns:`repeat(${PH_COLS},minmax(0,1fr))`,gap:12,paddingBottom:6,touchAction:"pan-y",animation:phAnim[k]?`${phAnim[k]} .3s cubic-bezier(.22,.61,.36,1)`:undefined}} className="ph-grid" id={`ph-grid-${k}`} {...(gridZones[k]?{}:phSwipeHandlers(k,page,pageCount))}>
               {renderList.map((ph,pi)=>{
                 // A section heading: a full-width row inside the same grid, so the tiles either
                 // side of it keep one consistent size.
@@ -2471,7 +2741,7 @@ undefined
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6,flexWrap:"wrap"}}>
                 {/* Pager on the left — only when there is more than one page to move between. */}
-                {paged&&pageCount>1&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                {pageCount>1&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <button onClick={()=>phGoTo(k,Math.max(0,page-1),page)} disabled={page===0} title="Previous photos" className="ph-pg" style={phNav(page===0)}>
                     <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={13}/></span>
                   </button>
@@ -2481,7 +2751,7 @@ undefined
                   <button onClick={()=>phGoTo(k,Math.min(pageCount-1,page+1),page)} disabled={page===pageCount-1} title="More photos" className="ph-pg" style={phNav(page===pageCount-1)}>
                     <span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={13}/></span>
                   </button>
-                  <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+PH_PER_PAGE,matchedPhotos.length)} of {matchedPhotos.length}</span>
+                  <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+perPage,matchedPhotos.length)} of {matchedPhotos.length}</span>
                 </div>}
                 {/* Update master used to sit here, at the far right under the photo strip. It has
                     moved up into the zone's header row, beside the grid toggle — see there. */}
