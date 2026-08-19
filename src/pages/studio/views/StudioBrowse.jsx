@@ -102,6 +102,18 @@ export default function StudioBrowse({ ctx }) {
   // save path already uses for "does this snapshot hold a build" — reused here against the LIVE
   // state instead of a saved one, so the two can't disagree about what counts as real work.
   const guardedPickAndLoadFromVideo = (videoId, targetStep, onLoaded) => {
+    // ── NOTHING WHILE A FUNCTION IS STILL LOADING ──
+    // The confirm below asks "does this function already hold work?" of the LIVE state. During a
+    // function switch that state has been cleared and the incoming one has not landed yet, so the
+    // test answers no, the confirm never appears, and the load goes through — then the rolling
+    // autosave writes that near-empty build over the session it came from. The work is gone and
+    // nothing warned anyone, which is exactly what was happening on a mis-click mid-switch.
+    // The guard cannot be made smarter here: mid-switch there is genuinely no state to judge. The
+    // only safe answer is to refuse until there is.
+    if (ctx.isFnSwitching) {
+      showMsg("Still loading this function — try again in a moment", "red");
+      return;
+    }
     const liveSnap = { elSelectedPhoto, zoneElements, enabledEls, sourceVideo, sourceEvent };
     const proceed = () => { pickAndLoadFromVideo(videoId, targetStep); if (onLoaded) onLoaded(); };
     if (fnSnapHasData(liveSnap)) {
@@ -287,14 +299,23 @@ export default function StudioBrowse({ ctx }) {
                 <div onClick={(e)=>{e.stopPropagation();setPremiaGate({ev:{id:v.id,name:v.title,video:`https://www.youtube.com/embed/${v.id}`}});}} className="sb-gate" style={{width:"100%",padding:"7px 12px",borderRadius:8,background:"linear-gradient(135deg,#EDE9FE,#F5F3FF)",textAlign:"center",fontSize:11,color:"#7C3AED",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IconCrown size={13}/>Sr. Designer Only</div>
               ):(
                 <Fragment>
-                  <button className="sb-vc" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}}
-                    title="Load this as the reference and start building"
-                    style={{border:"none",background:"transparent",padding:0,color:accentText,fontSize:11.5,fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6,letterSpacing:0.2}}>
+                  {/* Disabled while the function is still loading. The handler refuses anyway, but a
+                      control that looks live and then rejects the click is its own bug — and this
+                      one used to go through and take the build with it. */}
+                  <button className="sb-vc" disabled={ctx.isFnSwitching}
+                    onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,1);}}
+                    title={ctx.isFnSwitching?"Still loading this function…":"Load this as the reference and start building"}
+                    style={{border:"none",background:"transparent",padding:0,color:accentText,fontSize:11.5,fontWeight:700,
+                      cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.45:1,
+                      display:"inline-flex",alignItems:"center",gap:6,letterSpacing:0.2}}>
                     Customize<span className="sb-vc-arrow" style={{display:"inline-block"}}>→</span>
                   </button>
-                  {!priceTBD&&<button className="sb-icb" onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}}
-                    title="Exact Look — load this build as-is and jump straight to the summary"
-                    style={{width:28,height:28,flexShrink:0,borderRadius:8,padding:0,border:`1px solid ${border}`,background:"transparent",color:textS,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><IconClipboard size={13}/></button>}
+                  {!priceTBD&&<button className="sb-icb" disabled={ctx.isFnSwitching}
+                    onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}}
+                    title={ctx.isFnSwitching?"Still loading this function…":"Exact Look — load this build as-is and jump straight to the summary"}
+                    style={{width:28,height:28,flexShrink:0,borderRadius:8,padding:0,border:`1px solid ${border}`,background:"transparent",color:textS,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.45:1}}><IconClipboard size={13}/></button>}
                 </Fragment>
               )}
             </div>
@@ -1106,6 +1127,13 @@ export default function StudioBrowse({ ctx }) {
                 const isCurrent = bannerCurrentId === s.sourceVideoId && s._fnIdx === activeFnIdx;
                 const videoTitle = s.sourceVideoTitle || vid?.title || "Video";
                 const unavailable = !vid && !s.sourceVideoTitle;
+                // Whether the session's single `total` was taken from THIS card's function — see the
+                // note above the price line. Computed once here because the button reads it too: a
+                // card with no price is a card whose build has not been priced for this function
+                // yet, and continuing into it is what let a half-priced build get saved over a real
+                // one. No figure, no entry.
+                const ownsTotal = s.savedActiveFnIdx === s._fnIdx
+                  && typeof s.total === "number" && s.total > 0;
                 return (
                   <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
                     {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
@@ -1119,19 +1147,40 @@ export default function StudioBrowse({ ctx }) {
                         {/* Only worth saying when it isn't the pill you're on — otherwise it's noise. */}
                         {s._fnIdx !== activeFnIdx && <span title={`This session's build is on Function ${s._fnIdx+1}`} style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(99,102,241,0.18)":"rgba(99,102,241,0.12)",color:isDark?"#A5B4FC":"#4338CA",letterSpacing:0.3}}>Fn{s._fnIdx+1}</span>}
                       </div>
+                      {/* ── THE TOTAL BELONGS TO ONE FUNCTION, NOT TO THE SESSION ──
+                          saveSession writes `total: grandTotal` and `tier` at the session level, but
+                          grandTotal is whichever function was ACTIVE at save time — the session
+                          carries one number for a deal that has several. So this card, badged with
+                          its own _fnIdx, was printing a figure that might describe a different
+                          function entirely: switch to Wedding and it still read Reception's
+                          "₹39,352 Silver" until the next autosave overwrote it with "₹6,90,091
+                          Platinum". That is the value changing under you, not a load finishing.
+                          savedActiveFnIdx records which function the number was taken from. If it is
+                          not this card's, the figure is not this card's either, and no price is
+                          better than another function's price. */}
                       <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4}}>
-                        Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}{typeof s.total==="number"?` · ${fmt(s.total)}`:""}{s.tier?` ${s.tier}`:""}
+                        Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}
+                        {ownsTotal ? ` · ${fmt(s.total)}${s.tier?` ${s.tier}`:""}` : ""}
                       </div>
                     </div>
                     </div>
                     <div style={{display:"flex",gap:7}}>
                     {!unavailable && <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${s.sourceVideoId}`,venue:s.venue||"",fn:s.fn||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
-                    {/* Pass _fnIdx so the restore lands on the function that HAS the build. */}
-                    <button onClick={(e)=>{e.stopPropagation();if(isCurrent){setStep(2);}else{resumeSavedSession(s,s._fnIdx);}}}
-                      title={s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined}
-                      className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flex:1}}>
+                    {/* Pass _fnIdx so the restore lands on the function that HAS the build.
+                        Blocked in two cases. While a switch is in flight, because the build state is
+                        half-replaced and loading into it loses work. And whenever no price is shown,
+                        because that means this function's build has not been priced yet — the same
+                        unsettled state, just visible rather than timed. */}
+                    {(()=>{ const notReady = ctx.isFnSwitching || !ownsTotal;
+                    return (
+                    <button disabled={notReady}
+                      onClick={(e)=>{e.stopPropagation();if(notReady)return;if(isCurrent){setStep(2);}else{resumeSavedSession(s,s._fnIdx);}}}
+                      title={ctx.isFnSwitching?"Still loading this function…":!ownsTotal?"Waiting for this function's price…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
+                      className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flex:1,
+                        cursor:notReady?"progress":"pointer",opacity:notReady?0.5:1}}>
                       {isCurrent?"Continue":"Resume"} build {"→"}
                     </button>
+                    ); })()}
                     </div>
                   </div>
                 );

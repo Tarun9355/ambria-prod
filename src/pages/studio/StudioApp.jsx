@@ -1845,6 +1845,16 @@ export default function StudioApp() {
     return () => clearTimeout(t);
   }, [activeFnIdx]);
   const isFnSwitching = fnBusy || isPendingFnRender;
+  // ── THE AUTOSAVE HAS TO SEE THE SAME "STILL SWITCHING" THE UI DOES ──
+  // switchingRef (above) is cleared the moment activeFnIdx commits, but the switch is not finished
+  // there: isPendingFnRender stays true while the transition renders, and fnBusy holds the minimum
+  // spinner. In that window the ref said "not switching" while the build state was still settling,
+  // so an autosave could land on a half-loaded function and write its total as 0 — which is exactly
+  // the ₹0 that appeared on the saved-session card before the real figure replaced it.
+  // A ref, not the state, because autoSaveBuild is called from timers and listeners that hold a
+  // stale closure — the same reason activeFnIdxRef exists.
+  const fnSwitchingRef = useRef(false);
+  useEffect(() => { fnSwitchingRef.current = isFnSwitching; }, [isFnSwitching]);
   // Dev-only timing for the switch. It re-renders the whole of StudioApp and invalidates ten
   // memo chains, so "it's slow" needs a number before anything is optimised — guessing at the hot
   // spot is how you end up rewriting the wrong thing. Logs the click→committed duration.
@@ -5490,7 +5500,9 @@ export default function StudioApp() {
   // writes a session that is half one function and half another. The switch's own settled state
   // schedules a save straight after, so nothing is skipped — only mistimed.
   const autoSaveBuild = useCallback(() => {
-    if (switchingRef.current) return;
+    // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
+    // half. Either one alone leaves a window where a save can capture a half-loaded function.
+    if (switchingRef.current || fnSwitchingRef.current) return;
     if (buildHasDataRef.current) { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } }
   }, []);
   // 1) Debounced on edits.
@@ -5519,7 +5531,7 @@ export default function StudioApp() {
   // (via saveSession's savePromise) closes that race instead of hoping pagehide wins it.
   useEffect(() => {
     const flush = async () => {
-      if (switchingRef.current || !buildHasDataRef.current) return;
+      if (switchingRef.current || fnSwitchingRef.current || !buildHasDataRef.current) return;
       const result = saveSessionRef.current({ auto: true });
       if (result?.savePromise) await result.savePromise;
     };
