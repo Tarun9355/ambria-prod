@@ -160,6 +160,17 @@ export default function DCFloralsTab({ ctx }) {
                         : sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       let realCostPerUnit = 0;
                       let realLines = [];
+                      // ═══ INVENTORY INGREDIENTS ARE ARTIFICIAL ═══
+                      // A recipe ingredient sourced from IMS inventory is a manufactured piece — it is
+                      // never a fresh flower, so it belongs on the ARTIFICIAL side, not the real one.
+                      // It used to be added to realCostPerUnit, which is how a 0%-real element ended
+                      // up showing a Real figure.
+                      // Collected here rather than inside the artificial block below, because that
+                      // block is gated on artFrac > 0: at 100% real it never runs, and the piece is
+                      // still physically going out. It is charged in FULL either way — the blend
+                      // decides whether the FLOWERS are fresh, and has no bearing on a rented frame.
+                      let invItemCost = 0;
+                      const invItemLines = [];
                       // Fixed extra cost (pot/base/frame) per unit — a real cost regardless of the
                       // real/artificial split, added AFTER the flower lines below. calcFnFloralSourcingCost
                       // (the bottom-bar Florals rollup) already includes this; this tab's own Real Total
@@ -187,8 +198,19 @@ export default function DCFloralsTab({ ctx }) {
                               const rawPrice = item ? (Number(item.price ?? item.rentalCost) || 0) : 0;
                               const totalQty = (fl.qty || 0) * elQty;
                               const lineCost = totalQty * rawPrice;
-                              realCostPerUnit += (fl.qty || 0) * rawPrice;
-                              realLines.push({ flowerId: fl.invItemId, name: item?.name || "Inventory item", perPattern: fl.qty || 0, qty: totalQty, unit: item?.unit || "pc", unitPrice: rawPrice, lineCost, realOnly: true, invItem: true });
+                              // Held aside and added to the ARTIFICIAL total after that block — see
+                              // the note where invItemCost is declared. Deliberately NOT added to
+                              // realCostPerUnit or realLines: it is not a fresh flower.
+                              invItemCost += lineCost;
+                              invItemLines.push({
+                                flowerId: fl.invItemId, name: item?.name || "Inventory item",
+                                perPattern: fl.qty || 0, qty: totalQty, unit: item?.unit || "pc",
+                                unitPrice: rawPrice, lineCost,
+                                // No bunch maths: this has a price of its own, so it must not feed the
+                                // bunches -> kg -> rate calculation the other artificial lines drive.
+                                realUnitsReplaced: 0, bunchesPerUnit: 0, bunches: 0, isGreen: false,
+                                perBunch: 0, missingRatio: false, realOnly: true, invItem: true,
+                              });
                               return;
                             }
                             // Tier 2.1 — resolve via parent-with-variants helper. Recipe may reference
@@ -256,19 +278,11 @@ export default function DCFloralsTab({ ctx }) {
                         if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
                         if (comp && Array.isArray(comp.flowers)) {
                           comp.flowers.forEach(fl => {
-                            // Direct IMS Inventory ingredient — already counted in FULL on the real
-                            // side above (see that block's comment); no artificial substitute exists
-                            // for a physical rented piece, so it contributes nothing here.
-                            if (fl.invItemId) {
-                              const item = (dcInventoryCache || []).find(i => i.id === fl.invItemId);
-                              artLines.push({
-                                flowerId: fl.invItemId, name: item?.name || "Inventory item",
-                                realUnitsReplaced: 0, unit: item?.unit || "pc",
-                                bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: 0, lineCost: 0,
-                                missingRatio: false, realOnly: true, invItem: true
-                              });
-                              return;
-                            }
+                            // Direct IMS Inventory ingredient — priced and collected in the real-side
+                            // loop above (into invItemCost / invItemLines) and folded into this
+                            // side's total after this block, so it lands here with its real cost
+                            // whether or not artFrac happens to be above zero. Nothing to do here.
+                            if (fl.invItemId) return;
                             // Tier 2.1 — resolve through parent (same as real-cost block above)
                             const resolved = resolveMandiFlower(fl.flowerId, mandiCatalogue);
                             const parent = resolved?.parent || null;
@@ -321,6 +335,11 @@ export default function DCFloralsTab({ ctx }) {
                           });
                         }
                       }
+                      // Inventory ingredients join the ARTIFICIAL total here, outside the artFrac gate
+                      // above — a manufactured piece is never fresh, and it goes out whatever the
+                      // blend says. Charged in full: the blend governs flowers, not rented pieces.
+                      artCost += invItemCost;
+                      artLines.push(...invItemLines);
                       totalReal += realCost;
                       totalArtificial += artCost;
                       elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate });
@@ -653,6 +672,53 @@ export default function DCFloralsTab({ ctx }) {
                           </div>
                         );
                       })()}
+                      {/* ═══ DIRECT FROM INVENTORY ═══
+                          Recipe ingredients sourced from an IMS inventory item rather than from the
+                          mandi — realLines carries invItem:true on exactly those (set where
+                          fl.invItemId is handled). They are already inside the Real total; this does
+                          not add a cost, it names one that had nowhere to be read.
+                          They behave differently from every other flower here and that is worth
+                          seeing: a physical rented piece is sourced the same way whatever the
+                          real/artificial slider says, so it counts in FULL and never appears in the
+                          artificial split above.
+                          Aggregated by item across every element, so one stand used by six elements
+                          is one row rather than six. */}
+                      {(() => {
+                        const invAgg = {};
+                        elementBreakdown.forEach(e => (e.artLines || []).forEach(rl => {
+                          if (!rl.invItem) return;
+                          const key = rl.flowerId || rl.name;
+                          if (!invAgg[key]) invAgg[key] = { name: rl.name, unit: rl.unit, unitPrice: rl.unitPrice, qty: 0, cost: 0 };
+                          invAgg[key].qty += rl.qty || 0;
+                          invAgg[key].cost += rl.lineCost || 0;
+                        }));
+                        const invList = Object.values(invAgg);
+                        if (invList.length === 0) return null;
+                        const invTotal = invList.reduce((s, r) => s + r.cost, 0);
+                        return (
+                          <div style={{marginTop:14,padding:"12px 14px",borderRadius:10,background:"rgba(59,130,246,0.05)",border:"1px solid rgba(59,130,246,0.22)"}}>
+                            <div style={{fontSize:13,fontWeight:700,color:"#3B82F6",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📦 Direct from Inventory</div>
+                            {invList.map((r, ri) => (
+                              <div key={ri} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#000",padding:"3px 0"}}>
+                                <span style={{fontWeight:600}}>{r.name}</span>
+                                <span style={{opacity:0.7,fontVariantNumeric:"tabular-nums"}}>× {Math.round(r.qty * 100) / 100} {r.unit}</span>
+                                {r.unitPrice > 0 && <span style={{opacity:0.7,fontSize:11.5}}>@ ₹{Math.round(r.unitPrice).toLocaleString("en-IN")}</span>}
+                                <span style={{marginLeft:"auto",color:"#3B82F6",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(r.cost).toLocaleString("en-IN")}</span>
+                              </div>
+                            ))}
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:9,paddingTop:8,borderTop:`1px solid ${border}`}}>
+                              <span style={{fontSize:13,color:"#000",fontWeight:500}}>Total from Inventory</span>
+                              <span style={{color:"#3B82F6",fontWeight:700,fontSize:15.5,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(invTotal).toLocaleString("en-IN")}</span>
+                            </div>
+                            {/* Said plainly, because the number above is ALREADY inside Artificial —
+                                without this line the two totals look like they should add up and
+                                do not. */}
+                            <div style={{fontSize:11,color:"#000",opacity:0.65,marginTop:6,fontStyle:"italic"}}>
+                              Included in Total Artificial above — these are manufactured pieces charged in full, so the real/artificial blend does not scale them.
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {/* Floral elements this tab could not price. They ARE costed — Inventory bills
                           them as plain rental — but not as flower recipes, so they never reach the
                           mandi list or the real/artificial split. Shown so the count above cannot
@@ -680,11 +746,14 @@ export default function DCFloralsTab({ ctx }) {
                         const merged = [];
                         const byName = {};
                         elementBreakdown.forEach((eb, ebi) => {
-                          if (!byName[eb.name]) { byName[eb.name] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, entries: [] }; merged.push(byName[eb.name]); }
+                          if (!byName[eb.name]) { byName[eb.name] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[eb.name]); }
                           const g = byName[eb.name];
                           g.zones.push(eb.zoneKey);
                           g.totalQty += (eb.qty || 0);
                           g.realCost += (eb.realCost || 0);
+                          // How much of this row's Real ₹ is a rented inventory piece rather than
+                          // flowers. Carried so the Real column can say so — see the badge below.
+                          g.invCost += (eb.artLines || []).reduce((s, rl) => s + (rl.invItem ? (rl.lineCost || 0) : 0), 0);
                           g.artCost += (eb.artCost || 0);
                           g.total += (eb.total || 0);
                           if (eb.hasPattern) g.hasPattern = true;
@@ -715,7 +784,15 @@ export default function DCFloralsTab({ ctx }) {
                                 <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.totalQty}</td>
                                 <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.realPct}%</td>
                                 <td style={{padding:"6px 4px",color:"#10B981",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.realCost).toLocaleString("en-IN")}</td>
-                                <td style={{padding:"6px 4px",color:"#EC4899",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.artCost).toLocaleString("en-IN")}</td>
+                                {/* No badge on this figure. Inventory pieces are named in their own
+                                    "Direct from Inventory" section above and marked in the "how"
+                                    panel, so the point was already made twice; a third mark on every
+                                    affected row was noise in a column of numbers.
+                                    mg.invCost is still computed — the tooltip is gone, not the fact. */}
+                                <td style={{padding:"6px 4px",color:"#EC4899",textAlign:"right",fontVariantNumeric:"tabular-nums"}}
+                                  title={mg.invCost > 0 ? `Includes ₹${Math.round(mg.invCost).toLocaleString("en-IN")} of inventory pieces, charged in full` : undefined}>
+                                  ₹{Math.round(mg.artCost).toLocaleString("en-IN")}
+                                </td>
                                 <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.total).toLocaleString("en-IN")}</td>
                                 <td style={{padding:"6px 4px",textAlign:"right"}}>
                                   <button onClick={()=>setDcFloralCalcOpen(p=>({...p,[eKey]:!p[eKey]}))}
@@ -735,9 +812,20 @@ export default function DCFloralsTab({ ctx }) {
                                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:12}}>
                                         {/* Real side */}
                                         <div>
-                                          <div style={{color:"#10B981",fontWeight:600,marginBottom:5}}>● Real flowers ({eb.realPct}% blend × {eb.qty} pattern{eb.qty===1?"":"s"}{(eb.realLines||[]).some(rl=>rl.realOnly) ? " + 🔒 100% items":""})</div>
-                                          {(!eb.realLines || eb.realLines.length === 0) ? (
-                                            <div style={{color:"#000",fontStyle:"italic"}}>{eb.hasPattern ? "Recipe has no flowers." : "No IMS pattern found — Real ₹0."}</div>
+                                          <div style={{color:"#10B981",fontWeight:600,marginBottom:5}}>● Real flowers ({eb.realPct}% blend × {eb.qty} pattern{eb.qty===1?"":"s"}{(eb.realLines||[]).some(rl=>rl.realOnly&&!rl.invItem) ? " + 🔒 100% items":""})</div>
+                                          {/* realLines is flowers only now — inventory ingredients are
+                                              costed on the artificial side, so nothing needs filtering
+                                              out of this table and its rows add up to its subtotal. */}
+                                          {(()=>{ const mandiLines=(eb.realLines||[]);
+                                                  const invLines=(eb.artLines||[]).filter(rl=>rl.invItem);
+                                                  const invCost=invLines.reduce((s,rl)=>s+(rl.lineCost||0),0);
+                                          return (
+                                          (mandiLines.length === 0) ? (
+                                            <div style={{color:"#000",fontStyle:"italic"}}>
+                                              {invLines.length > 0
+                                                ? `No fresh flowers — ₹${Math.round(invCost).toLocaleString("en-IN")} of inventory pieces is costed as artificial.`
+                                                : eb.hasPattern ? "Recipe has no flowers." : "No IMS pattern found — Real ₹0."}
+                                            </div>
                                           ) : (
                                             <table style={{width:"100%",borderCollapse:"collapse"}}>
                                               <thead><tr style={{borderBottom:`1px solid ${border}`}}>
@@ -747,7 +835,7 @@ export default function DCFloralsTab({ ctx }) {
                                                 <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Cost</th>
                                               </tr></thead>
                                               <tbody>
-                                                {eb.realLines.map((rl, ri) => (
+                                                {mandiLines.map((rl, ri) => (
                                                   <tr key={ri}>
                                                     <td style={{padding:"3px 2px",color:"#000"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{rl.perPattern} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
@@ -761,7 +849,7 @@ export default function DCFloralsTab({ ctx }) {
                                                 </tr>
                                               </tbody>
                                             </table>
-                                          )}
+                                          )); })()}
                                         </div>
                                         {/* Artificial side */}
                                         <div>
@@ -777,12 +865,19 @@ export default function DCFloralsTab({ ctx }) {
                                                 <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Cost</th>
                                               </tr></thead>
                                               <tbody>
+                                                {/* invItem is checked BEFORE realOnly. Inventory lines
+                                                    carry realOnly:true (they are never scaled by the
+                                                    blend), and realOnly rows print "—" for cost — but
+                                                    an inventory line DOES contribute to Art subtotal,
+                                                    so printing "—" left the rows visibly short of the
+                                                    total beneath them. It has no bunches and replaces
+                                                    no real units, so those two columns stay blank. */}
                                                 {(eb.artLines || []).map((al, ai) => (
                                                   <tr key={ai}>
-                                                    <td style={{padding:"3px 2px",color:al.realOnly?textS:"#000"}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.realOnly?"#F59E0B":(al.isGreen?"#10B981":"#EC4899")}}>{al.realOnly?"🔒":(al.isGreen?"🌿":"🌹")}</span></td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
+                                                    <td style={{padding:"3px 2px",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#000")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":"#EC4899"))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":"🌹"))}</span></td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{al.invItem ? <span style={{fontSize:11,fontStyle:"italic",color:textS}}>{al.qty} {al.unit}</span> : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:al.realOnly?textS:(al.missingRatio?"#F59E0B":"#000"),fontVariantNumeric:"tabular-nums"}}>{al.realOnly ? "—" : (al.missingRatio?"⚠ ratio?":al.bunches.toFixed(1))}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899"),fontVariantNumeric:"tabular-nums"}}>{al.realOnly ? "—" : `₹${Math.round(al.lineCost).toLocaleString("en-IN")}`}</td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899")),fontVariantNumeric:"tabular-nums"}}>{al.invItem ? `₹${Math.round(al.lineCost).toLocaleString("en-IN")}` : al.realOnly ? "—" : `₹${Math.round(al.lineCost).toLocaleString("en-IN")}`}</td>
                                                   </tr>
                                                 ))}
                                                 <tr style={{borderTop:`1px solid ${border}`}}>
