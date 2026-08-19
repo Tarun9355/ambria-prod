@@ -2245,7 +2245,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         <button className="sh-pv" onClick={()=>setCsData(buildCombinedCostSheetData())} title="Preview the full cost sheet"
           style={{position:"absolute",top:13,right:13,padding:"5px 12px",borderRadius:8,border:"none",cursor:"pointer",
             fontSize:11,fontWeight:700,letterSpacing:.3,
-            display:"inline-flex",alignItems:"center",gap:6,zIndex:4}}>
+            /* zIndex 5, ABOVE .sh-te-body's 4. Both were 4, and on a tie the later element in the
+               DOM wins — .sh-te-body is a full-width block that comes after this button, so it
+               painted straight over it and swallowed every click. The button looked fine and did
+               nothing. */
+            display:"inline-flex",alignItems:"center",gap:6,zIndex:5}}>
           <span className="sh-pv-glow"/>
           <span style={{position:"relative"}}>{"👁"} Preview</span>
         </button>
