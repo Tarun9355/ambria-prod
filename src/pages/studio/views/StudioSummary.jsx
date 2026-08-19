@@ -20,6 +20,14 @@ import { canvaConnectionStatus, canvaCreateImport, canvaPollImport, canvaExportP
 import { deckImageUrl, isInventoryPhoto } from "../../../lib/studio/thumb";
 import { detailShots } from "../../../lib/studio/detailShots";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
+import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+
+// The photograph behind the Total Estimate card. Same glob-not-import reasoning as the panel images
+// on the other steps: no file, no layer, and the build still runs — the card simply keeps the plain
+// gradient it has always had. Drop one at src/assets/ambria-estimate.jpg to turn it on.
+const ESTIMATE_BG = Object.values(
+  import.meta.glob("../../../assets/ambria-estimate.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
+)[0] || null;
 import { supabase } from "../../../lib/supabase";
 import { callClaudeStreaming } from "../../../lib/ai";
 
@@ -153,10 +161,15 @@ function useCountUp(target, ms = 900) {
 // per render — random inline styles would change on every re-render and restart particles mid-flight.
 // Distinct from the full-screen markSold fireworks; these are ambient and never fire particles
 // outside the card (the panel clips them with overflow:hidden).
+// Five bursts, not three, and closer together — the cycle below is 8s and with three there was a
+// long stretch of nothing between them. Still staggered so no two are ever in the air at once, and
+// still spread across the card so it reads as occasional sparkle rather than a shower.
 const TE_BURSTS = [
-  { cx: 17, cy: 32, col: "#C9A96E", delay: 1.1, n: 14, dist: 46 },
-  { cx: 83, cy: 64, col: "#A78BFA", delay: 3.5, n: 12, dist: 40 },
-  { cx: 51, cy: 22, col: "#F5E0B7", delay: 5.9, n: 16, dist: 54 },
+  { cx: 17, cy: 32, col: "#C9A96E", delay: 0.9, n: 16, dist: 52 },
+  { cx: 83, cy: 64, col: "#A78BFA", delay: 2.4, n: 14, dist: 46 },
+  { cx: 51, cy: 22, col: "#F5E0B7", delay: 3.9, n: 18, dist: 60 },
+  { cx: 30, cy: 74, col: "#E8CF9A", delay: 5.3, n: 13, dist: 44 },
+  { cx: 69, cy: 30, col: "#C4B5FD", delay: 6.7, n: 15, dist: 50 },
 ];
 const TE_FW_PARTICLES = TE_BURSTS.flatMap((b, bi) =>
   Array.from({ length: b.n }, (_, p) => {
@@ -1933,7 +1946,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 
   const vb=venue&&allVenueData[venue]?allVenueData[venue].base:0;
   return(<>
-    <div style={S.main}>
+    <div className="sh-view" style={S.main}>
       <style>{`
 /* ═══ ESTIMATE HEADER ═══ Staggered entrance. Every animated part starts hidden with fill-mode
    forwards, so prefers-reduced-motion must restore the END state, not just cancel the animation —
@@ -1973,19 +1986,118 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    once it's settled; both are decorative siblings behind a positioned content wrapper. */
 @keyframes teRise{0%{opacity:0;transform:translateY(16px) scale(.985)}100%{opacity:1;transform:none}}
 @keyframes tePop{0%{opacity:0;transform:scale(.8)}64%{transform:scale(1.06)}100%{opacity:1;transform:scale(1)}}
-@keyframes teAurora{0%,100%{transform:translate(-6%,-8%) scale(1);opacity:.45}50%{transform:translate(9%,7%) scale(1.18);opacity:.8}}
-@keyframes teAurora2{0%,100%{transform:translate(5%,6%) scale(1.12);opacity:.5}50%{transform:translate(-7%,-6%) scale(1);opacity:.28}}
-/* One sweep every 7s — the travel is squeezed into the first ~18% so the rest of the cycle is rest. */
+/* Wider travel and a stronger swing than before — the blobs move far enough now that the card's
+   light visibly shifts rather than just breathing in place. */
+@keyframes teAurora{0%,100%{transform:translate(-11%,-13%) scale(1);opacity:.5}50%{transform:translate(15%,11%) scale(1.3);opacity:.92}}
+@keyframes teAurora2{0%,100%{transform:translate(9%,10%) scale(1.2);opacity:.6}50%{transform:translate(-12%,-10%) scale(.96);opacity:.3}}
+/* One sweep every 4.5s rather than 7 — still mostly rest, but the pause between passes no longer
+   outlasts the time anyone spends looking at the card. */
 @keyframes teSheen{0%{transform:translateX(-150%) skewX(-18deg);opacity:0}
-  3%{opacity:.55}14%{opacity:.55}
-  18%,100%{transform:translateX(330%) skewX(-18deg);opacity:0}}
+  4%{opacity:.7}20%{opacity:.7}
+  26%,100%{transform:translateX(330%) skewX(-18deg);opacity:0}}
+/* The total gets a slow glow. It is the one number on the page, and a static figure inside a card
+   where everything else moves reads as the only dead thing on it. */
+@keyframes teAmtGlow{0%,100%{text-shadow:0 2px 18px rgba(201,169,110,.28)}
+  50%{text-shadow:0 2px 30px rgba(201,169,110,.62), 0 0 60px rgba(201,169,110,.22)}}
+/* ═══ HEADER TYPE ═══
+   !important on the family because StudioApp sets font-family on the universal selector with
+   !important — without it the serif never lands. */
+.sh-hero-face{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;font-style:italic;
+  font-size:46px;font-weight:600;letter-spacing:-0.5px;line-height:1.04;margin-top:8px}
+.sh-eyebrow{font-size:11px;font-weight:700;letter-spacing:3.2px;text-transform:uppercase;
+  color:${accent};line-height:1.4}
+@media (max-width:760px){.sh-hero-face{font-size:34px}.sh-te-amt{font-size:36px !important}}
+/* ═══ THE BADGE ═══
+   A gold ring on a ring, with the fill breathing and the mark turning slowly. It was a flat tinted
+   circle with a border; at the top of a page whose card is full of motion that read as the one
+   inert thing on screen. */
+/* A real CAST shadow, not just a gold glow. The old keyframes were gold-on-gold, which on a cream
+   page is a halo and not a shadow — the badge looked printed onto the background rather than sitting
+   above it. Two dark layers now: a tight contact shadow that anchors it, and a wide soft one that
+   gives it height. The gold only comes in on the breath, as light rather than as the shadow itself.
+   The inset highlight is the lit top edge; without it a dark-shadowed circle reads as a hole. */
+@keyframes shBadgeBreathe{
+  0%,100%{box-shadow:${isDark
+    ? "0 5px 12px -4px rgba(0,0,0,.62), 0 18px 42px -12px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14)"
+    : "0 5px 12px -4px rgba(26,26,46,.34), 0 18px 42px -12px rgba(26,26,46,.30), inset 0 1px 0 rgba(255,255,255,.75)"}}
+  50%{box-shadow:${isDark
+    ? "0 8px 18px -4px rgba(0,0,0,.7), 0 26px 56px -12px rgba(0,0,0,.78), 0 0 28px rgba(201,169,110,.32), inset 0 1px 0 rgba(255,255,255,.18)"
+    : "0 8px 18px -4px rgba(26,26,46,.42), 0 26px 56px -12px rgba(26,26,46,.38), 0 0 28px rgba(201,169,110,.42), inset 0 1px 0 rgba(255,255,255,.8)"}}}
+@keyframes shBadgeSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+/* BOTH animations in one declaration. .sh-badge already carries its shPop entrance (with opacity:0
+   and fill-mode forwards) further up; declaring the animation property again here would replace
+   that rule outright and leave the badge stuck invisible. Comma-separated, they compose — shPop
+   brings it in once, shBadgeBreathe keeps it alive after. */
+.sh-badge{animation:shPop .62s cubic-bezier(.34,1.4,.5,1) .05s forwards,
+  shBadgeBreathe 4.2s ease-in-out 1s infinite}
+/* The dashed outer ring turns; the sparkle inside it stays upright. */
+.sh-badge-ring{position:absolute;inset:-9px;border-radius:50%;pointer-events:none;
+  border:1px dashed ${accent}66;animation:shBadgeSpin 26s linear infinite}
+.sh-badge-mark{position:relative;display:inline-flex}
 .sh-te{opacity:0;animation:teRise .62s cubic-bezier(.22,.61,.36,1) .5s forwards}
-.sh-te-aurora{position:absolute;left:4%;top:-34%;width:56%;height:168%;border-radius:50%;pointer-events:none;
-  background:radial-gradient(closest-side,rgba(124,58,237,.5),transparent 70%);filter:blur(40px);animation:teAurora 9s ease-in-out infinite}
-.sh-te-aurora2{position:absolute;right:2%;top:-24%;width:46%;height:150%;border-radius:50%;pointer-events:none;
-  background:radial-gradient(closest-side,rgba(201,169,110,.34),transparent 70%);filter:blur(44px);animation:teAurora2 11s ease-in-out infinite}
-.sh-te-sheen{position:absolute;top:0;bottom:0;left:0;width:34%;pointer-events:none;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent);animation:teSheen 7s ease-in-out 1.3s infinite}
+/* ── THE PHOTOGRAPH ──
+   Right of the card, with the copy on the left. It sits at z-index 0 under a scrim that runs
+   left-to-right, not top-to-bottom: the text lives on the left third, and darkening the whole frame
+   to make it legible would waste the picture that is the reason for having it.
+   Drop a file at src/assets/ambria-estimate.jpg and it appears. Without one the card keeps exactly
+   the gradient it has now — the glob resolves to nothing and neither layer renders. */
+/* The photograph fills the whole card, because the copy is CENTRED — with the text down the middle
+   there is no side to keep clear, so confining the picture to one half would just crop it for no
+   reason. The scrim is a radial rather than a linear sweep for the same reason: it darkens hardest
+   where the number sits and lets the corners keep their picture. */
+.sh-te-img{position:absolute;inset:0;z-index:0;background-size:cover;background-position:center}
+/* Lightened from 0.94/0.86 at the centre. At those values the picture was technically there and
+   effectively gone — a dark rectangle with a hint of stage in it. This darkens hardest exactly where
+   the number sits and lets the corners keep their photograph. */
+.sh-te-scrim{position:absolute;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(115% 95% at 50% 50%,rgba(15,15,26,0.82) 0%,rgba(15,15,26,0.68) 44%,rgba(15,15,26,0.38) 80%,rgba(15,15,26,0.26) 100%)}
+.sh-te-body{position:relative;z-index:4;padding:30px 34px}
+@media (max-width:760px){.sh-te-body{padding:24px 22px}}
+/* ═══ THE PAGE GROUND ═══
+   Event Info, Browse and Build are all drawn on this; Summary was the one step still on bare page.
+   Fixed rather than absolute — this view scrolls, and an absolute layer would scroll its colour away
+   and leave the lower half bare. z-index 0, NOT -1: negative puts it behind S.app's opaque
+   background, which then paints straight over it. */
+.sh-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:${isDark?"#0F0F1A":"#FAF9F6"}}
+.sh-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+.sh-wash-a{width:760px;height:700px;top:-190px;left:-120px;border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
+  background:radial-gradient(circle,rgba(201,169,110,0.34) 0%,rgba(201,169,110,0) 70%)}
+.sh-wash-b{width:640px;height:700px;top:90px;right:-170px;border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
+  background:radial-gradient(circle,rgba(214,158,140,0.30) 0%,rgba(214,158,140,0) 72%)}
+.sh-wash-c{width:740px;height:660px;top:520px;left:18%;border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
+  background:radial-gradient(circle,rgba(124,92,214,0.20) 0%,rgba(124,92,214,0) 74%)}
+.sh-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
+.sh-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
+  background-image:${GRAIN_URL};background-size:220px 220px}
+.sh-band{transform-box:view-box;transform-origin:center;will-change:transform}
+.sh-band-0{animation:shBand0 34s ease-in-out infinite alternate}
+.sh-band-1{animation:shBand1 45s ease-in-out infinite alternate}
+.sh-band-2{animation:shBand2 38s ease-in-out infinite alternate}
+.sh-band-3{animation:shBand3 53s ease-in-out infinite alternate}
+.sh-band-4{animation:shBand4 41s ease-in-out infinite alternate}
+@keyframes shBand0{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-72px,18px) scaleY(1.1)}}
+@keyframes shBand1{from{transform:translate(0,0) scaleY(1.06)}to{transform:translate(86px,-24px) scaleY(0.94)}}
+@keyframes shBand2{from{transform:translate(0,0) scaleY(0.96)}to{transform:translate(-94px,14px) scaleY(1.12)}}
+@keyframes shBand3{from{transform:translate(0,0) scaleY(1.08)}to{transform:translate(64px,-30px) scaleY(0.95)}}
+@keyframes shBand4{from{transform:translate(0,0) scaleY(1)}to{transform:translate(-78px,22px) scaleY(1.09)}}
+/* Every sibling of the wash has to clear it. A positioned layer at z-index 0 paints over the inline
+   content of un-positioned blocks, and this page is a stack of plain divs. */
+.sh-view > *:not(.sh-wash){position:relative;z-index:1}
+@media (prefers-reduced-motion: reduce){.sh-band{animation:none}}
+/* ── THE AURORA GOES UNDER THE SCRIM ──
+   These are 40px-blurred blobs covering half the card each. Above the photograph they read as the
+   photograph being out of focus — the picture looked blurred because two soft clouds were sitting
+   on it. At z-index 1 they tint the image from underneath and the scrim tempers them, which is
+   what they were for: light in the card, not haze over the picture.
+   The sparkle and the sheen stay ABOVE the scrim (z-index 3) — those are small and crisp, so they
+   read as motion rather than as fog. */
+.sh-te-aurora{position:absolute;left:4%;top:-34%;width:56%;height:168%;border-radius:50%;pointer-events:none;z-index:1;
+  background:radial-gradient(closest-side,rgba(124,58,237,.58),transparent 70%);filter:blur(40px);animation:teAurora 6.5s ease-in-out infinite}
+.sh-te-aurora2{position:absolute;right:2%;top:-24%;width:46%;height:150%;border-radius:50%;pointer-events:none;z-index:1;
+  background:radial-gradient(closest-side,rgba(201,169,110,.42),transparent 70%);filter:blur(44px);animation:teAurora2 8s ease-in-out infinite}
+.sh-te-sheen{position:absolute;top:0;bottom:0;left:0;width:34%;pointer-events:none;z-index:3;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);animation:teSheen 4.5s ease-in-out 1.3s infinite}
 /* Fireworks: 8s cycle, but the burst itself only occupies the first ~16% — the rest is dead air so
    the three staggered bursts read as occasional sparkle, not a constant shower. */
 @keyframes teFw{
@@ -1993,10 +2105,16 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   2%{opacity:1}
   10%{opacity:.85}
   16%,100%{transform:translate(var(--dx),calc(var(--dy) + 16px)) scale(.2);opacity:0}}
-.sh-te-fw{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.sh-te-fw{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3}
 .sh-te-fw span{position:absolute;width:3.5px;height:3.5px;border-radius:50%;opacity:0;animation:teFw 8s ease-out infinite}
 .sh-te-lbl{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .64s forwards}
-.sh-te-amt{opacity:0;animation:shRise .55s cubic-bezier(.22,.61,.36,1) .72s forwards;text-shadow:0 2px 18px rgba(201,169,110,.28)}
+/* Two animations: the entrance once, then the glow forever. Comma-separated so the second is not
+   waiting on the first to be re-declared. */
+/* Tabular figures: AnimatedTotal counts the number up, and with proportional digits a 1 is narrower
+   than a 0 — so the whole figure shifts sideways on every frame of the count. */
+.sh-te-amt{opacity:0;text-shadow:0 2px 18px rgba(201,169,110,.28);
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;
+  animation:shRise .55s cubic-bezier(.22,.61,.36,1) .72s forwards, teAmtGlow 3.4s ease-in-out 1.3s infinite}
 .sh-te-pill{opacity:0;animation:tePop .5s cubic-bezier(.34,1.4,.5,1) .84s forwards}
 .sh-te-cta{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .94s forwards}
 /* ═══ FOOTER NAV (Adjust / Start New) ═══ These keep S.btn(false) for their resting look, so the
@@ -2035,6 +2153,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   .sh-badge,.sh-1,.sh-2,.sh-3,.sh-4{animation:none;opacity:1;transform:none}
   .sh-rule{animation:none;opacity:1;width:56px}
   .sh-halo{animation:none;opacity:0}
+  .sh-badge-ring{animation:none}
   .sh-pv{animation:none;box-shadow:0 0 0 1px rgba(201,169,110,.7)}
   .sh-pv-glow{animation:none;opacity:.4}
   .sh-te,.sh-te-lbl,.sh-te-amt,.sh-te-pill,.sh-te-cta{animation:none;opacity:1;transform:none}
@@ -2044,17 +2163,44 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
   .sh-nav:hover,.sh-nav:active{transform:none}
 }
       `}</style>
+      {/* The page's own ground — the same one Event Info, Browse and Build are drawn on, from the
+          shared module so the four steps cannot drift apart. Never receives a click. */}
+      <div className="sh-wash" aria-hidden="true">
+        <span className="sh-wash-a"/><span className="sh-wash-b"/><span className="sh-wash-c"/>
+        <svg className="sh-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
+          {WASH_BANDS.map((b,i)=>(
+            <path key={i} className={"sh-band sh-band-" + i} d={b.d} fill="none" stroke={b.c}
+              strokeOpacity={b.o} strokeWidth={b.w} strokeLinecap="round"/>
+          ))}
+        </svg>
+        <i className="sh-grain"/>
+      </div>
       <div style={{textAlign:"center",marginBottom:28}}>
-        <div className="sh-badge" style={{position:"relative",width:60,height:60,margin:"0 auto 14px",borderRadius:"50%",
+        <div className="sh-badge" style={{position:"relative",width:64,height:64,margin:"0 auto 16px",borderRadius:"50%",
           display:"flex",alignItems:"center",justifyContent:"center",color:accent,
-          background:isDark?"rgba(201,169,110,0.12)":"rgba(201,169,110,0.13)",border:`1px solid ${accent}55`,
+          background:isDark
+            ? "radial-gradient(circle at 34% 28%, rgba(201,169,110,0.26), rgba(201,169,110,0.06) 68%)"
+            : "radial-gradient(circle at 34% 28%, rgba(255,255,255,0.9), rgba(201,169,110,0.16) 70%)",
+          border:`1px solid ${accent}66`,
           boxShadow:isDark?"0 10px 26px -14px rgba(0,0,0,0.7)":"0 10px 26px -14px rgba(201,169,110,0.55)"}}>
-          <IconSparkle size={26}/>
+          {/* A slow dashed ring outside the fill. It turns; the sparkle does not, so the mark stays
+              upright and legible while the badge still reads as alive. */}
+          <span className="sh-badge-ring" aria-hidden="true"/>
+          <span className="sh-badge-mark"><IconSparkle size={27}/></span>
           <span className="sh-halo" style={{position:"absolute",inset:-7,borderRadius:"50%",border:`1px solid ${accent}`,opacity:0,pointerEvents:"none"}}/>
         </div>
-        <div className="sh-1" style={{fontSize:30,fontWeight:700,letterSpacing:-0.6,lineHeight:1.15}}>Decor Estimate</div>
-        {clientName&&<div className="sh-2" style={{fontSize:16,color:accentText,fontWeight:600,marginTop:3}}>{clientName}</div>}
-        <div className="sh-3" style={{fontSize:13.5,color:textS,marginTop:3}}>{venue} {"·"} {fn}{clientDate&&` · ${new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</div>
+        {/* ── THE HIERARCHY IS INVERTED ──
+            "Decor Estimate" is what the page IS — the same on every estimate anyone ever opens — so
+            it drops to a tracked eyebrow. The client's name is what makes THIS one different, so it
+            takes the display serif at the size the title used to have. The venue line sits between
+            them: bigger than a caption, smaller than the name it belongs to.
+            Same face as Event Info, Browse and Build, so all four steps are set in one voice. */}
+        <div className="sh-1 sh-eyebrow">Decor Estimate</div>
+        {clientName&&<div className="sh-2 sh-hero-face">{clientName}</div>}
+        {/* Not textS. That is #8b8fa3 — the filter kit measured it at ~3.1:1 on this page, below AA,
+            and it showed: the line naming the venue and the date read as a caption you skip. */}
+        <div className="sh-3" style={{fontSize:16.5,color:isDark?"rgba(255,255,255,0.80)":"#3F4557",
+          fontWeight:600,marginTop:9,letterSpacing:0.2}}>{venue} {"·"} {fn}{clientDate&&` · ${new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`}</div>
         {activeClient&&<div className="sh-4" style={{marginTop:9}}><span style={{fontSize:10,padding:"3px 12px",borderRadius:8,background:accentBg,color:accentText,fontWeight:600}}>Meeting #{meetingNumber} with {activeClient.name}</span></div>}
         <div className="sh-rule" style={{height:2,borderRadius:2,margin:"16px auto 0",background:`linear-gradient(90deg,transparent,${accent},transparent)`}}/>
       </div>
@@ -2081,7 +2227,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           100%{transform:translate(var(--dx),calc(var(--dy) + 30px)) scale(.3);opacity:0}}
           @media (prefers-reduced-motion: reduce){.fw-p{animation:none !important;opacity:0}}`}</style>
       </div>}
-      <div className="sh-te" style={{position:"relative",overflow:"hidden",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:18,padding:"20px 26px",color:"#fff",textAlign:"center",marginBottom:22}}>
+      {/* Centred copy, as it was — the photograph sits behind the whole card rather than beside the
+          text. Padding lives on .sh-te-body so the picture can reach the card's own edges. */}
+      <div className="sh-te" style={{position:"relative",overflow:"hidden",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)",borderRadius:18,padding:0,color:"#fff",textAlign:"center",marginBottom:22}}>
+        {ESTIMATE_BG && <div className="sh-te-img" style={{backgroundImage:`url(${ESTIMATE_BG})`}} aria-hidden="true"/>}
+        {ESTIMATE_BG && <div className="sh-te-scrim" aria-hidden="true"/>}
         {/* Decorative layers — absolutely positioned, so the content below needs its own positioned
             wrapper to paint above them. */}
         <span className="sh-te-aurora"/>
@@ -2095,14 +2245,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         <button className="sh-pv" onClick={()=>setCsData(buildCombinedCostSheetData())} title="Preview the full cost sheet"
           style={{position:"absolute",top:13,right:13,padding:"5px 12px",borderRadius:8,border:"none",cursor:"pointer",
             fontSize:11,fontWeight:700,letterSpacing:.3,
-            display:"inline-flex",alignItems:"center",gap:6,zIndex:2}}>
+            display:"inline-flex",alignItems:"center",gap:6,zIndex:4}}>
           <span className="sh-pv-glow"/>
           <span style={{position:"relative"}}>{"👁"} Preview</span>
         </button>
-        <div style={{position:"relative",zIndex:1}}>
-        <div className="sh-te-lbl" style={{fontSize:11.5,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>Total Estimate</div>
-        <div className="sh-te-amt" style={{fontSize:33,fontWeight:700,marginBottom:7}}><AnimatedTotal value={eventGrandTotal} fmt={fmt}/></div>
-        <div className="sh-te-pill" style={{display:"inline-block",padding:"4px 15px",borderRadius:12,fontSize:12.5,fontWeight:600,background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
+        <div className="sh-te-body">
+        {/* Gold, not indigo, and tracked wide. It is a label on the number below it — at 11.5px with
+            1px of tracking it was competing with the figure instead of introducing it. */}
+        <div className="sh-te-lbl" style={{fontSize:10.5,color:"#E8CF9A",textTransform:"uppercase",letterSpacing:3.4,fontWeight:700,marginBottom:9}}>Total Estimate</div>
+        {/* The figure stays in the SANS. It was briefly set in the display serif to match the header,
+            and that was wrong for a number: Cormorant ships old-style figures, so 6,90,091 came out
+            with digits sitting at different heights and descenders hanging below the line — elegant
+            in a sentence, and wrong for the one figure a client reads off the screen.
+            The size from that attempt is worth keeping. */}
+        <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={eventGrandTotal} fmt={fmt}/></div>
+        <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
             rather than a full-width bar above the panel. */}
         <div className="sh-te-cta" style={{marginTop:12}}>
@@ -2113,7 +2270,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
           {/* Enabled state gets its green + shadow from .sh-sold so the :hover rule can override
               them — an inline background would always win over the stylesheet. */}
-          <button onClick={markSold} disabled={!canSold} className={canSold?"sh-sold":""} style={{padding:"7px 18px",borderRadius:9,border:"none",cursor:canSold?"pointer":"not-allowed",fontSize:11.5,fontWeight:700,background:canSold?undefined:"#333",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSold?undefined:"none",opacity:canSold?1:0.5}}>{"🎉"} SOLD — Confirm Booking</button>
+          <button onClick={markSold} disabled={!canSold} className={canSold?"sh-sold":""} style={{padding:"10px 22px",borderRadius:10,border:"none",cursor:canSold?"pointer":"not-allowed",fontSize:11.5,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",background:canSold?undefined:"#333",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSold?undefined:"none",opacity:canSold?1:0.5}}>{"🎉"} Sold — Confirm Booking</button>
           {!canSold&&<div style={{fontSize:10,color:textS,textAlign:"center",marginTop:6}}>Requires: {missing.join(", ")}</div>}
           </>;})()}
         </div>

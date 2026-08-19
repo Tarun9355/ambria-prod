@@ -8254,44 +8254,12 @@ export default function StudioApp() {
         })()}
       </div>}
 
-      {/* ═══ THE DEAL LINE ═══
-          Which deal this session is on — guest, date, venue — so you can always answer "who am I
-          looking at?" once Event Info has scrolled out of view. It sat inside the header, stacked
-          under the account chip, which is what made that zone two rows tall and left it the first
-          thing to get squeezed whenever the bar ran short of room.
-          Out here it is on the page instead, on its own line, and the bar goes back to one row.
-          Now SUMMARY ONLY. Browse and Build both open their left panel with a "Your event" block
-          carrying the same guest, date and venue — so on those two steps this was the same three
-          facts twice on one screen, once in the panel and once in the corner. Step 0 never had it:
-          on Event Info those three fields ARE the form you are looking at.
-          Summary keeps it because Summary has no panel, and it is the step most likely to be turned
-          toward a client, where "whose event is this" should not have to be remembered. */}
-      {!bareEventInfo && mode === "studio" && authUser && step === 3 && (() => {
-        const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
-        const parts = [clientName.trim(), fmtDate(clientDate), venue].filter(Boolean);
-        if (!parts.length) return null;
-        // position/z-index below are not decoration. Browse paints its page wash as a FIXED layer
-        // at z-index 0 across the whole viewport, and a positioned layer at 0 sits above the inline
-        // content of un-positioned blocks — so in normal flow this line was painted over and
-        // vanished completely. .sb-layout carries z-index 1 for exactly this reason; this needs the
-        // same or it is invisible on the step it matters most.
-        return (
-          <div style={{ position: "relative", zIndex: 1, display: "flex", justifyContent: "flex-end", padding: "12px 24px 0" }}>
-            {/* Plain text, no pill. It is a note about what you are looking at, not a control — and
-                everything else on this page that carries a border or a fill (Clear all, the filter
-                chips, the cards) is clickable. Giving this one the same treatment made it look like
-                a button that does nothing. */}
-            {/* Not textS. That is #8b8fa3, which the filter kit already measured at ~3.1:1 on this
-                page — below AA, and it showed: the line was there but you had to look for it.
-                Darker and heavier, since this is the one thing on screen naming whose event you
-                are building. */}
-            <div style={{ color: isDark ? "rgba(255,255,255,0.72)" : "#474D5E", fontSize: 12,
-              fontWeight: 700, whiteSpace: "nowrap", letterSpacing: 0.3 }}>
-              {parts.join(" · ")}
-            </div>
-          </div>
-        );
-      })()}
+      {/* No deal line on the page. It used to sit top-right, naming the guest, date and venue.
+          Browse and Build now open their left panel with a "Your event" block carrying exactly
+          those three facts, and Event Info IS that form — so on every step it had become the same
+          information twice on one screen. Summary was the last holdout and goes with the rest.
+          Removed rather than gated to a step it can never run on: that is dead code that reads as
+          live, and the next person has to prove it never fires before touching anything near it. */}
 
       {/* MANAGE MODE — permission-gated */}
       {mode === "manage" && authUser && (() => {
