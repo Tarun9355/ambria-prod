@@ -368,7 +368,12 @@ export default function StudioEventInfo({ ctx }) {
    would, instead of reading as two separate lights laid over each other. The blend needs a real
    backdrop to act on — hence the background here, and it has to be on THIS element because z-index
    isolates the children's blending to inside it. */
+/* ── KEEP THIS LAYER ── A hidden tab has its compositing layers discarded, and coming back rebuilds
+   them: here that means re-rasterising 80px-blurred blobs and a blend-mode stack, which shows as a
+   flash on fast tab switching. translateZ(0) plus backface-visibility promotes the wash to a layer
+   of its own and keeps it there; contain:paint stops its repaints escaping into the page. */
 .ei-wash{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+    transform:translateZ(0);backface-visibility:hidden;contain:paint;
   background:${isDark?"#0F0F1A":"#FAF9F6"}}
 /* Irregular radii instead of circles, and heavy blur. The shapes are static — only transform
    animates. Morphing border-radius would repaint an 80px-blurred 720px box every frame; rotating
@@ -646,7 +651,15 @@ export default function StudioEventInfo({ ctx }) {
 .ei-head{transition:background .18s ease, opacity .18s ease;border-radius:8px}
 .ei-head:hover{background:${isDark?"rgba(201,169,110,0.1)":"rgba(201,169,110,0.14)"};opacity:1}
 /* Rows: lift further, warm the fill, and thicken the gold edge — a shadow alone was invisible. */
-.ei-row{transition:box-shadow .2s ease, border-color .2s ease, transform .16s ease, background .2s ease}
+/* ── THE LIFT CANNOT BE ALLOWED TO OUTRUN THE CURSOR ──
+   The element that lifts is the same element that owns :hover. Near its lower edge, translateY(-2px)
+   moves it out from under the pointer, :hover drops, it falls back, :hover returns — a feedback loop
+   that shows up as flicker, and worst when the pointer is moving fast across the block.
+   The ::after fills exactly the 2px the row vacates. A positioned pseudo-element still counts as
+   part of its element for hit-testing, so the pointer never actually leaves and the loop cannot
+   start. Nothing about the look changes — it has no paint of its own. */
+.ei-row{position:relative;transition:box-shadow .2s ease, border-color .2s ease, transform .16s ease, background .2s ease}
+.ei-row::after{content:"";position:absolute;left:0;right:0;top:100%;height:3px;pointer-events:auto}
 .ei-row:hover{transform:translateY(-2px);border-color:${isDark?"rgba(201,169,110,0.6)":"rgba(201,169,110,0.65)"} !important;
   background:${isDark?"rgba(201,169,110,0.09)":"#FFFCF3"} !important;
   box-shadow:${isDark?"0 16px 30px -12px rgba(0,0,0,0.78)":"0 16px 30px -12px rgba(26,26,46,0.34)"} !important}
@@ -659,10 +672,15 @@ export default function StudioEventInfo({ ctx }) {
 /* The function card keeps a gold cast rather than a grey one — it sits on cream inside another
    card, and a neutral shadow there just looks like dirt. An ink layer underneath gives it the
    depth the gold alone cannot carry. */
+/* Two shadow layers, not three, and the widest blur is down from 62px to 40px. On a card this size
+   a 62px blur at 90% opacity is a large, expensive repaint every time the pointer crosses the edge,
+   and moving quickly across the block queues those repaints faster than they finish — which reads
+   as the hover stuttering rather than easing. The look survives the trim; the third layer was mostly
+   under the second. */
 .ei-fncard:hover{border-color:${isDark?"rgba(201,169,110,0.6)":"rgba(201,169,110,0.7)"} !important;
   box-shadow:${isDark
-    ? "0 2px 4px rgba(0,0,0,0.6), 0 18px 36px -14px rgba(0,0,0,0.82)"
-    : "0 2px 5px rgba(26,26,46,0.14), 0 20px 38px -14px rgba(26,26,46,0.34), 0 34px 62px -24px rgba(201,169,110,0.9)"} !important}
+    ? "0 2px 4px rgba(0,0,0,0.6), 0 16px 32px -14px rgba(0,0,0,0.8)"
+    : "0 2px 5px rgba(26,26,46,0.14), 0 18px 40px -16px rgba(201,169,110,0.85)"} !important}
 /* Footer status block — highlights the outstanding-fields readout on hover. */
 .ei-status{transition:background .2s ease, box-shadow .2s ease}
 .ei-status:hover{background:${isDark?"rgba(255,255,255,0.04)":"#FBFAF7"};

@@ -651,7 +651,12 @@ export default function StudioBrowse({ ctx }) {
 /* z-index 0, NOT -1. A negative index put this behind S.app's own opaque cream background, which
    painted straight over it — the ground was being drawn and then buried. At 0 it sits above that
    background, and .sb-layout below is lifted to 1 so the content still clears it. */
+/* ── KEEP THIS LAYER ── A hidden tab has its compositing layers discarded, and coming back rebuilds
+   them: here that means re-rasterising 80px-blurred blobs and a blend-mode stack, which shows as a
+   flash on fast tab switching. translateZ(0) plus backface-visibility promotes the wash to a layer
+   of its own and keeps it there; contain:paint stops its repaints escaping into the page. */
 .sb-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+    transform:translateZ(0);backface-visibility:hidden;contain:paint;
   background:${isDark?"#0F0F1A":"#FAF9F6"}}
 .sb-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
 .sb-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--sb-pw) - 150px);

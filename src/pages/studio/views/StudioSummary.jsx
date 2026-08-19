@@ -2058,7 +2058,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    Fixed rather than absolute — this view scrolls, and an absolute layer would scroll its colour away
    and leave the lower half bare. z-index 0, NOT -1: negative puts it behind S.app's opaque
    background, which then paints straight over it. */
+/* ── KEEP THIS LAYER ── A hidden tab has its compositing layers discarded, and coming back rebuilds
+   them: here that means re-rasterising 80px-blurred blobs and a blend-mode stack, which shows as a
+   flash on fast tab switching. translateZ(0) plus backface-visibility promotes the wash to a layer
+   of its own and keeps it there; contain:paint stops its repaints escaping into the page. */
 .sh-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+    transform:translateZ(0);backface-visibility:hidden;contain:paint;
   background:${isDark?"#0F0F1A":"#FAF9F6"}}
 .sh-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
 .sh-wash-a{width:760px;height:700px;top:-190px;left:-120px;border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;

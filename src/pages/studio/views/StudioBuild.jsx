@@ -1586,7 +1586,12 @@ export default function StudioBuild({ ctx }) {
    on purpose, so the header needs one set of rules rather than two that can drift.
    ── THE PAGE WASH ── fixed, so it does not scroll its colour away and leave the lower half bare.
    z-index 0, NOT -1: negative would put it behind S.app's opaque background and be painted over. */
+/* ── KEEP THIS LAYER ── A hidden tab has its compositing layers discarded, and coming back rebuilds
+   them: here that means re-rasterising 80px-blurred blobs and a blend-mode stack, which shows as a
+   flash on fast tab switching. translateZ(0) plus backface-visibility promotes the wash to a layer
+   of its own and keeps it there; contain:paint stops its repaints escaping into the page. */
 .bd-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+    transform:translateZ(0);backface-visibility:hidden;contain:paint;
   background:${isDark ? "#0F0F1A" : "#FAF9F6"}}
 /* EVERY sibling of the wash has to be lifted above it. A positioned layer at z-index 0 paints over
    the inline content of un-positioned blocks, and unlike Browse — where the whole page lives inside
