@@ -2573,7 +2573,28 @@ export default function StudioApp() {
           // row to the list this tab is showing.
           if (deletedClientIdsRef.current.has(c.id)) return;
           if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(c);
-          setClientLedger((prev) => { const i = prev.findIndex((x) => x.id === c.id); return i >= 0 ? prev.map((x) => (x.id === c.id ? c : x)) : [...prev, c]; });
+          // ── AN ECHO MUST NOT WIND THIS CLIENT BACK ──
+          // Every save upserts the row and Supabase sends it straight back. Applying that blindly
+          // means the newest local state can be replaced by an OLDER copy: the 15s autosave, the
+          // debounced edit save and the tab-hide save all write independently, and the echo of one
+          // can land after the next has already been applied here. The row that arrives is then a
+          // version behind, so the saved-session list reverts — the newly-picked video drops out of
+          // the rolling draft and Browse's "Current selection — not yet saved" card reappears, until
+          // the following save pushes it forward again. That is the card blinking in and out on the
+          // save cadence: nothing was being re-fetched or re-rendered wrongly, the data itself was
+          // moving backwards and forwards.
+          // The newest savedAt across a client's sessions only ever moves forward, so it says which
+          // copy is later. An older one is dropped, and an identical one returns the SAME array so
+          // React re-renders nothing at all — most echoes are our own write coming home.
+          const ledgerStamp = (x) => { let m = 0; for (const s of (x?.sessions || [])) { const t = s?.savedAt || 0; if (t > m) m = t; } return m; };
+          setClientLedger((prev) => {
+            const i = prev.findIndex((x) => x.id === c.id);
+            if (i < 0) return [...prev, c];
+            const mine = prev[i];
+            if (ledgerStamp(c) < ledgerStamp(mine)) return prev;
+            if (JSON.stringify(mine) === JSON.stringify(c)) return prev;
+            return prev.map((x) => (x.id === c.id ? c : x));
+          });
         }
       } catch { /* ignore */ }
     });
