@@ -1134,8 +1134,14 @@ export default function StudioBrowse({ ctx }) {
                 // one. No figure, no entry.
                 const ownsTotal = s.savedActiveFnIdx === s._fnIdx
                   && typeof s.total === "number" && s.total > 0;
+                // KEY ON THE SESSION ID, NOT savedAt. The rolling autosave rewrites savedAt every 15
+                // seconds, so a key built from it changed on every tick — and a changed key tells
+                // React this is a different card, so it destroyed the old one and mounted a fresh
+                // one. That is why Resume/Continue kept vanishing and the thumbnail reloaded:
+                // nothing was re-fetching, the whole card was being rebuilt on a timer. The id is
+                // stable for the life of the session, which is what a key is supposed to be.
                 return (
-                  <div key={s.sourceVideoId+"_"+s.savedAt} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+                  <div key={s.id || s.sourceVideoId} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
                     {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
                       style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
                     <div style={{display:"flex",alignItems:"flex-start",gap:9,paddingRight:16}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
@@ -1462,19 +1468,27 @@ export default function StudioBrowse({ ctx }) {
             </div>;
             const rule = <div style={{height:1,background:border,margin:"22px 0 14px"}}/>;
             // No venue picked (or nothing matched it) — one plain grid, exactly as before.
-            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div className="sb-grid" style={grid}>{pageVideos.map(v=><VideoCard key={v.id} v={v}/>)}</div>;
+            // CALLED, NOT RENDERED AS <VideoCard/>. VideoCard is declared inside this component, so
+            // it is a brand-new function object on every render — and React compares element types
+            // by identity, so <VideoCard/> looked like a different component each time and the whole
+            // grid was torn down and rebuilt. Every <img> went with it, which is the thumbnail
+            // flicker: the pictures were being re-requested, not just repainted. The autosave tick
+            // re-rendered this component every 15 seconds, so it happened on a timer too.
+            // Invoking it returns the same plain <div> element type, so React updates in place.
+            // Safe because VideoCard holds no hooks — it is a pure render helper.
+            if (!preferred.length || (!otherVenues.length && !noVenue.length)) return <div className="sb-grid" style={grid}>{pageVideos.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>;
             return <>
               {heading(browseVenues.length===1?browseVenues[0]:"Selected venues",`${preferred.length} tagged here`)}
-              <div className="sb-grid" style={grid}>{preferred.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+              <div className="sb-grid" style={grid}>{preferred.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>
               {otherVenues.length>0&&<>
                 {rule}
                 {heading("More references",`${otherVenues.length} from other venues`)}
-                <div className="sb-grid" style={grid}>{otherVenues.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+                <div className="sb-grid" style={grid}>{otherVenues.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>
               </>}
               {noVenue.length>0&&<>
                 {rule}
                 {heading("Not tagged to a venue",`${noVenue.length} — still usable, but nobody has said where they were shot`)}
-                <div className="sb-grid" style={grid}>{noVenue.map(v=><VideoCard key={v.id} v={v}/>)}</div>
+                <div className="sb-grid" style={grid}>{noVenue.map(v=><Fragment key={v.id}>{VideoCard({v})}</Fragment>)}</div>
               </>}
             </>;
           })()}
