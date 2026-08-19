@@ -1128,11 +1128,23 @@ export default function StudioBrowse({ ctx }) {
               build state that hasn't been replaced yet. A stale "Saved … · ₹73,570" against a pill
               that already reads Mehendi is worse than showing nothing, so it becomes a skeleton
               until the new function's own session is what's on screen. */}
-          {ctx.isFnSwitching ? (
+          {/* The same skeleton, for the same reason, over the OTHER window where this card cannot
+              be trusted: the first moments after a load, before the ledger has come back.
+              Until it does, activeClient has no sessions — not because there are none, but because
+              nobody has been asked yet. Everything this card decides from that reads wrong: no saved
+              row, and "Current selection — not yet saved" printed over a video that is in fact saved,
+              both corrected a moment later when the rows land. That correction is the card appearing
+              and disappearing on every visit to this page.
+              A function switch and a cold load are the same situation — the answer is not in yet —
+              so they get the same answer: say it is loading, and say nothing else until it is.
+              Only when there is actually something to wait FOR, though: a deal in progress or a video
+              already picked. With neither, this block rendered nothing before the ledger landed and
+              nothing after it, so a spinner would be inventing a wait that was never there. */}
+          {(ctx.isFnSwitching || (!ctx.ledgerReady && (!!bannerCurrentId || !!clientName))) ? (
             <div aria-busy="true" style={{display:"flex",flexDirection:"column",gap:10,flexShrink:0,padding:"11px 12px",borderRadius:10,background:isDark?"rgba(234,179,8,0.06)":"rgba(234,179,8,0.05)",border:`1px dashed ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{width:13,height:13,borderRadius:"50%",border:`2px solid ${isDark?"rgba(234,179,8,0.35)":"rgba(217,119,6,0.35)"}`,borderTopColor:isDark?"#FBBF24":"#B45309",animation:"sbSkelSpin .6s linear infinite",flexShrink:0}}/>
-                <span style={{fontSize:11,fontWeight:600,color:isDark?"#FBBF24":"#B45309"}}>Loading this function…</span>
+                <span style={{fontSize:11,fontWeight:600,color:isDark?"#FBBF24":"#B45309"}}>{ctx.isFnSwitching?"Loading this function…":"Loading saved work…"}</span>
               </div>
               <div style={{height:11,borderRadius:5,background:isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.07)",animation:"sbSkelPulse 1.1s ease-in-out infinite"}}/>
               <div style={{height:11,width:"62%",borderRadius:5,background:isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.07)",animation:"sbSkelPulse 1.1s ease-in-out infinite .15s"}}/>

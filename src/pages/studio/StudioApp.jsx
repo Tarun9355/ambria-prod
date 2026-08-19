@@ -1225,6 +1225,11 @@ export default function StudioApp() {
   const [fnBuilds, setFnBuilds] = useState({});
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientLedger, setClientLedger] = useState([]);
+  // Has the ledger come back from the database yet? An EMPTY ledger and a NOT-YET-LOADED ledger are
+  // the same [] to anything reading it, and they mean opposite things: "this client has no saved
+  // work" versus "we do not know yet". Browse was answering the first while the truth was the
+  // second — see the skeleton condition there.
+  const [ledgerReady, setLedgerReady] = useState(false);
   const [activeClientId, setActiveClientId] = useState(null);
   const [clientSearch, setClientSearch] = useState("");
   // The identity (name/phone) an ACTIVE client last loaded with, or was confirmed-renamed to.
@@ -2283,6 +2288,10 @@ export default function StudioApp() {
           setClientLedger(list);
         }
       } catch { /* ignore */ }
+      // Marked ready whether the read SUCCEEDED or THREW. A failed load leaves the ledger empty,
+      // and treating that as "still loading" would hold the skeleton up for the rest of the session
+      // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
+      if (!cancelled) setLedgerReady(true);
       // Date types
       try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {}
       // Event orders
@@ -7877,7 +7886,7 @@ export default function StudioApp() {
     venue, setVenue, fn, setFn, clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching,
+    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData,
     sessionHistoryExpanded, setSessionHistoryExpanded,
