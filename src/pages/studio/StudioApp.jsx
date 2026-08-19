@@ -107,7 +107,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -1084,8 +1084,13 @@ function sessionToRows(clientId, s) {
     const build = snaps[i] || snaps[String(i)] || null;
     const b = build || s;
     const isActive = keys.length ? s.savedActiveFnIdx === i : true;
+    // BUILT on, not merely referenced from. A picked video rides along to every function, so the
+    // looser test marked all of them as holding a build and one build showed up on every pill.
+    const built = fnSnapHasBuild(b);
     const own = s.fnTotals && (s.fnTotals[i] || s.fnTotals[String(i)]);
-    const ownTotal = own && Number(own.total) > 0 ? Number(own.total) : null;
+    // A price only belongs to a function that HAS a build. Carried forward onto an empty one it was
+    // a figure for something that is not there — which is how a ₹0 Wedding showed ₹6,90,091.
+    const ownTotal = built && own && Number(own.total) > 0 ? Number(own.total) : null;
     return {
       id: `${s.id}:${i}`,
       session_id: s.id,
@@ -1095,7 +1100,7 @@ function sessionToRows(clientId, s) {
       saved_by: s.savedBy || null,
       auto: !!s.auto,
       is_active_fn: !!isActive,
-      has_data: fnSnapHasDataPure(b),
+      has_data: built,
       fn_label: s.fn || null,
       event_date: s.eventDate || null,
       venue: s.venue || null,
@@ -1105,8 +1110,8 @@ function sessionToRows(clientId, s) {
       source_event_name: b?.sourceEvent?.name || b?.sourceEventName || null,
       // The figure for THIS function: its own, else the session-level one but ONLY when the session
       // says that is where the number came from. Another function's price is not a fallback.
-      total: ownTotal != null ? ownTotal : (isActive && Number(s.total) > 0 ? Number(s.total) : null),
-      tier: ownTotal != null ? (own.tier || null) : (isActive ? (s.tier || null) : null),
+      total: ownTotal != null ? ownTotal : (built && isActive && Number(s.total) > 0 ? Number(s.total) : null),
+      tier: ownTotal != null ? (own.tier || null) : (built && isActive ? (s.tier || null) : null),
       decor_total: isActive && s.decorTotal != null ? Number(s.decorTotal) : null,
       transport_total: isActive && s.transportTotal != null ? Number(s.transportTotal) : null,
       build: build || null,
@@ -5616,11 +5621,16 @@ export default function StudioApp() {
         const prev = (prevSnapForTotals && typeof prevSnapForTotals.fnTotals === "object" && prevSnapForTotals.fnTotals) || {};
         const next = {};
         for (let i = 0; i < totalFns; i++) {
-          if (!fnSnapshots[i]) continue;
+          // Only onto a function that HAS a build. This carried a price forward on the strength of a
+          // snapshot merely existing, and a snapshot exists for every function once a video is picked
+          // — so an untouched, ₹0 function inherited whatever the last save had measured elsewhere.
+          if (!fnSnapshots[i] || !fnSnapHasBuild(fnSnapshots[i])) continue;
           const carried = prev[i] || prev[String(i)];
           if (carried && typeof carried.total === "number" && carried.total > 0) next[i] = carried;
         }
-        if (grandTotal > 0) next[liveIdx] = { total: grandTotal, tier: getCat(grandTotal).label };
+        if (grandTotal > 0 && fnSnapHasBuild(fnSnapshots[liveIdx])) {
+          next[liveIdx] = { total: grandTotal, tier: getCat(grandTotal).label };
+        }
         return next;
       })(),
       customItems: dcCustomItems,
@@ -5761,7 +5771,13 @@ export default function StudioApp() {
             const { error } = await supabase.from("studio_sessions")
               .upsert(rowsForSnapshot, { onConflict: "id" });
             if (error) throw error;
-          } catch { /* the client_ledger mirror still holds this save */ }
+          } catch (e) {
+            // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
+            // were lost in July (see the note on migration 023) — if these rows are not landing, the
+            // screen has to say so rather than look like it saved. The client_ledger mirror still
+            // holds the save either way, so this reports a sync problem, not lost work.
+            showMsg?.("Session rows not saved: " + (e?.message || e), "red");
+          }
         })();
       }
     }
@@ -8127,7 +8143,7 @@ export default function StudioApp() {
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
     deleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
-    snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData,
+    snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,

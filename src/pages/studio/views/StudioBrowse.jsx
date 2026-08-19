@@ -82,7 +82,7 @@ export default function StudioBrowse({ ctx }) {
     // video modal / premia
     setVideoModal, setVideoPlaying, setPremiaGate,
     // multi-function
-    extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData,
+    extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData, fnSnapHasBuild,
     // build / session
     sourceVideo, sourceEvent, venue, clientName, clientDate, showMsg,
     elSelectedPhoto, zoneElements, enabledEls,
@@ -394,10 +394,13 @@ export default function StudioBrowse({ ctx }) {
           if (row) fnIdx = row.fn_idx;
         } else if (snaps && Object.keys(snaps).length > 0) {
           // Prefer the pill you're on; otherwise the lowest-numbered one that has real data.
-          if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) fnIdx = activeFnIdx;
+          // fnSnapHasBuild, not fnSnapHasData: the looser test counts a picked reference video, and
+          // that reference is shared across functions — so it answered yes for every pill and one
+          // build was listed under all of them.
+          if (fnSnapHasBuild(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) fnIdx = activeFnIdx;
           else {
             const idxs = Object.keys(snaps).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
-            for (const i of idxs) { if (fnSnapHasData(snaps[i] || snaps[String(i)] || null)) { fnIdx = i; break; } }
+            for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) { fnIdx = i; break; } }
           }
         } else if (fnSnapHasData(s)) {
           fnIdx = 0;   // legacy session — flat fields, they belong to Fn1
@@ -482,9 +485,10 @@ export default function StudioBrowse({ ctx }) {
       }
       const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
       if (!snaps || !Object.keys(snaps).length) return fnSnapHasData(s) ? 0 : null;
-      if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) return activeFnIdx;
+      // Same swap as bannerSaved above, for the same reason.
+      if (fnSnapHasBuild(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) return activeFnIdx;
       const idxs = Object.keys(snaps).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
-      for (const i of idxs) { if (fnSnapHasData(snaps[i] || snaps[String(i)] || null)) return i; }
+      for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) return i; }
       return null;
     };
     const deleteSession = (sessionId) => {

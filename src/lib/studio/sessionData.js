@@ -21,6 +21,28 @@ export function fnSnapHasData(snap) {
 }
 
 /**
+ * One function's snapshot, but only counting what was actually BUILT on it.
+ *
+ * fnSnapHasData above counts a picked reference video as data, and for its job — "would this
+ * auto-save destroy work?" — that is right: a video someone chose is worth not throwing away.
+ * It is the wrong test for "does this function have a build", because the reference is not
+ * per-function in practice. Pick a video while standing on Wedding and it is still the reference
+ * when you switch to Sangeet, so every function's snapshot carries it — and every function then
+ * looked like it held a build. That is one build appearing on all three pills, with the same title
+ * and, through the carried price, the same figure.
+ *
+ * Elements, zones and photos are the things you can only put on a function by working on THAT
+ * function, so they are what "has a build" means. No reference clause, deliberately.
+ */
+export function fnSnapHasBuild(snap) {
+  if (!snap || typeof snap !== "object") return false;
+  if (Object.keys(snap.elSelectedPhoto || {}).length > 0) return true;
+  if (Object.keys(snap.zoneElements || {}).length > 0) return true;
+  if (Object.values(snap.enabledEls || {}).some((v) => v)) return true;
+  return false;
+}
+
+/**
  * A whole session — any function carrying data, or the legacy flat fields for sessions written
  * before fnSnapshots existed.
  */
