@@ -1844,6 +1844,18 @@ export default function StudioApp() {
     const t = setTimeout(() => { fnBusyStartRef.current = 0; setFnBusy(false); }, left);
     return () => clearTimeout(t);
   }, [activeFnIdx]);
+  // A BACKSTOP, NOT A SECOND TIMER. The effect above releases fnBusy when the new index commits —
+  // but ONLY then, because activeFnIdx is its only dependency. If a switch never commits (an
+  // exception inside the transition, before setActiveFnIdx, is the realistic way) that effect never
+  // re-runs and fnBusy stays true for the rest of the session: every Customize and Resume button
+  // disabled, every pill stuck on the progress cursor, and no way out but a reload. A switch that
+  // has not landed in three seconds is not one that is still working. In the normal case the effect
+  // above has already cleared the flag long before this fires, so this changes nothing.
+  useEffect(() => {
+    if (!fnBusy) return;
+    const t = setTimeout(() => { fnBusyStartRef.current = 0; setFnBusy(false); }, 3000);
+    return () => clearTimeout(t);
+  }, [fnBusy]);
   const isFnSwitching = fnBusy || isPendingFnRender;
   // ── THE AUTOSAVE HAS TO SEE THE SAME "STILL SWITCHING" THE UI DOES ──
   // switchingRef (above) is cleared the moment activeFnIdx commits, but the switch is not finished

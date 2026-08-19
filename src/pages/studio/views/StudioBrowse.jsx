@@ -1144,7 +1144,14 @@ export default function StudioBrowse({ ctx }) {
                 // card with no price is a card whose build has not been priced for this function
                 // yet, and continuing into it is what let a half-priced build get saved over a real
                 // one. No figure, no entry.
-                const ownsTotal = s.savedActiveFnIdx === s._fnIdx
+                // EVERY SESSION SAVED BEFORE savedActiveFnIdx EXISTED CARRIES undefined, and
+                // undefined === 0 is false — so this read false for the entire existing history and
+                // hid a price that was perfectly fine. The guard is meant to suppress ANOTHER
+                // function's number, not to blank out every session that predates the field. So:
+                // honour the tag when the session has one, and when it has none fall back to
+                // showing the total, which is exactly what shipped before the tag existed.
+                const totalIsTagged = typeof s.savedActiveFnIdx === "number";
+                const ownsTotal = (!totalIsTagged || s.savedActiveFnIdx === s._fnIdx)
                   && typeof s.total === "number" && s.total > 0;
                 // KEY ON THE SESSION ID, NOT savedAt. The rolling autosave rewrites savedAt every 15
                 // seconds, so a key built from it changed on every tick — and a changed key tells
@@ -1185,15 +1192,19 @@ export default function StudioBrowse({ ctx }) {
                     <div style={{display:"flex",gap:7}}>
                     {!unavailable && <button onClick={(e)=>{e.stopPropagation();setVideoModal({name:videoTitle,video:`https://www.youtube.com/embed/${s.sourceVideoId}`,venue:s.venue||"",fn:s.fn||"",desc:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[],tags:[]});setVideoPlaying(true);}} className="sb-bnr-btn sb-bnr-out" style={{padding:"6px 11px",borderRadius:7,border:`1px solid ${isDark?"rgba(234,179,8,0.5)":"#D97706"}`,background:"transparent",color:isDark?"#FBBF24":"#B45309",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flex:"0 0 auto",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:5}}><IconPlay size={11}/>Play</button>}
                     {/* Pass _fnIdx so the restore lands on the function that HAS the build.
-                        Blocked in two cases. While a switch is in flight, because the build state is
-                        half-replaced and loading into it loses work. And whenever no price is shown,
-                        because that means this function's build has not been priced yet — the same
-                        unsettled state, just visible rather than timed. */}
-                    {(()=>{ const notReady = ctx.isFnSwitching || !ownsTotal;
+                        Blocked ONLY while a switch is in flight, because there the build state is
+                        half-replaced and loading into it loses work — a wait that ends on its own.
+                        It used to be blocked on a missing price too, and that was wrong: a missing
+                        price is not always a load in progress. A session whose total belongs to
+                        another function never grows one for this card, so the button sat disabled
+                        for good and the build behind it could not be reached at all. The figure is
+                        only ever a label; the restore reads this function's own snapshot, which is
+                        correct whatever the session-level total happens to say. */}
+                    {(()=>{ const notReady = ctx.isFnSwitching;
                     return (
                     <button disabled={notReady}
                       onClick={(e)=>{e.stopPropagation();if(notReady)return;if(isCurrent){setStep(2);}else{resumeSavedSession(s,s._fnIdx);}}}
-                      title={ctx.isFnSwitching?"Still loading this function…":!ownsTotal?"Waiting for this function's price…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
+                      title={ctx.isFnSwitching?"Still loading this function…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
                       className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flex:1,
                         cursor:notReady?"progress":"pointer",opacity:notReady?0.5:1}}>
                       {isCurrent?"Continue":"Resume"} build {"→"}
