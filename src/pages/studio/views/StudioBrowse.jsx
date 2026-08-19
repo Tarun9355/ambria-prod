@@ -820,9 +820,21 @@ export default function StudioBrowse({ ctx }) {
    border-style:none inline, so it stays borderless. */
 .sb-rail .sb-panel .sb-scroll > div{border-bottom-color:rgba(255,255,255,0.13) !important}
 /* The small cards that share the rail — the session banner and its history — get the same
-   treatment at a lighter weight, so the panel holds one family of surfaces rather than three. */
-.sb-rail .sb-rcard,.sb-rail .sb-hist{-webkit-backdrop-filter:blur(16px) saturate(150%);
-  backdrop-filter:blur(16px) saturate(150%);
+   treatment at a lighter weight, so the panel holds one family of surfaces rather than three.
+   PAINTED GLASS, NOT SAMPLED GLASS. These two used to carry their own backdrop-filter. A
+   backdrop-filter has to re-read and re-blur whatever sits behind it, and behind these is the wash
+   whose bands animate forever — so Safari was re-sampling the backdrop every single frame, on top of
+   the blur the filter panel beside them already asks for. WebKit drops the filter for the odd frame
+   under that load, and when saturate(150%) drops out the row loses its lift and reads DIM, then
+   snaps back: the dim/normal/dim pulse on the session list.
+   A blur over an already-veiled dark panel was contributing almost nothing anyway — what actually
+   made these read as glass is the bright top edge and the diagonal sheen, and both are just paint.
+   So the sheen is a plain gradient now: same surface, sampled zero times per frame.
+   background-image needs !important for the same reason .sb-panel's does — the inline background
+   shorthand that sets each card's tint also resets background-image to none, and inline beats a
+   plain rule. The tints themselves are untouched, so both themes look as they did. */
+.sb-rail .sb-rcard,.sb-rail .sb-hist{
+  background-image:linear-gradient(147deg,rgba(255,255,255,0.075) 0%,rgba(255,255,255,0.02) 46%,rgba(255,255,255,0.045) 100%) !important;
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.14), 0 10px 26px -12px rgba(0,0,0,0.7)}
 /* The content clears the fixed panel. --sb-pw is the one number: panel width and content offset.
    The offset is the panel width PLUS a gutter, not equal to it — the curve reaches the panel's full
