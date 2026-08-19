@@ -1,7 +1,7 @@
 import { Fragment, useState, useRef, useEffect } from "react";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCheck, IconChevron, IconCrown, IconSave, IconPlay,
-  IconPalette, IconClipboard, IconSearch } from "../../../components/icons.jsx";
+  IconPalette, IconClipboard, IconSearch, IconCalendar } from "../../../components/icons.jsx";
 import { paletteNames } from "../../../lib/studio/colours";
 import { venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
@@ -84,7 +84,7 @@ export default function StudioBrowse({ ctx }) {
     // multi-function
     extraFunctions, activeFnMeta, activeFnIdx, fnSnapHasData,
     // build / session
-    sourceVideo, sourceEvent, venue, showMsg,
+    sourceVideo, sourceEvent, venue, clientName, clientDate, showMsg,
     elSelectedPhoto, zoneElements, enabledEls,
     // names not in StudioApp ctx (see report) — referenced verbatim from reference body
     ytVideoTags, saveYtTags, outdoorVenueList, browseVideos, browseVideosAll, allVideos, activeClient,
@@ -1019,16 +1019,46 @@ export default function StudioBrowse({ ctx }) {
               simply landed on top of the first card — over that card's own delete button, no less.
               It cannot sit in the header band either: the bar is only transparent there, the
               element is still present and still swallows the click. A 26px row it is. */}
-          <div style={{flexShrink:0,display:"flex",justifyContent:"flex-end"}}>
-            <button type="button" onClick={()=>setFiltersOpen(false)} className="sb-hide-top"
-              title="Hide the filters and give the whole width to the videos"
-              style={{display:"inline-flex",alignItems:"center",gap:5,
-                padding:"5px 11px",borderRadius:8,cursor:"pointer",whiteSpace:"nowrap",
-                border:`1px solid ${pBorder}`,background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
-                color:pTextS,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
-              {/* Rotated to point left — the direction the panel collapses in. */}
-              <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
-            </button>
+          {/* ═══ YOUR EVENT ═══
+              The same block Build's panel opens with, so moving between the two steps does not feel
+              like moving between two products. One fact per row: across a 300px column a single
+              wrapping sentence breaks in a different place every time a venue name or a date
+              changes.
+              Hide shares the eyebrow's row rather than owning one above it — on its own it spent a
+              whole band on one small control and pushed everything below it down. flex-start with a
+              small nudge keeps it level with the eyebrow, not floating beside the serif line.
+              Deliberately narrower than Build's: this panel also carries the saved-session card, and
+              the demand notes (booked / ongoing / Saya day) are not computed on this step. */}
+          <div style={{flexShrink:0,paddingBottom:2}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,marginBottom:6}}>
+              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",color:accent,paddingTop:3}}>Your event</div>
+              <button type="button" onClick={()=>setFiltersOpen(false)} className="sb-hide-top"
+                title="Hide the filters and give the whole width to the videos"
+                style={{display:"inline-flex",alignItems:"center",gap:5,flexShrink:0,
+                  padding:"5px 11px",borderRadius:8,cursor:"pointer",whiteSpace:"nowrap",
+                  border:`1px solid ${pBorder}`,background:"rgba(0,0,0,0.34)",backdropFilter:"blur(4px)",WebkitBackdropFilter:"blur(4px)",
+                  color:pTextS,fontSize:10.5,fontWeight:600,letterSpacing:0.2}}>
+                {/* Rotated to point left — the direction the panel collapses in. */}
+                <span style={{display:"inline-flex",transform:"rotate(90deg)"}}><IconChevron size={10}/></span>Hide
+              </button>
+            </div>
+            {clientName && <div className="sb-hero-face" style={{fontSize:27,fontWeight:600,color:PANEL_INK,letterSpacing:-0.3,lineHeight:1.08,marginBottom:12}}>
+              Welcome, {clientName}
+            </div>}
+            {(()=>{
+              const row=(icon,text)=>(
+                <div style={{display:"flex",alignItems:"center",gap:9,fontSize:12.5,lineHeight:1.35,color:PANEL_INK}}>
+                  <span style={{display:"inline-flex",flexShrink:0,color:accent}}>{icon}</span>
+                  <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{text}</span>
+                </div>
+              );
+              const where=[activeFnMeta?.venue||venue, activeFnMeta?.type].filter(Boolean).join(" · ");
+              if(!where && !clientDate) return null;
+              return <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",rowGap:9}}>
+                {where && row(<IconPalette size={14}/>, where)}
+                {clientDate && row(<IconCalendar size={14}/>, (()=>{ try { return new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch { return clientDate; } })())}
+              </div>;
+            })()}
           </div>
           {/* No logo in the panel. It was put back when the header stopped being transparent here,
               on the reasoning that the header's own mark would be hidden behind the bar — but the

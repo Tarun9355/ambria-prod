@@ -8260,8 +8260,13 @@ export default function StudioApp() {
           under the account chip, which is what made that zone two rows tall and left it the first
           thing to get squeezed whenever the bar ran short of room.
           Out here it is on the page instead, on its own line, and the bar goes back to one row.
-          Step 0 is excluded: on Event Info these three fields are the form you are looking at. */}
-      {!bareEventInfo && mode === "studio" && authUser && step !== 0 && (() => {
+          Now SUMMARY ONLY. Browse and Build both open their left panel with a "Your event" block
+          carrying the same guest, date and venue — so on those two steps this was the same three
+          facts twice on one screen, once in the panel and once in the corner. Step 0 never had it:
+          on Event Info those three fields ARE the form you are looking at.
+          Summary keeps it because Summary has no panel, and it is the step most likely to be turned
+          toward a client, where "whose event is this" should not have to be remembered. */}
+      {!bareEventInfo && mode === "studio" && authUser && step === 3 && (() => {
         const fmtDate = (d) => { if (!d) return ""; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
         const parts = [clientName.trim(), fmtDate(clientDate), venue].filter(Boolean);
         if (!parts.length) return null;
