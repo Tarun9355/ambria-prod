@@ -386,24 +386,24 @@ export default function StudioBrowse({ ctx }) {
         // which had to open each snapshot and work out whether it held anything, then read the video
         // from fields that describe a different function — has nothing left to guess at. The scan
         // stays for sessions still coming from the blob fallback.
+        // ── THIS PILL ONLY. NO FALLING BACK TO ANOTHER FUNCTION. ──
+        // Both branches below used to prefer the active pill and then, failing that, take the
+        // lowest-numbered function that had work. That is why one build appeared on all three pills
+        // with the same title and the same price: Sangeet and Haldi have nothing of their own, so
+        // both borrowed Wedding's. The intent back then was that a build should not become
+        // unreachable while you stand on a different pill — but that is what the collapsed history
+        // list below is for, and it is not worth showing a figure against a function it does not
+        // belong to. A pill shows what was built ON that pill, or it shows nothing.
         const fnRows = Array.isArray(s._fnRows) ? s._fnRows.filter(r => r && r.has_data) : null;
         if (fnRows && fnRows.length) {
-          // Prefer the pill you are on; otherwise the lowest-numbered function that has work.
-          row = fnRows.find(r => r.fn_idx === activeFnIdx)
-            || fnRows.slice().sort((a, b) => a.fn_idx - b.fn_idx)[0];
+          row = fnRows.find(r => r.fn_idx === activeFnIdx) || null;
           if (row) fnIdx = row.fn_idx;
         } else if (snaps && Object.keys(snaps).length > 0) {
-          // Prefer the pill you're on; otherwise the lowest-numbered one that has real data.
           // fnSnapHasBuild, not fnSnapHasData: the looser test counts a picked reference video, and
-          // that reference is shared across functions — so it answered yes for every pill and one
-          // build was listed under all of them.
+          // that reference is shared across functions — so it answered yes for every pill.
           if (fnSnapHasBuild(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) fnIdx = activeFnIdx;
-          else {
-            const idxs = Object.keys(snaps).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
-            for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) { fnIdx = i; break; } }
-          }
-        } else if (fnSnapHasData(s)) {
-          fnIdx = 0;   // legacy session — flat fields, they belong to Fn1
+        } else if (activeFnIdx === 0 && fnSnapHasData(s)) {
+          fnIdx = 0;   // legacy session — flat fields, they belong to Fn1 and only to Fn1
         }
         if (fnIdx !== null) {
           // The reference video has to be read from the SNAPSHOT being shown, not from the
