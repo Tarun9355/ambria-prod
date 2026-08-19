@@ -7926,10 +7926,11 @@ export default function StudioApp() {
   // ═══════════════════════════════════════════════════════════════
   return (
     <div style={S.app}>
-      {/* Playfair Display + Cinzel are the display faces the client decks are already set in
-          (see SERIF/DISPLAY in StudioSummary) — Event Info borrows them so the screen a deal is
-          started on and the deck it ends as read as the same brand. */}
-      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600;1,700&family=Cinzel:wght@500;600;700&display=swap" rel="stylesheet" />
+      {/* The Google Fonts link moved to index.html — see the note there. It was in this tree, so
+          every re-render of StudioApp reconciled it and the serif headings flashed their fallback
+          for a frame. Playfair Display + Cinzel are the display faces the client decks are already
+          set in (see SERIF/DISPLAY in StudioSummary); Event Info borrows them so the screen a deal
+          is started on and the deck it ends as read as the same brand. */}
       <style>{`* { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; } h1,h2,h3 { font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, sans-serif !important; } input,select,textarea,button { font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif !important; }
         /* Toast entrance — keeps the translateX(-50%) centring in both frames, so the resting
            inline transform matches the animation's end state and there's no snap on completion. */
