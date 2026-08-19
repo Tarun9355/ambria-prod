@@ -421,11 +421,23 @@ export default function StudioBrowse({ ctx }) {
     // snapshot for this pill. Walk fnSnapshots[activeFnIdx].sourceVideo.id, else legacy session.sourceVideoId.
     // Only sessions belonging to THIS pill can stand in for the current selection — one listed
     // against Fn1 must not suppress the "not yet saved" row while you're building Fn2.
-    const bannerCurrentInSaved = bannerCurrentId ? bannerSaved.some(s => {
-      if (s._fnIdx !== activeFnIdx) return false;
-      const snapForPill = s.fnSnapshots?.[activeFnIdx];
-      if (snapForPill?.sourceVideo?.id === bannerCurrentId) return true;
-      return s.sourceVideoId === bannerCurrentId;
+    // ── ASKED OF THE WHOLE HISTORY, NOT OF THE ONE CARD ──
+    // This used to run over bannerSaved, which is deliberately capped at a single entry (the newest
+    // session gets the full card; the rest live in the collapsed list). So the question "is the video
+    // I have open already saved?" was only ever asked of the most recent session — and any video
+    // saved before that one answered "no". Pick a video, build it, save it, then pick a different
+    // one, then come back: the first video is sitting right there in the history with its own price,
+    // and the rail still announced "Current selection — not yet saved" over it. That is why the blue
+    // card kept turning up on builds that were already saved. Whether a video is saved is a fact
+    // about the history, so it is read from the history.
+    // Still per-pill, for the reason above it: a session listed against Fn1 must not suppress the
+    // row while you are standing on Fn2.
+    const bannerCurrentInSaved = bannerCurrentId ? (activeClient?.sessions || []).some(s => {
+      const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
+      const snapForPill = snaps ? (snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null) : null;
+      if (snapForPill) return (snapForPill.sourceVideo?.id || snapForPill.sourceVideoId) === bannerCurrentId;
+      // A session written before fnSnapshots existed has flat fields only, and those belong to Fn1.
+      return activeFnIdx === 0 && s.sourceVideoId === bannerCurrentId;
     }) : false;
     const bannerShowCurrent = !!bannerCurrentId && !bannerCurrentInSaved;
     const bannerFmtDate = (ts) => { try { return new Date(ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }); } catch { return ""; } };
