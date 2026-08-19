@@ -1144,15 +1144,23 @@ export default function StudioBrowse({ ctx }) {
                 // card with no price is a card whose build has not been priced for this function
                 // yet, and continuing into it is what let a half-priced build get saved over a real
                 // one. No figure, no entry.
-                // EVERY SESSION SAVED BEFORE savedActiveFnIdx EXISTED CARRIES undefined, and
-                // undefined === 0 is false — so this read false for the entire existing history and
-                // hid a price that was perfectly fine. The guard is meant to suppress ANOTHER
-                // function's number, not to blank out every session that predates the field. So:
-                // honour the tag when the session has one, and when it has none fall back to
-                // showing the total, which is exactly what shipped before the tag existed.
-                const totalIsTagged = typeof s.savedActiveFnIdx === "number";
-                const ownsTotal = (!totalIsTagged || s.savedActiveFnIdx === s._fnIdx)
-                  && typeof s.total === "number" && s.total > 0;
+                // The figure for THIS card's function, in order of how much it can be trusted.
+                // fnTotals keeps a price beside each function's own build, so it answers the
+                // question directly and is preferred whenever it has an entry.
+                // Failing that, the session-level total — but only if it can be shown to belong
+                // here. savedActiveFnIdx names the function it was taken from, so a mismatch means
+                // it describes a different build and printing it would be a lie. Sessions saved
+                // before either field existed have no tag at all, and there the total is the only
+                // figure there is; showing it is what this card always did, so it stays.
+                const shownTotal = (() => {
+                  const own = s.fnTotals && (s.fnTotals[s._fnIdx] || s.fnTotals[String(s._fnIdx)]);
+                  if (own && typeof own.total === "number" && own.total > 0) return own;
+                  const tagged = typeof s.savedActiveFnIdx === "number";
+                  if (tagged && s.savedActiveFnIdx !== s._fnIdx) return null;
+                  if (typeof s.total === "number" && s.total > 0) return { total: s.total, tier: s.tier };
+                  return null;
+                })();
+                const ownsTotal = !!shownTotal;
                 // KEY ON THE SESSION ID, NOT savedAt. The rolling autosave rewrites savedAt every 15
                 // seconds, so a key built from it changed on every tick — and a changed key tells
                 // React this is a different card, so it destroyed the old one and mounted a fresh
@@ -1185,7 +1193,7 @@ export default function StudioBrowse({ ctx }) {
                           better than another function's price. */}
                       <div style={{fontSize:10,color:textS,marginTop:3,lineHeight:1.4}}>
                         Saved {bannerFmtDate(s.savedAt)}{s.savedBy?` by ${s.savedBy}`:""}
-                        {ownsTotal ? ` · ${fmt(s.total)}${s.tier?` ${s.tier}`:""}` : ""}
+                        {ownsTotal ? ` · ${fmt(shownTotal.total)}${shownTotal.tier?` ${shownTotal.tier}`:""}` : ""}
                       </div>
                     </div>
                     </div>
@@ -1244,17 +1252,33 @@ export default function StudioBrowse({ ctx }) {
                     <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Last {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
                   </button>
                   {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
-                    {bannerHistory.map((s,i) => (
+                    {bannerHistory.map((s,i) => {
+                      // Same figure the card above resolves, against the function this row would
+                      // actually resume into. It used to print s.total flat, which is why rows read
+                      // "₹0 Silver" — a zero saved from a function that was empty at the time, shown
+                      // against a build that is not empty at all. A row with no trustworthy number
+                      // now shows the date and who saved it, and no price.
+                      const hIdx = bestFnIdxForSession(s);
+                      const hShown = (() => {
+                        const own = s.fnTotals && hIdx != null && (s.fnTotals[hIdx] || s.fnTotals[String(hIdx)]);
+                        if (own && typeof own.total === "number" && own.total > 0) return own;
+                        const tagged = typeof s.savedActiveFnIdx === "number";
+                        if (tagged && hIdx != null && s.savedActiveFnIdx !== hIdx) return null;
+                        if (typeof s.total === "number" && s.total > 0) return { total: s.total, tier: s.tier };
+                        return null;
+                      })();
+                      return (
                       <div key={s.id||i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 7px",borderRadius:6,background:isDark?"rgba(255,255,255,0.03)":"#FAFAFB"}}>
                         <span style={{fontSize:10,color:textS,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                          {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{typeof s.total==="number"?` · ${fmt(s.total)}`:""}{s.tier?` ${s.tier}`:""}
+                          {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{hShown?` · ${fmt(hShown.total)}${hShown.tier?` ${hShown.tier}`:""}`:""}
                         </span>
                         <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                          <span onClick={()=>resumeSavedSession(s, bestFnIdxForSession(s) ?? undefined)} style={{fontSize:9.5,fontWeight:700,color:accent,cursor:"pointer",whiteSpace:"nowrap"}}>↻ Resume</span>
+                          <span onClick={()=>resumeSavedSession(s, hIdx ?? undefined)} style={{fontSize:9.5,fontWeight:700,color:accent,cursor:"pointer",whiteSpace:"nowrap"}}>↻ Resume</span>
                           {s.id && <span onClick={()=>deleteSession(s.id)} title="Delete this session" style={{fontSize:11,color:textS,cursor:"pointer",lineHeight:1}}>✕</span>}
                         </span>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>}
                 </div>
               )}

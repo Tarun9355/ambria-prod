@@ -5311,6 +5311,10 @@ export default function StudioApp() {
     // wrong function — the same class of bug switchActiveFn had.
     const liveIdx = activeFnIdxRef.current;
     const liveBuilds = fnBuildsRef.current;
+    // The most recent save of THIS deal, read the same way the write below reads it. Only needed so
+    // each function's own price can be carried forward — see fnTotals in the snapshot.
+    const prevSnapForTotals = (((clientLedgerRef.current || clientLedger)
+      .find(c => c.id === activeClientId)?.sessions) || [])[0] || null;
     const takeSnapshot = snapshotFnRef.current || snapshotBuildState;
     for (let i = 0; i < totalFns; i++) {
       let snap;
@@ -5358,6 +5362,33 @@ export default function StudioApp() {
       floralRatio,
       fnSnapshots,
       savedActiveFnIdx: liveIdx,
+      // ── ONE PRICE PER FUNCTION, NOT ONE PER SESSION ──
+      // `total` above is whichever function happened to be active when this save fired, so a deal
+      // with three functions still only ever carried one figure. Browse could not tell whose it
+      // was, so it either printed another function's price under this one's build, or — once
+      // savedActiveFnIdx let it tell — printed nothing at all, which is what left cards blank.
+      // Neither is the fix. The fix is to keep the number next to the build it belongs to.
+      // Only the live function can be priced here: grandTotal is computed from the state that is
+      // actually loaded, and the other functions are stored builds with no pricing run against
+      // them. So each save records its own function and carries the rest forward from the previous
+      // save of this deal — visit a function once and its price stays with it from then on.
+      // Carried entries are dropped when their build is gone, so a deleted function leaves no
+      // orphan figure. And a zero is never written over a real one: a save landing on a function
+      // that is empty or still settling would otherwise wipe a good price, which is the same ₹0
+      // that has been turning up on these cards. Nothing here is compared for "did the build
+      // change" purposes either — an unchanged build gives the same grandTotal, so this object is
+      // byte-identical and the load-echo check still sees a no-op.
+      fnTotals: (() => {
+        const prev = (prevSnapForTotals && typeof prevSnapForTotals.fnTotals === "object" && prevSnapForTotals.fnTotals) || {};
+        const next = {};
+        for (let i = 0; i < totalFns; i++) {
+          if (!fnSnapshots[i]) continue;
+          const carried = prev[i] || prev[String(i)];
+          if (carried && typeof carried.total === "number" && carried.total > 0) next[i] = carried;
+        }
+        if (grandTotal > 0) next[liveIdx] = { total: grandTotal, tier: getCat(grandTotal).label };
+        return next;
+      })(),
       customItems: dcCustomItems,
       auto: !!opts.auto,   // background auto-draft (rolling, updated in place) vs a manual Save Draft
     };
