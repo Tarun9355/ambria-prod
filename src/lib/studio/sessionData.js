@@ -105,8 +105,11 @@ function stripVolatile(value) {
  */
 export function snapshotContentEqual(a, b) {
   if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  // _fnRows is the studio_sessions rows a session was rebuilt from, not content — a freshly-built
+  // snapshot has none and a session loaded from the table always does, so leaving it in would make
+  // every comparison unequal and the load-echo no-op below would never fire again.
   const strip = (s) => {
-    const { id, savedAt, savedBy, auto, ...rest } = s; // eslint-disable-line no-unused-vars
+    const { id, savedAt, savedBy, auto, _fnRows, ...rest } = s; // eslint-disable-line no-unused-vars
     return rest;
   };
   return stableStringify(stripVolatile(strip(a))) === stableStringify(stripVolatile(strip(b)));

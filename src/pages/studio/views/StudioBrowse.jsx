@@ -379,7 +379,20 @@ export default function StudioBrowse({ ctx }) {
       for (const s of (activeClient.sessions || [])) {
         const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
         let fnIdx = null;
-        if (snaps && Object.keys(snaps).length > 0) {
+        let row = null;
+        // ── FROM THE TABLE, WHERE IT IS A COLUMN (migration 026) ──
+        // _fnRows is this session's per-function rows as studio_sessions holds them. has_data, fn_idx,
+        // the reference video and the price are all recorded per function there, so the scan below —
+        // which had to open each snapshot and work out whether it held anything, then read the video
+        // from fields that describe a different function — has nothing left to guess at. The scan
+        // stays for sessions still coming from the blob fallback.
+        const fnRows = Array.isArray(s._fnRows) ? s._fnRows.filter(r => r && r.has_data) : null;
+        if (fnRows && fnRows.length) {
+          // Prefer the pill you are on; otherwise the lowest-numbered function that has work.
+          row = fnRows.find(r => r.fn_idx === activeFnIdx)
+            || fnRows.slice().sort((a, b) => a.fn_idx - b.fn_idx)[0];
+          if (row) fnIdx = row.fn_idx;
+        } else if (snaps && Object.keys(snaps).length > 0) {
           // Prefer the pill you're on; otherwise the lowest-numbered one that has real data.
           if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) fnIdx = activeFnIdx;
           else {
@@ -401,8 +414,11 @@ export default function StudioBrowse({ ctx }) {
           withFn.push({
             ...s,
             _fnIdx: fnIdx,
-            sourceVideoId: snap?.sourceVideo?.id || snap?.sourceVideoId || s.sourceVideoId || null,
-            sourceVideoTitle: snap?.sourceVideo?.title || snap?.sourceVideoTitle || s.sourceVideoTitle || null,
+            // The row wins where it exists: its columns describe THIS function, which is the whole
+            // point of the move. _row also carries the price, read further down.
+            _row: row,
+            sourceVideoId: row?.source_video_id || snap?.sourceVideo?.id || snap?.sourceVideoId || s.sourceVideoId || null,
+            sourceVideoTitle: row?.source_video_title || snap?.sourceVideo?.title || snap?.sourceVideoTitle || s.sourceVideoTitle || null,
           });
         }
       }
@@ -433,6 +449,11 @@ export default function StudioBrowse({ ctx }) {
     // Still per-pill, for the reason above it: a session listed against Fn1 must not suppress the
     // row while you are standing on Fn2.
     const bannerCurrentInSaved = bannerCurrentId ? (activeClient?.sessions || []).some(s => {
+      // One indexed fact per function, straight off the row: does this client have a save for THIS
+      // function built from THIS video. That is what studio_sessions_video_idx exists for.
+      if (Array.isArray(s._fnRows) && s._fnRows.length) {
+        return s._fnRows.some(r => r && r.fn_idx === activeFnIdx && r.source_video_id === bannerCurrentId);
+      }
       const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
       const snapForPill = snaps ? (snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null) : null;
       if (snapForPill) return (snapForPill.sourceVideo?.id || snapForPill.sourceVideoId) === bannerCurrentId;
@@ -444,11 +465,21 @@ export default function StudioBrowse({ ctx }) {
     // Last 5 sessions for this client, most-recent first — the raw history, not the pill-aware
     // dedup bannerSaved does. Collapsed by default (bannerHistoryOpen) since it's a "just in case"
     // list, not something needed on every visit.
-    const bannerHistory = (activeClient?.sessions || []).slice(0, 5);
+    // slice(1, 6), not slice(0, 5): the newest save is already the full card above, so starting at 0
+    // listed it twice — once as the card and again as the first row underneath. These are the five
+    // BEFORE it.
+    const bannerHistory = (activeClient?.sessions || []).slice(1, 6);
     // Same "which pill actually has data" logic bannerSaved uses above, applied per history row
     // (which — unlike bannerSaved's entries — never got a _fnIdx computed for it) so Resume lands
     // on the function this particular past session holds, not blindly on whichever pill is active now.
     const bestFnIdxForSession = (s) => {
+      // The table answers this outright — has_data per function, no snapshot to open.
+      const fnRows = Array.isArray(s._fnRows) ? s._fnRows.filter(r => r && r.has_data) : null;
+      if (fnRows && fnRows.length) {
+        const pick = fnRows.find(r => r.fn_idx === activeFnIdx)
+          || fnRows.slice().sort((a, b) => a.fn_idx - b.fn_idx)[0];
+        if (pick) return pick.fn_idx;
+      }
       const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
       if (!snaps || !Object.keys(snaps).length) return fnSnapHasData(s) ? 0 : null;
       if (fnSnapHasData(snaps[activeFnIdx] || snaps[String(activeFnIdx)] || null)) return activeFnIdx;
@@ -461,6 +492,9 @@ export default function StudioBrowse({ ctx }) {
       askConfirm("Delete this saved session?", () => {
         const nextSessions = (activeClient.sessions || []).filter(sess => sess.id !== sessionId);
         saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
+        // The rows too. studio_sessions is what the next load reads, so removing this from the
+        // client's array alone would delete it for this tab and bring it straight back on refresh.
+        ctx.deleteSessionRows?.(sessionId);
         showMsg("Session deleted", "green");
       }, { yesLabel: "Delete", note: "This can't be undone." });
     };
@@ -1177,6 +1211,11 @@ export default function StudioBrowse({ ctx }) {
                 // before either field existed have no tag at all, and there the total is the only
                 // figure there is; showing it is what this card always did, so it stays.
                 const shownTotal = (() => {
+                  // The row's own column, where the session came from the table: one function, one
+                  // price, no reconciling to do.
+                  if (s._row && s._row.total != null && Number(s._row.total) > 0) {
+                    return { total: Number(s._row.total), tier: s._row.tier || "" };
+                  }
                   const own = s.fnTotals && (s.fnTotals[s._fnIdx] || s.fnTotals[String(s._fnIdx)]);
                   if (own && typeof own.total === "number" && own.total > 0) return own;
                   const tagged = typeof s.savedActiveFnIdx === "number";
@@ -1273,7 +1312,7 @@ export default function StudioBrowse({ ctx }) {
                   <button type="button" onClick={()=>setBannerHistoryOpen(v=>!v)} aria-expanded={bannerHistoryOpen}
                     style={{width:"100%",display:"flex",alignItems:"center",gap:7,padding:"10px 12px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
                     <span style={{display:"inline-flex",transform:bannerHistoryOpen?"rotate(90deg)":"none",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
-                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Last {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
+                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Past {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
                   </button>
                   {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
                     {bannerHistory.map((s,i) => {
@@ -1284,6 +1323,11 @@ export default function StudioBrowse({ ctx }) {
                       // now shows the date and who saved it, and no price.
                       const hIdx = bestFnIdxForSession(s);
                       const hShown = (() => {
+                        const hRow = Array.isArray(s._fnRows) && hIdx != null
+                          ? s._fnRows.find(r => r && r.fn_idx === hIdx) : null;
+                        if (hRow && hRow.total != null && Number(hRow.total) > 0) {
+                          return { total: Number(hRow.total), tier: hRow.tier || "" };
+                        }
                         const own = s.fnTotals && hIdx != null && (s.fnTotals[hIdx] || s.fnTotals[String(hIdx)]);
                         if (own && typeof own.total === "number" && own.total > 0) return own;
                         const tagged = typeof s.savedActiveFnIdx === "number";

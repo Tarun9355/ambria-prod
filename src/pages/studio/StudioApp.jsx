@@ -1045,12 +1045,140 @@ function rowToClient(row) {
   return { ...base, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
 }
 function clientToRow(c) {
+  // _fnRows is the per-function rows a session was rebuilt FROM (see rowsToSessions) — it is a view
+  // of studio_sessions, not part of the client. Left in, the blob mirror would carry a second copy of
+  // every build in every session: the same data this migration exists to stop duplicating.
+  const data = Array.isArray(c?.sessions)
+    // eslint-disable-next-line no-unused-vars
+    ? { ...c, sessions: c.sessions.map(({ _fnRows, ...rest }) => rest) }
+    : c;
   return {
     id: c.id, name: c.name || "", phone: c.phone ?? null, email: c.email ?? null,
     status: c.status || "ongoing", budget: Number(c.budget) || 0, created_by: c.createdBy ?? null,
-    data: c,
+    data,
   };
 }
+// How many saves a client keeps — in the array, in the table, everywhere. Browse spends six of them
+// (the newest as the full card, the five after it in the collapsed list); the rest are headroom.
+// One number, so the cut and the row-pruning can never disagree about what "kept" means.
+const SESSION_KEEP = 10;
+
+// ═══ `studio_sessions` TABLE ↔ the session shape the app already speaks (migration 026) ═══
+// One row per SAVE per FUNCTION. The app's in-memory session keeps exactly the shape it has always
+// had — fnSnapshots, fnTotals, savedActiveFnIdx, flat build fields — so every existing consumer
+// (resume, the deck, Deal Check, the cost sheet) is untouched by the move. What changes is that the
+// facts Browse needs per function are now READ from columns instead of guessed from the blob:
+// fn_idx says which function a build belongs to, total says what that function costs, and
+// source_video_id says which video it was built from. Those three guesses are where the wrong
+// prices, blank cards and "no longer in library" flips all came from.
+
+/** The rows one saved session becomes — one per function that has a snapshot. */
+function sessionToRows(clientId, s) {
+  if (!s || !s.id || !clientId) return [];
+  const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};
+  const keys = Object.keys(snaps).filter((k) => /^\d+$/.test(k));
+  // A session written before fnSnapshots existed carries its build in flat fields, and those belong
+  // to Fn1 — the same reading Browse has always given them.
+  const idxs = keys.length ? keys.map(Number).sort((a, b) => a - b) : [0];
+  return idxs.map((i) => {
+    const build = snaps[i] || snaps[String(i)] || null;
+    const b = build || s;
+    const isActive = keys.length ? s.savedActiveFnIdx === i : true;
+    const own = s.fnTotals && (s.fnTotals[i] || s.fnTotals[String(i)]);
+    const ownTotal = own && Number(own.total) > 0 ? Number(own.total) : null;
+    return {
+      id: `${s.id}:${i}`,
+      session_id: s.id,
+      client_id: clientId,
+      fn_idx: i,
+      saved_at: Number(s.savedAt) || 0,
+      saved_by: s.savedBy || null,
+      auto: !!s.auto,
+      is_active_fn: !!isActive,
+      has_data: fnSnapHasDataPure(b),
+      fn_label: s.fn || null,
+      event_date: s.eventDate || null,
+      venue: s.venue || null,
+      source_video_id: b?.sourceVideo?.id || b?.sourceVideoId || null,
+      source_video_title: b?.sourceVideo?.title || b?.sourceVideoTitle || null,
+      source_event_id: b?.sourceEvent?.id || b?.sourceEventId || null,
+      source_event_name: b?.sourceEvent?.name || b?.sourceEventName || null,
+      // The figure for THIS function: its own, else the session-level one but ONLY when the session
+      // says that is where the number came from. Another function's price is not a fallback.
+      total: ownTotal != null ? ownTotal : (isActive && Number(s.total) > 0 ? Number(s.total) : null),
+      tier: ownTotal != null ? (own.tier || null) : (isActive ? (s.tier || null) : null),
+      decor_total: isActive && s.decorTotal != null ? Number(s.decorTotal) : null,
+      transport_total: isActive && s.transportTotal != null ? Number(s.transportTotal) : null,
+      build: build || null,
+    };
+  });
+}
+
+/** Rows back into sessions, newest first — what client.sessions holds. */
+function rowsToSessions(rows) {
+  const bySession = new Map();
+  for (const r of (rows || [])) {
+    if (!r || !r.session_id) continue;
+    let g = bySession.get(r.session_id);
+    if (!g) { g = []; bySession.set(r.session_id, g); }
+    g.push(r);
+  }
+  const out = [];
+  for (const [sid, group] of bySession) {
+    group.sort((a, b) => (a.fn_idx || 0) - (b.fn_idx || 0));
+    // The function that was on screen when the save fired. Its build is what saveSession also wrote
+    // to the session's flat fields, so spreading it first reproduces the original object exactly.
+    const active = group.find((r) => r.is_active_fn) || group[0];
+    const fnSnapshots = {};
+    const fnTotals = {};
+    for (const r of group) {
+      if (r.build && typeof r.build === "object") fnSnapshots[r.fn_idx] = r.build;
+      if (r.total != null && Number(r.total) > 0) fnTotals[r.fn_idx] = { total: Number(r.total), tier: r.tier || "" };
+    }
+    const base = (active.build && typeof active.build === "object") ? active.build : {};
+    out.push({
+      ...base,
+      id: sid,
+      savedAt: Number(active.saved_at) || 0,
+      savedBy: active.saved_by || "—",
+      auto: !!active.auto,
+      eventDate: active.event_date || null,
+      venue: active.venue || null,
+      fn: active.fn_label || null,
+      sourceVideoId: active.source_video_id || null,
+      sourceVideoTitle: active.source_video_title || null,
+      sourceEventId: active.source_event_id || null,
+      sourceEventName: active.source_event_name || null,
+      total: active.total != null ? Number(active.total) : undefined,
+      tier: active.tier || undefined,
+      decorTotal: active.decor_total != null ? Number(active.decor_total) : undefined,
+      transportTotal: active.transport_total != null ? Number(active.transport_total) : undefined,
+      savedActiveFnIdx: active.fn_idx,
+      fnSnapshots,
+      fnTotals,
+      // The per-function rows as they came out of the table, so Browse can ask "this client, this
+      // function" without deriving anything. Prefixed: not part of what gets written back.
+      _fnRows: group,
+    });
+  }
+  out.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  // Capped on the way in as well as on the way out. Rows written before the cap existed, or left by a
+  // prune whose delete failed, would otherwise come back as a longer history than the app keeps.
+  return out.slice(0, SESSION_KEEP);
+}
+
+async function loadSessionRows() {
+  const all = []; const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase.from("studio_sessions")
+      .select("*").order("saved_at", { ascending: false }).range(from, from + SIZE - 1);
+    if (error) throw error;
+    all.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return all;
+}
+
 async function loadClientRows() {
   const all = []; const SIZE = 1000;
   for (let from = 0; ; from += SIZE) {
@@ -2283,6 +2411,27 @@ export default function StudioApp() {
         const rows = await loadClientRows();
         if (Array.isArray(rows) && !cancelled) {
           const list = rows.map(rowToClient).filter(Boolean);
+          // Sessions come from the `studio_sessions` TABLE (migration 026), which is the source of
+          // truth. The blob copy inside client_ledger.data stays as the fallback below — the same
+          // two-step 023 used for video tags, so this is reversible without losing a save.
+          // Only a client the table actually has rows for is replaced: a client whose sessions have
+          // not been backfilled yet keeps its blob history rather than appearing to have lost it.
+          try {
+            const srows = await loadSessionRows();
+            if (Array.isArray(srows) && srows.length && !cancelled) {
+              const byClient = new Map();
+              for (const r of srows) {
+                if (!r?.client_id) continue;
+                let g = byClient.get(r.client_id);
+                if (!g) { g = []; byClient.set(r.client_id, g); }
+                g.push(r);
+              }
+              for (const c of list) {
+                const mine = byClient.get(c.id);
+                if (mine && mine.length) c.sessions = rowsToSessions(mine);
+              }
+            }
+          } catch { /* table absent or unreadable — the blob history below stands */ }
           const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
           clientJsonRef.current = seed;
           setClientLedger(list);
@@ -2609,6 +2758,46 @@ export default function StudioApp() {
     });
     return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
+  // ── Realtime: session rows, row-level (migration 026) ──
+  // Another salesperson saving on the same deal, or the same person in a second tab, now changes ROWS
+  // rather than the client blob — so watching client_ledger alone would miss it. Rebuilt per client
+  // from whatever rows that client has after the change, which is the same function rowsToSessions
+  // does on load, so a live update and a cold load can never disagree about the shape.
+  useEffect(() => {
+    const ch = subscribeTable("studio_sessions", (payload) => {
+      try {
+        const cid = payload.new?.client_id || payload.old?.client_id;
+        if (!cid) return;
+        const sid = payload.new?.session_id || payload.old?.session_id;
+        const rowId = payload.new?.id || payload.old?.id;
+        setClientLedger((prev) => {
+          const i = prev.findIndex((c) => c.id === cid);
+          if (i < 0) return prev;   // a client this tab has not loaded — nothing to update
+          const c = prev[i];
+          // Rebuild this client's rows from the sessions it currently holds, apply the one change,
+          // then map back. Cheaper and safer than re-querying on every event.
+          const rows = [];
+          for (const s of (c.sessions || [])) {
+            if (Array.isArray(s._fnRows) && s._fnRows.length) rows.push(...s._fnRows);
+            else rows.push(...sessionToRows(cid, s));
+          }
+          let next;
+          if (payload.eventType === "DELETE") {
+            next = rows.filter((r) => (sid ? r.session_id !== sid : r.id !== rowId));
+          } else if (payload.new) {
+            const without = rows.filter((r) => r.id !== payload.new.id);
+            next = [...without, payload.new];
+          } else return prev;
+          const rebuilt = rowsToSessions(next);
+          // Same content, same array — most events are this tab's own write coming home, and
+          // replacing state with an identical value only makes Browse re-render for nothing.
+          if (JSON.stringify(rebuilt) === JSON.stringify(c.sessions || [])) return prev;
+          return prev.map((x, xi) => (xi === i ? { ...x, sessions: rebuilt } : x));
+        });
+      } catch { /* ignore */ }
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
   const saveTpl = useCallback(async (nt) => { setTemplates(nt); await reliableSave(TPL_SK, JSON.stringify(nt), "Template"); }, []);
   const saveZD = useCallback(async (nd) => { setZoneDefs(nd); await reliableSave(ZONE_DEF_SK, JSON.stringify(nd), "Zone config"); }, []);
 
@@ -2802,13 +2991,28 @@ export default function StudioApp() {
     try {
       // Delete BEFORE upserting. Both run in one call when the tracker deletes a client, and an
       // upsert landing after its own delete would put the row straight back.
-      for (const id of dels) await deleteRow("client_ledger", id);
+      // A deleted client's session rows go with it. client_ledger no longer holds the only copy of a
+      // deal's history, so dropping the client row alone would leave that history behind in
+      // studio_sessions with nothing pointing at it.
+      for (const id of dels) {
+        try { await supabase.from("studio_sessions").delete().eq("client_id", id); } catch { /* the client row still goes */ }
+        await deleteRow("client_ledger", id);
+      }
       if (changed.length) {
         const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
         const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
         if (error) throw error;
       }
     } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
+  }, [showMsg]);
+  // Deleting ONE saved session. Browse removes it from the client's array and saves the ledger; that
+  // takes it out of the blob mirror, and this takes out the rows it became in studio_sessions. Both
+  // are needed — the table is the source of truth on the next load, so a session deleted from the
+  // array alone would come back.
+  const deleteSessionRows = useCallback(async (sessionId) => {
+    if (!sessionId) return;
+    try { await supabase.from("studio_sessions").delete().eq("session_id", sessionId); }
+    catch (e) { showMsg?.("Session delete failed: " + (e?.message || e), "red"); }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
   // Submit a last-minute amendment request to the department head. Re-reads the
@@ -5522,10 +5726,44 @@ export default function StudioApp() {
       // (sessionBoundaryRef), in which case this save must start a fresh entry so the resumed draft
       // (the previous meeting's build) survives instead of being overwritten in place.
       const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current;
-      client.sessions = collapseInPlace
-        ? [snapshot, ...prevSessions.slice(1)].slice(0, 20)
-        : [snapshot, ...prevSessions].slice(0, 20);
+      // TEN PER CLIENT, and the table holds the same ten. Browse shows the newest as the full card
+      // and the five after it in the collapsed list, so ten is the history with room to spare — and a
+      // bounded row count is the point of keeping this in a table rather than letting a blob grow.
+      // The list is built before it is cut, so the entries the cut drops are known by id and their
+      // rows go with them. Without that the array would forget them while the table kept them, and
+      // the next load would bring them all back.
+      const nextSessionList = collapseInPlace
+        ? [snapshot, ...prevSessions.slice(1)]
+        : [snapshot, ...prevSessions];
+      client.sessions = nextSessionList.slice(0, SESSION_KEEP);
+      const prunedIds = nextSessionList.slice(SESSION_KEEP).map((x) => x?.id).filter(Boolean);
       sessionBoundaryRef.current = false;
+      // ── THE SAME SAVE, ROW-LEVEL, TO `studio_sessions` (migration 026) ──
+      // Inside the else on purpose: keepDraft and loadEchoNoop are deliberate no-ops on the array
+      // above, and a no-op must not write to the table either.
+      // Each save mints its own id, so a collapsed auto-draft does not overwrite the row it replaces
+      // — it stands beside it. The array drops the one it replaced; the table has to as well, or it
+      // would accumulate every 15s tick as its own entry in the history.
+      // Fire-and-forget, like every other caller on this path: the blob mirror in client_ledger
+      // carries this same save, so a failed write here costs sync, not data.
+      const rowsForSnapshot = sessionToRows(client.id, snapshot);
+      const replacedId = collapseInPlace ? (prevSessions[0]?.id || null) : null;
+      // The draft this save replaced, plus anything the ten-session cut dropped.
+      const dropIds = [...new Set([replacedId, ...prunedIds].filter((x) => x && x !== snapshot.id))];
+      if (rowsForSnapshot.length) {
+        (async () => {
+          try {
+            // Delete first. Both can run in one save, and a delete landing after the upsert that
+            // replaced it would take the new rows out with the old.
+            for (const did of dropIds) {
+              await supabase.from("studio_sessions").delete().eq("session_id", did);
+            }
+            const { error } = await supabase.from("studio_sessions")
+              .upsert(rowsForSnapshot, { onConflict: "id" });
+            if (error) throw error;
+          } catch { /* the client_ledger mirror still holds this save */ }
+        })();
+      }
     }
     setActiveClientId(client.id);
     const finalLedger = updated.slice(0, 200);
@@ -7887,6 +8125,7 @@ export default function StudioApp() {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
+    deleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData,
     sessionHistoryExpanded, setSessionHistoryExpanded,
