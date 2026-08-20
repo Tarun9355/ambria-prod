@@ -2640,7 +2640,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const fnLine=(fnObj)=>{const parts=[fnObj.fnType||"Function",fmtDate(fnObj.fnDate),fnObj.fnVenue||"—"];if(fnObj.fnShift)parts.push(fnObj.fnShift);return parts.filter(Boolean).join(" · ");};
       const fnCount=csData.functions.length;
       return(
-      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#F5F3EE",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      {/* ── GLASS NEEDS SOMETHING TO BE GLASS AGAINST ──
+          The ground was the app's cream, #F5F3EE, and that is why the panes would not show: a pale
+          sheet over a pale ground is the same pale, whatever its opacity says. Nothing was wrong with
+          the glass — there was nothing behind it to see.
+          Deeper and violet-tinted, so the panes read as panes and the wash's blobs (which multiply)
+          have some tone to darken. Only the BASE moved; the wash layers, the bands and the grain are
+          untouched, so this is still the same ground every other screen has, turned down a few stops.
+          Light mode only — dark mode is already dark enough for the panes to read against. */}
+      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#DCD7EC",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         {/* THE SAME GROUND AS EVERY OTHER SCREEN. This overlay was a flat fill — correct colour,
             nothing else — so opening the cost sheet dropped out of the app's world and into a plain
             document. The wash is the app's ground: the same drifting blobs, the same ripple bands,
