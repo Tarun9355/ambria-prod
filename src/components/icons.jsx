@@ -417,6 +417,15 @@ export function IconCoins({ size = 15 }) {
   );
 }
 
+// Shield — the buffer. Money held back against what the estimate did not foresee.
+export function IconShield({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M12 3.2 4.8 6v5.4c0 4.2 2.9 7.6 7.2 9.4 4.3-1.8 7.2-5.2 7.2-9.4V6z" />
+    </svg>
+  );
+}
+
 // Eye — show something that already exists, as opposed to making or exporting it.
 export function IconEye({ size = 15 }) {
   return (

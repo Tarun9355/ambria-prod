@@ -13,7 +13,7 @@ import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { IconBox, IconTruss, IconFlower, IconCrew, IconFactory,
-  IconCart, IconTruck, IconBolt, IconChart, IconCoins } from "../../../components/icons.jsx";
+  IconCart, IconTruck, IconBolt, IconChart, IconCoins, IconShield } from "../../../components/icons.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
@@ -958,7 +958,7 @@ export default function DealCheckOverlay({ ctx }) {
                   currentColor rule), so the active tab's mark goes dark with its text and no second
                   colour has to be threaded through here. */}
               {TABS.map(t => (
-                <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"9px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#FAF9F6":"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1}}>
+                <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?`1px solid ${accent}55`:"1px solid transparent",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?`${accent}1F`:"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1}}>
                   <t.Icon size={14}/>{t.label}
                   {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                 </button>
@@ -1040,10 +1040,15 @@ export default function DealCheckOverlay({ ctx }) {
                       }
                       const isActive = fi === activeFnIdx;
                       return (
-                        <button key={fi} onClick={()=>switchActiveFn(fi)} style={{padding:"10px 11px",borderRadius:8,border:isActive?`1px solid ${accent}`:`1px solid ${border}`,background:isActive?`${accent}18`:"rgba(26, 26, 46,0.02)",cursor:isActive?"default":"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:3}}>
-                          <div style={{fontSize:13,fontWeight:700,color:isActive?accent:"#000",letterSpacing:0.2}}>{fn?.fnType || `Function ${fi+1}`}</div>
-                          <div style={{fontSize:11,color:"#000",letterSpacing:0.4}}>{fn?.fnDate || "—"}{fn?.fnShift?` · ${fn.fnShift}`:""}</div>
-                          <div style={{fontSize:13,fontWeight:600,color:fnDecor>0?"#000":textS,marginTop:2}}>{fnDecor>0?`₹${Math.round(fnDecor).toLocaleString("en-IN")}`:"—"}</div>
+                        // THE SELECTED FUNCTION IS INKED, NOT TINTED. A gold-tinted card next to plain
+                        // ones told you which was chosen only if you compared them; the sidebar's whole
+                        // job is to answer that at a glance. Dark ground and light type inverts it
+                        // outright, and the figure — the one number anyone came to this column for —
+                        // goes gold on it, which it could not do while sitting on a gold tint.
+                        <button key={fi} onClick={()=>switchActiveFn(fi)} className="dc-fn" data-on={isActive?"1":"0"} style={{padding:"11px 12px",borderRadius:10,border:isActive?"1px solid transparent":`1px solid ${border}`,background:isActive?"linear-gradient(150deg,#1F1A33,#2C2350)":"#fff",cursor:isActive?"default":"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:3,boxShadow:isActive?"0 10px 24px -14px rgba(26,26,46,0.6)":"none"}}>
+                          <div style={{fontSize:13,fontWeight:700,color:isActive?"#fff":"#000",letterSpacing:0.2}}>{fn?.fnType || `Function ${fi+1}`}</div>
+                          <div style={{fontSize:11,color:isActive?"rgba(255,255,255,0.66)":"#000",letterSpacing:0.4}}>{fn?.fnDate || "—"}{fn?.fnShift?` · ${fn.fnShift}`:""}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:fnDecor>0?(isActive?accent:"#000"):(isActive?"rgba(255,255,255,0.5)":textS),marginTop:2}}>{fnDecor>0?`₹${Math.round(fnDecor).toLocaleString("en-IN")}`:"—"}</div>
                         </button>
                       );
                     });
@@ -1057,7 +1062,10 @@ export default function DealCheckOverlay({ ctx }) {
                 )}
                 {!activeTabDef.live ? (
                   <div style={{padding:"60px 30px",textAlign:"center",color:"#000"}}>
-                    <div style={{fontSize:42,marginBottom:14}}>{activeTabDef.icon}</div>
+                    {/* The tab's own mark, drawn large. This read activeTabDef.icon, which was the
+                        emoji string — now that the strip carries components it has to be rendered as
+                        one, or this empty state silently shows nothing at all. */}
+                    <div style={{marginBottom:14,display:"flex",justifyContent:"center",color:textS}}><activeTabDef.Icon size={42}/></div>
                     <div style={{fontSize:17.5,fontWeight:600,color:"#000",marginBottom:8}}>{activeTabDef.label}</div>
                     <div style={{fontSize:13.5,marginBottom:4}}>Coming in {activeTabDef.ship}</div>
                     <div style={{fontSize:12,opacity:0.6}}>Spec: §7.9.{activeTabDef.id==="manpower"?"13":activeTabDef.id==="production"?"14":activeTabDef.id==="buying"?"15":"2.A + 7.9.18 + 7.9.19"}</div>
@@ -1241,8 +1249,15 @@ export default function DealCheckOverlay({ ctx }) {
                         }
                         zoneRentalTotal = Math.round(zoneRentalTotal);
                         return (
-                          <div key={zk} style={{borderRadius:10,border:`1px solid ${border}`,background:"rgba(26, 26, 46,0.02)",overflow:"hidden"}}>
-                            <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 14px",cursor:"pointer",background:"rgba(26, 26, 46,0.03)",borderBottom:collapsed?"none":`1px solid ${border}`}}>
+                          <div key={zk} className="dc-zone" style={{borderRadius:12,border:`1px solid ${border}`,background:"#fff",overflow:"hidden",boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 20px -16px rgba(26,26,46,0.35)"}}>
+                            {/* White, not a 2%-ink tint, and the header no longer carries a tint of its
+                                own either. Six of these stacked on a cream page were six beige bands
+                                with beige headers — the row and its heading were the same value, so
+                                nothing separated one zone from the next except a hairline. On white the
+                                thumbnail, the name and the money are what carry, and the shadow does
+                                the separating. Kept shallow: these are list rows, and a list where
+                                every row floats reads as a pile of cards, not a list. */}
+                            <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 14px",cursor:"pointer",borderBottom:collapsed?"none":`1px solid ${border}`}}>
                               <div style={{display:"flex",alignItems:"center",gap:10}}>
                                 <span style={{fontSize:13,color:"#000",transition:"transform 0.15s",display:"inline-block",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}>▼</span>
                                 {zonePhoto && <img loading="lazy" decoding="async" src={thumbUrl(zonePhoto, 160)} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
@@ -2421,20 +2436,20 @@ export default function DealCheckOverlay({ ctx }) {
                 finally { setDcSavingDraft(false); }
               };
               const chips = [
-                { id:"rental",   label:"Rental",   icon:"📦", value: fmt(rental),    live: true  },
-                { id:"truss",    label:"Truss",    icon:"🏗️", value: fmt(truss),     live: true  },
-                { id:"florals",  label:"Florals",  icon:"🌸", value: fmt(florals),   live: true  },
-                { id:"transport",label:"Transport",icon:"🚚", value: fmt(Math.max(0, transport - genset)), live: true  },
-                { id:"genset",   label:"Genset",   icon:"⚡", value: fmt(genset),    live: true  },
+                { id:"rental",   label:"Rental",   Icon: IconBox,     value: fmt(rental),    live: true  },
+                { id:"truss",    label:"Truss",    Icon: IconTruss,   value: fmt(truss),     live: true  },
+                { id:"florals",  label:"Florals",  Icon: IconFlower,  value: fmt(florals),   live: true  },
+                { id:"transport",label:"Transport",Icon: IconTruck,   value: fmt(Math.max(0, transport - genset)), live: true  },
+                { id:"genset",   label:"Genset",   Icon: IconBolt,    value: fmt(genset),    live: true  },
                 // "(ADJUSTED)" once a dept head has edited crew in IMS Dept Ops — same flag + label
                 // the GYV Fixed & Buffer tab already uses (line ~2188). Without it this chip silently
                 // showed the reconciled-actuals figure with no sign it had moved off the Manpower
                 // tab's own projected total, which is what the tab itself still shows.
-                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", icon:"👷", value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
-                { id:"buy",      label:"Buy",      icon:"🛒", value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
-                { id:"produce",  label:"Produce",  icon:"🏭", value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
-                { id:"gyv",      label:"GYV 5%",   icon:"🏢", value: fmt(gyvFixed),  live: true  },
-                { id:"buffer",   label:"Buffer 3%",icon:"🛡️", value: fmt(bufferCost),live: true  },
+                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", Icon: IconCrew, value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
+                { id:"buy",      label:"Buy",      Icon: IconCart,    value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
+                { id:"produce",  label:"Produce",  Icon: IconFactory, value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
+                { id:"gyv",      label:"GYV 5%",   Icon: IconCoins,   value: fmt(gyvFixed),  live: true  },
+                { id:"buffer",   label:"Buffer 3%",Icon: IconShield,  value: fmt(bufferCost),live: true  },
               ];
               return (
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,background:"#FFFFFF",gap:14}}>
@@ -2442,8 +2457,12 @@ export default function DealCheckOverlay({ ctx }) {
                     <div><div style={{fontSize:11,color:"#000",letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Project total</div><div style={{fontSize:18,fontWeight:800,color:"#000",letterSpacing:0.3}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                     <div style={{height:30,width:1,background:border}}/>
                     {chips.map(c => (
-                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"6px 10px",borderRadius:8,background:"rgba(26, 26, 46,0.04)",fontSize:12,color:"#000",minWidth:70,opacity:c.live?1:0.5}}>
-                        <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600}}>{c.icon} {c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
+                      <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#000",minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
+                        {/* The label row is a flex line now rather than an emoji glued to text. The old
+                            "{c.icon} {c.label}" put a full-size emoji inside an 11px uppercase caption,
+                            so every tile's caption sat a different height depending on which emoji it
+                            drew. The mark is 11px, inherits the caption's colour, and shrinks with it. */}
+                        <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600,display:"flex",alignItems:"center",gap:5,lineHeight:1}}><c.Icon size={11}/>{c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
                         <div style={{fontSize:14.5,fontWeight:700,color:"#000",marginTop:1}}>{c.value}</div>
                       </div>
                     ))}
