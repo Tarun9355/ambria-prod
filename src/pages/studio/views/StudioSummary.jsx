@@ -2001,15 +2001,39 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    keeps prompting after you have obeyed it is just noise.
    Reduced motion gets the bright teal ring, held still. The point is "this is new" and that survives
    without the breathing; dropping the animation entirely would take the message with it. */
-@keyframes dkGlow{
-  0%,100%{box-shadow:0 0 0 1px rgba(94,234,212,.5),0 0 9px rgba(94,234,212,.3),0 0 20px rgba(94,234,212,.14)}
-  50%{box-shadow:0 0 0 1px rgba(94,234,212,.85),0 0 16px rgba(94,234,212,.55),0 0 34px rgba(94,234,212,.3)}
+/* The cost-sheet overlay's own children, above its wash — see the note on the wash markup. */
+.cs-overlay > *:not(.sh-wash){position:relative;z-index:1}
+/* A HEARTBEAT, NOT A BREATH. An even sine pulse reads as ambient — the eye files it with the other
+   slow-moving things on the page and stops reporting it. A heart's rhythm is the opposite: two quick
+   thumps and then a REST, and the rest is what does the work, because something that stops and starts
+   is something alive asking for attention. Hence the bunched stops (7% and 24%) and the long flat
+   tail out to 100%.
+   The ripple is a second ring on ::after that leaves the button and fades. The box-shadow alone
+   brightens in place, which is easy to miss in peripheral vision; a ring that TRAVELS is not, and it
+   is what makes this readable while someone is looking at the cost sheet rather than the toolbar.
+   Both run on the same 1.8s clock so the ripple leaves ON the first thump instead of drifting against
+   it. inset:-1px and border-radius:inherit so the ring starts exactly on the button's own edge — the
+   pill radius comes from the inline style, and inherit is what picks it up without repeating it. */
+@keyframes dkBeat{
+  0%,100%{box-shadow:0 0 0 1px rgba(94,234,212,.45),0 0 8px rgba(94,234,212,.2)}
+  7%{box-shadow:0 0 0 1px rgba(94,234,212,.95),0 0 20px rgba(94,234,212,.7),0 0 42px rgba(94,234,212,.34)}
+  15%{box-shadow:0 0 0 1px rgba(94,234,212,.58),0 0 12px rgba(94,234,212,.32)}
+  24%{box-shadow:0 0 0 1px rgba(94,234,212,.9),0 0 17px rgba(94,234,212,.6),0 0 34px rgba(94,234,212,.26)}
+  38%,100%{box-shadow:0 0 0 1px rgba(94,234,212,.45),0 0 8px rgba(94,234,212,.2)}
 }
-.sh-deck-glow{border-color:rgba(94,234,212,.8) !important;color:#5EEAD4 !important;
-  animation:dkGlow 2.2s ease-in-out infinite}
+@keyframes dkRipple{
+  0%{opacity:.6;transform:scale(1)}
+  70%,100%{opacity:0;transform:scale(1.55)}
+}
+.sh-deck-glow{position:relative;border-color:rgba(94,234,212,.85) !important;color:#5EEAD4 !important;
+  animation:dkBeat 1.8s ease-in-out infinite}
+.sh-deck-glow::after{content:"";position:absolute;inset:-1px;border-radius:inherit;
+  border:1px solid rgba(94,234,212,.85);pointer-events:none;
+  animation:dkRipple 1.8s ease-out infinite}
 @media (prefers-reduced-motion: reduce){
   .sh-deck-glow{animation:none;
-    box-shadow:0 0 0 1px rgba(94,234,212,.8),0 0 14px rgba(94,234,212,.45)}
+    box-shadow:0 0 0 1px rgba(94,234,212,.85),0 0 14px rgba(94,234,212,.45)}
+  .sh-deck-glow::after{display:none}
 }
 /* ═══ SOLD BUTTON ═══ Only the enabled button carries this class, so the hover never fires on the
    greyed-out state. Green + shadow live here rather than inline so :hover can actually override. */
@@ -2562,7 +2586,28 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       const fnLine=(fnObj)=>{const parts=[fnObj.fnType||"Function",fmtDate(fnObj.fnDate),fnObj.fnVenue||"—"];if(fnObj.fnShift)parts.push(fnObj.fnShift);return parts.filter(Boolean).join(" · ");};
       const fnCount=csData.functions.length;
       return(
-      <div style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#F5F3EE",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#F5F3EE",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {/* THE SAME GROUND AS EVERY OTHER SCREEN. This overlay was a flat fill — correct colour,
+            nothing else — so opening the cost sheet dropped out of the app's world and into a plain
+            document. The wash is the app's ground: the same drifting blobs, the same ripple bands,
+            the same paper grain, from the same lib every other view imports. Reusing the .sh-wash
+            classes already in this file rather than a second copy tuned by eye, because a wash that
+            is ALMOST the other pages' is worse than a flat fill — it reads as a bug.
+            Lifted by the .cs-overlay rule in the stylesheet rather than inline on each child: the
+            wash is a positioned layer at z-index 0, and a STATIC sibling paints below that level
+            however late it comes in the DOM — so the error strips and the deck's iframe would have
+            gone under the grain. One rule catches every child, including the conditional ones, which
+            is the same thing .sh-view does for the page itself. */}
+        <div className="sh-wash" aria-hidden="true">
+          <span className="sh-wash-a"/><span className="sh-wash-b"/><span className="sh-wash-c"/>
+          <svg className="sh-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
+            {WASH_BANDS.map((b,i)=>(
+              <path key={i} className={"sh-band sh-band-" + i} d={b.d} fill="none" stroke={b.c}
+                strokeOpacity={b.o} strokeWidth={b.w} strokeLinecap="round"/>
+            ))}
+          </svg>
+          <i className="sh-grain"/>
+        </div>
         {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px",background:"#1a1a2e",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:14}}>
