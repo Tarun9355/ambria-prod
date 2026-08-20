@@ -12,6 +12,8 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
+import { IconBox, IconTruss, IconFlower, IconCrew, IconFactory,
+  IconCart, IconTruck, IconBolt, IconChart, IconCoins } from "../../../components/icons.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
@@ -158,17 +160,22 @@ export default function DealCheckOverlay({ ctx }) {
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.
         // Tab definitions — only Inventory/Florals/Transport are functional in Deploy 1
+        // DRAWN, NOT EMOJI. Emoji cannot be size-matched — every one renders at its own font's optical
+        // weight, so the strip had a heavy 📦 next to a spindly ⚡ next to a 🏗️ that most systems draw
+        // with a variation selector and some draw as a black-and-white glyph. Ten of them in a row is
+        // ten different weights. These inherit the tab's own colour and one stroke width, so the row
+        // reads as a row. Component, not a string, so the size is set once at the call site.
         const TABS = [
-          { id: "inventory", label: "Inventory",        icon: "📦", live: true  },
-          { id: "truss",     label: "Truss",            icon: "🏗️", live: true  },
-          { id: "florals",   label: "Florals",          icon: "🌸", live: true  },
-          { id: "manpower",  label: "Manpower",         icon: "👷", live: true  },
-          { id: "production",label: "Production",       icon: "🏭", live: true  },
-          { id: "buying",    label: "Buying",           icon: "🛒", live: true  },
-          { id: "transport", label: "Transport",        icon: "🚚", live: true  },
-          { id: "power",     label: "Power",            icon: "⚡", live: true  },
-          { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
-          { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
+          { id: "inventory", label: "Inventory",        Icon: IconBox,     live: true  },
+          { id: "truss",     label: "Truss",            Icon: IconTruss,   live: true  },
+          { id: "florals",   label: "Florals",          Icon: IconFlower,  live: true  },
+          { id: "manpower",  label: "Manpower",         Icon: IconCrew,    live: true  },
+          { id: "production",label: "Production",       Icon: IconFactory, live: true  },
+          { id: "buying",    label: "Buying",           Icon: IconCart,    live: true  },
+          { id: "transport", label: "Transport",        Icon: IconTruck,   live: true  },
+          { id: "power",     label: "Power",            Icon: IconBolt,    live: true  },
+          { id: "status",    label: "Inventory Status", Icon: IconChart,   live: true  },
+          { id: "gyv",       label: "GYV & Buffer",     Icon: IconCoins,   live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
@@ -945,9 +952,14 @@ export default function DealCheckOverlay({ ctx }) {
             </div>
             {/* TAB STRIP */}
             <div style={{display:"flex",gap:2,padding:"8px 14px 0 14px",background:"#FFFFFF",borderBottom:`1px solid ${border}`,overflowX:"auto"}}>
+              {/* inline-flex with a gap on each tab, so the icon and the label are one object that
+                  centres together — with the old marginRight the pair sat optically low against the
+                  label's baseline. The icon inherits the tab's colour (see the icon set's
+                  currentColor rule), so the active tab's mark goes dark with its text and no second
+                  colour has to be threaded through here. */}
               {TABS.map(t => (
-                <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"9px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#FAF9F6":"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative"}}>
-                  <span style={{marginRight:5}}>{t.icon}</span>{t.label}
+                <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"9px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#FAF9F6":"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1}}>
+                  <t.Icon size={14}/>{t.label}
                   {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                 </button>
               ))}
