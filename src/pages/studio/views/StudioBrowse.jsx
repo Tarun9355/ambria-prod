@@ -1235,7 +1235,12 @@ export default function StudioBrowse({ ctx }) {
                 // nothing was re-fetching, the whole card was being rebuilt on a timer. The id is
                 // stable for the life of the session, which is what a key is supposed to be.
                 return (
-                  <div key={s.id || s.sourceVideoId} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)"}`}}>
+                  {/* LIVE IS THE OUTLINE, NOT A LABEL. A green pill sat inside the title, competing
+                      with it for the same line and reading as one more tag among the others. The
+                      thing being said is "this card is the build you are in", which is a property of
+                      the whole card — so the whole card says it. Border only, same 1px, so nothing
+                      moves when it turns on. */}
+                  <div key={s.id || s.sourceVideoId} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isCurrent?"rgba(16,185,129,0.75)":(isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)")}`}}>
                     {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
                       style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
                     <div style={{display:"flex",alignItems:"flex-start",gap:9,paddingRight:16}}><div style={{flexShrink:0,display:"flex",marginTop:1,color:"#B45309"}}><IconSave size={15}/></div>
@@ -1243,7 +1248,6 @@ export default function StudioBrowse({ ctx }) {
                       <div style={{fontSize:11.5,fontWeight:600,color:PANEL_INK,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                         {videoTitle}
                         {unavailable && <span style={{marginLeft:8,fontSize:10,color:textS,fontWeight:400}}>(no longer in library)</span>}
-                        {isCurrent && <span style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:"rgba(16,185,129,0.15)",color:"#10B981",letterSpacing:0.3}}>LIVE</span>}
                         {/* Only worth saying when it isn't the pill you're on — otherwise it's noise. */}
                         {s._fnIdx !== activeFnIdx && <span title={`This session's build is on Function ${s._fnIdx+1}`} style={{marginLeft:8,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:4,background:isDark?"rgba(99,102,241,0.18)":"rgba(99,102,241,0.12)",color:isDark?"#A5B4FC":"#4338CA",letterSpacing:0.3}}>Fn{s._fnIdx+1}</span>}
                       </div>
