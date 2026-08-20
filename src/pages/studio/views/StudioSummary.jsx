@@ -2003,6 +2003,39 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    without the breathing; dropping the animation entirely would take the message with it. */
 /* The cost-sheet overlay's own children, above its wash — see the note on the wash markup. */
 .cs-overlay > *:not(.sh-wash){position:relative;z-index:1}
+/* ═══ GLASS, PAINTED AND NOT SAMPLED ═══
+   The function panels were solid — correct, and the reason the new wash underneath was invisible the
+   moment it was added: three opaque cards covering the whole scrollport. Glass is what lets the
+   ground stay part of the page instead of a border you glimpse around the edges.
+   NO backdrop-filter, deliberately, and this is the one decision here worth keeping. A
+   backdrop-filter re-reads and re-blurs whatever sits behind it every frame, and behind these are
+   the wash bands, which animate forever (shBand0 and friends, 34s infinite). That combination is
+   exactly what made Safari drop the filter on the odd frame and dim the session cards on Browse
+   until it was taken out of them. What actually reads as glass is the bright top edge, the diagonal
+   sheen and the shadow — all of them paint. So they are painted: same surface, sampled zero times
+   per frame, and no browser gets to have an opinion about it.
+   Translucent enough for the wash to move behind the figures, opaque enough that a rupee amount is
+   never competing with a blurred blob for the same pixels — 0.82 falling to 0.66 across the sheen. */
+.cs-glass{
+  background:${isDark
+    ? "linear-gradient(148deg,rgba(255,255,255,0.075) 0%,rgba(255,255,255,0.032) 46%,rgba(255,255,255,0.058) 100%)"
+    : "linear-gradient(148deg,rgba(255,255,255,0.86) 0%,rgba(255,255,255,0.68) 46%,rgba(255,255,255,0.78) 100%)"};
+  border:1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.85)"};
+  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.13)" : "rgba(255,255,255,0.92)"},
+    0 2px 6px ${isDark ? "rgba(0,0,0,0.34)" : "rgba(26,26,46,0.05)"},
+    0 20px 46px -22px ${isDark ? "rgba(0,0,0,0.72)" : "rgba(26,26,46,0.26)"}}
+/* The zone cards sit ON that glass, so they are a lighter weight of it — a second pane at the same
+   strength would cancel the first and the stack would read as one flat slab again. Their border
+   stays inline: it carries the open/closed state, which is not this rule's business. */
+.cs-tile{
+  background:${isDark
+    ? "linear-gradient(148deg,rgba(255,255,255,0.055) 0%,rgba(255,255,255,0.022) 100%)"
+    : "linear-gradient(148deg,rgba(255,255,255,0.72) 0%,rgba(255,255,255,0.52) 100%)"};
+  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.8)"},
+    0 8px 20px -12px ${isDark ? "rgba(0,0,0,0.6)" : "rgba(26,26,46,0.18)"}}
+/* No hover here. .sm-zcard already owns the lift on these cards — same -2px, and with a
+   reduced-motion guard this rule would not have had. A second hover would only fight it over
+   box-shadow and win or lose by stylesheet order, which is not a thing to leave to chance. */
 /* A HEARTBEAT, NOT A BREATH. An even sine pulse reads as ambient — the eye files it with the other
    slow-moving things on the page and stops reporting it. A heart's rhythm is the opposite: two quick
    thumps and then a REST, and the rest is what does the work, because something that stops and starts
@@ -2715,7 +2748,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               before you reached anything. */}
           {/* Per-function blocks */}
           {csData.functions.map((fnObj,fi)=>(
-            <div key={fi} style={{background:isDark?"#12121F":"#fff",borderRadius:14,border:`1px solid ${border}`,marginBottom:20,overflow:"hidden"}}>
+            <div key={fi} className="cs-glass" style={{borderRadius:14,marginBottom:20,overflow:"hidden"}}>
               {/* Function header */}
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",color:"#fff"}}>
                 <div>
@@ -2748,10 +2781,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                     const zKey=`${fi}-${z.k}`, zOpen=!!csOpenZones[zKey];
                     return (
                     <Fragment key={z.k}>
-                      <div onClick={()=>toggleZoneCard(zKey)} className="sm-zcard" role="button" tabIndex={0}
+                      <div onClick={()=>toggleZoneCard(zKey)} className="sm-zcard cs-tile" role="button" tabIndex={0}
                         onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggleZoneCard(zKey);}}}
                         title={zOpen?"Hide the costing":"Show the costing"}
-                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:border}`,background:isDark?"rgba(255,255,255,0.03)":"#fff"}}>
+                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:border}`}}>
                         {z.photo
                           ? <img src={z.photo} alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
                           : <div style={{width:"100%",aspectRatio:"4 / 3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:isDark?"#0A0A14":"#F3EFE9",color:textS}}>{z.icon||"📦"}</div>}
