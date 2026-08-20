@@ -11,7 +11,7 @@
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef, Fragment } from "react";
-import { IconSparkle, IconExcelMark, IconCanvaMark } from "../../../components/icons.jsx";
+import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
@@ -2557,13 +2557,21 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               // deliberately plain so the link stays the obvious one.
               if (canvaState === "ready") return (
                 <>
+                  {/* ── ONE FILL IN THE ROW ──
+                      Four buttons all shouting was the problem: Excel blue, View deck teal, Canva
+                      violet, Make again ghosted. Four colours is no hierarchy at all — the eye has
+                      nowhere to land. Only ONE thing here leaves the app, and that is Canva, so
+                      Canva keeps the fill. View deck and Make again both act INSIDE this overlay, so
+                      they are ghosts on the dark bar: present, pressable, and quiet. Excel stays
+                      white because it is the other kind of thing entirely — a file you take away.
+                      All four are pills now, so the row reads as one set. */}
                   <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
                     title="Show the design deck as it stands in Canva, and hand it over as a PDF"
-                    style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Opening…":"👁 View deck"}</button>
+                    style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"transparent",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{deckPdf.state==="loading"?"⏳ Opening…":<><IconEye size={14}/>View deck</>}</button>
                   <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"7px 15px",borderRadius:999,border:"1px solid #7C3AED",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconCanvaMark size={15}/>Canva</button>
                   <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
                     title="Design a fresh deck — the current link stays open in Canva either way"
-                    style={{padding:"8px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>{"⟳"} Make again</button>
+                    style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconRepeat size={14}/>Make again</button>
                 </>
               );
               // The same pill as the "Open in Canva" one above, because this is the button that sits
@@ -2575,7 +2583,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               // if the other product were the thing reporting.
               return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"7px 15px",borderRadius:999,border:`1px solid ${canvaState==="error"?"#EF4444":"#7C3AED"}`,cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":<><IconCanvaMark size={15}/>Canva</>}</button>;
             })()}
-            <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
+            {/* A round button for the round set. Fixed square rather than padded text, so the glyph
+                actually sits in the middle of the circle. */}
+            <button onClick={()=>setCsData(null)} title="Close the cost sheet" style={{width:30,height:30,padding:0,borderRadius:999,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>{"✕"}</button>
           </div>
         </div>
         {canvaState==="error"&&canvaError&&<div style={{padding:"6px 20px",background:"rgba(239,68,68,0.15)",color:"#FCA5A5",fontSize:11,flexShrink:0}}>{canvaError}</div>}

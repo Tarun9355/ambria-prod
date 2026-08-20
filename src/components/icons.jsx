@@ -356,6 +356,16 @@ export function IconRepeat({ size = 15 }) {
   );
 }
 
+// Eye — show something that already exists, as opposed to making or exporting it.
+export function IconEye({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.75" />
+    </svg>
+  );
+}
+
 // Chevron — collapsible section toggle. Rotated by the caller for the open state.
 export function IconChevron({ size = 15 }) {
   return (
