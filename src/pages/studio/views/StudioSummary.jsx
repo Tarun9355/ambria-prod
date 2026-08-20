@@ -2647,8 +2647,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // have some tone to darken. Only the BASE moved; the wash layers, the bands and the grain are
       // untouched, so this is still the same ground every other screen has, turned down a few stops.
       // Light mode only — dark mode is already dark enough for the panes to read against.
+      // Taken down again, further this time. It can go this dark safely because the base is only
+      // visible in the GUTTERS — between the panels and around them. Every figure and every table sits
+      // on glass, so darkening the ground buys contrast for the panes without touching the contrast of
+      // anything anyone has to read.
       return(
-      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#DCD7EC",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#857BB4",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         {/* THE SAME GROUND AS EVERY OTHER SCREEN. This overlay was a flat fill — correct colour,
             nothing else — so opening the cost sheet dropped out of the app's world and into a plain
             document. The wash is the app's ground: the same drifting blobs, the same ripple bands,
