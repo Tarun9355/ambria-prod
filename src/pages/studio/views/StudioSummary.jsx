@@ -2806,13 +2806,13 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                     const zKey=`${fi}-${z.k}`, zOpen=!!csOpenZones[zKey];
                     return (
                     <Fragment key={z.k}>
+                      {/* The closed border is white, not the theme's grey rule. With the fill this
+                          close to clear the border IS the tile, and a grey line over a violet wash
+                          reads as a smudge rather than an edge. Open still takes the gold, because
+                          that is state and state should win. */}
                       <div onClick={()=>toggleZoneCard(zKey)} className="sm-zcard cs-tile" role="button" tabIndex={0}
                         onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggleZoneCard(zKey);}}}
                         title={zOpen?"Hide the costing":"Show the costing"}
-                        {/* The closed border is white, not the theme's grey rule. With the fill this
-                            close to clear the border IS the tile, and a grey line over a violet wash
-                            reads as a smudge rather than an edge. Open still takes the gold, because
-                            that is state and state should win. */}
                         style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:(isDark?"rgba(255,255,255,0.14)":"rgba(255,255,255,0.9)")}`}}>
                         {z.photo
                           ? <img src={z.photo} alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
