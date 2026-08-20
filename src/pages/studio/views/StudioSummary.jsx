@@ -255,7 +255,9 @@ export default function StudioSummary({ ctx }) {
   // second deck when one already existed. Remembered against the CLIENT, so it follows the deal
   // rather than the tab, and so opening someone else's deal never shows this one's link.
   const canvaKey = (id) => `ambria-canva-deck-${id || "none"}`;
-  const [deckThumb, setDeckThumb] = useState("");
+  // deckThumb is gone with the "Design deck ready" strip that read it. Worth noting what removing it
+  // revealed: nothing ever CALLED its setter, so the cover was always empty and that strip always
+  // drew the dashed placeholder. The card was written to show a deck's cover and never once did.
   // Stored as JSON now that the cover thumbnail is kept beside the link. Decks remembered before
   // this was a JSON blob are a bare URL string, and are still read — a salesperson mid-deal should
   // not lose the link they already have because the shape of the record changed under them.
@@ -2618,25 +2620,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               style={{flex:1,minHeight:0,width:"100%",border:"none",background:"#1f2937"}} />
           </div>
         )}
-        {/* ── The deck this deal already has, said on the page rather than only in a button ──
-            A made deck was invisible here: two buttons in a toolbar, and nothing on the sheet to
-            say a presentation existed at all, let alone what it looked like. The cover comes from
-            the import, so decks made before it was kept show the card without the image rather
-            than not showing at all. */}
-        {canvaState==="ready"&&deckPdf.state!=="ready"&&(
-          <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:14,padding:"11px 22px",background:"#111827",borderBottom:"1px solid rgba(255,255,255,0.10)"}}>
-            {deckThumb
-              ? <img src={deckThumb} alt="Design deck cover" style={{width:104,height:59,objectFit:"cover",borderRadius:6,border:"1px solid rgba(255,255,255,0.18)",flexShrink:0}} />
-              : <div style={{width:104,height:59,borderRadius:6,border:"1px dashed rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{"🎨"}</div>}
-            <div style={{minWidth:0}}>
-              <div style={{fontSize:12.5,fontWeight:700,color:"#fff"}}>Design deck ready</div>
-              {/* No View button here any more — the toolbar above owns that action. This card says a
-                  deck EXISTS and shows its cover; two buttons doing the same thing on one screen
-                  just made you decide which one to press. */}
-              <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>Open it with <strong style={{color:"#5EEAD4"}}>View deck</strong> above — no Canva needed unless you want to edit it.</div>
-            </div>
-          </div>
-        )}
+        {/* The "Design deck ready" strip is gone. It existed to announce a deck the toolbar had no
+            room to mention, but the toolbar now says it plainly: View deck and Canva only appear
+            once a deck exists, so their presence IS the announcement. The strip was left explaining
+            a button sitting a few pixels above it, and eating a band of the cost sheet to do it. */}
         {/* Scrollable body — hidden, not unmounted, while the deck is open: the deck takes the whole
             panel, and unmounting this would throw away the reader's scroll position in a long cost
             sheet every time they glanced at the slides. */}
