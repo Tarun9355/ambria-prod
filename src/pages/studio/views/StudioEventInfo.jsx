@@ -378,7 +378,19 @@ export default function StudioEventInfo({ ctx }) {
 /* Irregular radii instead of circles, and heavy blur. The shapes are static — only transform
    animates. Morphing border-radius would repaint an 80px-blurred 720px box every frame; rotating
    an already-lopsided shape reads as the same slow churn and stays on the compositor. */
-.ei-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+/* ── NO BLEND MODE ON A MOVING ELEMENT, IN LIGHT MODE ──
+   mix-blend-mode makes an element's paint depend on its BACKDROP, so anything that moves it
+   invalidates the blend and the pair has to be re-composited — every frame, for the life of the page.
+   Three 720px boxes under an 80px blur, each drifting on its own clock, is that work three times
+   over, and on Mac it showed as the background flickering after a load.
+   It costs nothing to drop here: multiply against a near-white ground returns the colour itself, and
+   this ground is #FAF9F6. The alphas are unchanged and the blobs land the same — the only real
+   difference is where two of them overlap, which multiply darkened slightly more.
+   Dark mode keeps it. There the ground is near-black, where multiply is doing actual work (it is what
+   holds the blobs down to a hint), and matching that by hand would be guesswork against a look
+   nobody has reported a problem with. */
+.ei-wash span{position:absolute;display:block;filter:blur(80px);
+  mix-blend-mode:${isDark ? "multiply" : "normal"}}
 .ei-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--ei-pw) - 150px);
   border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
   background:radial-gradient(circle,rgba(201,169,110,0.38) 0%,rgba(201,169,110,0) 70%);
