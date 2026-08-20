@@ -22,6 +22,25 @@ import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailabilit
 import { isHiddenSubcat } from "../../../lib/rateCard";
 
 export default function DealCheckOverlay({ ctx }) {
+  // ── THE APP'S NAVBAR STAYS ON SCREEN ──
+  // This overlay was inset:0 at z-index 9000, so it covered the header — and with it the step nav, the
+  // Studio/IMS switcher and the way out of the deal. Deal Check is a STEP of the Summary, not a
+  // separate application, and the reference has the bar sitting above it.
+  // Measured rather than assumed, and observed with a ResizeObserver, because the header's height is
+  // not a constant: it wraps to a second row on a narrow window and grows again when the function row
+  // appears. A hardcoded offset is right until the bar changes shape and then leaves a gap or hides
+  // a row. Same approach Browse and Build already use for the same measurement.
+  const [navH, setNavH] = useState(0);
+  useEffect(() => {
+    const el = document.querySelector(".sa-header");
+    if (!el) return undefined;
+    const read = () => setNavH(el.getBoundingClientRect().height || 0);
+    read();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
@@ -915,7 +934,14 @@ export default function DealCheckOverlay({ ctx }) {
           // The background here is a FALLBACK. .dc-wash covers it with an opaque fill of its own, so
           // the colour that shows is the one on .dc-wash in the stylesheet. Left as the app's own
           // cream so that if the wash ever fails to render, what shows through is the page colour.
-          <div className="dc-root" style={{position:"fixed",inset:0,zIndex:9000,background:"#FAF9F6",display:"flex",flexDirection:"column"}}>
+          // top starts BELOW the measured navbar, and the z-index drops under the header's own 50 (set in
+          // lib/studio/styles.js) so the bar is not merely visible but REACHABLE — Manage, the step nav
+          // and the avatar all still take clicks. inset:0 at 9000 gave neither.
+          // 45 rather than something small: it still has to cover the Summary page underneath, whose
+          // rails sit at 40. Between the page and the header is the whole available room.
+          // The modals inside Deal Check keep their 9100/9200 and are meant to: a focused dialog should
+          // cover the navbar, which is exactly what those still do.
+          <div className="dc-root" style={{position:"fixed",left:0,right:0,bottom:0,top:navH,zIndex:45,background:"#FAF9F6",display:"flex",flexDirection:"column"}}>
             <div className="dc-wash" aria-hidden="true">
               <span className="dc-wash-a"/><span className="dc-wash-b"/><span className="dc-wash-c"/>
               <svg className="dc-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
