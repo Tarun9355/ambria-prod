@@ -8295,19 +8295,32 @@ export default function StudioApp() {
            here precisely because the header HAS a background of its own.
            Violet and gold because the bar's own gradient already runs to violet and the accent is
            gold — this moves the light that is in the surface rather than adding a new colour to it. */
-        .sa-sheen { position: absolute; inset: 0; z-index: -1; pointer-events: none;
+        /* ── TWO ELEMENTS, BECAUSE ONE OF THEM IS MASKED AND THE OTHER MOVES ──
+           This drifted by animating background-position, which is a PAINT property: the layer is
+           re-rasterised on every frame, forever, on every page. On its own that was affordable. Then
+           a mask went on the same element (see the note below it) and the two multiplied — a masked
+           layer has to be re-composited every time it repaints, so the bar was doing full-width
+           paint plus mask compositing at 60fps for the life of the tab. That is what was flickering
+           the whole UI on Mac, and it was mine.
+           Split now. The outer box is STATIC and owns the mask and the clipping, so the mask is
+           computed once. The inner ::before owns the gradient and drifts on TRANSFORM, which the
+           compositor moves without repainting anything. Same motion, same look, no per-frame paint.
+           230% wide and travelling -56.5% of itself reproduces exactly the old 0%→100% background
+           travel: 130 of the 230 is offscreen, and 130/230 is 56.5. */
+        .sa-sheen { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+        .sa-sheen::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 230%;
           background: linear-gradient(100deg,
             rgba(124,92,214,0) 0%,
             rgba(124,92,214,0.26) 20%,
             rgba(201,169,110,0.15) 45%,
             rgba(124,92,214,0.24) 68%,
             rgba(124,92,214,0) 100%);
-          background-size: 230% 100%;
+          will-change: transform;
           animation: saSheen 26s ease-in-out infinite alternate; }
-        /* 26s and no transform. There is nothing with an edge here, so slow is free — the eye never
-           catches it moving, it just finds the bar a slightly different colour than a minute ago. */
-        @keyframes saSheen { from { background-position: 0% 50% } to { background-position: 100% 50% } }
-        @media (prefers-reduced-motion: reduce) { .sa-sheen { animation: none } }
+        /* 26s. There is nothing with an edge here, so slow is free — the eye never catches it moving,
+           it just finds the bar a slightly different colour than a minute ago. */
+        @keyframes saSheen { from { transform: translateX(0) } to { transform: translateX(-56.5%) } }
+        @media (prefers-reduced-motion: reduce) { .sa-sheen::before { animation: none; will-change: auto } }
         /* ── THE SHEEN MUST NOT START WITH AN EDGE ──
            On Browse and Build the bar is transparent across the panel so the panel shows through, and
            the sheen is pushed over to begin at the panel's edge (see the .sa-sheen override in those
