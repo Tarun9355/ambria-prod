@@ -977,8 +977,17 @@ export default function DealCheckOverlay({ ctx }) {
 .dc-zone{background:linear-gradient(148deg,rgba(255,255,255,0.52) 0%,rgba(250,249,255,0.30) 100%);
   border:1px solid rgba(255,255,255,0.85);transition:background .16s ease}
 .dc-zone:hover{background:linear-gradient(148deg,rgba(255,255,255,0.66) 0%,rgba(250,249,255,0.42) 100%)}
+/* Close reveals its intent on hover rather than wearing it at rest: a permanently red ring in the
+   corner of a screen that is fine reads as an error. Quiet until you reach for it. */
 .dc-x{-webkit-tap-highlight-color:transparent;transition:background .14s ease,border-color .14s ease,color .14s ease}
-.dc-x:hover{background:#E11D48 !important;border-color:#E11D48 !important;color:#fff !important}
+.dc-x:hover{background:rgba(225,29,72,0.10) !important;border-color:rgba(225,29,72,0.45) !important;color:#E11D48 !important}
+/* Save Draft. The gold edge brightens and the shadow deepens — the button itself stays navy, because
+   a control that changes colour on hover reads as changing what it will do. */
+.dc-save{-webkit-tap-highlight-color:transparent;transition:border-color .16s ease,box-shadow .16s ease,transform .14s ease}
+.dc-save:not([disabled]):hover{border-color:rgba(201,169,110,0.7) !important;transform:translateY(-1px);
+  box-shadow:0 14px 30px -14px rgba(26,26,46,0.8) !important}
+.dc-save:not([disabled]):active{transform:translateY(0)}
+@media (prefers-reduced-motion: reduce){.dc-save:hover,.dc-save:active{transform:none}}
 /* ═══ TYPOGRAPHY ═══
    FIGURES LINE UP. This is a costing screen — six zone rentals in a column, ten totals along the
    bottom — and proportional digits make a 1 narrower than a 7, so nothing stacks and the eye cannot
@@ -989,12 +998,11 @@ export default function DealCheckOverlay({ ctx }) {
    had to remember. */
 .dc-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-/* THE SERIF NEEDS !important OR IT DOES NOT HAPPEN. StudioApp sets font-family on the UNIVERSAL
-   selector with !important, and a stylesheet !important beats a plain inline style — so this was
-   declared inline on the element and silently rendered in Outfit like everything else. The other
-   views hit this too (see .bd-hero-face); a class is the only way to answer it. */
-.dc-title{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;
-  font-style:italic;font-weight:600;letter-spacing:-0.2px;line-height:1.06}
+/* .dc-title (the display serif) is gone with the centred navy title it existed for. Keeping the note,
+   because the trap it documents is still here for whoever wants a serif on this screen next: StudioApp
+   sets font-family on the UNIVERSAL selector with !important, and a stylesheet !important beats a plain
+   inline style — so declaring a font inline on an element here does nothing at all, silently. It has to
+   be a class carrying its own !important (see .bd-hero-face in StudioBuild for the same answer). */
 /* Labels: small, wide, and quiet. A caption at the same tracking as body text reads as body text set
    small; the extra letter-spacing is what makes it read as a LABEL and lets it drop to 10px without
    turning into noise. */
@@ -1010,28 +1018,21 @@ export default function DealCheckOverlay({ ctx }) {
   font-feature-settings:"tnum" 1,"lnum" 1}
 `}</style>
             {/* TOP BAR */}
-            {/* ── THE BAR IS THE THEME'S NAVY, AND THE TITLE IS CENTRED IN IT ──
-                Three zones, and the OUTER two carry flex:1 1 0 with minWidth:0 — that is what keeps
-                the centre optically centred. Centring by justifyContent would centre the middle of
-                the whole row, so the title would drift left or right by however wide the client's
-                name happens to be. The main header solves it the same way, which is the point: this
-                overlay covers the app, so its bar should read as belonging to the same app.
-                Navy also settles what colour everything here is: the glass shell would have put pale
-                type on a pale ground, so the name goes gold and the label goes to a soft white. */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"11px 18px",background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",borderBottom:"1px solid rgba(255,255,255,0.10)"}}>
-              <div style={{display:"flex",alignItems:"center",gap:14,flex:"1 1 0",minWidth:0}}>
+            {/* Back to the reference: light ground, close on the left, title ranged left. The navy bar
+                with the title centred was a different idea and it is gone — the mockup this is being
+                matched to has neither. */}
+            <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"14px 20px",borderBottom:`1px solid ${border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:14,minWidth:0}}>
+                {/* A ring, not a bordered box. At 36px round with a hairline it reads as a control and
+                    not as a button competing with the title beside it. */}
+                <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
+                  style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
                 <div style={{minWidth:0}}>
-                  {/* The client leads on the left — it is whose deal this is. */}
-                  <div style={{fontSize:15.5,fontWeight:700,color:accent,letterSpacing:0.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                    {cli?.name || clientName || "(no client)"}
+                  <div style={{fontSize:21,fontWeight:700,color:"#1A1A2E",letterSpacing:-0.2,lineHeight:1.15}}>Deal Check</div>
+                  <div className="dc-cap" style={{color:"#1A1A2E",opacity:0.55,marginTop:2,letterSpacing:1.5,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                    {cli?.name || clientName || "(no client)"}{isSold?" · Booked":""}
                   </div>
-                  {isSold && <div className="dc-cap" style={{color:"#34D399",marginTop:2,letterSpacing:1.4}}>Booked</div>}
                 </div>
-              </div>
-              {/* Centre: what this screen IS. Serif, because it is a title and not a control — the
-                  same display face Browse, Build and the cost sheet set their headings in. */}
-              <div className="dc-title" style={{fontSize:26,color:"#fff",flexShrink:0,textAlign:"center",letterSpacing:0.2}}>
-                Deal Check
               </div>
               <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flex:"1 1 0",minWidth:0}}>
                 {/* The "Cached · <time>", "↻ Regenerate" and run-counter badges are gone from this
@@ -1046,11 +1047,6 @@ export default function DealCheckOverlay({ ctx }) {
                     Red, and only on hover does it fill: a permanently red button in the corner reads
                     as an error state on a screen that is fine. Resting it as a red glyph on a quiet
                     tint says "this is the destructive one" without shouting it. */}
-                {/* Lifted off the navy: #E11D48 on a dark ground is muddy, so the resting glyph is the
-                    lighter rose and the tint is stronger than it was on white. Hover still fills to
-                    the full red, which on navy reads as clearly as it did on the glass. */}
-                <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
-                  style={{width:32,height:32,padding:0,borderRadius:999,border:"1px solid rgba(251,113,133,0.45)",background:"rgba(225,29,72,0.16)",color:"#FDA4AF",fontSize:15,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
             </div>
             {/* TAB STRIP */}
@@ -1280,7 +1276,14 @@ export default function DealCheckOverlay({ ctx }) {
                       {genBar}
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
                         <div style={{fontSize:13,color:"#1A1A2E"}}>{totalCards} card{totalCards===1?"":"s"} across {zoneList.length} zone{zoneList.length===1?"":"s"} · function {fnIdx + 1}</div>
-                        <div style={{fontSize:11,color:"#1A1A2E",opacity:0.7,letterSpacing:1}}>{dirtyCount>0?`${dirtyCount} dirty`:`all clean`}</div>
+                        {/* Same count, said as a state rather than as a word. "7 dirty" was grey text
+                            at the same weight as everything around it — the one line on this header
+                            that means SOMETHING NEEDS DOING, and it was the quietest thing there.
+                            Red with a warning glyph when there is something, green when there is not.
+                            Only the presentation moved; dirtyCount is untouched. */}
+                        {dirtyCount>0
+                          ? <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#E11D48",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(225,29,72,0.10)",border:"1px solid rgba(225,29,72,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>⚠</span>{dirtyCount} {dirtyCount===1?"issue":"issues"}</div>
+                          : <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#059669",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>✓</span>All clean</div>}
                       </div>
                       {zoneList.map(zk => {
                         const collapseKey = `${fnIdx}|${zk}`;
@@ -2579,7 +2582,11 @@ export default function DealCheckOverlay({ ctx }) {
                       </div>
                     ))}
                   </div>
-                  <button onClick={onSaveDraft} disabled={dcSavingDraft} style={{padding:"10px 18px",borderRadius:10,border:"none",background:dcSavingDraft?"rgba(26, 26, 46,0.06)":`linear-gradient(135deg,${accent},#8B7355)`,color:dcSavingDraft?textS:"#0F0F1A",fontSize:13.5,fontWeight:700,cursor:dcSavingDraft?"default":"pointer",letterSpacing:0.4,whiteSpace:"nowrap"}}>{dcSavingDraft?"Saving…":"💾 Save Draft"}</button>
+                  {/* Navy with gold type, not gold with navy type. Every tile along this bar is a pale
+                      card, so the one CONTROL among them should be the dark object — a gold button on
+                      a cream bar was the same value as the gold rental pills up in the rows, and read
+                      as another badge rather than the thing you press. */}
+                  <button onClick={onSaveDraft} disabled={dcSavingDraft} className="dc-save" style={{padding:"12px 22px",borderRadius:12,border:"1px solid rgba(201,169,110,0.34)",background:dcSavingDraft?"rgba(26,26,46,0.06)":"linear-gradient(135deg,#1F1A33,#2C2350)",color:dcSavingDraft?textS:accent,fontSize:13.5,fontWeight:700,cursor:dcSavingDraft?"default":"pointer",letterSpacing:0.4,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:8,lineHeight:1,boxShadow:dcSavingDraft?"none":"0 10px 24px -14px rgba(26,26,46,0.7)"}}>{dcSavingDraft?"Saving…":<><span style={{fontSize:14,lineHeight:1}}>💾</span>Save Draft</>}</button>
                 </div>
               );
             })()}
