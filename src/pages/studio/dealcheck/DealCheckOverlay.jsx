@@ -1038,11 +1038,14 @@ export default function DealCheckOverlay({ ctx }) {
    had to remember. */
 .dc-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-/* .dc-title (the display serif) is gone with the centred navy title it existed for. Keeping the note,
-   because the trap it documents is still here for whoever wants a serif on this screen next: StudioApp
-   sets font-family on the UNIVERSAL selector with !important, and a stylesheet !important beats a plain
-   inline style — so declaring a font inline on an element here does nothing at all, silently. It has to
-   be a class carrying its own !important (see .bd-hero-face in StudioBuild for the same answer). */
+/* THE DISPLAY SERIF, AND WHY IT MUST BE A CLASS. StudioApp sets font-family on the UNIVERSAL selector
+   with !important, and a stylesheet !important beats a plain inline style — so declaring this font in a
+   style prop does nothing at all, silently, which is exactly what happened the first time. It has to
+   carry its own !important from a rule (see .bd-hero-face in StudioBuild for the same answer).
+   Cormorant because it is the face Browse, Build and the cost sheet set their headings in. A screen
+   that introduces a fourth voice is how an app stops reading as one product. */
+.dc-title{font-family:'Cormorant Garamond','Playfair Display',Georgia,serif !important;
+  font-style:italic;font-weight:600;letter-spacing:-0.3px;line-height:1.04}
 /* Labels: small, wide, and quiet. A caption at the same tracking as body text reads as body text set
    small; the extra letter-spacing is what makes it read as a LABEL and lets it drop to 10px without
    turning into noise. */
@@ -1063,13 +1066,19 @@ export default function DealCheckOverlay({ ctx }) {
                 matched to has neither. */}
             <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"14px 20px",borderBottom:`1px solid ${border}`}}>
               <div style={{display:"flex",alignItems:"center",gap:14,minWidth:0}}>
-                {/* A ring, not a bordered box. At 36px round with a hairline it reads as a control and
-                    not as a button competing with the title beside it. */}
-                <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
-                  style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
+                {/* ── TWO LINES, TWO JOBS ──
+                    Both were sans: 21px bold over 10px caps at 55% ink. That is a heading and a
+                    subtitle in the same voice, so the pair read as one grey block and neither carried.
+                    The title takes the display serif — it is the name of a screen, not a control — and
+                    the client goes GOLD rather than faded ink. Faded ink says "less important";
+                    the accent says "different kind of thing", which is what a client's name is next to
+                    a screen title. Warmth against the serif's ink, and the eye lands on the name
+                    without the title giving up any size.
+                    The rule between them is 1px of gold at low alpha — enough to bind the two lines
+                    into one lockup, not enough to be seen as a divider. */}
                 <div style={{minWidth:0}}>
-                  <div style={{fontSize:21,fontWeight:700,color:"#1A1A2E",letterSpacing:-0.2,lineHeight:1.15}}>Deal Check</div>
-                  <div className="dc-cap" style={{color:"#1A1A2E",opacity:0.55,marginTop:2,letterSpacing:1.5,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  <div className="dc-title" style={{fontSize:28,color:"#1A1A2E"}}>Deal Check</div>
+                  <div className="dc-cap" style={{color:accent,marginTop:4,paddingTop:4,letterSpacing:2,borderTop:`1px solid ${accent}33`,display:"inline-block",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>
                     {cli?.name || clientName || "(no client)"}{isSold?" · Booked":""}
                   </div>
                 </div>
@@ -1081,12 +1090,13 @@ export default function DealCheckOverlay({ ctx }) {
                     count on its own line — this row was restating that in three more chips.
                     The live progress text stays: it is the only thing here that is not a repeat. */}
                 {dcGenerating && <div style={{fontSize:12,color:accent,fontWeight:600}}>{dcGenStatus || "Working…"}</div>}
-                {/* Close moved here, to the corner. On the left it sat where a BACK control sits, and
-                    it is not one — it discards the screen. Top-right is where a window's close lives,
-                    so it needs no label to be understood.
-                    Red, and only on hover does it fill: a permanently red button in the corner reads
-                    as an error state on a screen that is fine. Resting it as a red glyph on a quiet
-                    tint says "this is the destructive one" without shouting it. */}
+                {/* Close, in the corner. On the left it sat where a BACK control sits, and it is not
+                    one — it discards the screen. Top-right is where a window's close lives, so it
+                    needs no label to be understood.
+                    A ring, not a filled box, and red only on HOVER: a permanently red control in the
+                    corner of a screen that is fine reads as an error rather than as an exit. */}
+                <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
+                  style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
             </div>
             {/* TAB STRIP */}
