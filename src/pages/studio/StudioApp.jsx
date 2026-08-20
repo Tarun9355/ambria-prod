@@ -8322,6 +8322,21 @@ export default function StudioApp() {
            catches it moving, it just finds the bar a slightly different colour than a minute ago. */
         @keyframes saSheen { from { background-position: 0% 50% } to { background-position: 100% 50% } }
         @media (prefers-reduced-motion: reduce) { .sa-sheen { animation: none } }
+        /* ── THE SHEEN MUST NOT START WITH AN EDGE ──
+           On Browse and Build the bar is transparent across the panel so the panel shows through, and
+           the sheen is pushed over to begin at the panel's edge (see the .sa-sheen override in those
+           views). Beginning there is the problem: this gradient is 230% wide and drifting, so at any
+           moment its left edge is at whatever strength the drift has reached — up to 0.26 of violet —
+           and it lands as a bright vertical line on the exact seam where the panel meets the bar.
+           That is the step: not the panel against the bar, but the sheen against its own absence.
+           Masked so it comes up from nothing over 160px. The sheen still crosses the whole bar and
+           still drifts; it just no longer announces where it starts. Defined here, next to the sheen
+           itself, rather than in both views — one bar, one rule.
+           Prefixed too: this is a mask on an animated layer, which is exactly where Safari still
+           wants -webkit-. */
+        :root[data-sb-rail="1"] .sa-sheen {
+          -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,0) 0, rgba(0,0,0,1) 160px);
+          mask-image: linear-gradient(90deg, rgba(0,0,0,0) 0, rgba(0,0,0,1) 160px); }
 
         @media (max-width: 1180px) {
           .sa-header { padding: 10px 14px !important; gap: 8px !important; }
