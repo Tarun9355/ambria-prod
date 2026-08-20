@@ -1007,6 +1007,16 @@ export default function DealCheckOverlay({ ctx }) {
    in — the row is already clear against the body, and matching it here would have merged the two into
    one pane with a border drawn through it. */
 .dc-item{background:linear-gradient(148deg,rgba(255,255,255,0.62) 0%,rgba(250,249,255,0.38) 100%)}
+/* ── THE PANEL CURVES BELONG TO THE STEP UNDERNEATH, NOT TO THIS SCREEN ──
+   Browse and Build draw the gold edge of their side panel at z-index 51 — above the header's 50, which
+   is deliberate: the curve runs the whole height of the window and the bar sits over it. This overlay
+   is at 45 so the navbar stays usable, so that gold line came through it as a stray stroke down the
+   left. It only started showing because the navbar is reachable now: the step nav is clickable while
+   Deal Check is open, so Build or Browse can be the mounted step behind it.
+   Hidden rather than re-stacked, because there is nothing to re-stack — a curve belonging to a panel
+   nobody can see has no business being drawn. These rules live in THIS stylesheet, which mounts and
+   unmounts with the overlay, so the edges come straight back the moment Deal Check closes. */
+.sb-rail-edge,.bd-rail-edge{display:none !important}
 /* Close reveals its intent on hover rather than wearing it at rest: a permanently red ring in the
    corner of a screen that is fine reads as an error. Quiet until you reach for it. */
 .dc-x{-webkit-tap-highlight-color:transparent;transition:background .14s ease,border-color .14s ease,color .14s ease}
