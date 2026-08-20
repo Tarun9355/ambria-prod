@@ -2011,7 +2011,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    Scoped to .cs-overlay so the Summary PAGE keeps its own near-white wash. The same class serves
    both, and the cost sheet is the only one that wants a deep ground: it is the screen that gets
    turned towards a client, and its glass panels need something with tone to sit against. */
-.cs-overlay .sh-wash{background:${isDark ? "#0F0F1A" : "#6F63A8"}}
+/* Light, and low-chroma on purpose. #6F63A8 gave the panes plenty to sit against and turned the whole
+   screen blue doing it — on a sheet of rupee figures the ground should be the quietest thing in the
+   room. Most of what was wrong was SATURATION rather than lightness: pulling the violet almost out
+   and keeping just enough to tint the greys is what lets it read as off-white and still hold an edge
+   under the glass. */
+.cs-overlay .sh-wash{background:${isDark ? "#0F0F1A" : "#D5D1E0"}}
 /* ═══ THE TOOLBAR'S BUTTONS ═══
    Hover has to live in a stylesheet: these are inline-styled buttons, and inline styles have no
    pseudo-classes at all — there is no way to express :hover from the style prop, which is why none of
