@@ -108,6 +108,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
+import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -125,27 +126,9 @@ const PERM_LABELS = { canViewPricing: "View pricing & costs", canEditEvents: "Ad
 const ROLE_DEFAULTS = { admin: { canViewPricing: true, canEditEvents: true, canManageTemplates: true, canManageLibrary: true, canExport: true, canManageVenues: true, canManageUsers: true }, manager: { canViewPricing: true, canEditEvents: true, canManageTemplates: false, canManageLibrary: true, canExport: false, canManageVenues: false, canManageUsers: false }, sales: { canViewPricing: false, canEditEvents: false, canManageTemplates: false, canManageLibrary: false, canExport: false, canManageVenues: false, canManageUsers: false } };
 const DEFAULT_TEAM = Object.fromEntries(Object.entries(TEAM).map(([id, u]) => ([id, { ...u, active: true, perms: { ...(ROLE_DEFAULTS[u.role] || ROLE_DEFAULTS.sales) }, assignedVenues: [], venueScope: u.role === "admin" ? "all" : "outside", defaultVenue: "" }])));
 
-// ══ THE BRAND MARK ══
-// Same asset and same glob-not-import reasoning as Event Info and Browse: if the file isn't there
-// the glob resolves to {}, the header falls back to the lettermark below, and the build still runs.
-const LOGO_ASSET = Object.values(
-  import.meta.glob("../../assets/ambria-logo.{svg,png,webp,jpg,jpeg}", { eager: true, query: "?url", import: "default" })
-)[0] || null;
-// MEASURED opaque bounds of ambria-logo.png — the artwork is 4258×2838 but the mark itself is only
-// 2530×733 at (869,1045): roughly 37% of the canvas is transparent padding above and below, and 20%
-// either side. Dropped into a header row as-is, the visible wordmark comes out about a third the
-// height of the space it occupies, which is why the panel copies of it carry hand-tuned negative
-// margins. These numbers crop that padding by measurement instead, so the lockup is sized by the
-// one number that actually matters: how tall the wordmark should be.
-const LOGO_BOX = { w: 4258, h: 2838, x: 869, y: 1045, cw: 2530, ch: 733 };
-const logoCrop = (markH) => {
-  const k = markH / LOGO_BOX.ch;
-  return {
-    box: { position: "relative", width: Math.round(LOGO_BOX.cw * k), height: markH, overflow: "hidden", flexShrink: 0 },
-    img: { position: "absolute", left: -LOGO_BOX.x * k, top: -LOGO_BOX.y * k,
-      width: LOGO_BOX.w * k, height: LOGO_BOX.h * k, maxWidth: "none", display: "block" },
-  };
-};
+// The brand mark and its measured crop now live in lib/studio/brand.js — the cost sheet's own header
+// wanted the wordmark too, and six measured numbers copied into a second file is how one header ends
+// up cropping into the letters after a re-export while the other still looks right.
 
 // ══ AMBRIA PREMIA (Platinum gate) — fully editable copy & CTA ══
 // The point of this gate is a sales one, not a policy one: a Platinum look isn't one designer

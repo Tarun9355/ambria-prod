@@ -12,6 +12,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef, Fragment } from "react";
 import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
+import { LOGO_ASSET, logoCrop } from "../../../lib/studio/brand.js";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
@@ -44,12 +45,11 @@ const BG_BY_EVENT = Object.fromEntries(
   Object.entries(BG_ASSETS).map(([path, url]) => [(path.match(/([^/]+)-bg\.\w+$/) || [, ""])[1].toLowerCase(), url])
 );
 
-// ═══ DECK WATERMARK ═══
-// The Ambria mark, sat quietly in the corner of every design-deck slide.
-// Same glob-not-import reasoning as the backgrounds above: no file, no watermark, deck still builds.
-const LOGO_ASSET = Object.values(
-  import.meta.glob("../../../assets/ambria-logo.{png,svg,webp,jpg,jpeg}", { eager: true, query: "?url", import: "default" })
-)[0] || null;
+// ═══ DECK WATERMARK, AND THE COST SHEET'S OWN HEADER ═══
+// The Ambria mark: sat quietly in the corner of every design-deck slide, and now also the lockup on
+// the cost sheet's toolbar. One asset from lib/studio/brand.js rather than a second glob here — this
+// file had its own copy, and the crop numbers the toolbar needs were in a third place again.
+// Same glob-not-import reasoning as before: no file, no watermark, deck still builds.
 
 // The artwork can't be dropped onto a slide as-is, for two reasons:
 //   1. Its wordmark is WHITE (it's the variant drawn for a dark ground) and every design-deck slide
@@ -2665,8 +2665,28 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px",background:"#1a1a2e",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:14}}>
-            <div style={{width:34,height:34,borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#8B7355)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff"}}>A</div>
-            <div><div style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Cost Sheet</div><div style={{fontSize:11,color:"#a5b4fc"}}>{csData.clientName||"Client"} · {fnCount} function{fnCount!==1?"s":""}</div></div>
+            {/* THE REAL WORDMARK, NOT A LETTERMARK. The gold "A" tile was a stand-in for exactly this
+                file, and this bar is the one a client sees over someone's shoulder — the mark is
+                white and gold on transparent, which is what a navy toolbar wants. Cropped to its own
+                ink via logoCrop, so 20px means 20px of visible wordmark and not 20px of mostly
+                transparent canvas. Falls back to the tile if the asset is missing, which is the whole
+                reason the asset is globbed rather than imported. */}
+            {LOGO_ASSET ? (() => { const L = logoCrop(20); return (
+              <div style={L.box}><img src={LOGO_ASSET} alt="Ambria" style={L.img}/></div>
+            ); })() : (
+              <div style={{width:34,height:34,borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#8B7355)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff"}}>A</div>
+            )}
+            {/* A hairline, not a gap. Identity on the left of it, THIS DEAL on the right — the same
+                separation the main header makes between the brand and the navigation, so the two bars
+                are read the same way. */}
+            <span aria-hidden="true" style={{width:1,alignSelf:"stretch",margin:"2px 4px",background:"rgba(255,255,255,0.18)",flexShrink:0}}/>
+            {/* The guest, and what is being priced for them. The name leads because on this screen it
+                is the answer to "whose sheet is this" — "Cost Sheet" was the loudest thing here and it
+                is the one fact nobody needs, given they just pressed Preview to get here. */}
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:700,color:"#C9A96E",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{csData.clientName||"Client"}</div>
+              <div style={{fontSize:11,color:"#a5b4fc",whiteSpace:"nowrap"}}>Cost sheet · {fnCount} function{fnCount!==1?"s":""}</div>
+            </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             {/* The grand total used to sit here, pinned above everything. It is still on the sheet
