@@ -11,7 +11,7 @@
 // Inline styles preserved verbatim (NOT converted to Tailwind).
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef, Fragment } from "react";
-import { IconSparkle } from "../../../components/icons.jsx";
+import { IconSparkle, IconExcelMark, IconCanvaMark } from "../../../components/icons.jsx";
 import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
@@ -2538,7 +2538,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             {/* The grand total used to sit here, pinned above everything. It is still on the sheet
                 itself (and in the PDF, Excel and PPT exports) — off the toolbar it is no longer
                 the first thing on screen while a deck is open in front of a client. */}
-            <button onClick={csExportExcel} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#0EA5E9",color:"#fff"}}>{"📊"} Excel</button>
+            {/* Excel light, Canva filled — the two are not the same kind of action and should not
+                look it. Excel hands over a FILE you keep; Canva hands you off to another product.
+                So Excel is the quiet one on white, and the violet is spent on the button that
+                actually takes you somewhere. Both carry their own brand mark instead of the emoji
+                they used to: a chart glyph and an arrow said "some export, somewhere", while the
+                marks say which product before the label is read.
+                Radius 999 rather than 8: these two now read as a pair of pills sitting apart from
+                the square buttons beside them, which is what they are. */}
+            <button onClick={csExportExcel} style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(15,23,42,0.14)",cursor:"pointer",fontSize:12,fontWeight:600,background:"#fff",color:"#1F2937",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconExcelMark size={15}/>Excel</button>
             {(() => {
               const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
               const busyLabel = canvaState === "designing" ? "Designing…" : canvaState === "uploading" ? "Uploading…" : "Finalizing…";
@@ -2552,13 +2560,20 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                   <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
                     title="Show the design deck as it stands in Canva, and hand it over as a PDF"
                     style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"#0F766E",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1}}>{deckPdf.state==="loading"?"⏳ Opening…":"👁 View deck"}</button>
-                  <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff"}}>{"↗"} Open in Canva</button>
+                  <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"7px 15px",borderRadius:999,border:"1px solid #7C3AED",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconCanvaMark size={15}/>Canva</button>
                   <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
                     title="Design a fresh deck — the current link stays open in Canva either way"
                     style={{padding:"8px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>{"⟳"} Make again</button>
                 </>
               );
-              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":"🎨 Canva"}</button>;
+              // The same pill as the "Open in Canva" one above, because this is the button that sits
+              // next to Excel for most of a deal's life — the deck only exists after someone makes
+              // it. Styling only that later state would mean the pair the toolbar is built around
+              // appears late and looks accidental before then.
+              // The mark is dropped while busy or after a failure: both of those are about THIS app's
+              // progress, not about Canva, and a brand mark beside "Finalizing…" or "Retry" reads as
+              // if the other product were the thing reporting.
+              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"7px 15px",borderRadius:999,border:`1px solid ${canvaState==="error"?"#EF4444":"#7C3AED"}`,cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":<><IconCanvaMark size={15}/>Canva</>}</button>;
             })()}
             <button onClick={()=>setCsData(null)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12}}>{"✕"}</button>
           </div>

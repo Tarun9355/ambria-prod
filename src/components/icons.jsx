@@ -383,3 +383,44 @@ export function IconExpand({ size = 15 }) {
     </svg>
   );
 }
+
+// ═══ BRAND MARKS ═══
+// These deliberately break the two rules the set above follows: they are FILLED and they carry
+// their OWN colours rather than currentColor. That is the point of them — a button that hands work
+// to Excel or to Canva is recognised by the mark's colour before the label is read, and drawing
+// them in the button's text colour would turn both into the same grey glyph. They are simplified
+// to what reads at 14px, not reproductions.
+// Not in the nav set's shared svg() helper either, for the same reason: that helper hard-codes
+// fill:none and stroke:currentColor.
+
+// Excel — the green sheet with its X.
+export function IconExcelMark({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+      style={{ display: "block", flexShrink: 0 }}>
+      <rect x="2.5" y="3.5" width="19" height="17" rx="2.6" fill="#1D6F42" />
+      <path d="M9 8.6l6 6.8M15 8.6l-6 6.8" stroke="#fff" strokeWidth="2.1" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// Canva — the teal-to-violet disc with its C.
+// The gradient needs an id, and an id in an SVG is DOCUMENT-scoped, not component-scoped: two of
+// these on one page would both point at whichever definition rendered last. The name is specific
+// enough that nothing else will collide with it, which is the practical fix at this scale.
+export function IconCanvaMark({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+      style={{ display: "block", flexShrink: 0 }}>
+      <defs>
+        <linearGradient id="ambriaCanvaMark" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#00C4CC" />
+          <stop offset="1" stopColor="#7D2AE8" />
+        </linearGradient>
+      </defs>
+      <circle cx="12" cy="12" r="9.6" fill="url(#ambriaCanvaMark)" />
+      <path d="M15.4 9.6a3.6 3.6 0 0 0-5.1.7c-1.1 1.5-1 3.6.3 4.6 1.1.9 2.7.6 3.7-.5"
+        fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
