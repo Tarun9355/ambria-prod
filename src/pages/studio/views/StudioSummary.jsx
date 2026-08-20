@@ -2671,7 +2671,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                 ink via logoCrop, so 20px means 20px of visible wordmark and not 20px of mostly
                 transparent canvas. Falls back to the tile if the asset is missing, which is the whole
                 reason the asset is globbed rather than imported. */}
-            {LOGO_ASSET ? (() => { const L = logoCrop(20); return (
+            {LOGO_ASSET ? (() => { const L = logoCrop(27); return (
               <div style={L.box}><img src={LOGO_ASSET} alt="Ambria" style={L.img}/></div>
             ); })() : (
               <div style={{width:34,height:34,borderRadius:8,background:"linear-gradient(135deg,#C9A96E,#8B7355)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff"}}>A</div>
