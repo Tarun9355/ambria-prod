@@ -86,6 +86,21 @@ export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:10
 export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}];
 export const DEFAULT_PLATFORM_RATES = PLAT_OPTS.map((o) => ({ key: o.id, name: o.l, ratePerSqft: o.r }));
 
+/**
+ * Which platform height a zone gets when nobody has picked one.
+ *
+ * Derived from the OFFERED options rather than hardcoded, because the list comes from the admin's
+ * rate card — keys can be renamed there, and a default that names a band nobody offers would be
+ * written into a zone and then priced off the seed rates behind the user's back.
+ * 1ft–3ft is the intended default (it is what almost every zone is actually built at). If that key is
+ * gone, the last option is the taller band, which is the safer guess than the shortest.
+ */
+export function platformDefaultId(platformRates) {
+  const opts = platformOptions(platformRates);
+  if (!opts.length) return "";
+  return (opts.find((o) => o.id === "1ft") || opts[opts.length - 1]).id;
+}
+
 /** ₹/sqft for a platform height, from the admin's saved list, falling back to the seed rates. */
 export function platformRateFor(key, platformRates) {
   const list = (Array.isArray(platformRates) && platformRates.length) ? platformRates : DEFAULT_PLATFORM_RATES;
