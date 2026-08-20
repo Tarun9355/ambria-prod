@@ -12,8 +12,6 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
-import { IconBox, IconTruss, IconFlower, IconCrew, IconFactory,
-  IconCart, IconTruck, IconBolt, IconChart, IconCoins, IconShield } from "../../../components/icons.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
@@ -161,22 +159,17 @@ export default function DealCheckOverlay({ ctx }) {
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.
         // Tab definitions — only Inventory/Florals/Transport are functional in Deploy 1
-        // DRAWN, NOT EMOJI. Emoji cannot be size-matched — every one renders at its own font's optical
-        // weight, so the strip had a heavy 📦 next to a spindly ⚡ next to a 🏗️ that most systems draw
-        // with a variation selector and some draw as a black-and-white glyph. Ten of them in a row is
-        // ten different weights. These inherit the tab's own colour and one stroke width, so the row
-        // reads as a row. Component, not a string, so the size is set once at the call site.
         const TABS = [
-          { id: "inventory", label: "Inventory",        Icon: IconBox,     live: true  },
-          { id: "truss",     label: "Truss",            Icon: IconTruss,   live: true  },
-          { id: "florals",   label: "Florals",          Icon: IconFlower,  live: true  },
-          { id: "manpower",  label: "Manpower",         Icon: IconCrew,    live: true  },
-          { id: "production",label: "Production",       Icon: IconFactory, live: true  },
-          { id: "buying",    label: "Buying",           Icon: IconCart,    live: true  },
-          { id: "transport", label: "Transport",        Icon: IconTruck,   live: true  },
-          { id: "power",     label: "Power",            Icon: IconBolt,    live: true  },
-          { id: "status",    label: "Inventory Status", Icon: IconChart,   live: true  },
-          { id: "gyv",       label: "GYV & Buffer",     Icon: IconCoins,   live: true  },
+          { id: "inventory", label: "Inventory",        icon: "📦", live: true  },
+          { id: "truss",     label: "Truss",            icon: "🏗️", live: true  },
+          { id: "florals",   label: "Florals",          icon: "🌸", live: true  },
+          { id: "manpower",  label: "Manpower",         icon: "👷", live: true  },
+          { id: "production",label: "Production",       icon: "🏭", live: true  },
+          { id: "buying",    label: "Buying",           icon: "🛒", live: true  },
+          { id: "transport", label: "Transport",        icon: "🚚", live: true  },
+          { id: "power",     label: "Power",            icon: "⚡", live: true  },
+          { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
+          { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
@@ -984,14 +977,27 @@ export default function DealCheckOverlay({ ctx }) {
 .dc-zone{background:linear-gradient(148deg,rgba(255,255,255,0.52) 0%,rgba(250,249,255,0.30) 100%);
   border:1px solid rgba(255,255,255,0.85);transition:background .16s ease}
 .dc-zone:hover{background:linear-gradient(148deg,rgba(255,255,255,0.66) 0%,rgba(250,249,255,0.42) 100%)}
+.dc-x{-webkit-tap-highlight-color:transparent;transition:background .14s ease,border-color .14s ease,color .14s ease}
+.dc-x:hover{background:#E11D48 !important;border-color:#E11D48 !important;color:#fff !important}
 `}</style>
             {/* TOP BAR */}
             <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:`1px solid ${border}`}}>
               <div style={{display:"flex",alignItems:"center",gap:14}}>
-                <button onClick={()=>setDcFullPageOpen(false)} title="Close Deal Check" style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:15.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                {/* ── THE TITLE, SET AS A TITLE ──
+                    Both lines were the same weight of the same near-black at almost the same size, so
+                    "Deal Check" and the client's name competed instead of ranking. The client is the
+                    subject of this screen — it is their deal being checked — so the NAME takes the
+                    display serif and the size, and "Deal Check" becomes the small caps label above it
+                    saying what you are looking at. Same two facts, one of them now clearly first.
+                    Cormorant here because it is what Browse, Build and the cost sheet set their
+                    headings in; a fourth voice on the fourth screen is how an app stops feeling like
+                    one product. */}
                 <div>
-                  <div style={{fontSize:16.5,fontWeight:700,color:"#000",letterSpacing:0.2}}>Deal Check</div>
-                  <div style={{fontSize:12,color:"#000",letterSpacing:1.2,textTransform:"uppercase",marginTop:2}}>{cli?.name || clientName || "(no client)"}{isSold?" · BOOKED":""}</div>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:1.7,textTransform:"uppercase",color:accent,marginBottom:1}}>Deal Check</div>
+                  <div style={{fontFamily:"'Cormorant Garamond','Playfair Display',Georgia,serif",fontStyle:"italic",fontSize:25,fontWeight:600,color:"#1A1A2E",letterSpacing:-0.2,lineHeight:1.06}}>
+                    {cli?.name || clientName || "(no client)"}
+                  </div>
+                  {isSold && <div style={{fontSize:10,fontWeight:700,letterSpacing:1.4,textTransform:"uppercase",color:"#10B981",marginTop:2}}>Booked</div>}
                 </div>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1001,18 +1007,24 @@ export default function DealCheckOverlay({ ctx }) {
                     count on its own line — this row was restating that in three more chips.
                     The live progress text stays: it is the only thing here that is not a repeat. */}
                 {dcGenerating && <div style={{fontSize:12,color:accent,fontWeight:600}}>{dcGenStatus || "Working…"}</div>}
+                {/* Close moved here, to the corner. On the left it sat where a BACK control sits, and
+                    it is not one — it discards the screen. Top-right is where a window's close lives,
+                    so it needs no label to be understood.
+                    Red, and only on hover does it fill: a permanently red button in the corner reads
+                    as an error state on a screen that is fine. Resting it as a red glyph on a quiet
+                    tint says "this is the destructive one" without shouting it. */}
+                <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
+                  style={{width:32,height:32,padding:0,borderRadius:999,border:"1px solid rgba(225,29,72,0.34)",background:"rgba(225,29,72,0.08)",color:"#E11D48",fontSize:15,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
             </div>
             {/* TAB STRIP */}
             <div style={{display:"flex",gap:2,padding:"8px 14px 0 14px",background:"#FFFFFF",borderBottom:`1px solid ${border}`,overflowX:"auto"}}>
-              {/* inline-flex with a gap on each tab, so the icon and the label are one object that
-                  centres together — with the old marginRight the pair sat optically low against the
-                  label's baseline. The icon inherits the tab's colour (see the icon set's
-                  currentColor rule), so the active tab's mark goes dark with its text and no second
-                  colour has to be threaded through here. */}
+              {/* inline-flex with a gap rather than a marginRight on the emoji: the pair centres as
+                  one object instead of the glyph hanging off the label's baseline. Kept from the
+                  drawn-icon pass — it is the layout that was worth having, not the icons. */}
               {TABS.map(t => (
                 <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?`1px solid ${accent}55`:"1px solid transparent",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?`${accent}1F`:"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1}}>
-                  <t.Icon size={14}/>{t.label}
+                  <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
                   {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                 </button>
               ))}
@@ -1115,10 +1127,7 @@ export default function DealCheckOverlay({ ctx }) {
                 )}
                 {!activeTabDef.live ? (
                   <div style={{padding:"60px 30px",textAlign:"center",color:"#000"}}>
-                    {/* The tab's own mark, drawn large. This read activeTabDef.icon, which was the
-                        emoji string — now that the strip carries components it has to be rendered as
-                        one, or this empty state silently shows nothing at all. */}
-                    <div style={{marginBottom:14,display:"flex",justifyContent:"center",color:textS}}><activeTabDef.Icon size={42}/></div>
+                    <div style={{fontSize:42,marginBottom:14}}>{activeTabDef.icon}</div>
                     <div style={{fontSize:17.5,fontWeight:600,color:"#000",marginBottom:8}}>{activeTabDef.label}</div>
                     <div style={{fontSize:13.5,marginBottom:4}}>Coming in {activeTabDef.ship}</div>
                     <div style={{fontSize:12,opacity:0.6}}>Spec: §7.9.{activeTabDef.id==="manpower"?"13":activeTabDef.id==="production"?"14":activeTabDef.id==="buying"?"15":"2.A + 7.9.18 + 7.9.19"}</div>
@@ -2489,20 +2498,20 @@ export default function DealCheckOverlay({ ctx }) {
                 finally { setDcSavingDraft(false); }
               };
               const chips = [
-                { id:"rental",   label:"Rental",   Icon: IconBox,     value: fmt(rental),    live: true  },
-                { id:"truss",    label:"Truss",    Icon: IconTruss,   value: fmt(truss),     live: true  },
-                { id:"florals",  label:"Florals",  Icon: IconFlower,  value: fmt(florals),   live: true  },
-                { id:"transport",label:"Transport",Icon: IconTruck,   value: fmt(Math.max(0, transport - genset)), live: true  },
-                { id:"genset",   label:"Genset",   Icon: IconBolt,    value: fmt(genset),    live: true  },
+                { id:"rental",   label:"Rental",   icon:"📦", value: fmt(rental),    live: true  },
+                { id:"truss",    label:"Truss",    icon:"🏗️", value: fmt(truss),     live: true  },
+                { id:"florals",  label:"Florals",  icon:"🌸", value: fmt(florals),   live: true  },
+                { id:"transport",label:"Transport",icon:"🚚", value: fmt(Math.max(0, transport - genset)), live: true  },
+                { id:"genset",   label:"Genset",   icon:"⚡", value: fmt(genset),    live: true  },
                 // "(ADJUSTED)" once a dept head has edited crew in IMS Dept Ops — same flag + label
                 // the GYV Fixed & Buffer tab already uses (line ~2188). Without it this chip silently
                 // showed the reconciled-actuals figure with no sign it had moved off the Manpower
                 // tab's own projected total, which is what the tab itself still shows.
-                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", Icon: IconCrew, value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
-                { id:"buy",      label:"Buy",      Icon: IconCart,    value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
-                { id:"produce",  label:"Produce",  Icon: IconFactory, value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
-                { id:"gyv",      label:"GYV 5%",   Icon: IconCoins,   value: fmt(gyvFixed),  live: true  },
-                { id:"buffer",   label:"Buffer 3%",Icon: IconShield,  value: fmt(bufferCost),live: true  },
+                { id:"manpower", label: mpDelta ? "Manpower (ADJUSTED)" : "Manpower", icon:"👷", value: fmt(manpower), live: true, note: mpDelta ? `dept heads adjusted crew · projected ${fmt(dcCostRollup.manpower)}` : null },
+                { id:"buy",      label:"Buy",      icon:"🛒", value: fmt(dcCustomItems.filter(c=>c.type==="buying").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)),  live: true },
+                { id:"produce",  label:"Produce",  icon:"🏭", value: fmt(dcCustomItems.filter(c=>c.type==="production").reduce((s,c)=>s+(c.manualPrice||c.refPrice||0)*(Number(c.qty)||1),0)), live: true },
+                { id:"gyv",      label:"GYV 5%",   icon:"🏢", value: fmt(gyvFixed),  live: true  },
+                { id:"buffer",   label:"Buffer 3%",icon:"🛡️", value: fmt(bufferCost),live: true  },
               ];
               return (
                 <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
@@ -2511,11 +2520,12 @@ export default function DealCheckOverlay({ ctx }) {
                     <div style={{height:30,width:1,background:border}}/>
                     {chips.map(c => (
                       <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#000",minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
-                        {/* The label row is a flex line now rather than an emoji glued to text. The old
-                            "{c.icon} {c.label}" put a full-size emoji inside an 11px uppercase caption,
-                            so every tile's caption sat a different height depending on which emoji it
-                            drew. The mark is 11px, inherits the caption's colour, and shrinks with it. */}
-                        <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600,display:"flex",alignItems:"center",gap:5,lineHeight:1}}><c.Icon size={11}/>{c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
+                        {/* Flex line rather than the emoji glued straight onto the text. An emoji
+                            inside an 11px uppercase caption sets its own line height, so each tile's
+                            caption sat at a slightly different height depending on which glyph it
+                            drew; giving the glyph its own box and letting flex centre both keeps the
+                            row of tiles level. Layout kept from the drawn-icon pass. */}
+                        <div style={{fontSize:11,opacity:0.7,letterSpacing:1,textTransform:"uppercase",fontWeight:600,display:"flex",alignItems:"center",gap:5,lineHeight:1}}><span style={{fontSize:11,lineHeight:1}}>{c.icon}</span>{c.label}{!c.live&&<span style={{marginLeft:4,fontSize:9,opacity:0.7}}>D2</span>}</div>
                         <div style={{fontSize:14.5,fontWeight:700,color:"#000",marginTop:1}}>{c.value}</div>
                       </div>
                     ))}
