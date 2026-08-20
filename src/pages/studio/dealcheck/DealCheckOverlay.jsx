@@ -977,6 +977,10 @@ export default function DealCheckOverlay({ ctx }) {
 .dc-zone{background:linear-gradient(148deg,rgba(255,255,255,0.52) 0%,rgba(250,249,255,0.30) 100%);
   border:1px solid rgba(255,255,255,0.85);transition:background .16s ease}
 .dc-zone:hover{background:linear-gradient(148deg,rgba(255,255,255,0.66) 0%,rgba(250,249,255,0.42) 100%)}
+/* Items inside an expanded zone. A THIRD level of glass, so it is clearer again than the row it sits
+   in — the row is already clear against the body, and matching it here would have merged the two into
+   one pane with a border drawn through it. */
+.dc-item{background:linear-gradient(148deg,rgba(255,255,255,0.62) 0%,rgba(250,249,255,0.38) 100%)}
 /* Close reveals its intent on hover rather than wearing it at rest: a permanently red ring in the
    corner of a screen that is fine reads as an error. Quiet until you reach for it. */
 .dc-x{-webkit-tap-highlight-color:transparent;transition:background .14s ease,border-color .14s ease,color .14s ease}
@@ -1385,15 +1389,25 @@ export default function DealCheckOverlay({ ctx }) {
                                   const fattaShort = pi.freeAfterFatta < 0;
                                   const standShort = pi.stands > 0 && pi.freeAfterStand < 0;
                                   const anyShort = fattaShort || standShort;
-                                  const accentBorder = anyShort ? "#F59E0B" : "#10B981";
+                                  // THE INSIDE OF A ZONE, SKINNED LIKE THE OUTSIDE. This card was a
+                                  // 4%-green wash with a green hairline, which made every structural item
+                                  // look like a success message. The state it needs to signal is stock —
+                                  // short or not — and that is already said by the tick or warning on
+                                  // each line below, in words. So the card goes glass like everything
+                                  // else, and the BORDER carries the state: amber when something is
+                                  // short, otherwise a plain edge. (accentBorder is gone with the green
+                                  // wash it was picked for; anyShort is read directly below.)
+                                  // STRUCTURAL loses its grey slab for a hairline tag: it is a
+                                  // classification, not a warning, and at 11px in a filled box it was
+                                  // heavier than the item's own name.
                                   return (
-                                    <div key={piKey} style={{padding:"11px 12px",borderRadius:9,background:"rgba(16,185,129,0.04)",border:`1px solid ${accentBorder}33`,display:"flex",flexDirection:"column",gap:8}}>
-                                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                                        <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
-                                        <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(148,163,184,0.18)",color:"#64748B",fontWeight:700,letterSpacing:0.4}}>STRUCTURAL</span>
-                                        <span style={{fontSize:12,color:"#1A1A2E"}}>{pi.L}×{pi.W} = {sqft} sqft</span>
+                                    <div key={piKey} className="dc-item" style={{padding:"12px 13px",borderRadius:10,border:`1px solid ${anyShort?"rgba(245,158,11,0.45)":"rgba(255,255,255,0.85)"}`,display:"flex",flexDirection:"column",gap:8}}>
+                                      <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                                        <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E",letterSpacing:-0.1}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
+                                        <span className="dc-cap" style={{fontSize:9.5,padding:"2px 7px",borderRadius:999,border:"1px solid rgba(100,116,139,0.32)",color:"#64748B",letterSpacing:1.1}}>Structural</span>
+                                        <span className="dc-money" style={{fontSize:12,color:"#1A1A2E",opacity:0.62}}>{pi.L}×{pi.W} = {sqft} sqft</span>
                                       </div>
-                                      <div style={{fontSize:12,color:"#1A1A2E",marginBottom:2}}>Composite — expands to:</div>
+                                      <div className="dc-cap" style={{color:"#1A1A2E",opacity:0.45,letterSpacing:1.3}}>Composite — expands to</div>
                                       <div style={{display:"flex",flexDirection:"column",gap:5,paddingLeft:8}}>
                                         <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                                           <span style={{color:"#1A1A2E",fontWeight:600,minWidth:140}}>Platform Fatta × {pi.fattas}</span>
@@ -1429,21 +1443,30 @@ export default function DealCheckOverlay({ ctx }) {
                                         const sCost = (pi.stands||0) * sR;
                                         const total = fCost + sCost;
                                         if (total <= 0) return <div style={{fontSize:12,color:"#F59E0B",marginTop:6,fontStyle:"italic"}}>⚠ Set rental prices on Platform Fatta/Stand in IMS for cost to appear</div>;
+                                        // A COSTING BLOCK, SET AS ONE. Three lines with a rupee figure on
+                                        // the right is a small table, and it was set as three sentences:
+                                        // proportional digits, so ₹4,800 and ₹1,200 did not line up under
+                                        // each other, and the sum did not line up under either. dc-money
+                                        // on every figure fixes the column.
+                                        // The total stops being green. Green is what the availability ticks
+                                        // above mean here — "in stock" — and using it again on a rupee
+                                        // figure said the amount was somehow good news. It is the sum, so
+                                        // it is ink, and weight is what makes it the sum.
                                         return (
-                                          <div style={{marginTop:8,paddingTop:6,borderTop:"1px solid rgba(16,185,129,0.15)",display:"flex",flexDirection:"column",gap:3}}>
-                                            <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#1A1A2E"}}>
+                                          <div style={{marginTop:9,paddingTop:8,borderTop:"1px solid rgba(26,26,46,0.10)",display:"flex",flexDirection:"column",gap:4}}>
+                                            <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:"#1A1A2E",opacity:0.72}}>
                                               <span>Fatta ₹{fR.toLocaleString("en-IN")} × {pi.fattas}</span>
-                                              <span style={{color:"#1A1A2E",fontWeight:600}}>₹{fCost.toLocaleString("en-IN")}</span>
+                                              <span className="dc-money" style={{fontWeight:600}}>₹{fCost.toLocaleString("en-IN")}</span>
                                             </div>
                                             {pi.stands > 0 && sR > 0 && (
-                                              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#1A1A2E"}}>
+                                              <div style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:12,color:"#1A1A2E",opacity:0.72}}>
                                                 <span>Stand ₹{sR.toLocaleString("en-IN")} × {pi.stands}</span>
-                                                <span style={{color:"#1A1A2E",fontWeight:600}}>₹{sCost.toLocaleString("en-IN")}</span>
+                                                <span className="dc-money" style={{fontWeight:600}}>₹{sCost.toLocaleString("en-IN")}</span>
                                               </div>
                                             )}
-                                            <div style={{display:"flex",justifyContent:"space-between",fontSize:13,fontWeight:700,color:"#10B981",marginTop:2}}>
-                                              <span>Platform rental</span>
-                                              <span>₹{total.toLocaleString("en-IN")}</span>
+                                            <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"baseline",marginTop:3,paddingTop:5,borderTop:"1px solid rgba(26,26,46,0.07)"}}>
+                                              <span className="dc-cap" style={{color:"#1A1A2E",opacity:0.55,letterSpacing:1.3}}>Platform rental</span>
+                                              <span className="dc-money" style={{fontSize:14,fontWeight:800,color:"#1A1A2E"}}>₹{total.toLocaleString("en-IN")}</span>
                                             </div>
                                           </div>
                                         );
