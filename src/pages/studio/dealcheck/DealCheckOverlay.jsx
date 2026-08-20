@@ -1000,8 +1000,14 @@ export default function DealCheckOverlay({ ctx }) {
    turning into noise. */
 .dc-cap{font-size:10px;font-weight:700;letter-spacing:1.7px;text-transform:uppercase}
 /* Money. Slightly negative tracking because tabular figures are set on a wide advance and a rupee
-   total at 18px+ looks loose without it. */
-.dc-money{font-variant-numeric:tabular-nums;letter-spacing:-0.3px;font-feature-settings:"tnum" 1}
+   total at 18px+ looks loose without it.
+   LINING as well as tabular, and both properties spell out both features. This rule used to declare
+   font-feature-settings:"tnum" 1 alone, which does not add to the root's declaration — it REPLACES it,
+   so the "lnum" set there was switched back off for every figure this class touched. A serif with
+   old-style figures as its default then set ₹5,32,725 with the 3, 5 and 7 hanging below the line, which
+   is correct for a paragraph and wrong for a total. */
+.dc-money{font-variant-numeric:tabular-nums lining-nums;letter-spacing:-0.3px;
+  font-feature-settings:"tnum" 1,"lnum" 1}
 `}</style>
             {/* TOP BAR */}
             {/* ── THE BAR IS THE THEME'S NAVY, AND THE TITLE IS CENTRED IN IT ──
@@ -2546,12 +2552,16 @@ export default function DealCheckOverlay({ ctx }) {
               return (
                 <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
                   <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-                    {/* The one figure on this screen that is a CONCLUSION rather than a line item, so
-                        it is the one thing set in the display serif — 26px against the tiles' 13, and
-                        no longer 800-weight sans fighting the caption above it for the same voice.
-                        letterSpacing goes NEGATIVE: it was +0.3, which on tabular figures already set
-                        on a wide advance made the total read spaced out rather than substantial. */}
-                    <div><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-title dc-money" style={{fontSize:26,color:"#1A1A2E",marginTop:1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.2}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
+                    {/* NOT THE SERIF. I set this in Cormorant because it is the screen's conclusion,
+                        and that was the wrong reason to pick a face: Cormorant's default figures are
+                        OLD-STYLE, so the total came out with its 3, 5 and 7 sitting below the line —
+                        beautiful in a sentence, wobbly in a column of money. Even forced to lining
+                        figures, a text serif's numerals are drawn to sit inside prose, not to be
+                        read as an amount.
+                        The sans is what a price is set in. Size and weight carry the emphasis the
+                        serif was being asked for, and dc-money keeps it tabular and lining so it
+                        agrees with every other figure on the screen. */}
+                    <div><div className="dc-cap" style={{color:"#1A1A2E",opacity:0.62}}>Project total</div><div className="dc-money" style={{fontSize:25,fontWeight:800,color:"#1A1A2E",marginTop:1,lineHeight:1.1}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div className="dc-money" style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:2,letterSpacing:0.1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                     <div style={{height:30,width:1,background:border}}/>
                     {chips.map(c => (
                       <div key={c.id} className="dc-chip" title={c.note ? `${c.label} — ${c.value} (${c.note})` : `${c.label} — ${c.value}`} style={{padding:"7px 11px",borderRadius:10,background:"#fff",border:`1px solid ${border}`,fontSize:12,color:"#1A1A2E",minWidth:78,opacity:c.live?1:0.5,boxShadow:"0 1px 2px rgba(26,26,46,0.04)"}}>
