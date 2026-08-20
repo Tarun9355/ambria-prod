@@ -2016,23 +2016,37 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    per frame, and no browser gets to have an opinion about it.
    Translucent enough for the wash to move behind the figures, opaque enough that a rupee amount is
    never competing with a blurred blob for the same pixels — 0.82 falling to 0.66 across the sheen. */
+/* TINTED, NOT WHITE. Plain white over a cream page with violet in it is not glass — it is paper, and
+   that is what the first pass looked like. Real glass takes the colour of what is behind it, so the
+   falloff carries a violet cast (244,242,255) while the highlight stays near-white. That one
+   difference is most of what separates the reference from a white card with a shadow.
+   The outer ring is violet rather than grey for the same reason: a neutral shadow under a violet
+   wash reads as dirt on the glass. */
 .cs-glass{
   background:${isDark
     ? "linear-gradient(148deg,rgba(255,255,255,0.075) 0%,rgba(255,255,255,0.032) 46%,rgba(255,255,255,0.058) 100%)"
-    : "linear-gradient(148deg,rgba(255,255,255,0.86) 0%,rgba(255,255,255,0.68) 46%,rgba(255,255,255,0.78) 100%)"};
-  border:1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.85)"};
-  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.13)" : "rgba(255,255,255,0.92)"},
-    0 2px 6px ${isDark ? "rgba(0,0,0,0.34)" : "rgba(26,26,46,0.05)"},
-    0 20px 46px -22px ${isDark ? "rgba(0,0,0,0.72)" : "rgba(26,26,46,0.26)"}}
+    : "linear-gradient(148deg,rgba(255,255,255,0.90) 0%,rgba(244,242,255,0.62) 48%,rgba(249,247,255,0.74) 100%)"};
+  border:1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.92)"};
+  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.13)" : "rgba(255,255,255,0.96)"},
+    inset 0 -1px 0 ${isDark ? "rgba(255,255,255,0.05)" : "rgba(124,92,214,0.06)"},
+    0 2px 6px ${isDark ? "rgba(0,0,0,0.34)" : "rgba(76,52,140,0.06)"},
+    0 22px 50px -24px ${isDark ? "rgba(0,0,0,0.72)" : "rgba(76,52,140,0.24)"}}
 /* The zone cards sit ON that glass, so they are a lighter weight of it — a second pane at the same
    strength would cancel the first and the stack would read as one flat slab again. Their border
    stays inline: it carries the open/closed state, which is not this rule's business. */
 .cs-tile{
   background:${isDark
     ? "linear-gradient(148deg,rgba(255,255,255,0.055) 0%,rgba(255,255,255,0.022) 100%)"
-    : "linear-gradient(148deg,rgba(255,255,255,0.72) 0%,rgba(255,255,255,0.52) 100%)"};
-  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.8)"},
-    0 8px 20px -12px ${isDark ? "rgba(0,0,0,0.6)" : "rgba(26,26,46,0.18)"}}
+    : "linear-gradient(148deg,rgba(255,255,255,0.82) 0%,rgba(246,244,255,0.54) 100%)"};
+  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.9)"},
+    0 10px 24px -14px ${isDark ? "rgba(0,0,0,0.6)" : "rgba(76,52,140,0.2)"}}
+/* THE PHOTOGRAPH SITS IN THE GLASS, NOT FLUSH WITH IT. Edge-to-edge, the picture WAS the card and
+   the glass only showed as a strip under the label — so all that work went to a 40px band. Inset by
+   7px with its own radius, the pane frames the photo and the tint reads on all four sides, which is
+   what the reference is actually doing. Its own overflow:hidden is what rounds the image; the card
+   keeps its radius for the outer edge. */
+.cs-tile{padding:7px}
+.cs-tile > img,.cs-tile > .cs-tile-ph{border-radius:9px}
 /* No hover here. .sm-zcard already owns the lift on these cards — same -2px, and with a
    reduced-motion guard this rule would not have had. A second hover would only fight it over
    box-shadow and win or lose by stylesheet order, which is not a thing to leave to chance. */
@@ -2750,7 +2764,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           {csData.functions.map((fnObj,fi)=>(
             <div key={fi} className="cs-glass" style={{borderRadius:14,marginBottom:20,overflow:"hidden"}}>
               {/* Function header */}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",background:"linear-gradient(135deg,#1a1a2e,#2d1b69)",color:"#fff"}}>
+              {/* Translucent, so the header belongs to the pane instead of being a solid lid on top
+                  of it — in the reference the band and the glass are one surface and the wash keeps
+                  moving behind both. Still dark enough to carry the gold figure and the pale caps:
+                  0.88 at its lightest, which is well past the contrast the text needs. */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",background:"linear-gradient(135deg,rgba(26,26,46,0.94),rgba(45,27,105,0.88))",color:"#fff"}}>
                 <div>
                   <div style={{fontSize:11,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Function {fi+1} of {fnCount}</div>
                   <div style={{fontSize:16,fontWeight:700,color:"#C9A96E"}}>{fnLine(fnObj)}</div>
@@ -2787,8 +2805,10 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                         style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:border}`}}>
                         {z.photo
                           ? <img src={z.photo} alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
-                          : <div style={{width:"100%",aspectRatio:"4 / 3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:isDark?"#0A0A14":"#F3EFE9",color:textS}}>{z.icon||"📦"}</div>}
-                        <div style={{padding:"9px 11px",display:"flex",alignItems:"center",gap:7}}>
+                          : <div className="cs-tile-ph" style={{width:"100%",aspectRatio:"4 / 3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:isDark?"#0A0A14":"#F3EFE9",color:textS}}>{z.icon||"📦"}</div>}
+                        {/* Tighter now that the card itself carries 7px — the two paddings used to
+                            stack into a band of empty glass under every photograph. */}
+                        <div style={{padding:"8px 4px 2px",display:"flex",alignItems:"center",gap:7}}>
                           <div style={{fontSize:13,fontWeight:700,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{z.icon} {z.label}</div>
                           <span style={{marginLeft:"auto",fontSize:10,color:textS,flexShrink:0}}>{zOpen?"▲":"▼"}</span>
                         </div>
