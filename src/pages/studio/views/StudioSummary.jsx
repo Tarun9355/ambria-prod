@@ -2003,6 +2003,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    without the breathing; dropping the animation entirely would take the message with it. */
 /* The cost-sheet overlay's own children, above its wash — see the note on the wash markup. */
 .cs-overlay > *:not(.sh-wash){position:relative;z-index:1}
+/* ── THE WASH OWNS THE GROUND, NOT THE OVERLAY'S OWN BACKGROUND ──
+   Worth writing down, because it cost two commits that changed nothing visible. .sh-wash is
+   inset:0 and paints an OPAQUE colour of its own, so it covers whatever the element behind it is
+   filled with. Darkening the overlay's background had no effect for that reason alone — the value
+   was correct and simply never seen. The ground is here.
+   Scoped to .cs-overlay so the Summary PAGE keeps its own near-white wash. The same class serves
+   both, and the cost sheet is the only one that wants a deep ground: it is the screen that gets
+   turned towards a client, and its glass panels need something with tone to sit against. */
+.cs-overlay .sh-wash{background:${isDark ? "#0F0F1A" : "#6F63A8"}}
 /* ═══ GLASS, PAINTED AND NOT SAMPLED ═══
    The function panels were solid — correct, and the reason the new wash underneath was invisible the
    moment it was added: three opaque cards covering the whole scrollport. Glass is what lets the
@@ -2647,12 +2656,15 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       // have some tone to darken. Only the BASE moved; the wash layers, the bands and the grain are
       // untouched, so this is still the same ground every other screen has, turned down a few stops.
       // Light mode only — dark mode is already dark enough for the panes to read against.
-      // Taken down again, further this time. It can go this dark safely because the base is only
-      // visible in the GUTTERS — between the panels and around them. Every figure and every table sits
-      // on glass, so darkening the ground buys contrast for the panes without touching the contrast of
-      // anything anyone has to read.
+      // This value is a FALLBACK and nothing more — .sh-wash covers it with an opaque fill of its own.
+      // The colour that actually shows is set on .cs-overlay .sh-wash in the stylesheet; see the note
+      // there. Left as the plain page colour so that if the wash ever fails to render, what shows
+      // through is the app's own ground rather than a violet nobody chose.
+      // The ground can go dark safely because it is only visible in the GUTTERS — between the panels
+      // and around them. Every figure and every table sits on glass, so darkening it buys contrast for
+      // the panes without touching the contrast of anything anyone has to read.
       return(
-      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#857BB4",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div className="cs-overlay" style={{position:"fixed",inset:0,background:isDark?"#0A0A14":"#F5F3EE",zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         {/* THE SAME GROUND AS EVERY OTHER SCREEN. This overlay was a flat fill — correct colour,
             nothing else — so opening the cost sheet dropped out of the app's world and into a plain
             document. The wash is the app's ground: the same drifting blobs, the same ripple bands,
