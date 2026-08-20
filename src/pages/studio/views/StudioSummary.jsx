@@ -255,9 +255,10 @@ export default function StudioSummary({ ctx }) {
   // second deck when one already existed. Remembered against the CLIENT, so it follows the deal
   // rather than the tab, and so opening someone else's deal never shows this one's link.
   const canvaKey = (id) => `ambria-canva-deck-${id || "none"}`;
-  // deckThumb is gone with the "Design deck ready" strip that read it. Worth noting what removing it
-  // revealed: nothing ever CALLED its setter, so the cover was always empty and that strip always
-  // drew the dashed placeholder. The card was written to show a deck's cover and never once did.
+  // deckThumb is gone with the "Design deck ready" strip that was the only thing reading it. Its two
+  // writers went with it — one restoring a remembered deck, one recording a fresh one. rememberDeck
+  // still PERSISTS the thumbnail URL, so nothing about the stored shape changed and a card that wants
+  // a cover again has the data waiting.
   // Stored as JSON now that the cover thumbnail is kept beside the link. Decks remembered before
   // this was a JSON blob are a bare URL string, and are still read — a salesperson mid-deal should
   // not lose the link they already have because the shape of the record changed under them.
@@ -365,7 +366,7 @@ export default function StudioSummary({ ctx }) {
     // Only ever fills IN a remembered link — it must not clear a deck being generated right now.
     if (canvaState !== "idle") return;
     const saved = readDeck(activeClientId);
-    if (saved.url) { setCanvaEditUrl(saved.url); setDeckThumb(saved.thumb); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); }
+    if (saved.url) { setCanvaEditUrl(saved.url); setCanvaDeckId(saved.designId || ""); setCanvaState("ready"); }
   }, [activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to a blank deal. The 40-setter body moved to StudioApp as startNewDeal, because
@@ -1935,7 +1936,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setDeckThumb(res.thumbnailUrl || ""); setCanvaDeckId(res.designId || ""); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId); return; }
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId); return; }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
