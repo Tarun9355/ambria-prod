@@ -816,7 +816,13 @@ export default function StudioBrowse({ ctx }) {
    button (the filter card brings its own ground), so the veil only has to stop the photograph
    competing with the grid — it does not have to carry type. */
 .sb-rail-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
-  background:linear-gradient(180deg,rgba(9,9,20,0.52) 0%,rgba(11,9,24,0.44) 40%,rgba(9,9,20,0.34) 72%,rgba(9,9,20,0.46) 100%)}
+  background:linear-gradient(180deg,rgba(9,9,20,0.66) 0%,rgba(11,9,24,0.52) 42%,rgba(9,9,20,0.34) 72%,rgba(9,9,20,0.46) 100%)}
+/* The top two stops are Build's, deliberately. The header paints its own near-black from the panel's
+   edge rightward, and whether that reads as one surface or as a bar standing proud of the panel
+   depends entirely on how dark the panel is DIRECTLY BEHIND the header. Build's veil opens at 0.66
+   and its seam vanishes; this one opened at 0.52, so the panel's top sat lighter than the bar beside
+   it and the join showed as a step. Only the top two stops moved — 72% and 100% are untouched, so
+   the candles and roses the veil was tuned around are exactly as they were. */
 /* ══ DEPTH ══
    The cast shadow: z-index 39 — above the page so the shadow actually lands on it, below the panel
    (40) so the panel covers everything but the bleed past its edge. Nudged right so the light reads
@@ -935,17 +941,16 @@ export default function StudioBrowse({ ctx }) {
    The cut starts 3px EARLY, at --sb-pw minus 3. The panel's edge is a curve and this cut is a
    straight line: by the bottom of the bar the curve has drawn in to about 99.4% of the panel width,
    so a straight cut at exactly --sb-pw left a ~2px strip where neither the panel nor the navy
-   painted, and the cream page showed through it. Overlapping by 3px closes that for the whole band.
-   THE SEAM COLOUR IS THE PANEL'S, NOT THE THEME'S. That 3px lands ON the panel, and the header sits
-   above it, so whatever colour starts the gradient is painted over panel ink for 3px down the whole
-   bar. It used to be the theme's own near-black — #0A0A14 in dark, #0A0619 in light — and the light
-   one has a purple cast the panel does not, so those 3px read as a strip of the navbar's black
-   standing proud of the panel's edge. The panel is deliberately the SAME in both themes (its own
-   gradient, photo and veil), so the colour meeting it has to be too: #0A0A14 either way, which is
-   what that composite comes to. Only the far end of the bar still follows the theme. */
+   painted, and the cream page showed through it. Overlapping by 3px closes that for the whole band —
+   the overlap lands on panel ink, which is dark either way, so it costs nothing to look at.
+   BYTE-IDENTICAL TO BUILD'S RULE, and it has to stay that way: the two pages wear the same bar over
+   the same panel, and the seam looking different on one of them is a drift bug, not a design choice.
+   When the join showed as a step here it was not this rule that was wrong — it was the panel's veil
+   opening lighter than Build's, so the bar had a lighter surface to sit against. Fixed there, at
+   .sb-rail-veil, which is where the difference actually was. */
 :root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
   background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 3px),
-    #0A0A14 calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
+    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
   background-origin:border-box !important}
 /* Hidden panel, no reserved gutter. The offset above is plain CSS keyed to --sb-pw, so folding the
    rail used to leave its 392px behind as empty page — the grid stayed exactly where it was and the
