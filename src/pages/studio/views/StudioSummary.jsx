@@ -2012,6 +2012,48 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    both, and the cost sheet is the only one that wants a deep ground: it is the screen that gets
    turned towards a client, and its glass panels need something with tone to sit against. */
 .cs-overlay .sh-wash{background:${isDark ? "#0F0F1A" : "#6F63A8"}}
+/* ═══ THE TOOLBAR'S BUTTONS ═══
+   Hover has to live in a stylesheet: these are inline-styled buttons, and inline styles have no
+   pseudo-classes at all — there is no way to express :hover from the style prop, which is why none of
+   them responded to the pointer before.
+   Each button hovers towards WHAT IT ALREADY IS rather than to a shared grey: Excel goes cleaner,
+   the ghosts pick up a little light, Canva goes one step brighter violet. A single shared hover would
+   flatten the hierarchy the row was just given.
+   SAFARI: -webkit-tap-highlight-color, because iOS Safari paints its own grey block over any tapped
+   button and it lands OUTSIDE the pill's radius, which looks like a rendering fault. transform and
+   box-shadow rather than filter, which Safari composites less predictably on small elements. Nothing
+   here uses backdrop-filter — the same reason as the panels: the wash behind them animates. */
+.cs-tb{-webkit-tap-highlight-color:transparent;
+  transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+.cs-tb:hover{transform:translateY(-1px)}
+.cs-tb:active{transform:translateY(0)}
+.cs-tb:focus-visible{outline:2px solid #A5B4FC;outline-offset:2px}
+.cs-tb[disabled]{transform:none}
+.cs-tb-excel:hover{background:#fff;border-color:rgba(15,23,42,0.24);
+  box-shadow:0 7px 18px -8px rgba(15,23,42,0.45)}
+.cs-tb-ghost:hover{background:rgba(255,255,255,0.10);border-color:rgba(255,255,255,0.52)}
+.cs-tb-canva:hover{background:#8B5CF6;border-color:#8B5CF6;
+  box-shadow:0 8px 20px -8px rgba(124,58,237,0.75)}
+.cs-tb-x:hover{background:rgba(255,255,255,0.13);border-color:rgba(255,255,255,0.45)}
+@media (prefers-reduced-motion: reduce){
+  .cs-tb{transition:background .16s ease,border-color .16s ease}
+  .cs-tb:hover,.cs-tb:active{transform:none}
+}
+/* ── RESPONSIVE: THE LABELS GO, THE ICONS STAY ──
+   Five buttons plus the lockup and the guest do not fit a narrow window, and a flex row that cannot
+   fit does not wrap by default — it squashes, and the pills turn into slivers with clipped text.
+   Dropping the labels first is the cheap win: every button kept its brand mark or its glyph for
+   exactly this, and an icon-only pill is still a pill. Below that the row is allowed to wrap so the
+   buttons drop under the lockup rather than shrinking further. */
+.cs-tb-l{display:inline}
+@media (max-width:1000px){
+  .cs-tb-l{display:none}
+  .cs-tb{padding-left:10px !important;padding-right:10px !important}
+}
+@media (max-width:620px){
+  .cs-tbar{flex-wrap:wrap;row-gap:8px}
+  .cs-tbar-brand{flex:1 1 100%}
+}
 /* ═══ GLASS, PAINTED AND NOT SAMPLED ═══
    The function panels were solid — correct, and the reason the new wash underneath was invisible the
    moment it was added: three opaque cards covering the whole scrollport. Glass is what lets the
@@ -2687,8 +2729,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           <i className="sh-grain"/>
         </div>
         {/* Header */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px",background:"#1a1a2e",flexShrink:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:14}}>
+        <div className="cs-tbar" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,padding:"12px 20px",background:"#1a1a2e",flexShrink:0}}>
+          <div className="cs-tbar-brand" style={{display:"flex",alignItems:"center",gap:14,minWidth:0}}>
             {/* THE REAL WORDMARK, NOT A LETTERMARK. The gold "A" tile was a stand-in for exactly this
                 file, and this bar is the one a client sees over someone's shoulder — the mark is
                 white and gold on transparent, which is what a navy toolbar wants. Cropped to its own
@@ -2724,7 +2766,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                 marks say which product before the label is read.
                 Radius 999 rather than 8: these two now read as a pair of pills sitting apart from
                 the square buttons beside them, which is what they are. */}
-            <button onClick={csExportExcel} style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(15,23,42,0.14)",cursor:"pointer",fontSize:12,fontWeight:600,background:"#fff",color:"#1F2937",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconExcelMark size={15}/>Excel</button>
+            <button onClick={csExportExcel} className="cs-tb cs-tb-excel" title="Download the cost sheet as an Excel workbook" style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(15,23,42,0.14)",cursor:"pointer",fontSize:12,fontWeight:600,background:"#fff",color:"#1F2937",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconExcelMark size={15}/><span className="cs-tb-l">Excel</span></button>
             {(() => {
               const busy = canvaState === "designing" || canvaState === "uploading" || canvaState === "processing";
               const busyLabel = canvaState === "designing" ? "Designing…" : canvaState === "uploading" ? "Uploading…" : "Finalizing…";
@@ -2744,13 +2786,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                       white because it is the other kind of thing entirely — a file you take away.
                       All four are pills now, so the row reads as one set. */}
                   <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
-                    className={deckGlow?"sh-deck-glow":undefined}
+                    className={"cs-tb cs-tb-ghost" + (deckGlow?" sh-deck-glow":"")}
                     title={deckGlow?"Your design deck is ready — open it":"Show the design deck as it stands in Canva, and hand it over as a PDF"}
-                    style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"transparent",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{deckPdf.state==="loading"?"⏳ Opening…":<><IconEye size={14}/>View deck</>}</button>
-                  <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"7px 15px",borderRadius:999,border:"1px solid #7C3AED",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconCanvaMark size={15}/>Canva</button>
+                    style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"transparent",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{deckPdf.state==="loading"?"⏳ Opening…":<><IconEye size={14}/><span className="cs-tb-l">View deck</span></>}</button>
+                  <button onClick={() => window.open(canvaEditUrl, "_blank")} className="cs-tb cs-tb-canva" title="Open this deck in Canva to edit it" style={{padding:"7px 15px",borderRadius:999,border:"1px solid #7C3AED",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconCanvaMark size={15}/><span className="cs-tb-l">Canva</span></button>
                   <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
                     title="Design a fresh deck — the current link stays open in Canva either way"
-                    style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconRepeat size={14}/>Make again</button>
+                    className="cs-tb cs-tb-ghost"
+                    style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconRepeat size={14}/><span className="cs-tb-l">Make again</span></button>
                 </>
               );
               // The same pill as the "Open in Canva" one above, because this is the button that sits
@@ -2760,11 +2803,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               // The mark is dropped while busy or after a failure: both of those are about THIS app's
               // progress, not about Canva, and a brand mark beside "Finalizing…" or "Retry" reads as
               // if the other product were the thing reporting.
-              return <button disabled={busy} onClick={()=>sendToCanva(csData)} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"7px 15px",borderRadius:999,border:`1px solid ${canvaState==="error"?"#EF4444":"#7C3AED"}`,cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":<><IconCanvaMark size={15}/>Canva</>}</button>;
+              return <button disabled={busy} onClick={()=>sendToCanva(csData)} className={"cs-tb" + (canvaState==="error"?"":" cs-tb-canva")} title={canvaState==="error"?canvaError:"Design this deck with Gamma's AI, then send it to Canva as an editable draft"} style={{padding:"7px 15px",borderRadius:999,border:`1px solid ${canvaState==="error"?"#EF4444":"#7C3AED"}`,cursor:busy?"default":"pointer",fontSize:12,fontWeight:600,background:canvaState==="error"?"#EF4444":"#7C3AED",color:"#fff",opacity:busy?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{busy?`⏳ ${busyLabel}`:canvaState==="error"?"⚠ Retry":<><IconCanvaMark size={15}/><span className="cs-tb-l">Canva</span></>}</button>;
             })()}
             {/* A round button for the round set. Fixed square rather than padded text, so the glyph
                 actually sits in the middle of the circle. */}
-            <button onClick={()=>setCsData(null)} title="Close the cost sheet" style={{width:30,height:30,padding:0,borderRadius:999,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>{"✕"}</button>
+            <button onClick={()=>setCsData(null)} className="cs-tb cs-tb-x" title="Close the cost sheet" style={{width:30,height:30,padding:0,borderRadius:999,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"#fff",cursor:"pointer",fontSize:12,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>{"✕"}</button>
           </div>
         </div>
         {canvaState==="error"&&canvaError&&<div style={{padding:"6px 20px",background:"rgba(239,68,68,0.15)",color:"#FCA5A5",fontSize:11,flexShrink:0}}>{canvaError}</div>}
@@ -2832,9 +2875,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               </div>
               {/* Empty function placeholder */}
               {fnObj.isEmpty?(
-                <div style={{padding:"32px 20px",textAlign:"center",color:textS}}>
-                  <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>Design pending</div>
-                  <div style={{fontSize:11}}>Zones for this function have not been built yet — it will appear in the PPT as a placeholder slide.</div>
+                // textS is the theme's SECONDARY grey, and it was chosen when this sat on white. On the
+                // tinted glass it has almost nothing to push against — a mid grey on a violet-grey
+                // pane is the same value twice. Violet ink instead: same hue family as the ground, far
+                // enough down it to read. The heading takes the darker of the two because it is the
+                // line someone scanning the sheet needs to catch.
+                <div style={{padding:"32px 20px",textAlign:"center"}}>
+                  <div style={{fontSize:14,fontWeight:700,marginBottom:6,color:isDark?"#CFC9E8":"#332A56"}}>Design pending</div>
+                  <div style={{fontSize:11,color:isDark?"#A9A1C9":"#554A7D"}}>Zones for this function have not been built yet — it will appear in the PPT as a placeholder slide.</div>
                 </div>
               ):(
                 <>
