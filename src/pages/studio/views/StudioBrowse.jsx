@@ -805,7 +805,23 @@ export default function StudioBrowse({ ctx }) {
 .sb-rail > *{position:relative;z-index:2}
 /* The photograph sits behind everything, overflowing by 4% so no scale rounding can leave a strip
    of gradient down an edge. */
-.sb-rail-img{position:absolute;inset:-4%;z-index:0;background-size:cover;background-position:center}
+/* ── THE GROUND IS PINNED, NOT PARENTED TO THE SCROLL ──
+   These two were absolute inside .sb-rail, and .sb-rail is itself the scrollport (overflow-y:auto).
+   An absolute child of a scrollport SCROLLS WITH ITS CONTENT — so the moment the filters moved, the
+   photograph and its veil slid up with them and left the rail's own base gradient showing at the
+   bottom of the column. That gradient runs to #241a46, much lighter and much more violet than the
+   veiled photo above it, so the join read as a horizontal seam across the panel — and the panel
+   stopped looking like it ran the full height of the screen.
+   Build does not have this because there the rail does not scroll at all: it is only the ground, and
+   a separate inner box does the scrolling. Fixed to the viewport is the same arrangement expressed
+   without restructuring the column — the ground stays put whatever the filters do.
+   clip-path on .sb-rail still clips both: an element with clip-path is a containing block for its
+   fixed descendants, so the curve holds them exactly as it did when they were absolute.
+   The 4% bleed is kept — it is there so no rounding in the cover scale can leave a hairline of
+   gradient down an edge — just expressed against the rail's own box now that inset no longer does. */
+.sb-rail-img{position:fixed;left:calc(var(--sb-pw) * -0.04);top:-4svh;
+  width:calc(var(--sb-pw) * 1.08);height:108svh;
+  z-index:0;background-size:cover;background-position:center}
 /* A scrim, not a vignette: the picture is busy and bright in places, and the filter labels have to
    stay readable wherever they land on it. */
 /* Tuned to THIS photograph rather than to a generic one, and the stops run the opposite way to
@@ -815,7 +831,9 @@ export default function StudioBrowse({ ctx }) {
    It now stays light where the picture lives. Nothing sits directly on the panel but the Hide
    button (the filter card brings its own ground), so the veil only has to stop the photograph
    competing with the grid — it does not have to carry type. */
-.sb-rail-veil{position:absolute;inset:0;z-index:1;pointer-events:none;
+/* Pinned for the same reason as the photograph above — it has to stay over the picture, not over
+   whatever part of the scroll happens to be passing. */
+.sb-rail-veil{position:fixed;left:0;top:0;width:var(--sb-pw);height:100svh;z-index:1;pointer-events:none;
   background:linear-gradient(180deg,rgba(9,9,20,0.66) 0%,rgba(11,9,24,0.52) 42%,rgba(9,9,20,0.34) 72%,rgba(9,9,20,0.46) 100%)}
 /* The top two stops are Build's, deliberately. The header paints its own near-black from the panel's
    edge rightward, and whether that reads as one surface or as a bar standing proud of the panel
