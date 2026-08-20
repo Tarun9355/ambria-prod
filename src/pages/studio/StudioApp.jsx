@@ -6052,8 +6052,11 @@ export default function StudioApp() {
         setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
       }
       setStep(landingStep);
-      const fnCount = Object.keys(session.fnSnapshots).length;
-      showMsg("Loaded session from " + new Date(session.savedAt).toLocaleDateString("en-IN") + " (" + fnCount + " function" + (fnCount > 1 ? "s" : "") + ")", "green");
+      // NO TOAST FOR A LOAD THAT ALREADY SHOWS ITSELF. Resuming a session moves the whole screen —
+      // the step changes, the reference video appears, the build fills in — so a banner saying it
+      // happened is telling you what you just watched, and it lands over the step nav while you are
+      // trying to read it. Its companion further down (the single-function path) is gone for the
+      // same reason. Failures still speak; this was only ever a success message.
       return;
     }
     setFnBuilds({});
@@ -6081,7 +6084,7 @@ export default function StudioApp() {
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
     setStep(landingStep);
-    showMsg("Loaded session from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
+    // The single-function path's toast, gone for the reason given on the multi-function one above.
   }, [events, allVideos, ytVideoTags]);
 
   // ── Close the open deal: back to a blank builder ──
