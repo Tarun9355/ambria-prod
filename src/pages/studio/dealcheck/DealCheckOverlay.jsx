@@ -14,6 +14,7 @@ import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { IconBox, IconTruss, IconFlower, IconCrew, IconFactory,
   IconCart, IconTruck, IconBolt, IconChart, IconCoins, IconShield } from "../../../components/icons.jsx";
+import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
@@ -918,7 +919,20 @@ export default function DealCheckOverlay({ ctx }) {
         }
 
         return (
-          <div style={{position:"fixed",inset:0,zIndex:9000,background:"#FAF9F6",display:"flex",flexDirection:"column"}}>
+          // The background here is a FALLBACK. .dc-wash covers it with an opaque fill of its own, so
+          // the colour that shows is the one on .dc-wash in the stylesheet. Left as the app's own
+          // cream so that if the wash ever fails to render, what shows through is the page colour.
+          <div className="dc-root" style={{position:"fixed",inset:0,zIndex:9000,background:"#FAF9F6",display:"flex",flexDirection:"column"}}>
+            <div className="dc-wash" aria-hidden="true">
+              <span className="dc-wash-a"/><span className="dc-wash-b"/><span className="dc-wash-c"/>
+              <svg className="dc-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
+                {WASH_BANDS.map((b,i)=>(
+                  <path key={i} d={b.d} fill="none" stroke={b.c}
+                    strokeOpacity={b.o} strokeWidth={b.w} strokeLinecap="round"/>
+                ))}
+              </svg>
+              <i className="dc-grain"/>
+            </div>
             {/* Hover layer. Everything here is inline-styled, and inline styles cannot express
                 :hover — so the tab strip and the cost chips had no feedback at all and read as
                 labels rather than things you can point at. */}
@@ -931,9 +945,48 @@ export default function DealCheckOverlay({ ctx }) {
   .dc-tab,.dc-chip{transition:none}
   .dc-chip:hover{transform:none}
 }
+/* ═══ THE APP'S GROUND ═══
+   Same wash every other screen has, from the same lib. Deal Check was a flat #FAF9F6 fill, which is
+   the right colour and nothing else — opening it stepped out of the app and into a plain document.
+   The wash paints its OWN opaque colour, so it covers the root's fill: the ground you actually see is
+   set here, not on the overlay. (That cost two commits to learn on the cost sheet.)
+   translateZ + backface + contain:paint keep it on its own layer and keep its repaints from escaping.
+   No mix-blend-mode on the blobs: they drift, and a blended moving element re-composites against its
+   backdrop every frame — the thing that was flickering the other pages on Mac. Over a near-white
+   ground multiply returns the colour anyway, so there is nothing to miss. */
+.dc-wash{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  transform:translateZ(0);backface-visibility:hidden;contain:paint;background:#F3F1F8}
+.dc-wash span{position:absolute;display:block;filter:blur(80px)}
+.dc-wash-a{width:760px;height:700px;top:-190px;left:-120px;
+  border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
+  background:radial-gradient(circle,rgba(201,169,110,0.30) 0%,rgba(201,169,110,0) 70%)}
+.dc-wash-b{width:640px;height:700px;top:90px;right:-170px;
+  border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
+  background:radial-gradient(circle,rgba(214,158,140,0.26) 0%,rgba(214,158,140,0) 72%)}
+.dc-wash-c{width:740px;height:660px;top:520px;left:18%;
+  border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
+  background:radial-gradient(circle,rgba(124,92,214,0.18) 0%,rgba(124,92,214,0) 74%)}
+.dc-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
+.dc-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
+  background-image:${GRAIN_URL};background-size:220px 220px}
+/* Static, so this blend is composited once — it is the moving ones that cost. */
+.dc-root > *:not(.dc-wash){position:relative;z-index:1}
+/* ═══ GLASS ═══
+   Painted, not sampled — no backdrop-filter, for the reason in the wash note above.
+   Translucency is judged against what each pane SITS ON, not against the ground: the zone rows lie on
+   the body, which is already glass, so two panes at the same strength would composite to opaque and
+   the pair would read as one white slab. The rows are therefore much clearer than the shell. */
+.dc-glass{background:linear-gradient(148deg,rgba(255,255,255,0.78) 0%,rgba(250,249,255,0.58) 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.9)}
+/* No !important: the inline background and border were removed from the row so this rule is the only
+   thing painting it. An inline value left behind for a class to override is a contradiction sitting in
+   the file waiting to be believed. */
+.dc-zone{background:linear-gradient(148deg,rgba(255,255,255,0.52) 0%,rgba(250,249,255,0.30) 100%);
+  border:1px solid rgba(255,255,255,0.85);transition:background .16s ease}
+.dc-zone:hover{background:linear-gradient(148deg,rgba(255,255,255,0.66) 0%,rgba(250,249,255,0.42) 100%)}
 `}</style>
             {/* TOP BAR */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:`1px solid ${border}`,background:"#FFFFFF"}}>
+            <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:`1px solid ${border}`}}>
               <div style={{display:"flex",alignItems:"center",gap:14}}>
                 <button onClick={()=>setDcFullPageOpen(false)} title="Close Deal Check" style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:15.5,cursor:"pointer",lineHeight:1}}>✕</button>
                 <div>
@@ -967,7 +1020,7 @@ export default function DealCheckOverlay({ ctx }) {
             {/* BODY (3-column layout: left sidebar · main content · bottom strip is global) */}
             <div style={{flex:1,display:"flex",overflow:"hidden"}}>
               {/* LEFT SIDEBAR — function tabs + per-fn cost (skeletal in Patch 3, populated in Patch 5) */}
-              <div style={{width:220,borderRight:`1px solid ${border}`,padding:"14px 12px",overflowY:"auto",background:"#FFFFFF"}}>
+              <div className="dc-glass" style={{width:220,borderRight:`1px solid ${border}`,padding:"14px 12px",overflowY:"auto"}}>
                 <div style={{fontSize:11,color:"#000",letterSpacing:1.4,textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Functions</div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                   {(() => {
@@ -1249,7 +1302,7 @@ export default function DealCheckOverlay({ ctx }) {
                         }
                         zoneRentalTotal = Math.round(zoneRentalTotal);
                         return (
-                          <div key={zk} className="dc-zone" style={{borderRadius:12,border:`1px solid ${border}`,background:"#fff",overflow:"hidden",boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 20px -16px rgba(26,26,46,0.35)"}}>
+                          <div key={zk} className="dc-zone" style={{borderRadius:12,overflow:"hidden",boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 20px -16px rgba(26,26,46,0.35)"}}>
                             {/* White, not a 2%-ink tint, and the header no longer carries a tint of its
                                 own either. Six of these stacked on a cream page were six beige bands
                                 with beige headers — the row and its heading were the same value, so
@@ -2452,7 +2505,7 @@ export default function DealCheckOverlay({ ctx }) {
                 { id:"buffer",   label:"Buffer 3%",Icon: IconShield,  value: fmt(bufferCost),live: true  },
               ];
               return (
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,background:"#FFFFFF",gap:14}}>
+                <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 18px",borderTop:`1px solid ${border}`,gap:14}}>
                   <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                     <div><div style={{fontSize:11,color:"#000",letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Project total</div><div style={{fontSize:18,fontWeight:800,color:"#000",letterSpacing:0.3}}>{fmt(grandWithOverheads)}</div>{stripRevenue > 0 && <div style={{fontSize:11,color:stripProfitColor,fontWeight:700,marginTop:1}}>Margin {stripProfitPct}% · {fmt(stripRevenue)} quote</div>}</div>
                     <div style={{height:30,width:1,background:border}}/>
