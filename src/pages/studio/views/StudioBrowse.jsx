@@ -935,11 +935,17 @@ export default function StudioBrowse({ ctx }) {
    The cut starts 3px EARLY, at --sb-pw minus 3. The panel's edge is a curve and this cut is a
    straight line: by the bottom of the bar the curve has drawn in to about 99.4% of the panel width,
    so a straight cut at exactly --sb-pw left a ~2px strip where neither the panel nor the navy
-   painted, and the cream page showed through it. Overlapping by 3px closes that for the whole band —
-   the overlap lands on panel ink, which is dark either way, so it costs nothing to look at. */
+   painted, and the cream page showed through it. Overlapping by 3px closes that for the whole band.
+   THE SEAM COLOUR IS THE PANEL'S, NOT THE THEME'S. That 3px lands ON the panel, and the header sits
+   above it, so whatever colour starts the gradient is painted over panel ink for 3px down the whole
+   bar. It used to be the theme's own near-black — #0A0A14 in dark, #0A0619 in light — and the light
+   one has a purple cast the panel does not, so those 3px read as a strip of the navbar's black
+   standing proud of the panel's edge. The panel is deliberately the SAME in both themes (its own
+   gradient, photo and veil), so the colour meeting it has to be too: #0A0A14 either way, which is
+   what that composite comes to. Only the far end of the bar still follows the theme. */
 :root[data-sb-rail="1"] .sa-header{box-shadow:none !important;border-bottom-color:transparent !important;
   background:linear-gradient(90deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) calc(var(--sb-pw,0px) - 3px),
-    ${isDark?"#0A0A14":"#0A0619"} calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
+    #0A0A14 calc(var(--sb-pw,0px) - 3px),${isDark?"#07070D":"#130A2E"} 100%) !important;
   background-origin:border-box !important}
 /* Hidden panel, no reserved gutter. The offset above is plain CSS keyed to --sb-pw, so folding the
    rail used to leave its 392px behind as empty page — the grid stayed exactly where it was and the
