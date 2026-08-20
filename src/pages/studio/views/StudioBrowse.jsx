@@ -1234,12 +1234,12 @@ export default function StudioBrowse({ ctx }) {
                 // one. That is why Resume/Continue kept vanishing and the thumbnail reloaded:
                 // nothing was re-fetching, the whole card was being rebuilt on a timer. The id is
                 // stable for the life of the session, which is what a key is supposed to be.
+                // LIVE IS THE OUTLINE, NOT A LABEL. A green pill sat inside the title, competing with
+                // it for the same line and reading as one more tag among the others. The thing being
+                // said is "this card is the build you are in", which is a property of the whole card
+                // — so the whole card says it. Border only, same 1px, so nothing moves when it
+                // turns on.
                 return (
-                  {/* LIVE IS THE OUTLINE, NOT A LABEL. A green pill sat inside the title, competing
-                      with it for the same line and reading as one more tag among the others. The
-                      thing being said is "this card is the build you are in", which is a property of
-                      the whole card — so the whole card says it. Border only, same 1px, so nothing
-                      moves when it turns on. */}
                   <div key={s.id || s.sourceVideoId} className="sb-rcard" style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"stretch",gap:11,padding:"13px 14px",borderRadius:11,background:isDark?"rgba(234,179,8,0.08)":"rgba(234,179,8,0.07)",border:`1px solid ${isCurrent?"rgba(16,185,129,0.75)":(isDark?"rgba(234,179,8,0.28)":"rgba(217,119,6,0.30)")}`}}>
                     {s.id && <button onClick={(e)=>{e.stopPropagation();deleteSession(s.id);}} title="Delete this saved session"
                       style={{position:"absolute",top:6,right:6,width:18,height:18,borderRadius:"50%",border:"none",background:"transparent",color:textS,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>✕</button>}
