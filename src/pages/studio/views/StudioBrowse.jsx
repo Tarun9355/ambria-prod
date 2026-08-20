@@ -729,7 +729,12 @@ export default function StudioBrowse({ ctx }) {
 .sb-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
     transform:translateZ(0);backface-visibility:hidden;contain:paint;
   background:${isDark?"#0F0F1A":"#FAF9F6"}}
-.sb-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+/* Blend mode dropped in light mode — see the long note on .ei-wash span in StudioEventInfo, which is
+   the same three blobs on the same near-white ground. A blended element's paint depends on its
+   backdrop, so moving it re-composites the pair every frame; multiply over #FAF9F6 returns the colour
+   itself, so this costs nothing to remove. Dark mode keeps it, where it is doing real work. */
+.sb-wash span{position:absolute;display:block;filter:blur(80px);
+  mix-blend-mode:${isDark ? "multiply" : "normal"}}
 .sb-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--sb-pw) - 150px);
   border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
   background:radial-gradient(circle,rgba(201,169,110,0.38) 0%,rgba(201,169,110,0) 70%)}

@@ -1600,7 +1600,10 @@ export default function StudioBuild({ ctx }) {
    background on it. Excluding the three decoration layers so they keep their own z-indices (the
    shadow at 39 must stay under the panel, the gold edge at 51 above the header). */
 .bd-view > *:not(.bd-wash):not(.bd-rail-shadow):not(.bd-rail-edge):not(.bd-scrim){position:relative;z-index:1}
-.bd-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+/* Blend mode dropped in light mode — see the long note on .ei-wash span in StudioEventInfo. Same
+   blobs, same near-white ground, same per-frame backdrop re-composite when they move. */
+.bd-wash span{position:absolute;display:block;filter:blur(80px);
+  mix-blend-mode:${isDark ? "multiply" : "normal"}}
 .bd-wash-a{width:760px;height:700px;top:-190px;left:calc(var(--sb-pw) - 150px);
   border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
   background:radial-gradient(circle,rgba(201,169,110,0.38) 0%,rgba(201,169,110,0) 70%)}

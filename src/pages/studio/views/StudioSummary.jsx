@@ -2234,7 +2234,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 .sh-wash{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
     transform:translateZ(0);backface-visibility:hidden;contain:paint;
   background:${isDark?"#0F0F1A":"#FAF9F6"}}
-.sh-wash span{position:absolute;display:block;filter:blur(80px);mix-blend-mode:multiply}
+/* Blend mode dropped in light mode — see the long note on .ei-wash span in StudioEventInfo. Same
+   blobs, same near-white ground, same per-frame backdrop re-composite when they move.
+   Note the cost sheet overlay overrides this wash's GROUND to a deeper violet, where multiply would
+   no longer be a no-op — which is a second reason not to blend here. */
+.sh-wash span{position:absolute;display:block;filter:blur(80px);
+  mix-blend-mode:${isDark ? "multiply" : "normal"}}
 .sh-wash-a{width:760px;height:700px;top:-190px;left:-120px;border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
   background:radial-gradient(circle,rgba(201,169,110,0.34) 0%,rgba(201,169,110,0) 70%)}
 .sh-wash-b{width:640px;height:700px;top:90px;right:-170px;border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
