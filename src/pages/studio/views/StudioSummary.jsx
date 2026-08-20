@@ -2025,7 +2025,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 .cs-glass{
   background:${isDark
     ? "linear-gradient(148deg,rgba(255,255,255,0.075) 0%,rgba(255,255,255,0.032) 46%,rgba(255,255,255,0.058) 100%)"
-    : "linear-gradient(148deg,rgba(255,255,255,0.90) 0%,rgba(244,242,255,0.62) 48%,rgba(249,247,255,0.74) 100%)"};
+    : "linear-gradient(148deg,rgba(255,255,255,0.72) 0%,rgba(244,242,255,0.44) 48%,rgba(249,247,255,0.56) 100%)"};
   border:1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.92)"};
   box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.13)" : "rgba(255,255,255,0.96)"},
     inset 0 -1px 0 ${isDark ? "rgba(255,255,255,0.05)" : "rgba(124,92,214,0.06)"},
@@ -2034,12 +2034,19 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 /* The zone cards sit ON that glass, so they are a lighter weight of it — a second pane at the same
    strength would cancel the first and the stack would read as one flat slab again. Their border
    stays inline: it carries the open/closed state, which is not this rule's business. */
+/* NEARLY CLEAR, BECAUSE IT IS GLASS ON GLASS. This is the trap: a tile at 0.82 white looks
+   translucent on its own, but it sits on a pane that is already 0.72 white, and two translucent
+   layers COMPOSITE — the pair came to roughly 0.95 and the tile read as a plain white card. Opacity
+   here cannot be judged against the wash; it has to be judged against the pane it lies on.
+   So the fill is barely there (0.30 falling to 0.12) and the tile is defined by its EDGES instead —
+   the bright inset top line and the white border. That is how glass on glass works: you see the
+   join, not the sheet. */
 .cs-tile{
   background:${isDark
     ? "linear-gradient(148deg,rgba(255,255,255,0.055) 0%,rgba(255,255,255,0.022) 100%)"
-    : "linear-gradient(148deg,rgba(255,255,255,0.82) 0%,rgba(246,244,255,0.54) 100%)"};
-  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.9)"},
-    0 10px 24px -14px ${isDark ? "rgba(0,0,0,0.6)" : "rgba(76,52,140,0.2)"}}
+    : "linear-gradient(148deg,rgba(255,255,255,0.30) 0%,rgba(246,244,255,0.12) 100%)"};
+  box-shadow:inset 0 1px 0 ${isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.75)"},
+    0 10px 24px -14px ${isDark ? "rgba(0,0,0,0.6)" : "rgba(76,52,140,0.16)"}}
 /* THE PHOTOGRAPH SITS IN THE GLASS, NOT FLUSH WITH IT. Edge-to-edge, the picture WAS the card and
    the glass only showed as a strip under the label — so all that work went to a 40px band. Inset by
    7px with its own radius, the pane frames the photo and the tint reads on all four sides, which is
@@ -2802,7 +2809,11 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                       <div onClick={()=>toggleZoneCard(zKey)} className="sm-zcard cs-tile" role="button" tabIndex={0}
                         onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggleZoneCard(zKey);}}}
                         title={zOpen?"Hide the costing":"Show the costing"}
-                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:border}`}}>
+                        {/* The closed border is white, not the theme's grey rule. With the fill this
+                            close to clear the border IS the tile, and a grey line over a violet wash
+                            reads as a smudge rather than an edge. Open still takes the gold, because
+                            that is state and state should win. */}
+                        style={{cursor:"pointer",borderRadius:12,overflow:"hidden",border:`1px solid ${zOpen?accentText:(isDark?"rgba(255,255,255,0.14)":"rgba(255,255,255,0.9)")}`}}>
                         {z.photo
                           ? <img src={z.photo} alt={z.label} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",background:isDark?"#0A0A14":"#F3EFE9"}} onError={e=>{e.target.style.display="none"}}/>
                           : <div className="cs-tile-ph" style={{width:"100%",aspectRatio:"4 / 3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:isDark?"#0A0A14":"#F3EFE9",color:textS}}>{z.icon||"📦"}</div>}
