@@ -265,6 +265,14 @@ export default function StudioSummary({ ctx }) {
   // Canva's own id for the design. Kept because the export endpoint wants it and the edit URL is
   // not a reliable place to find it — see canvaDesignId in lib/canva.js.
   const [canvaDeckId, setCanvaDeckId] = useState("");
+  // ── "THE DECK IS MADE" HAS TO SURVIVE THE MOMENT IT HAPPENS ──
+  // Making a deck takes long enough that nobody watches the button while it runs, so the toolbar
+  // quietly gaining two new buttons is a change that lands while you are looking elsewhere. The glow
+  // is that news, held until it is acted on rather than shown for a second and lost.
+  // Set only when a deck is FRESHLY made, never when one is restored from a previous visit — a deck
+  // you already have does not need chasing, and glowing on every page load would train the eye to
+  // ignore it. Cleared the moment View deck is pressed, which is the whole point of it.
+  const [deckGlow, setDeckGlow] = useState(false);
   const rememberDeck = (url, thumb, designId) => {
     try {
       if (activeClientId && url) localStorage.setItem(canvaKey(activeClientId), JSON.stringify({ url, thumb: thumb || "", designId: designId || "" }));
@@ -308,6 +316,10 @@ export default function StudioSummary({ ctx }) {
   useEffect(() => { setDeckPdf({ state: "idle", url: "", error: "" }); }, [canvaEditUrl]);
   const showDeckPdf = async () => {
     if (deckPdf.state === "loading") return;
+    // Cleared here rather than in the button's onClick, so it stops on the ACTION and not merely on a
+    // click — the early return above means a click during a load is not an action, and the glow has
+    // to survive that or it would be dismissed by an impatient second press.
+    setDeckGlow(false);
     // A still-fresh export opens straight away. Without this, viewing the deck twice in a meeting
     // means waiting out Canva's export twice, which is what made this feel like an export button
     // rather than a viewer.
@@ -1936,7 +1948,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       for (let i = 0; i < 24; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         const res = await canvaPollImport(jobId);
-        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId); return; }
+        if (res.status === "success") { setCanvaEditUrl(res.editUrl); setCanvaState("ready"); setCanvaDeckId(res.designId || ""); setDeckGlow(true); rememberDeck(res.editUrl, res.thumbnailUrl, res.designId); return; }
         if (res.status === "failed") { setCanvaState("error"); setCanvaError(res.error || "Canva import failed"); return; }
       }
       setCanvaState("error"); setCanvaError("Timed out waiting for Canva — try again");
@@ -1979,6 +1991,26 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
 .sh-pv:hover{background:linear-gradient(135deg,#E8CFA0,#C9A96E);filter:brightness(1.06);transform:translateY(-1.5px)}
 .sh-pv:active{transform:translateY(0);filter:brightness(.96)}
 .sh-pv-glow{position:absolute;inset:-6px;border-radius:12px;background:radial-gradient(closest-side,rgba(201,169,110,.5),transparent 72%);filter:blur(7px);pointer-events:none;animation:pvHalo 2.4s ease-in-out infinite}
+/* ═══ VIEW DECK, ONCE A DECK HAS JUST BEEN MADE ═══
+   Built on the Preview button's pulse above rather than a new idea, so the app has ONE way of saying
+   "press this". Teal, not gold: gold is Preview's and violet is Canva's, and a third button
+   borrowing either would read as the same action twice. Teal is already the deck's colour elsewhere.
+   The pulse is on the box-shadow only. Border and text brighten to teal but nothing moves and no
+   size changes — this button sits in a row with three others, and a growing button would shove them.
+   Removed the instant View deck is pressed (see setDeckGlow in showDeckPdf), because a prompt that
+   keeps prompting after you have obeyed it is just noise.
+   Reduced motion gets the bright teal ring, held still. The point is "this is new" and that survives
+   without the breathing; dropping the animation entirely would take the message with it. */
+@keyframes dkGlow{
+  0%,100%{box-shadow:0 0 0 1px rgba(94,234,212,.5),0 0 9px rgba(94,234,212,.3),0 0 20px rgba(94,234,212,.14)}
+  50%{box-shadow:0 0 0 1px rgba(94,234,212,.85),0 0 16px rgba(94,234,212,.55),0 0 34px rgba(94,234,212,.3)}
+}
+.sh-deck-glow{border-color:rgba(94,234,212,.8) !important;color:#5EEAD4 !important;
+  animation:dkGlow 2.2s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){
+  .sh-deck-glow{animation:none;
+    box-shadow:0 0 0 1px rgba(94,234,212,.8),0 0 14px rgba(94,234,212,.45)}
+}
 /* ═══ SOLD BUTTON ═══ Only the enabled button carries this class, so the hover never fires on the
    greyed-out state. Green + shadow live here rather than inline so :hover can actually override. */
 .sh-sold{background:linear-gradient(135deg,#10B981,#059669);box-shadow:0 4px 20px rgba(16,185,129,.35);transition:background .18s,box-shadow .18s,transform .18s}
@@ -2569,7 +2601,8 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                       white because it is the other kind of thing entirely — a file you take away.
                       All four are pills now, so the row reads as one set. */}
                   <button onClick={showDeckPdf} disabled={deckPdf.state==="loading"}
-                    title="Show the design deck as it stands in Canva, and hand it over as a PDF"
+                    className={deckGlow?"sh-deck-glow":undefined}
+                    title={deckGlow?"Your design deck is ready — open it":"Show the design deck as it stands in Canva, and hand it over as a PDF"}
                     style={{padding:"7px 15px",borderRadius:999,border:"1px solid rgba(255,255,255,0.28)",cursor:deckPdf.state==="loading"?"default":"pointer",fontSize:12,fontWeight:600,background:"transparent",color:"#fff",opacity:deckPdf.state==="loading"?0.7:1,display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}>{deckPdf.state==="loading"?"⏳ Opening…":<><IconEye size={14}/>View deck</>}</button>
                   <button onClick={() => window.open(canvaEditUrl, "_blank")} style={{padding:"7px 15px",borderRadius:999,border:"1px solid #7C3AED",cursor:"pointer",fontSize:12,fontWeight:600,background:"#7C3AED",color:"#fff",display:"inline-flex",alignItems:"center",gap:7,lineHeight:1}}><IconCanvaMark size={15}/>Canva</button>
                   <button onClick={() => { setCanvaState("idle"); setCanvaEditUrl(""); setCanvaError(""); forgetDeck(); }}
