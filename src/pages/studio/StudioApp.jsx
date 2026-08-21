@@ -918,7 +918,9 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
     const d = cfg.dims || {}; const fd = cfg.floorDims || d;
     if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
-    if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+    // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
+    // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
+    if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
   });
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
@@ -4016,7 +4018,7 @@ export default function StudioApp() {
         const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
       });
       let truckFrac = 0; Object.values(subAgg).forEach(s => { if (s.perTruck > 0) truckFrac += (s.qty || 0) / s.perTruck; });
       const itemTrucks = Math.ceil(truckFrac);
@@ -4418,7 +4420,7 @@ export default function StudioApp() {
         const d = cfg.dims || {}; const fd = cfg.floorDims || d;
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * Math.max(1, cfg.trussQty || 1); if (tSqft > 0) addSub("Truss", tSqft, zk, "Truss structure"); }
         const sqft = (fd.L || 0) * (fd.W || 0);
-        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
+        if (sqft > 0) { if (cfg.plH) addSub("Platform", sqft, zk, "Platform"); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft, zk, "Carpet"); }
       });
       let truckFrac = 0;
       Object.values(subAgg).forEach(s => { if (s.perTruck > 0) { truckFrac += (s.qty || 0) / s.perTruck; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: (s.qty || 0) / s.perTruck, items: s.items }); } });

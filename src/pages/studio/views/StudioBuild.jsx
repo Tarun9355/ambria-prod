@@ -7,7 +7,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, venueTypeLabel,
-  maskingOptions, platformOptions, platformDefaultId, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
+  maskingOptions, platformOptions, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
   platformRowCost,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
@@ -454,11 +454,13 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     <span style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginLeft:2}}>Height</span>
                     <span style={{display:"inline-flex",padding:2,borderRadius:999,border:`1px solid ${border}`,background:"rgba(26,26,46,0.03)",gap:2}}>
                       {platformOptions(imsPlatformRates).map(o=>{
-                        // 1ft–3ft shows as the default while nothing is chosen, so the control arrives
-                        // answered instead of blank. Safe to show before it is written because a zone
-                        // with no floor dimensions has no platform either way — and the moment a
-                        // dimension is typed, sFD above commits this same value.
-                        const on = zc.plH ? zc.plH === o.id : o.id === platformDefaultId(imsPlatformRates);
+                        // Neither button shows as picked until zc.plH is actually written — it used
+                        // to show 1ft–3ft as pre-selected so the control never looked blank, but that
+                        // pre-select used to get silently committed the moment a floor dimension was
+                        // typed (see sFD above), billing a platform nobody had pressed a button for.
+                        // A zone with no plH simply has no platform — that's a real, valid state now,
+                        // not just an unanswered control.
+                        const on = zc.plH === o.id;
                         return (
                           <button key={o.id} onClick={()=>sZ({plH:on?null:o.id})}
                             title={on?`${o.l} selected — press again for no platform`:`Set platform height to ${o.l}`}
@@ -480,14 +482,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
               </div>
               {/* Carpet sits with the floor dimensions, to the right of depth — it is priced on the
                   same area those two inputs define, so it belongs beside them rather than in a row
-                  of its own above.
-                  The options come from imsCarpetMaterials, NOT imsPrintMaterials. Carpet moved to
-                  its own master list in IMS and platformRowCost prices against `carpetMaterials`;
-                  this select was still reading the print list, so defaultCarpetMatId found no
-                  "Carpet Old" there and fell through to "— None —" while pricing was quietly
-                  charging the default anyway. Same list on both sides now, so the dropdown shows
-                  the material actually being billed. Only the explicit CARPET_OFF sentinel means
-                  no carpet — leaving it untouched has always meant Carpet Old. */}
+                  of its own above. The options come from imsCarpetMaterials, NOT imsPrintMaterials —
+                  carpet has its own master list in IMS and platformRowCost prices against
+                  `carpetMaterials`.
+                  Defaults to "— None —", unselected, until a material is actually picked — it used
+                  to pre-select "Carpet Old" (via defaultCarpetMatId) and price that in even though
+                  nothing had been chosen, so a floor got charged carpet just for having a truss.
+                  carpetPricingFor now treats an unset cpT the same as the explicit CARPET_OFF
+                  sentinel (₹0, no carpet) — see taxonomy.js. */}
               <div style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-end",flexWrap:"wrap"}}>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
@@ -495,15 +497,10 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
-                  <select value={zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>sZ({cpT:e.target.value})}
+                  <select value={zc.cpT||""} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
                     style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                    <option value="" style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
-                    {/* "— None —" is no longer offered: every floor gets carpet. It is still rendered
-                        for a zone already saved as CARPET_OFF, otherwise the select would fall back
-                        to showing the first material while platformRowCost kept charging ₹0 for it —
-                        a dropdown disagreeing with the bill. Pick any material there and the option
-                        disappears for good. */}
-                    {zc.cpT===CARPET_OFF&&<option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>}
                   </select></div>
                 {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
               </div>
@@ -3425,7 +3422,12 @@ undefined
             // so entering a dimension is exactly the point the band has to be real. Set only when it is
             // still unset, so an explicit 4-inch choice is never overwritten, and a zone nobody measures
             // still carries no platform at all.
-            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};return {...p,[k]:{...cur,plH:cur.plH||platformDefaultId(imsPlatformRates),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}};});};
+            // Typing a floor dimension no longer silently picks a platform height for you — it used
+            // to write platformDefaultId() in here the moment ANY dimension was typed, which is how
+            // a height ended up "chosen" (and billed) without either HEIGHT button ever being
+            // pressed. plH now only ever comes from actually pressing one — see the segmented
+            // control below.
+            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};return {...p,[k]:{...cur,floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}};});};
             const fd=zc.floorDims||{};
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
               {/* The "Zone Structure" header row is gone. Its label named a panel you had already

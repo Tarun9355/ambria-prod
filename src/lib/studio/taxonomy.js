@@ -86,21 +86,6 @@ export const BASE_RATES={truss:{box:50,singleU:30},masking:{fabric:20,acrylic:10
 export const PLAT_OPTS=[{id:"4in",l:"4 inch",r:30},{id:"1ft",l:"1ft–3ft",r:45}];
 export const DEFAULT_PLATFORM_RATES = PLAT_OPTS.map((o) => ({ key: o.id, name: o.l, ratePerSqft: o.r }));
 
-/**
- * Which platform height a zone gets when nobody has picked one.
- *
- * Derived from the OFFERED options rather than hardcoded, because the list comes from the admin's
- * rate card — keys can be renamed there, and a default that names a band nobody offers would be
- * written into a zone and then priced off the seed rates behind the user's back.
- * 1ft–3ft is the intended default (it is what almost every zone is actually built at). If that key is
- * gone, the last option is the taller band, which is the safer guess than the shortest.
- */
-export function platformDefaultId(platformRates) {
-  const opts = platformOptions(platformRates);
-  if (!opts.length) return "";
-  return (opts.find((o) => o.id === "1ft") || opts[opts.length - 1]).id;
-}
-
 /** ₹/sqft for a platform height, from the admin's saved list, falling back to the seed rates. */
 export function platformRateFor(key, platformRates) {
   const list = (Array.isArray(platformRates) && platformRates.length) ? platformRates : DEFAULT_PLATFORM_RATES;
@@ -217,11 +202,13 @@ export function maskingOptions(maskingRates) {
   return list.map((r) => ({ id: r.key, l: r.name, r: Number(r.ratePerSqft) || 0 }));
 }
 
-// Sentinel `cpT` value meaning "salesperson explicitly turned carpet off" — any OTHER falsy value
-// (null/undefined, from every zone-creation path that doesn't set cpT at all) means "not decided
-// yet", which prices as Carpet Old by default rather than as no carpet — carpet used to be priced
-// unconditionally whenever a zone had a floor footprint, so leaving it untouched must keep pricing,
-// not silently drop to ₹0.
+// Sentinel `cpT` value meaning "salesperson explicitly turned carpet off". Any OTHER falsy value
+// (null/undefined/"", from every zone-creation path that doesn't set cpT at all, or a floor
+// nobody has touched yet) means "not decided" — and prices the same as CARPET_OFF, ₹0, exactly
+// like an untouched platform height (`plH` falsy) already does. Carpet used to price as Carpet
+// Old whenever left untouched, on the theory that a floor almost always gets one, but that meant
+// every truss/platform silently billed (and counted toward labour/logistics) for a carpet nobody
+// had actually asked for. A carpet only prices once someone explicitly picks a material.
 export const CARPET_OFF = "__off__";
 
 /**
@@ -253,28 +240,19 @@ export function platformRowCost(row, rates) {
 // code change. `{rate, label}` together so pricing and display (StudioApp's structItems line,
 // StudioSummary's breakdown) read off the same lookup.
 export function carpetPricingFor(cpT, carpetMaterials) {
-  if (cpT === CARPET_OFF) return { rate: 0, label: "" };
+  // Unset (nobody has picked a material yet) prices exactly like the explicit CARPET_OFF sentinel
+  // — see the comment on CARPET_OFF above. No more falling back to defaultCarpetMatId() here.
+  if (!cpT || cpT === CARPET_OFF) return { rate: 0, label: "" };
   const list = carpetMaterials || [];
-  const effective = cpT || defaultCarpetMatId(list);
-  if (!effective) return { rate: 0, label: "" };
-  let mat = list.find((m) => m.id === effective);
-  if (!mat && (effective === "old" || effective === "new")) {
+  let mat = list.find((m) => m.id === cpT);
+  if (!mat && (cpT === "old" || cpT === "new")) {
     // Zones saved before this switch stored cpT as the literal "old"/"new" enum — map by name once.
-    const want = effective === "old" ? "carpet old" : "carpet new";
+    const want = cpT === "old" ? "carpet old" : "carpet new";
     mat = list.find((m) => String(m.name || "").trim().toLowerCase() === want);
   }
   if (mat) return { rate: Number(mat.ratePerSqft) || 0, label: mat.name };
-  const fallbackRate = effective === "old" ? 7 : effective === "new" ? 15 : 0;
-  return { rate: fallbackRate, label: effective === "old" ? "Old" : effective === "new" ? "New" : effective };
-}
-// Whatever a newly-added platform's carpet should default to — "Carpet Old" by name if that
-// material exists, else any material with "carpet" in its name, else none (no default available).
-export function defaultCarpetMatId(carpetMaterials) {
-  const list = carpetMaterials || [];
-  const exact = list.find((m) => String(m.name || "").trim().toLowerCase() === "carpet old");
-  if (exact) return exact.id;
-  const anyCarpet = list.find((m) => String(m.name || "").toLowerCase().includes("carpet"));
-  return anyCarpet ? anyCarpet.id : null;
+  const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
+  return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
 }
 export const ZONE_PRESETS={
   stage:  {small:{L:16,W:10,H:10,tr:"box",mk:"fabric",ms:1,pl:"4in",cp:"new"},medium:{L:24,W:15,H:12,tr:"box",mk:"fabric",ms:1,pl:"1ft",cp:"new",archT:"2d",archQty:2,archW:6,archH:8,pillarQty:4}},

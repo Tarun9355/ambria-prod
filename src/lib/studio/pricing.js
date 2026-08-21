@@ -585,7 +585,7 @@ const imsField = {
 // Carpet sqft = zone floor area (L×W). rentalRate = item rental (₹/sqft); purchaseRate = item.cost (₹/sqft).
 export const calcZoneCarpet = (zc, carpetItem, markupPct) => {
   const out = { needed: 0, reused: 0, fresh: 0, reusedCost: 0, freshCost: 0, cost: 0, rentalRate: 0, purchaseRate: 0 };
-  if (!zc || zc.cpT === CARPET_OFF || !carpetItem) return out;
+  if (!zc || !zc.cpT || zc.cpT === CARPET_OFF || !carpetItem) return out;
   const fd = zc.floorDims || zc.dims || {};
   const needed = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
   if (needed <= 0) return out;

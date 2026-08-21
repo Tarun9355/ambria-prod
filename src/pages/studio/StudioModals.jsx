@@ -13,7 +13,7 @@ import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
-import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
+import { getCat, carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
@@ -525,7 +525,7 @@ export default function StudioModals({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={zoneUploadReview.dims?.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={zoneUploadReview.dims?.cpT||""} onChange={e=>setZoneUploadReview({...zoneUploadReview,dims:{...(zoneUploadReview.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
@@ -559,7 +559,7 @@ export default function StudioModals({ ctx }) {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                        <select value={row.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <select value={row.cpT||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                           <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
                           {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                         </select>

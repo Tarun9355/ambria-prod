@@ -4,7 +4,7 @@ import KitComponentsEditor from "../../../components/shared/KitComponentsEditor"
 import { logVideoOpen, logPhotoOpen, logBulk } from "../../../lib/studio/userActions";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
-import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
+import { libPhotoIsTagged, carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
@@ -1062,7 +1062,7 @@ export default function ManageLibrary({ ctx }) {
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                  <select value={libEditImg.dims?.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                  <select value={libEditImg.dims?.cpT||""} onChange={e=>setLibEditImg({...libEditImg,dims:{...(libEditImg.dims||{}),cpT:e.target.value}})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                   </select>
@@ -1096,7 +1096,7 @@ export default function ManageLibrary({ ctx }) {
                     <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ fontSize: 9, color: textS }}>🟫 Carpet</span>
-                        <select value={row.cpT||defaultCarpetMatId(imsCarpetMaterials)||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
+                        <select value={row.cpT||""} onChange={e=>setRow({cpT:e.target.value})} style={{fontSize:10,padding:"3px 6px",borderRadius:6,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                           <option value={CARPET_OFF} style={{color:"#111827",background:"#fff"}}>— None —</option>
                           {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name} · ₹{m.ratePerSqft}/sqft</option>)}
                         </select>

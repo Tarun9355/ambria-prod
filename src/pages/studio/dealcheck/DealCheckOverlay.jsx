@@ -1640,7 +1640,11 @@ export default function DealCheckOverlay({ ctx }) {
                                 {/* §26.18 + §26.19 — Carpet block with visual tile picker */}
                                 {(()=>{
                                   const zc = fns[fnIdx]?.zoneConfig?.[zk];
-                                  if (!zc || zc.cpT === CARPET_OFF) return null;
+                                  // Unset cpT (nobody has picked a carpet material yet) skips this card
+                                  // too, same as the explicit OFF sentinel — otherwise it renders an
+                                  // "pick a carpet" prompt for a floor that isn't being charged carpet
+                                  // at all (see carpetPricingFor in taxonomy.js).
+                                  if (!zc || !zc.cpT || zc.cpT === CARPET_OFF) return null;
                                   const fd = zc.floorDims || zc.dims || {};
                                   const neededSqft = Math.round((Number(fd.L)||0)*(Number(fd.W)||0));
                                   if (neededSqft <= 0) return null;
