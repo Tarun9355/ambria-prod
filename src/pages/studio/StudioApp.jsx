@@ -1787,6 +1787,13 @@ export default function StudioApp() {
   // Blocks for just the active function's date — warms once loadAvailability/activeFnMeta exist
   // below. Powers Build view's availability-aware pricing for invId-sourced elements only.
   const [activeBlocksForDate, setActiveBlocksForDate] = useState({});
+  // Same thing, but for EVERY function's own date, not just whichever one is the open Build tab —
+  // { [date]: blocksForDate }. eventGrandTotal/calcFunctionBreakdown need each function's shortfall
+  // priced against ITS OWN date, not the active function's; without this, checking availability at
+  // all was restricted to the active function only (activeBlocksForDate has no other date to check
+  // against), which meant the shortfall discount silently moved to whichever function you had open —
+  // the combined total shifted every time you switched tabs, nothing about the event having changed.
+  const [blocksByDate, setBlocksByDate] = useState({});
   const [libElSearch, setLibElSearch] = useState("");
   const [trVenues, setTrVenues] = useState(TR_DV);
   const [truckCap, setTruckCap] = useState(TR_DTC);
@@ -3444,7 +3451,10 @@ export default function StudioApp() {
     }
 
     if (opts?.checkAvailability) {
-      const available = getStudioAvailable(item, activeBlocksForDate);
+      // blocksForDate lets a caller price a NON-active function's shortfall against ITS OWN date
+      // (see getElPriceForFn) — falls back to the single active-function cache for every existing
+      // Build-view caller, which never passes it and keeps working exactly as before.
+      const available = getStudioAvailable(item, opts?.blocksForDate ?? activeBlocksForDate);
       const ownedQty = Math.min(qty, available);
       const shortQty = Math.max(0, qty - available);
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
@@ -3703,16 +3713,18 @@ export default function StudioApp() {
     }, 0);
   }, [getElPrice, applyFloralRatio]);
 
-  // checkAvail (optional): mirrors getElPrice's opts.checkAvailability — only meaningful for the
-  // CURRENTLY ACTIVE function, since activeBlocksForDate is only ever warmed for that function's
-  // own date (see the useEffect that warms it). Callers must gate this to the active function only;
-  // passing it for another function's snapshot would check its items against the wrong date's blocks.
+  // checkAvail (optional): mirrors getElPrice's opts.checkAvailability. blocksForDate (optional) is
+  // the specific function's OWN date's blocks (from the blocksByDate map — see the warming effect
+  // below) — pass it whenever checkAvail is true for a function that ISN'T necessarily the active
+  // one, so its shortfall prices against its own date rather than falling back to whichever date
+  // activeBlocksForDate happens to be warmed for. Omitted, it falls back to activeBlocksForDate
+  // inside getElPriceFromInventory, same as before this existed.
   // venueName (optional, no default): unlike getElPrice, this variant is explicitly "for a given
   // function snapshot" — callers iterate their OWN fns/fnData with its own fnVenue, so there is no
   // single correct default the way activeFnMeta.venue is for the always-active-function getElPrice.
   // Omit it and a Repeat zone here simply prices at full rate, same as before this existed.
-  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName) => {
-    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName }); // IMS inventory-sourced element — Rate Card never consulted
+  const getElPriceForFn = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
+    if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate }); // IMS inventory-sourced element — Rate Card never consulted
     if (el.patternId) return getElPriceFromPattern(el); // pure flower-recipe element, no inventory item
     const rc = rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase());
     if (!rc) return { rc: null, unitPrice: 0, lineCost: 0 };
@@ -3745,8 +3757,8 @@ export default function StudioApp() {
     return { rc, unitPrice: up, lineCost: (el.qty || 0) * up };
   }, [rcItems, getFloralMode, rcFloralModeByKey, floralArtUnitRate, patternExtra, resolveRcRate, getElPriceFromInventory, getElPriceFromPattern]);
 
-  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName) => {
-    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName).lineCost, 0);
+  const calcElsCostForFn = useCallback((elements, zc, fnRatio, checkAvail, venueName, blocksForDate) => {
+    return (elements || []).reduce((s, el) => s + getElPriceForFn(el, zc, fnRatio, checkAvail, venueName, blocksForDate).lineCost, 0);
   }, [getElPriceForFn]);
 
   // The price badge on every UNSELECTED photo tile: what this zone would cost if you picked this
@@ -3970,14 +3982,18 @@ export default function StudioApp() {
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     zones.forEach(z => { decor += calcStructCost(z.type, z.config, structRates).total; });
-    // Availability-shortfall pricing only applies to the currently active function — see
-    // getElPriceForFn's comment. This is what makes this total (Summary's top banner, Deal Check's
-    // quote) match Build's own live totalCost() instead of running lower whenever an item is
-    // oversubscribed for the date.
-    const fCheckAvail = fnData.fnIdx === activeFnIdx;
+    // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
+    // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
+    // only run for whichever function was the active Build tab (activeBlocksForDate has no other
+    // date to check against) — so switching tabs moved which function got the shortfall discount,
+    // and this total (Summary's top banner, Deal Check's quote) shifted on every click even though
+    // nothing about the event had changed. blocksByDate[fnData.fnDate] can briefly be undefined
+    // right after a date changes and before the fetch resolves — getStudioAvailable(item, undefined)
+    // just reads as "nothing blocked yet", the same safe empty-state every date starts from anyway.
+    const fBlocksForDate = blocksByDate[fnData.fnDate];
     Object.entries(fZoneElements).forEach(([zk, elems]) => {
       if (!fEnabledEls[zk] || !elems) return;
-      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, fCheckAvail, fVenue);
+      decor += calcElsCostForFn(elems, fZoneConfig[zk], fFloralRatio, true, fVenue, fBlocksForDate);
     });
     // Only count a custom item while its own zone is still enabled — matches calcFunctionBreakdown
     // (Summary's accordion), which already scoped this way; this one used to count every custom
@@ -4031,7 +4047,7 @@ export default function StudioApp() {
       transport = truckTotal + gensetCost;
     }
     return { decor, transport, grand: decor + transport };
-  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, activeFnIdx, imsInventory, dealCheckData, studioFloralData]);
+  }, [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
 
   const calcFnFloralSourcingCost = useCallback((fn) => {
     const fp = dealCheckData?.flowerPatterns || [];
@@ -4342,6 +4358,8 @@ export default function StudioApp() {
     const fElTiers = fnData.elTiers || {};
     const fVenue = fnData.fnVenue || "";
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
+    // Every function's own date, not just the active one — see calcFunctionCost's matching comment.
+    const fBlocksForDate = blocksByDate[fnData.fnDate];
     const zones = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
       // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
       // custom zone names showing blank in Summary's accordion and the PDF/PPT export.
@@ -4358,9 +4376,10 @@ export default function StudioApp() {
           // (it's not an error signal; lineCost is already 0 in the genuinely-unpriced case). This
           // used to skip counting ANY of those elements' cost here — the single biggest reason
           // Summary's own per-zone accordion could show a fraction of Build's/Deal Check's total.
-          // checkAvail only for the active function (see getElPriceForFn) — keeps this accordion's
-          // per-zone total matching Build's own live totalCost() when an item is oversubscribed.
-          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, fnData.fnIdx === activeFnIdx, fVenue);
+          // checkAvail for every function now (see calcFunctionCost's comment) — keeps this
+          // accordion's per-zone total matching Build's own live totalCost() when an item is
+          // oversubscribed, for whichever function's zone this is, not just the active tab's.
+          const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate);
           ic += priceInfo.lineCost;
           itemCount += (el2.qty || 0);
         });
@@ -4439,7 +4458,7 @@ export default function StudioApp() {
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, activeFnIdx, imsInventory, dealCheckData, studioFloralData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
 
@@ -7387,6 +7406,20 @@ export default function StudioApp() {
     loadAvailability(date).then(({ blocksForDate }) => { if (!cancelled) setActiveBlocksForDate(blocksForDate || {}); }).catch(() => { if (!cancelled) setActiveBlocksForDate({}); });
     return () => { cancelled = true; };
   }, [activeFnMeta?.date, clientDate, loadAvailability]);
+
+  // Same warm-up, for every function's date — not just the active one. loadAvailability already
+  // caches per date (availCacheRef), so re-fetching a date already warmed by the effect above (or by
+  // a previous run of this one) is free. Runs whenever the set of dates in play changes: function 0's
+  // date (clientDate) or any extra function's date.
+  useEffect(() => {
+    const dates = [...new Set([clientDate, ...(extraFunctions || []).map(f => f?.date)].filter(Boolean))];
+    if (!dates.length) return;
+    let cancelled = false;
+    Promise.all(dates.map((d) => loadAvailability(d).then(({ blocksForDate }) => [d, blocksForDate || {}])))
+      .then((pairs) => { if (!cancelled) setBlocksByDate(Object.fromEntries(pairs)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [clientDate, extraFunctions, loadAvailability]);
 
   // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
   // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
