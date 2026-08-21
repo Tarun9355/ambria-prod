@@ -13,7 +13,7 @@ import KitComponentsEditor from "../../components/shared/KitComponentsEditor.jsx
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb.jsx";
 import InventoryItemPickerModal from "../../components/shared/InventoryItemPickerModal.jsx";
 import PhotoTagFields from "../../components/studio/PhotoTagFields.jsx";
-import { getCat, carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
+import { getCat, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { calcZoneFabric, autoFillFabricAllocation } from "../../lib/studio/pricing";
 import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { isHiddenSubcat } from "../../lib/rateCard";
@@ -511,8 +511,11 @@ export default function StudioModals({ ctx }) {
                 );
               })}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={zoneUploadReview.dims?.floorL || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), floorL: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
-                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={zoneUploadReview.dims?.floorW || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), floorW: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                {/* Same "default cpT to Carpet Old the moment a real floor dimension is typed" as
+                    Build's sFD — only while cpT is still unset, so an explicit pick is never
+                    overwritten. See the comment on Build's sFD (StudioBuild.jsx). */}
+                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={zoneUploadReview.dims?.floorL || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), cpT: zoneUploadReview.dims?.cpT || defaultCarpetMatId(imsCarpetMaterials), floorL: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={zoneUploadReview.dims?.floorW || ""} onChange={e => setZoneUploadReview({ ...zoneUploadReview, dims: { ...(zoneUploadReview.dims || {}), cpT: zoneUploadReview.dims?.cpT || defaultCarpetMatId(imsCarpetMaterials), floorW: parseFloat(e.target.value) || 0 } })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
                 <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Platform</div>
                   <div style={{ display: "flex", gap: 4 }}>
                     {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{
@@ -545,8 +548,8 @@ export default function StudioModals({ ctx }) {
                       <span onClick={removeRow} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={row.floorL || ""} onChange={e => setRow({ floorL: parseFloat(e.target.value) || 0 })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
-                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={row.floorW || ""} onChange={e => setRow({ floorW: parseFloat(e.target.value) || 0 })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Depth (ft)</div><input type="number" value={row.floorL || ""} onChange={e => setRow({ cpT: row.cpT || defaultCarpetMatId(imsCarpetMaterials), floorL: parseFloat(e.target.value) || 0 })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
+                      <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Floor Width (ft)</div><input type="number" value={row.floorW || ""} onChange={e => setRow({ cpT: row.cpT || defaultCarpetMatId(imsCarpetMaterials), floorW: parseFloat(e.target.value) || 0 })} style={{ ...S.input, fontSize: 13, padding: "6px 8px", textAlign: "center", fontWeight: 600 }} placeholder="—" /></div>
                       <div><div style={{ fontSize: 9, color: textS, marginBottom: 2 }}>Platform</div>
                         <div style={{ display: "flex", gap: 4 }}>
                           {[{v:"",l:"None"},{v:"4in",l:"4\""},{v:"1ft",l:"Raised"}].map(o=>{

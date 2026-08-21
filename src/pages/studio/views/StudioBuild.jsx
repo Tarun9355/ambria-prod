@@ -7,7 +7,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, venueTypeLabel,
-  maskingOptions, platformOptions, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
+  maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
   platformRowCost,
 } from "../../../lib/studio/taxonomy";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
@@ -485,11 +485,13 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   of its own above. The options come from imsCarpetMaterials, NOT imsPrintMaterials —
                   carpet has its own master list in IMS and platformRowCost prices against
                   `carpetMaterials`.
-                  Defaults to "— None —", unselected, until a material is actually picked — it used
-                  to pre-select "Carpet Old" (via defaultCarpetMatId) and price that in even though
-                  nothing had been chosen, so a floor got charged carpet just for having a truss.
-                  carpetPricingFor now treats an unset cpT the same as the explicit CARPET_OFF
-                  sentinel (₹0, no carpet) — see taxonomy.js. */}
+                  Shows "— None —" only for a floor nobody has measured yet — sFD (Floor Width/Depth's
+                  onChange, above) defaults cpT to Carpet Old the moment a real dimension is typed, so
+                  a floor that's plainly being sized for carpet doesn't sit silently unpriced just
+                  because the team moved straight past the dropdown. Still fully overridable: pick a
+                  different material, or "— None —" (writes the explicit CARPET_OFF sentinel), and
+                  sFD never touches cpT again once it's set. carpetPricingFor prices an unset cpT the
+                  same as CARPET_OFF (₹0) — see taxonomy.js. */}
               <div style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-end",flexWrap:"wrap"}}>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
@@ -526,7 +528,9 @@ export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark,
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
       const setRow = (patch) => write(rows.map((x, i) => (i === ri ? { ...x, ...patch } : x)));
-      const setFd = (d, v) => setRow({ floorDims: { ...(rows[ri]?.floorDims || {}), [d]: parseFloat(v) || 0 } });
+      // Same carpet default-on-first-dimension as the primary floor's sFD above — an extra
+      // platform footprint gets it too, only while its own cpT is still unset.
+      const setFd = (d, v) => setRow({ cpT: row.cpT || defaultCarpetMatId(imsCarpetMaterials), floorDims: { ...(rows[ri]?.floorDims || {}), [d]: parseFloat(v) || 0 } });
       return <FloorCard key={row.id || ri} {...shared} zc={row} sZ={setRow} sFD={setFd} fd={row.floorDims || {}}
         nested title={`Platform ${ri + 2}`} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
     })}
@@ -3414,20 +3418,17 @@ undefined
               // 3 dims filled ⇒ Box, exactly 2 ⇒ Single U — keep the toggle + pricing in sync with the dims.
               const n=[dims.W,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
               return {...p,[k]:{...cur,dims,trT}};});};
-            // ── THE 1ft–3ft DEFAULT IS COMMITTED HERE, WHEN IT STARTS TO MATTER ──
-            // Showing a height as pre-selected without writing it would be a lie the moment anyone
-            // typed dimensions: buildPlatformPlan skips a row whose plH is empty (if (!row.plH) return),
-            // so the screen would read "1ft–3ft" while the platform silently cost nothing.
-            // A platform only exists once it has a footprint — the same function needs L and W above 0 —
-            // so entering a dimension is exactly the point the band has to be real. Set only when it is
-            // still unset, so an explicit 4-inch choice is never overwritten, and a zone nobody measures
-            // still carries no platform at all.
-            // Typing a floor dimension no longer silently picks a platform height for you — it used
-            // to write platformDefaultId() in here the moment ANY dimension was typed, which is how
-            // a height ended up "chosen" (and billed) without either HEIGHT button ever being
-            // pressed. plH now only ever comes from actually pressing one — see the segmented
-            // control below.
-            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};return {...p,[k]:{...cur,floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}};});};
+            // Typing a floor dimension no longer silently picks a PLATFORM HEIGHT for you — it used
+            // to write a default height in here the moment ANY dimension was typed, which is how a
+            // height ended up "chosen" (and billed) without either HEIGHT button ever being pressed.
+            // plH now only ever comes from actually pressing one — see the segmented control below.
+            //
+            // CARPET is the opposite call, on purpose: the team reliably types floor dimensions and
+            // then moves on without ever touching the Carpet dropdown, so a floor that's plainly
+            // being measured for carpet was quietly pricing none at all. The moment a real floor
+            // dimension is entered, default cpT to Carpet Old — but only while cpT is still unset, so
+            // an explicit "— None —" pick (or any other material) is never overwritten.
+            const sFD=(d,v)=>{setActiveZones([]);setZoneConfig(p=>{const cur=p[k]||{};return {...p,[k]:{...cur,cpT:cur.cpT||defaultCarpetMatId(imsCarpetMaterials),floorDims:{...(cur.floorDims||{}),[d]:parseFloat(v)||0}}};});};
             const fd=zc.floorDims||{};
             return(<div style={{background:isDark?"#12121F":"#F9F9F6",borderRadius:10,padding:"10px 14px",marginBottom:10,border:`1px solid ${border}`}}>
               {/* The "Zone Structure" header row is gone. Its label named a panel you had already

@@ -254,6 +254,20 @@ export function carpetPricingFor(cpT, carpetMaterials) {
   const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
   return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
 }
+// Whatever a floor's carpet should default to the MOMENT someone types an actual floor dimension
+// for it — "Carpet Old" by name if that material exists, else any material with "carpet" in its
+// name, else none (no default available). Not applied by carpetPricingFor itself (an untouched
+// zone still prices no carpet at all) — the caller writes this into cpT only once real floor
+// dimensions are entered, and only if cpT is still unset, so a deliberate "— None —" pick is never
+// overwritten. Exists because salespeople reliably enter floor dims and then move on without ever
+// touching the Carpet dropdown, which used to mean the floor quietly priced with no carpet at all.
+export function defaultCarpetMatId(carpetMaterials) {
+  const list = carpetMaterials || [];
+  const exact = list.find((m) => String(m.name || "").trim().toLowerCase() === "carpet old");
+  if (exact) return exact.id;
+  const anyCarpet = list.find((m) => String(m.name || "").toLowerCase().includes("carpet"));
+  return anyCarpet ? anyCarpet.id : null;
+}
 export const ZONE_PRESETS={
   stage:  {small:{L:16,W:10,H:10,tr:"box",mk:"fabric",ms:1,pl:"4in",cp:"new"},medium:{L:24,W:15,H:12,tr:"box",mk:"fabric",ms:1,pl:"1ft",cp:"new",archT:"2d",archQty:2,archW:6,archH:8,pillarQty:4}},
   entry:  {small:{L:20,W:8,H:10,tr:"singleU",mk:"fabric",ms:1,cp:"old"},medium:{L:40,W:12,H:14,tr:"singleU",mk:"fabric",ms:1,cp:"new",archT:"3d",archQty:1,archW:10,archH:12,pillarQty:8}},
