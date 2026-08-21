@@ -23,7 +23,7 @@ export default function StudioModals({ ctx }) {
   const {
     // dcCustomModal
     dcCustomModal, setDcCustomModal, dcCustomItems, setDcCustomItems,
-    dealCheckData, studioFloralData, rcCats, rcItems, isDark, border, textP, textS,
+    dealCheckData, studioFloralData, rcItems, isDark, border, textP, textS,
     elSelectedPhoto,
     // videoModal
     videoModal, setVideoModal, videoPlaying, setVideoPlaying, videoOverlay, setVideoOverlay,
@@ -111,8 +111,6 @@ export default function StudioModals({ ctx }) {
         customItems={dcCustomItems}
         setCustomItems={setDcCustomItems}
         imsInventory={imsInventory || []}
-        rcCats={rcCats}
-        rcItems={rcItems}
         isDark={isDark}
         border={border}
         textP={textP}

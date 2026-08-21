@@ -17,7 +17,7 @@ const imsField = {
 };
 
 // §26.13 — Production/Buying Custom Item Modal (proper component for hooks)
-export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, rcCats, rcItems, isDark, border, textP, textS, onClose, zonePhoto, openAvailModal }) {
+export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, isDark, border, textP, textS, onClose, zonePhoto, openAvailModal }) {
   const { fnIdx, zoneKey, type, editId } = config;
   const isProduction = type === "production";
   const icon = isProduction ? "🏭" : "🛒";
@@ -55,20 +55,38 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
     } catch (err) { console.warn("[custom-item] photo upload failed:", err); }
     finally { setCPhotoUploading(false); }
   };
-  // RC-driven Category → Subcategory
-  const catLabels = useMemo(() => (rcCats || []).map(c => c?.l).filter(Boolean), [rcCats]);
+  // Category → Sub-Category, straight off LIVE IMS INVENTORY — the same `category`/`subcategory`
+  // fields the reference-pricing search just below (imsField.category/subcategory) matches
+  // against. This used to be driven by rcCats/rcItems (Studio's own legacy Rate Card catalogue —
+  // a small hardcoded seed list crossed with whatever `.sub` string anyone had typed onto a Rate
+  // Card line item), which is a different vocabulary from real Inventory and from the IMS-owned
+  // "📂 Sub-Categories" master (rate_card_categories) alike. Picking a category/sub-category here
+  // that didn't actually exist in Inventory was common, and silently meant "no reference price,
+  // ever" — the search below can only ever match real Inventory rows. Deriving the picker from the
+  // exact same rows the search scans makes every choice here guaranteed to have a chance at a match.
+  const catLabels = useMemo(() => {
+    const seen = new Set(), out = [];
+    (imsInventory || []).forEach((it) => {
+      const c = imsField.category(it).trim();
+      if (!c || seen.has(c.toLowerCase())) return;
+      seen.add(c.toLowerCase()); out.push(c);
+    });
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [imsInventory]);
   const subcatsByCat = useMemo(() => {
-    const out = {};
-    (rcCats || []).forEach(c => { if (c?.l) out[c.l] = new Set(); });
-    (rcItems || []).forEach(i => {
-      const cat = (rcCats || []).find(c => c?.id === i?.cat);
-      const sub = (i?.sub || "").trim();
-      if (cat?.l && sub) { if (!out[cat.l]) out[cat.l] = new Set(); out[cat.l].add(sub); }
+    const out = {}; // canonical category label -> Map(lowercase sub -> canonical sub label)
+    (imsInventory || []).forEach((it) => {
+      const c = imsField.category(it).trim();
+      const s = imsField.subcategory(it).trim();
+      if (!c || !s) return;
+      if (!out[c]) out[c] = new Map();
+      const subKey = s.toLowerCase();
+      if (!out[c].has(subKey)) out[c].set(subKey, s);
     });
     const final = {};
-    Object.keys(out).forEach(k => { final[k] = Array.from(out[k]).sort(); });
+    Object.keys(out).forEach((c) => { final[c] = [...out[c].values()].sort((a, b) => a.localeCompare(b)); });
     return final;
-  }, [rcCats, rcItems]);
+  }, [imsInventory]);
   const currentSubs = cForm.cat ? (subcatsByCat[cForm.cat] || []) : [];
   // Search IMS by subcategory + category with fuzzy matching + dimension similarity
   useEffect(() => {
