@@ -996,7 +996,17 @@ export default function DCManpowerTab({ ctx }) {
                                                   {/* Situational-multiplier pills (Tier 3 Labours only — venue-min floor side of the max()) */}
                                                   {trace.situational && (
                                                     <div style={{marginBottom:8}}>
-                                                      <ManpowerFactorPills mode="tier3" trace={trace.situational} qty={trace.total} label="Labours" dark />
+                                                      {/* NOT dark any more. This shared component carries two
+                                                          palettes and its own note says why: "Studio's Deal Check
+                                                          is a dark-themed panel … flips the palette so pills don't
+                                                          render as light boxes on a black background."
+                                                          Deal Check is not that panel any more — it is a light
+                                                          glass page now — so the dark palette was painting
+                                                          text-gray-300 and bg-white/5 onto a near-white ground and
+                                                          the whole breakdown came out washed to nothing.
+                                                          The prop was right when it was written; the page changed
+                                                          underneath it. */}
+                                                      <ManpowerFactorPills mode="tier3" trace={trace.situational} qty={trace.total} label="Labours" />
                                                     </div>
                                                   )}
                                                   {/* Sub-cat table (Carpenters/Painters Tier 2) */}
