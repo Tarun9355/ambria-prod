@@ -11,6 +11,7 @@ import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
+import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 
@@ -470,7 +471,6 @@ export default function DealCheckOverlay({ ctx }) {
             const flowerPatternsMP = dealCheckData?.flowerPatterns || [];
             const electricianProdMP = dealCheckData?.electricianProductivity || {};
             const seasonMapMP = dealCheckData?.seasonMap || {};
-            const recipeSubsMP = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase().trim());
             const labourTypes = Object.keys(dihariSchemes);
             if (labourTypes.length && fns.length) {
               // Rate per type MUST match the Manpower tab exactly (else the bottom bar diverges from the tab):
@@ -552,15 +552,17 @@ export default function DealCheckOverlay({ ctx }) {
                   let total = 0;
                   walkFn(fn, ({rc, el, qty}) => {
                     if (String(rc.cat||"").toLowerCase() !== "florals") return;
-                    const rnF = String(rc.name||"").toLowerCase().trim();
-                    const inRSF = recipeSubsMP.includes(String(rc.sub||"").toLowerCase().trim());
-                    // The element's own recipe first — what Build actually priced it with, and it
-                    // resolves even when there's no rate-card row to name-match against. Matches
-                    // DCManpowerTab.calcPeopleFlowerists; this copy skipped straight to name matching,
-                    // dropping any element whose name differs from its linked recipe's name.
+                    // The element's own recipe first — what Build actually priced it with. Beyond
+                    // that, matchFlowerPattern (flowerHelpers.js) is the SAME sub-category-first
+                    // matcher Build's own pricing already uses — a recipe is created PER SUB-CATEGORY
+                    // and applies to every differently-named product filed under it, not to one
+                    // product whose name happens to match. This used to be a hand-rolled
+                    // exact-name-then-substring lookup against the item's OWN name, which could only
+                    // ever find a pattern coincidentally named identically to the physical prop —
+                    // every sub-category-linked recipe (the normal case) silently dropped out of this
+                    // count. Matches DCManpowerTab.calcPeopleFlowerists.
                     let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
-                    if (!pattern) pattern = flowerPatternsMP.find(p => String(p?.name||"").toLowerCase().trim() === rnF);
-                    if (!pattern && inRSF) pattern = flowerPatternsMP.find(p => { const n = String(p?.name||"").toLowerCase().trim(); return n && rnF && (n.includes(rnF) || rnF.includes(n)); });
+                    if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatternsMP);
                     if (!pattern) return;
                     const sz = pattern.sizes || {};
                     const sk = sizeFromMode(rc.inhouseMode, el.size);
@@ -650,13 +652,10 @@ export default function DealCheckOverlay({ ctx }) {
                 if (type === "Flowerists") {
                   const agg = {}; walkFn(fn, ({ rc, el, qty }) => {
                     if (String(rc.cat || "").toLowerCase() !== "florals") return;
-                    const rnF = String(rc.name || "").toLowerCase().trim();
-                    const inRSF = recipeSubsMP.includes(String(rc.sub || "").toLowerCase().trim());
-                    // Same patternId-first resolution as calcPpl above — this "how" trace must explain
-                    // the same number, not a differently-resolved one.
+                    // Same patternId-first / matchFlowerPattern resolution as calcPpl above — this
+                    // "how" trace must explain the same number, not a differently-resolved one.
                     let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
-                    if (!pattern) pattern = flowerPatternsMP.find(p => String(p?.name || "").toLowerCase().trim() === rnF);
-                    if (!pattern && inRSF) pattern = flowerPatternsMP.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && rnF && (n.includes(rnF) || rnF.includes(n)); });
+                    if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatternsMP);
                     if (!pattern) return; const sz = pattern.sizes || {}; const sk = sizeFromMode(rc.inhouseMode, el.size);
                     let c = sz[sk] || sz.medium; if (!c && sk === "big" && sz.large) c = sz.large;
                     const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }

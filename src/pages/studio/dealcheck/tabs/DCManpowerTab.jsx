@@ -8,6 +8,7 @@ import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
+import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 
 export default function DCManpowerTab({ ctx }) {
@@ -58,7 +59,6 @@ export default function DCManpowerTab({ ctx }) {
                   const flowerPatternsMP = dealCheckData?.flowerPatterns || [];
                   const electricianProdMP = dealCheckData?.electricianProductivity || {};
                   const seasonMapMP = dealCheckData?.seasonMap || {};
-                  const recipeSubsMP = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase().trim());
                   // ── Vendor avg-rate lookup (22 May 2026) ─────────────
                   // For each labour type: avg of (vendor.storedRate.amount) where
                   // vendor.type==="Manpower Contractor", vendor.active, vendor.isFixed, vendor.labourType===type.
@@ -148,23 +148,20 @@ export default function DCManpowerTab({ ctx }) {
                     let total = 0;
                     walkFnElements(fn, ({ rc, qty, el }) => {
                       const cat = String(rc.cat||"").toLowerCase();
-                      const subLC = String(rc.sub||"").toLowerCase().trim();
                       if (cat !== "florals") return;
-                      // Count if the recipe has flowerist productivity: an EXACT pattern-name match counts on
-                      // its own (so a defined recipe like "Console Table Floral" is included without needing its
-                      // sub-cat toggled into flowerRecipeSubcats); loose name matching stays gated to those subs.
-                      const inRS = recipeSubsMP.includes(subLC);
                       // The element's own recipe first — that is what Build priced it with, and it
                       // resolves even when there is no rate-card row to match a name against.
-                      const targetName = (rc.name||"").toLowerCase().trim();
+                      // Beyond that, matchFlowerPattern (flowerHelpers.js) is the SAME sub-category-first
+                      // matcher Build's own pricing and Deal Check's Florals tab already use — a recipe is
+                      // created PER SUB-CATEGORY and applies to every differently-named product filed
+                      // under it ("Flower Pot Small" → "Round Fibre Pot", "Terracotta Fibre Element", etc.),
+                      // not to one product whose name happens to match. This used to be a hand-rolled
+                      // exact-name-then-substring lookup against the item's OWN name, which could only ever
+                      // find a pattern that happened to be named identically to the physical prop — every
+                      // sub-category-linked recipe (the normal case) silently reported "no pattern" here
+                      // while pricing and costing fine everywhere else.
                       let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
-                      if (!pattern) pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
-                      if (!pattern && inRS) {
-                        pattern = flowerPatternsMP.find(p => {
-                          const n = (p.name||"").toLowerCase().trim();
-                          return n && (n.includes(targetName) || targetName.includes(n));
-                        });
-                      }
+                      if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatternsMP);
                       if (!pattern) return;
                       const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       const sizes = pattern.sizes || {};
@@ -367,23 +364,15 @@ export default function DCManpowerTab({ ctx }) {
                     const agg = {};
                     walkFnElements(fn, ({ rc, qty, el }) => {
                       const cat = String(rc.cat||"").toLowerCase();
-                      const subLC = String(rc.sub||"").toLowerCase().trim();
                       if (cat !== "florals") return;
-                      // Count if the recipe has flowerist productivity: an EXACT pattern-name match counts on
-                      // its own (so a defined recipe like "Console Table Floral" is included without needing its
-                      // sub-cat toggled into flowerRecipeSubcats); loose name matching stays gated to those subs.
-                      const inRS = recipeSubsMP.includes(subLC);
-                      // The element's own recipe first — that is what Build priced it with, and it
-                      // resolves even when there is no rate-card row to match a name against.
                       const targetName = (rc.name||"").toLowerCase().trim();
+                      // The element's own recipe first — that is what Build priced it with. Beyond
+                      // that, matchFlowerPattern (flowerHelpers.js) is the SAME sub-category-first
+                      // matcher Build's own pricing and Deal Check's Florals tab already use — see
+                      // calcPeopleFlowerists above for the full explanation of why a name-only lookup
+                      // silently missed every sub-category-linked recipe (the normal case).
                       let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
-                      if (!pattern) pattern = flowerPatternsMP.find(p => (p.name||"").toLowerCase().trim() === targetName);
-                      if (!pattern && inRS) {
-                        pattern = flowerPatternsMP.find(p => {
-                          const n = (p.name||"").toLowerCase().trim();
-                          return n && (n.includes(targetName) || targetName.includes(n));
-                        });
-                      }
+                      if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatternsMP);
                       if (!pattern) { const k = `${targetName}||nopattern`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no pattern" }; agg[k].qty += qty; return; }
                       const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       const sizes = pattern.sizes || {};

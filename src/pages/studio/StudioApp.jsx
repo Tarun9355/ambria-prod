@@ -4261,7 +4261,6 @@ export default function StudioApp() {
     const fps = d.flowerPatterns || [];
     const elecProd = d.electricianProductivity || {};
     const seasonMap = d.seasonMap || {};
-    const recipeSubs = (d.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s || "").toLowerCase().trim());
     const types = Object.keys(dihari);
     if (!types.length || !(allFns || []).length) return [];
     const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
@@ -4290,12 +4289,15 @@ export default function StudioApp() {
       if (type === "Flowerists") {
         let t = 0; const agg = {}; walk(fn, ({ rc, el, qty }) => {
           if (String(rc.cat || "").toLowerCase() !== "florals") return;
-          // Exact pattern-name match counts on its own (a recipe with productivity is included even if its
-          // sub-cat isn't in flowerRecipeSubcats); loose name matching stays gated to those subs.
-          const rn = String(rc.name || "").toLowerCase().trim();
-          const inRS = recipeSubs.includes(String(rc.sub || "").toLowerCase().trim());
-          let pat = fps.find(p => String(p?.name || "").toLowerCase().trim() === rn);
-          if (!pat && inRS) pat = fps.find(p => { const n = String(p?.name || "").toLowerCase().trim(); return n && rn && (n.includes(rn) || rn.includes(n)); });
+          // matchFlowerPattern (flowerHelpers.js) is the SAME sub-category-first matcher Build's own
+          // pricing (matchFlowerPattern call ~line 4143 below) and Deal Check's tabs already use — a
+          // recipe is created PER SUB-CATEGORY and applies to every differently-named product filed
+          // under it, not to one product whose name happens to match. This used to be a hand-rolled
+          // exact-name-then-substring lookup against the item's OWN name (gated further behind
+          // flowerRecipeSubcats for the substring branch), which could only ever find a pattern
+          // coincidentally named identically to the physical prop — every sub-category-linked recipe
+          // (the normal case) silently dropped out of this count while pricing fine elsewhere.
+          let pat = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, fps);
           if (!pat) return; const sk = sizeFromMode(rc.inhouseMode, el.size); let c = pat.sizes?.[sk] || pat.sizes?.medium; if (!c && sk === "big" && pat.sizes?.large) c = pat.sizes.large;
           const upf = Number(c?.unitsPerFlowerist || 0); if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
         });
