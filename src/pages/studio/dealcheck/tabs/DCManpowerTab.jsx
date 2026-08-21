@@ -770,6 +770,17 @@ export default function DCManpowerTab({ ctx }) {
                     "Painters":"🎨", "Fabric Bangali":"🧵", "Truss Labour":"🏗️",
                     "Helpers":"🤝", "Supervisors":"👔", "Drivers":"🚛"
                   })[t] || "👷";
+                  // A tint per trade, purely so the icon tiles are distinguishable down the column —
+                  // eight identical grey squares are worse than no squares at all, because the eye
+                  // reads them as a repeated bullet rather than as a marker for THIS row.
+                  // Presentation only: nothing keys off these, and an unlisted trade falls back to
+                  // slate rather than to nothing.
+                  const typeTint = (t) => ({
+                    "Flowerists":"236,72,153", "Electricians":"245,158,11", "Labours":"59,130,246",
+                    "Carpenters":"120,113,108", "Painters":"239,68,68", "Fabric Bangali":"168,85,247",
+                    "Truss Labour":"14,165,233", "Helpers":"16,185,129", "Supervisors":"139,92,246",
+                    "Drivers":"249,115,22"
+                  })[t] || "100,116,139";
 
                   if (labourTypes.length === 0) {
                     return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>
@@ -865,18 +876,42 @@ export default function DCManpowerTab({ ctx }) {
                                 const slots = ticked.reduce((s, id) => s + winCountFor(d.date, t, id, ppl), 0); // Σ per-shift crew
                                 const uniform = ticked.every(id => winCountFor(d.date, t, id, ppl) === ppl);
                                 const cost = slots * effRate;
+                                // The row is a COLUMN, and the icon + detail sit in a band inside it.
+                                // Making the row itself horizontal would have made the calculation
+                                // breakdown below a third flex column beside the icon and the text,
+                                // which is not where it goes — it belongs full width under both.
                                 return (
-                                  <div key={t} style={{padding:"8px 10px",borderRadius:7,background:"rgba(148,163,184,0.04)",border:`1px solid ${border}55`}}>
-                                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:6}}>
-                                      <div style={{fontSize:13,color:"#1A1A2E",fontWeight:600}}>
-                                        {typeEmoji(t)} {t}  <span style={{color:"#1A1A2E",fontWeight:400}}>· {ppl} ppl @ ₹{effRate}/dihari</span>
+                                  <div key={t} style={{display:"flex",flexDirection:"column",gap:10,padding:"12px 14px",borderRadius:12,background:"rgba(255,255,255,0.62)",border:"1px solid rgba(255,255,255,0.85)",boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 18px -14px rgba(26,26,46,0.28)"}}>
+                                    <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                                    {/* ── THE TRADE'S OWN MARK, IN ITS OWN TILE ──
+                                        The emoji used to sit inline in front of the name, at whatever
+                                        size the label was, so eight rows of glyphs ran into eight rows
+                                        of text. In a tinted 34px tile it becomes the thing you find the
+                                        row BY — and the tile is what makes the row read as a card with
+                                        a subject rather than as a line of prose.
+                                        Fixed square with flexShrink:0, so a long trade name can never
+                                        squash it out of round. */}
+                                    <span aria-hidden="true" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:34,height:34,borderRadius:10,flexShrink:0,fontSize:16,lineHeight:1,background:`rgba(${typeTint(t)},0.13)`,border:`1px solid rgba(${typeTint(t)},0.22)`}}>{typeEmoji(t)}</span>
+                                    {/* The middle column takes the room, so the cost on the right stays
+                                        pinned however long the name and the shift pills run. minWidth:0
+                                        is what lets it shrink instead of pushing the cost off. */}
+                                    <div style={{flex:"1 1 auto",minWidth:0,display:"flex",flexDirection:"column",gap:7}}>
+                                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+                                      <div style={{fontSize:13.5,color:"#1A1A2E",fontWeight:700,letterSpacing:-0.1}}>
+                                        {t}  <span style={{color:"#1A1A2E",opacity:0.62,fontWeight:400,letterSpacing:0}}>· {ppl} ppl @ ₹{effRate}/dihari</span>
                                         {src.kind === "vendor_avg" ? (
                                           <span title={`Avg of: ${(src.vendors||[]).join(", ")}`} style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:7,background:"rgba(16,185,129,0.15)",color:"#10B981",fontWeight:600}}>📊 avg of {src.count} vendor{src.count===1?"":"s"}</span>
                                         ) : (
-                                          <span style={{marginLeft:6,fontSize:11,padding:"1px 6px",borderRadius:7,background:"rgba(148,163,184,0.10)",color:"#1A1A2E",fontWeight:500}}>🏠 house rate</span>
+                                          <span style={{marginLeft:6,fontSize:10.5,padding:"2px 8px",borderRadius:999,background:"rgba(148,163,184,0.12)",border:"1px solid rgba(148,163,184,0.22)",color:"#1A1A2E",fontWeight:600}}>🏠 house rate</span>
                                         )}
                                       </div>
-                                      <div style={{fontSize:13,color:cost>0?"#10B981":textS,fontWeight:700,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
+                                      {/* The computed line: green only when there IS a cost, which is
+                                          the one thing on this row that means "this crew is booked and
+                                          priced". Zero stays grey — a green "0 dihari" reads as a
+                                          success and it is the opposite.
+                                          tabular figures so the eight rows' amounts line up down the
+                                          right edge, which is the only way to compare them at a glance. */}
+                                      <div style={{fontSize:13,color:cost>0?"#059669":textS,fontWeight:700,fontVariantNumeric:"tabular-nums",letterSpacing:-0.2,whiteSpace:"nowrap"}}>
                                         {cost > 0 ? (uniform ? `${dihari} dihari × ${ppl} = ₹${Math.round(cost).toLocaleString("en-IN")}` : `${slots} crew-shifts = ₹${Math.round(cost).toLocaleString("en-IN")}`) : "0 dihari"}
                                       </div>
                                     </div>
@@ -912,7 +947,10 @@ export default function DCManpowerTab({ ctx }) {
                                         {dcMpCalcOpen[`${d.date}|${t}`] ? "× hide" : "🧮 how"}
                                       </button>
                                     </div>
-                                    {/* Calculation breakdown panel — visible when toggled on */}
+                                    </div>
+                                    </div>
+                                    {/* Calculation breakdown panel — visible when toggled on. Full width
+                                        under the whole row, not inside the text column beside the icon. */}
                                     {dcMpCalcOpen[`${d.date}|${t}`] && (() => {
                                       // For event days: trace each fn on this day. For other phases: explain carry-over.
                                       if (d.phase === "event" && d.fns.length > 0) {
