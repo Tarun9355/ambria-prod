@@ -1019,6 +1019,10 @@ export default function DealCheckOverlay({ ctx }) {
 .sb-rail-edge,.bd-rail-edge{display:none !important}
 /* Close reveals its intent on hover rather than wearing it at rest: a permanently red ring in the
    corner of a screen that is fine reads as an error. Quiet until you reach for it. */
+/* Chrome and Safari want the pseudo-element; scrollbarWidth on the element covers Firefox. Ten pills
+   in a scrolling row with a bar under them looks like a rendering fault, and there is nothing to
+   discover by dragging it that the wheel does not already do. */
+.dc-tabs::-webkit-scrollbar{display:none}
 .dc-x{-webkit-tap-highlight-color:transparent;transition:background .14s ease,border-color .14s ease,color .14s ease}
 .dc-x:hover{background:rgba(225,29,72,0.10) !important;border-color:rgba(225,29,72,0.45) !important;color:#E11D48 !important}
 /* Save Draft. The gold edge brightens and the shadow deepens — the button itself stays navy, because
@@ -1083,7 +1087,27 @@ export default function DealCheckOverlay({ ctx }) {
                   </div>
                 </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flex:"1 1 0",minWidth:0}}>
+              {/* ── THE TABS SHARE THE TITLE'S LINE ──
+                  They were a row of their own under the header, which cost a second border, a second
+                  band of padding and a strip of empty ground between the two — a lot of vertical room
+                  spent on nothing, on a screen whose whole job is to fit a costing table.
+                  flex:1 with overflowX:auto is what makes it safe: the tabs take the room left between
+                  the title and the close, and scroll inside it rather than squashing the title or
+                  pushing the close off the edge. minWidth:0 is required for that — without it a flex
+                  child refuses to shrink below its content and the overflow never engages.
+                  scrollbarWidth:none because a scrollbar under ten pills reads as a broken element;
+                  the row scrolls by wheel, trackpad and drag regardless. */}
+              <div className="dc-tabs" style={{display:"flex",gap:2,flex:"1 1 auto",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
+                {/* inline-flex with a gap rather than a marginRight on the emoji: the pair centres as
+                    one object instead of the glyph hanging off the label's baseline. */}
+                {TABS.map(t => (
+                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?`1px solid ${accent}55`:"1px solid transparent",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?`${accent}1F`:"transparent",color:dcActiveTab===t.id?"#1A1A2E":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
+                    <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
+                    {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
+                  </button>
+                ))}
+              </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flexShrink:0}}>
                 {/* The "Cached · <time>", "↻ Regenerate" and run-counter badges are gone from this
                     header. Generate below is the one control that matters, and it already states
                     what it will do ("4 zones changed…" / "no changes — uses cache") plus the run
@@ -1098,18 +1122,6 @@ export default function DealCheckOverlay({ ctx }) {
                 <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
                   style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
-            </div>
-            {/* TAB STRIP */}
-            <div style={{display:"flex",gap:2,padding:"8px 14px 0 14px",background:"#FFFFFF",borderBottom:`1px solid ${border}`,overflowX:"auto"}}>
-              {/* inline-flex with a gap rather than a marginRight on the emoji: the pair centres as
-                  one object instead of the glyph hanging off the label's baseline. Kept from the
-                  drawn-icon pass — it is the layout that was worth having, not the icons. */}
-              {TABS.map(t => (
-                <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?`1px solid ${accent}55`:"1px solid transparent",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?`${accent}1F`:"transparent",color:dcActiveTab===t.id?"#000":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1}}>
-                  <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
-                  {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
-                </button>
-              ))}
             </div>
             {/* BODY (3-column layout: left sidebar · main content · bottom strip is global) */}
             <div style={{flex:1,display:"flex",overflow:"hidden"}}>
