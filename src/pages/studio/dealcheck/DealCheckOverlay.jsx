@@ -13,6 +13,8 @@ import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+// The zone-row action marks, taken from Build so one action does not have two pictures.
+import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron } from "../../../components/icons.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
@@ -1355,8 +1357,12 @@ export default function DealCheckOverlay({ ctx }) {
                       </div>
                     );
                   }
+                  // gap 12 → 10 between the cards, but they now carry their own radius and lift, so the
+                  // air between them reads. The old rows butted onto each other and the gap was doing
+                  // all the separating on its own — which is why they looked like one striped block
+                  // rather than a stack of cards.
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {genBar}
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
                         <div style={{fontSize:13,color:"#1A1A2E"}}>{totalCards} card{totalCards===1?"":"s"} across {zoneList.length} zone{zoneList.length===1?"":"s"} · function {fnIdx + 1}</div>
@@ -1433,31 +1439,43 @@ export default function DealCheckOverlay({ ctx }) {
                           }
                         }
                         zoneRentalTotal = Math.round(zoneRentalTotal);
+                        // ── A CARD, NOT A BAND ──
+                        // These read as flat grey strips: the shadow was almost nothing, the radius was
+                        // small against their width, and every row butted onto the next. A card needs
+                        // three things and it had none of them — a lift you can see, a radius you can
+                        // see, and air between it and its neighbour.
+                        // The shadow is still soft, deliberately. These are LIST rows: if each one
+                        // floats hard the list reads as a scattered pile instead of an ordered set.
+                        // Enough to separate, not enough to detach.
                         return (
-                          <div key={zk} className="dc-zone" style={{borderRadius:12,overflow:"hidden",boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 20px -16px rgba(26,26,46,0.35)"}}>
-                            {/* White, not a 2%-ink tint, and the header no longer carries a tint of its
-                                own either. Six of these stacked on a cream page were six beige bands
-                                with beige headers — the row and its heading were the same value, so
-                                nothing separated one zone from the next except a hairline. On white the
-                                thumbnail, the name and the money are what carry, and the shadow does
-                                the separating. Kept shallow: these are list rows, and a list where
-                                every row floats reads as a pile of cards, not a list. */}
-                            <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 14px",cursor:"pointer",borderBottom:collapsed?"none":`1px solid ${border}`}}>
-                              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                                <span style={{fontSize:13,color:"#1A1A2E",transition:"transform 0.15s",display:"inline-block",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}>▼</span>
+                          <div key={zk} className="dc-zone" style={{borderRadius:14,overflow:"hidden",boxShadow:"0 1px 2px rgba(26,26,46,0.05), 0 10px 22px -14px rgba(26,26,46,0.28)"}}>
+                            <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"13px 16px",cursor:"pointer",borderBottom:collapsed?"none":`1px solid ${border}`}}>
+                              <div style={{display:"flex",alignItems:"center",gap:11,minWidth:0}}>
+                                {/* The set's own chevron, rotated, rather than a ▼ glyph — the triangle
+                                    was a font character, so it sat at whatever weight and baseline the
+                                    system font gave it and never quite matched the row. */}
+                                <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,flexShrink:0,color:collapsed?textS:"#1A1A2E",background:collapsed?"transparent":"rgba(26,26,46,0.05)",transition:"transform .16s ease,background .16s ease",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}><IconChevron size={13}/></span>
                                 {zonePhoto && <img loading="lazy" decoding="async" src={thumbUrl(zonePhoto, 160)} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
                                 <span style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2,textTransform:"capitalize"}}>{zk}</span>
                                 <span style={{fontSize:12,color:"#1A1A2E"}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
                                 {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:13,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                                {hasPlatform && <span title="Structural platform (fatta + stand)" style={{fontSize:11,padding:"3px 7px",borderRadius:4,background:platformShort?"rgba(245,158,11,0.18)":"rgba(16,185,129,0.18)",color:platformShort?"#F59E0B":"#10B981",fontWeight:700,letterSpacing:0.4}}>🏗️ {platformShort?"⚠":"✓"}</span>}
+                                {/* ── THE SAME MARKS BUILD USES, FOR THE SAME ACTIONS ──
+                                    These were emoji-plus-sign labels — 🏭+ and 🛒+ — while Build draws
+                                    the identical two buttons as IconFactory and IconCart in 26px tinted
+                                    squares. Two different pictures for one action is the kind of thing
+                                    that makes an app feel assembled rather than designed, and the emoji
+                                    version could not be size-matched anyway.
+                                    Copied down to the colours and the box: #7E22CE on violet, #B45309 on
+                                    amber, 26×26, radius 7. If Build's change, these should follow. */}
+                                {hasPlatform && <span title={platformShort?"Structural platform — short in stock":"Structural platform (fatta + stand)"} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:3,height:26,padding:"0 8px",borderRadius:7,background:platformShort?"rgba(245,158,11,0.14)":"rgba(16,185,129,0.14)",color:platformShort?"#B45309":"#059669",fontWeight:700,fontSize:11}}><IconPlatform size={13}/>{platformShort?"⚠":"✓"}</span>}
                                 {fnIdx === activeFnIdx && <>
-                                  <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"production"});}} title="Add Production item" style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(168,85,247,0.10)",color:"#A855F7",fontWeight:600,cursor:"pointer"}}>🏭+</span>
-                                  <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"buying"});}} title="Add Buying item" style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(245,158,11,0.10)",color:"#F59E0B",fontWeight:600,cursor:"pointer"}}>🛒+</span>
+                                  <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"production"});}} title="Add Production item" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#7E22CE",borderRadius:7,background:"rgba(168,85,247,0.10)"}}><IconFactory size={14}/></span>
+                                  <span onClick={e=>{e.stopPropagation();setDcCustomModal({fnIdx,zoneKey:zk,type:"buying"});}} title="Add Buying item" style={{cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,color:"#B45309",borderRadius:7,background:"rgba(245,158,11,0.12)"}}><IconCart size={14}/></span>
                                 </>}
-                                {matchedCount>0 && <span style={{fontSize:11,padding:"3px 7px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>✓ {matchedCount}</span>}
-                                {unmatchedCount>0 && <span style={{fontSize:11,padding:"3px 7px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>⚠ {unmatchedCount}</span>}
+                                {matchedCount>0 && <span title={`${matchedCount} matched to stock`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(16,185,129,0.14)",color:"#059669",fontWeight:700,fontSize:11.5}}><IconCheck size={12}/>{matchedCount}</span>}
+                                {unmatchedCount>0 && <span title={`${unmatchedCount} not matched`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(239,68,68,0.14)",color:"#DC2626",fontWeight:700,fontSize:11.5}}><IconAlert size={12}/>{unmatchedCount}</span>}
                               </div>
                             </div>
                             {!collapsed && (
