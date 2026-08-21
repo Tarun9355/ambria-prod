@@ -10,7 +10,8 @@ import {
   maskingOptions, platformOptions, platformDefaultId, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
   platformRowCost,
 } from "../../../lib/studio/taxonomy";
-import { paletteNames } from "../../../lib/studio/colours";
+import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
+import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { trussRowCost } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig } from "../../../lib/studio/pricing";
@@ -556,7 +557,7 @@ export default function StudioBuild({ ctx }) {
     studioFloralData, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // palette / colour catalogues
-    imsPaletteCatalogue, imsColourCatalogue,
+    imsPaletteCatalogue, imsColourCatalogue, setImsPaletteCatalogue, savePaletteData,
     // venues (for named-venue correction + the zone-photo Venue pill filter)
     allInhouseVenues = [], customOutdoor = [], allVenueData = {}, allOutdoorDB = [], leafInhouseVenues = [],
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
@@ -3769,6 +3770,13 @@ undefined
               <div style={{fontSize:10,color:textS,marginBottom:3,fontWeight:600}}>{taxLabel(key)}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                 {(key==="tier"?(vals||[]):azSort(vals||[])).map(v=>{const sel=(correctPhoto.tags?.[key]||[]).includes(v);return <span key={v} onClick={()=>toggle(key,v)} style={{padding:"3px 9px",fontSize:10,borderRadius:8,cursor:"pointer",border:`1px solid ${sel?accent:border}`,background:sel?`${accent}18`:"transparent",color:sel?accent:textS}}>{v}</span>;})}
+                {key==="colorPalette"&&setImsPaletteCatalogue&&<PaletteQuickAdd accent={accent} border={border} textS={textS}
+                  onAdd={(name)=>{
+                    const added=addPaletteInline(name,imsPaletteCatalogue,setImsPaletteCatalogue,savePaletteData);
+                    if(!added)return;
+                    const cur=correctPhoto.tags?.colorPalette||[];
+                    if(!cur.includes(added))toggle("colorPalette",added);
+                  }} />}
               </div>
             </div>;
           })}

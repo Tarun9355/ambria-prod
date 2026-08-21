@@ -12,6 +12,8 @@ import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
 import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
 import { itemDimsText, priceForInvItem } from "../../../lib/ims/helpers";
+import { addPaletteInline } from "../../../lib/studio/colours";
+import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
 // any sidebar filter, venue selection, or (debounced) search term changes; loadMore() appends.
@@ -859,6 +861,13 @@ export default function ManageLibrary({ ctx }) {
                           setLibEditImg({ ...libEditImg, tags: { ...libEditImg.tags, [k]: next } });
                         }} style={{ padding: "2px 7px", fontSize: 9, borderRadius: 8, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{v}</span>;
                       })}
+                      {k === "colorPalette" && <PaletteQuickAdd dense accent={accent} border={border} textS={textS}
+                        onAdd={(name) => {
+                          const added = addPaletteInline(name, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData);
+                          if (!added) return;
+                          const cur = libEditImg.tags?.colorPalette || [];
+                          if (!cur.includes(added)) setLibEditImg({ ...libEditImg, tags: { ...libEditImg.tags, colorPalette: [...cur, added] } });
+                        }} />}
                     </div>
                   </div>);
                 })}
@@ -2258,6 +2267,13 @@ export default function ManageLibrary({ ctx }) {
                           border:`1px solid ${sel?"rgba(249,115,22,0.5)":border}`,
                           color:sel?"#F97316":textS}}>{c}</span>;
                       })}
+                      <PaletteQuickAdd dense accent={accent} border={border} textS={textS}
+                        onAdd={(name)=>{
+                          const added=addPaletteInline(name,imsPaletteCatalogue,setImsPaletteCatalogue,savePaletteData);
+                          if(!added)return;
+                          const addColor=(t)=>{ const cur=t.colors||[]; return cur.includes(added)?t:{...t,colors:[...cur,added]}; };
+                          if(hasDraft){setAiVideoDraft(p=>({...p,tags:addColor(p.tags||{})}));}else{saveYtTags({[v.id]:addColor});}
+                        }} />
                     </div>
                   </div>
                   {/* Quick actions */}
@@ -2356,7 +2372,14 @@ export default function ManageLibrary({ ctx }) {
                 <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                 <div><div style={lbl}>Event type</div><div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div></div>
                 <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(venueTypeLabel(io), vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
-                <div><div style={lbl}>Colors</div><div style={chipRow}>{palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}</div></div>
+                <div><div style={lbl}>Colors</div><div style={chipRow}>
+                  {palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}
+                  <PaletteQuickAdd accent={accent} border={border} textS={textS}
+                    onAdd={(name) => {
+                      const added = addPaletteInline(name, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData);
+                      if (added && !(vTag.colors || []).includes(added)) toggleArr("colors", added);
+                    }} />
+                </div></div>
                 <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
                 <div><div style={lbl}>Time / Setting</div><div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div></div>
               </div>

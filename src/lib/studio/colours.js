@@ -114,3 +114,26 @@ export const paletteNames = (paletteCatalogue, taxonomyPalettes, fallback = []) 
   const tax = dedupe((taxonomyPalettes || []).filter(Boolean));
   return tax.length ? tax : dedupe(fallback);
 };
+
+// ═══ ADD A PALETTE, INLINE, FROM WHEREVER SOMEONE IS TAGGING ═══
+//
+// Palettes used to only be addable from Manage → Library's admin "🎨 Palettes" editor — if a
+// tagger (in Build, the zone-upload review, or the Library/video tag editors) saw a colour story
+// that wasn't in the list yet, they had no way to add it and either mis-tagged it to the closest
+// wrong palette or left it untagged, to be fixed later by someone else. This writes straight into
+// the same shared IMS palette catalogue (`{name, anchorColours:[]}`, persisted via savePaletteData)
+// so a name typed while tagging is exactly as real as one added from the admin screen.
+//
+// Case/whitespace-insensitive against what's already there, so mashing Enter twice — or two people
+// adding "Ivory & Gold" from two different screens — doesn't create duplicate rows. Returns the
+// normalised name to select on the tag either way (freshly added or already existing).
+export const addPaletteInline = (rawName, catalogue, setCatalogue, savePaletteData) => {
+  const name = normPaletteName(rawName);
+  if (!name) return null;
+  const existing = (catalogue || []).find((p) => samePalette(p?.name, name));
+  if (existing) return normPaletteName(existing.name);
+  const next = [...(catalogue || []), { name, anchorColours: [] }];
+  setCatalogue?.(next);
+  savePaletteData?.(null, next);
+  return name;
+};

@@ -13,10 +13,12 @@
 // Taxonomy appears on both screens with no code change.
 
 import { useState } from "react";
+import PaletteQuickAdd from "./PaletteQuickAdd.jsx";
+import { addPaletteInline } from "../../lib/studio/colours.js";
 
 export default function PhotoTagFields({
   tags, onChange,
-  taxonomy, imsPaletteCatalogue,
+  taxonomy, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
   leafInhouseVenues = [], allInhouseVenues = [], allOutdoorDB = [],
   getTaxLabel,
   S, accent, accentText, border, textS, textP,
@@ -92,6 +94,15 @@ export default function PhotoTagFields({
                   setTags({ [k]: sel ? cur.filter((x) => x !== v) : [...cur, v] });
                 }} style={chip(sel)}>{v}</span>;
               })}
+              {k === "colorPalette" && setImsPaletteCatalogue && (
+                <PaletteQuickAdd dense={dense} accent={accent} border={border} textS={textS}
+                  onAdd={(name) => {
+                    const added = addPaletteInline(name, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData);
+                    if (!added) return;
+                    const cur = t.colorPalette || [];
+                    if (!cur.includes(added)) setTags({ colorPalette: [...cur, added] });
+                  }} />
+              )}
             </div>
           </div>
         );

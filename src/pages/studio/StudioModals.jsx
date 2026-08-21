@@ -49,7 +49,7 @@ export default function StudioModals({ ctx }) {
     // paintPickerTarget
     paintPickerTarget, setPaintPickerTarget, zoneElements, setZoneElements,
     imsDefaultPaintCost, activeFnIdx, clientPalette, extraFunctions,
-    normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue,
+    normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
     collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // per-element / per-reference stock availability picker — shared by Build's own 📦 icon and
@@ -330,7 +330,7 @@ export default function StudioModals({ ctx }) {
               <PhotoTagFields
                 tags={zoneUploadReview.tags||{}}
                 onChange={(next)=>setZoneUploadReview(p=>({...p,tags:next}))}
-                taxonomy={taxonomy} imsPaletteCatalogue={imsPaletteCatalogue}
+                taxonomy={taxonomy} imsPaletteCatalogue={imsPaletteCatalogue} setImsPaletteCatalogue={setImsPaletteCatalogue} savePaletteData={savePaletteData}
                 leafInhouseVenues={leafInhouseVenues} allInhouseVenues={allInhouseVenues} allOutdoorDB={allOutdoorDB}
                 getTaxLabel={(k)=>(TAX_LABELS||{})[k]||k}
                 S={S} accent={accent} accentText={accentText} border={border} textS={textS} textP={textP} dense
