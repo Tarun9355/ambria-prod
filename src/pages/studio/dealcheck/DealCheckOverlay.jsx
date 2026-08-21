@@ -5,7 +5,7 @@
 // bodies. The 7 large sub-tabs (inventory / truss / florals / manpower /
 // production / buying / transport) are placeholders pending later slices.
 // ═══════════════════════════════════════════════════════════════
-import { useState, useEffect, useRef, Fragment } from "react";
+import { useState, useEffect, useRef } from "react";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
@@ -1375,14 +1375,6 @@ export default function DealCheckOverlay({ ctx }) {
                           ? <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#E11D48",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(225,29,72,0.10)",border:"1px solid rgba(225,29,72,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>⚠</span>{dirtyCount} {dirtyCount===1?"issue":"issues"}</div>
                           : <div style={{fontSize:11,fontWeight:700,letterSpacing:0.6,color:"#059669",display:"inline-flex",alignItems:"center",gap:5,padding:"4px 9px",borderRadius:999,background:"rgba(16,185,129,0.10)",border:"1px solid rgba(16,185,129,0.22)"}}><span style={{fontSize:11,lineHeight:1}}>✓</span>All clean</div>}
                       </div>
-                      {/* ── A GRID, WHICH IS WHAT MAKES THEM CARDS ──
-                          auto-fill with minmax(232px, 1fr) rather than a fixed column count: the tiles
-                          decide how many fit and reflow on a narrow window, so this needs no
-                          breakpoints. The cost sheet's zone cards are laid out the same way.
-                          The grid wraps only the MAP — the "27 cards across 5 zones" line and the
-                          generate bar are siblings above it in the flex column and would each have
-                          become a grid cell. */}
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(232px,1fr))",gap:10,alignItems:"start"}}>
                       {zoneList.map(zk => {
                         const collapseKey = `${fnIdx}|${zk}`;
                         const userOverride = dcCollapsedZones[collapseKey];
@@ -1456,32 +1448,19 @@ export default function DealCheckOverlay({ ctx }) {
                         // floats hard the list reads as a scattered pile instead of an ordered set.
                         // Enough to separate, not enough to detach.
                         return (
-                          <Fragment key={zk}>
-                          {/* THE TILE. Photo-led and inset by 7px with its own radius, the same way the
-                              cost sheet's zone cards are built — the photograph is what identifies a
-                              zone faster than its name, so it leads and the glass frames it on all four
-                              sides. As a full-width row it was a 46px thumbnail doing nothing.
-                              The detail is a SIBLING below, not a child: in a grid a card cannot both
-                              sit in a column and hold a full-width panel. See gridColumn on it. */}
-                          <div className="dc-zone" onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))}
-                            style={{borderRadius:14,padding:7,cursor:"pointer",display:"flex",flexDirection:"column",gap:7,
-                              boxShadow:collapsed?"0 1px 2px rgba(26,26,46,0.05), 0 10px 22px -14px rgba(26,26,46,0.28)":"0 1px 2px rgba(26,26,46,0.06), 0 14px 28px -14px rgba(26,26,46,0.4)"}}>
-                            {zonePhoto
-                              ? <img loading="lazy" decoding="async" src={thumbUrl(zonePhoto, 480)} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:"100%",aspectRatio:"4 / 3",objectFit:"cover",display:"block",borderRadius:9,cursor:"zoom-in",background:"rgba(26,26,46,0.05)"}} />
-                              : <div style={{width:"100%",aspectRatio:"4 / 3",borderRadius:9,background:"rgba(26,26,46,0.04)",display:"flex",alignItems:"center",justifyContent:"center",color:textS,fontSize:22}}>{"📦"}</div>}
-                            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"1px 4px 3px"}}>
-                              <div style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
-                                <span style={{fontSize:14,fontWeight:700,color:"#1A1A2E",letterSpacing:0.1,textTransform:"capitalize",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{zk}</span>
-                                {/* The set's own chevron, rotated, rather than a ▼ glyph — the triangle was
-                                    a font character, so it sat at whatever weight and baseline the system
-                                    font gave it and never quite matched the row. */}
-                                <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,flexShrink:0,color:collapsed?textS:"#1A1A2E",background:collapsed?"transparent":"rgba(26,26,46,0.06)",transition:"transform .16s ease,background .16s ease",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}><IconChevron size={13}/></span>
+                          <div key={zk} className="dc-zone" style={{borderRadius:14,overflow:"hidden",boxShadow:"0 1px 2px rgba(26,26,46,0.05), 0 10px 22px -14px rgba(26,26,46,0.28)"}}>
+                            <div onClick={()=>setDcCollapsedZones(p=>({...p,[collapseKey]:!collapsed}))} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"13px 16px",cursor:"pointer",borderBottom:collapsed?"none":`1px solid ${border}`}}>
+                              <div style={{display:"flex",alignItems:"center",gap:11,minWidth:0}}>
+                                {/* The set's own chevron, rotated, rather than a ▼ glyph — the triangle
+                                    was a font character, so it sat at whatever weight and baseline the
+                                    system font gave it and never quite matched the row. */}
+                                <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,flexShrink:0,color:collapsed?textS:"#1A1A2E",background:collapsed?"transparent":"rgba(26,26,46,0.05)",transition:"transform .16s ease,background .16s ease",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}><IconChevron size={13}/></span>
+                                {zonePhoto && <img loading="lazy" decoding="async" src={thumbUrl(zonePhoto, 160)} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
+                                <span style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2,textTransform:"capitalize"}}>{zk}</span>
+                                <span style={{fontSize:12,color:"#1A1A2E"}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
+                                {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:13,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
                               </div>
-                              <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-                                <span style={{fontSize:11.5,color:"#1A1A2E",opacity:0.6}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
-                                {zoneRentalTotal>0 && <span className="dc-money" title="Total rental of all inventory in this zone" style={{fontSize:12.5,padding:"3px 9px",borderRadius:999,background:"rgba(201,169,110,0.16)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")}</span>}
-                              </div>
-                              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                              <div style={{display:"flex",gap:6,alignItems:"center"}}>
                                 {/* ── THE SAME MARKS BUILD USES, FOR THE SAME ACTIONS ──
                                     These were emoji-plus-sign labels — 🏭+ and 🛒+ — while Build draws
                                     the identical two buttons as IconFactory and IconCart in 26px tinted
@@ -1499,16 +1478,8 @@ export default function DealCheckOverlay({ ctx }) {
                                 {unmatchedCount>0 && <span title={`${unmatchedCount} not matched`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(239,68,68,0.14)",color:"#DC2626",fontWeight:700,fontSize:11.5}}><IconAlert size={12}/>{unmatchedCount}</span>}
                               </div>
                             </div>
-                          </div>
-                          {/* THE DETAIL, FULL WIDTH UNDER ITS TILE. gridColumn 1/-1 is what lets a card
-                              in one column open a panel across all of them — grid auto-placement drops
-                              it onto the row beneath the tile it belongs to, which is why it does not
-                              need to know which column that was. The costing table needs the width; in
-                              a 240px column it would be unreadable.
-                              Its own glass, one step clearer than the tile, so it reads as opened FROM
-                              the card rather than as another card. */}
                             {!collapsed && (
-                              <div className="dc-zone" style={{gridColumn:"1/-1",borderRadius:14,padding:"12px 14px",display:"flex",flexDirection:"column",gap:10,cursor:"default"}}>
+                              <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:10}}>
                                 {/* Platform composite card(s) (Deploy 2 §7.9 addendum) — one per platform row */}
                                 {platformEntriesForZone.map(({ k: piKey, pi, rowIdx }) => {
                                   const sqft = pi.L * pi.W;
@@ -2168,10 +2139,9 @@ export default function DealCheckOverlay({ ctx }) {
                                 })}
                               </div>
                             )}
-                          </Fragment>
+                          </div>
                         );
                       })}
-                      </div>
                     </div>
                   );
                 })() : dcActiveTab === "florals" ? (
