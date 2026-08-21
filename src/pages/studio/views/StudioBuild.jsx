@@ -2388,6 +2388,26 @@ undefined
       const srcType=czSrc?.sourceType||k;
       const el=czSrc?{label:czSrc.name,icon:czSrc.icon||""}:zoneLabelsD[k];
       const isOn=enabledEls[k];const isCust=customMode[k];
+      // ── UPDATE MASTER — shared by the header button AND the per-tile one on the selected photo ──
+      // Pulled out once so both call sites open the exact same panel on the exact same photo,
+      // instead of two copies of "find the master, prefill correction" that could drift apart.
+      const masterForSel = (() => {
+        const selP = elSelectedPhoto[k];
+        return (selP?.isLibrary && selP.eventId) ? libItems.find(i => i.id === selP.eventId) : null;
+      })();
+      const masterVerified = !!masterForSel?._verified;
+      const openUpdateMaster = () => {
+        const selP = elSelectedPhoto[k];
+        if (!selP?.src) return;
+        if (!masterForSel) {
+          setCorrVenueGrp("");
+          setCorrectPhoto({ libId: null, zoneKey: k, name: selP.eventName || "", tags: {} });
+          return;
+        }
+        const mv = masterForSel.tags?.venue || "";
+        setCorrVenueGrp(allInhouseVenues.includes(mv) ? "inhouse" : (mv ? "outside" : ""));
+        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: masterForSel.name || "", tags: JSON.parse(JSON.stringify(masterForSel.tags || {})) });
+      };
       let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
@@ -2472,8 +2492,13 @@ undefined
       // scrolling left/right to hunt for it. Its saved elements & dims live in zoneElements/
       // zoneConfig and are already restored; keeping it first also stops an accidental click on a
       // different photo from resetting those edits.
+      // Grid view only skips this: with the whole set laid out at once, a selected tile jumping to
+      // the front of the grid moved the very thing you just clicked out from under your cursor.
+      // matchedPhotos is recomputed fresh every render, so toggling OFF grid view (back to the
+      // strip) re-enters this branch on its own and pins the pick to the front right then — no
+      // separate "reorder on view change" logic needed.
       const selP = elSelectedPhoto[k];
-      if (selP?.src) {
+      if (selP?.src && !gridZones[k]) {
         const existing = matchedPhotos.find(ph => ph.src === selP.src);
         matchedPhotos = [existing || selP, ...matchedPhotos.filter(ph => ph.src !== selP.src)];
       }
@@ -2539,38 +2564,14 @@ undefined
                 while CORRECTION_MODE is on: if the photo isn't a Library photo yet (fresh upload,
                 event photo), the save path creates a new Library entry rather than updating one.
                 stopPropagation because an OFF zone's header toggles the zone. */}
-            {isOn&&CORRECTION_MODE&&elSelectedPhoto[k]?.src&&(()=>{
-              const selP = elSelectedPhoto[k];
-              const isLib = selP.isLibrary && selP.eventId;
-              const master = isLib ? libItems.find(i => i.id === selP.eventId) : null;
-              const verified = !!master?._verified;
-              return <button onClick={e=>{
-                e.stopPropagation();
-                // ── NO MASTER IS A VALID CASE, NOT AN ERROR ──
-                // This bailed out with "Couldn't find the master photo" whenever the selected photo was
-                // not already a Library item — a fresh upload, or a photo off an event. But the button is
-                // deliberately shown for ANY selected photo (see the note above), and the save path is
-                // built for exactly this: it reads `isNewMaster = !correctPhoto.libId` and CREATES a
-                // library entry instead of updating one. The guard made that branch unreachable, so on
-                // those photos the button did nothing but show a red message.
-                // Opened with no libId, the photo's own name, and empty tags to fill in — which is what
-                // the save path is waiting for.
-                if(!master){
-                  setCorrVenueGrp("");
-                  setCorrectPhoto({ libId:null, zoneKey:k, name: selP.eventName||"", tags:{} });
-                  return;
-                }
-                // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
-                const mv=master.tags?.venue||"";
-                setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
-                setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
-              }} title={master
+            {isOn&&CORRECTION_MODE&&elSelectedPhoto[k]?.src&&(
+              <button onClick={e=>{e.stopPropagation();openUpdateMaster();}} title={masterForSel
                 ? "Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
                 : "This photo isn't in the shared library yet — tag it and it will be added (permanent, for everyone)"}
-                style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
+                style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${masterVerified?"#059669":"#7C3AED"}`,color:masterVerified?"#059669":"#7C3AED",fontWeight:600}}>
                 <IconPencil size={11}/>Update master
-              </button>;
-            })()}
+              </button>
+            )}
             {/* Entering the grid pre-loads the ticks from whatever's already pinned, so tick/untick
                 always acts on the FULL current membership, not a blank slate — ticking more adds,
                 unticking a pinned one removes, both auto-saved. Leaving the grid hides the ticks, so
@@ -2924,7 +2925,11 @@ undefined
                       flex:1 claims the leftover height and the padding widens the target. */}
                   <div className="ph-sel" data-sel={isSelected?"1":"0"} title={multiZone?(isSelected?"Selected — untick to remove this photo's elements from the build":"Tick to add this photo's elements to the build"):(isSelected?"Selected — this photo's pricing is applied to the zone":"Use this photo's pricing for the zone")} style={{flex:1,minHeight:52,padding:"11px 12px",cursor:"pointer",background:isSelected?(isDark?"#0D2818":"#ECFDF5"):"transparent"}} onClick={()=>{
                     if(phSwipedJustNow())return;
-                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);phGoTo(k,0,phPage[k]||0);phScrollTop(k);}
+                    // Grid view no longer pins the pick to the front (see matchedPhotos above), so
+                    // jumping to page 0 here would strand you on a page that doesn't even show the
+                    // photo you just clicked. Only the strip still pins-and-jumps; the grid leaves
+                    // you exactly where you were.
+                    if(multiZone){toggleMultiElPhoto(k,ph);}else{selectElPhoto(k,ph);if(!gridZones[k]){phGoTo(k,0,phPage[k]||0);phScrollTop(k);}}
                     // Same rule as opening the grid: whatever you actually pick to build with belongs
                     // in the group already, not just whatever happened to be ticked before. Add-only —
                     // never un-ticks anything the checkbox itself didn't touch.
@@ -2938,6 +2943,18 @@ undefined
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
                     </div>
                     {isSelected&&<div style={{marginTop:5,fontSize:10.5,fontWeight:700,color:"#047857",display:"flex",alignItems:"center",gap:4}}>✓ Selected</div>}
+                    {/* Same action as the header's "Update master" — repeated right on the tile it
+                        acts on. The header one scrolls out of view the moment a long grid (hundreds
+                        of photos, paginated) puts any distance between you and the top of the card;
+                        this copy stays exactly where your eyes already are, selection or not. Always
+                        on rather than hover-only, so it works on touch too. */}
+                    {CORRECTION_MODE&&elSelectedPhoto[k]?.src===ph.src&&<button onClick={e=>{e.stopPropagation();openUpdateMaster();}}
+                      title={masterForSel
+                        ? "Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+                        : "This photo isn't in the shared library yet — tag it and it will be added (permanent, for everyone)"}
+                      style={{marginTop:6,display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:600,padding:"3px 8px",borderRadius:7,border:`1px solid ${masterVerified?"#059669":"#7C3AED"}`,color:masterVerified?"#059669":"#7C3AED",background:"transparent",cursor:"pointer"}}>
+                      <IconPencil size={10}/>Update master
+                    </button>}
                   </div>
                 </div>);
               })}
