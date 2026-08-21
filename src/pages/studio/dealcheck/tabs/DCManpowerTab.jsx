@@ -7,7 +7,7 @@
 import { resolveTrussConfig } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, standingPillarCount, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
-import { itemImsSubcat } from "../../../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat } from "../../../../lib/ims/helpers";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 
 export default function DCManpowerTab({ ctx }) {
@@ -155,7 +155,7 @@ export default function DCManpowerTab({ ctx }) {
                   const _labBatches = {}; heavyElementRanges.forEach(her => { if (her && her.subCat && Number(her.perCount) > 0) _labBatches[her.subCat] = Number(her.perCount); });
                   const labourUsageMode = Object.keys(_labBatches).length > 0;
                   let labourUsageTotal = 0;
-                  if (labourUsageMode) fns.forEach(fn => walkFnElements(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[itemImsSubcat(rc)]; if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
+                  if (labourUsageMode) fns.forEach(fn => walkFnElements(freshFnMP(fn), ({ rc, qty }) => { const b = lookupBySubcat(_labBatches, itemImsSubcat(rc)); if (b) labourUsageTotal += (Number(qty) || 0) / b; }));
 
                   // ── People count per ceremony per labour type ─────────────
                   // Mirror of IMS App.jsx calcTier1Flowerist (line 1701). DO NOT diverge without IMS commit.
@@ -214,12 +214,14 @@ export default function DCManpowerTab({ ctx }) {
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => {
                       const sub = itemImsSubcat(rc);
-                      if (batches[sub]) subCounts[sub] = (subCounts[sub] || 0) + qty;
+                      // Case/whitespace-insensitive — an admin's config chip and an inventory item's
+                      // own sub-category are independently typed strings (see lookupBySubcat).
+                      if (lookupBySubcat(batches, sub) != null) subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
                     // Sum fractional need across sub-categories, THEN round up once.
                     let frac = 0;
                     Object.entries(subCounts).forEach(([sc, count]) => {
-                      const b = batches[sc] || 3;
+                      const b = lookupBySubcat(batches, sc) || 3;
                       frac += count / b;
                     });
                     return Math.max(cfg.minimum || 1, Math.ceil(frac));
@@ -256,7 +258,7 @@ export default function DCManpowerTab({ ctx }) {
                     // Net fixed-venue standing inventory (by matched item id) — mirrors IMS.
                     const reduction = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
                     heavyElementRanges.forEach(her => {
-                      const count = Math.max(0, (subCounts[her.subCat] || 0) - (reduction[her.subCat] || 0));
+                      const count = Math.max(0, (lookupBySubcat(subCounts, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0));
                       heavyExtra += heavyExtraLabour(her, count);
                     });
                     // Usage-based floor (matches the rollup / quote): never fewer than 1 labour per N units.
@@ -436,11 +438,11 @@ export default function DCManpowerTab({ ctx }) {
                     const subCounts = {};
                     walkFnElements(fn, ({ rc, qty }) => {
                       const sub = itemImsSubcat(rc);
-                      if (batches[sub]) subCounts[sub] = (subCounts[sub] || 0) + qty;
+                      if (lookupBySubcat(batches, sub) != null) subCounts[sub] = (subCounts[sub] || 0) + qty;
                     });
                     const rows = []; let frac = 0;
                     Object.entries(subCounts).forEach(([sc, count]) => {
-                      const b = batches[sc] || 3;
+                      const b = lookupBySubcat(batches, sc) || 3;
                       const part = count / b;
                       rows.push({ sub: sc, count, batch: b, need: Math.round(part * 100) / 100 }); // fractional contribution
                       frac += part;
@@ -480,7 +482,7 @@ export default function DCManpowerTab({ ctx }) {
                     const rows = []; let usageSum = 0, heavyFloor = 0;
                     heavyElementRanges.forEach(her => {
                       const per = Number(her.perCount) || 0; if (per <= 0) return;
-                      const count = Math.max(0, (subCounts[her.subCat] || 0) - (reductionB[her.subCat] || 0));
+                      const count = Math.max(0, (lookupBySubcat(subCounts, her.subCat) || 0) - (lookupBySubcat(reductionB, her.subCat) || 0));
                       if (count <= 0) return;
                       usageSum += count / per;
                       heavyFloor += heavyExtraLabour(her, count);

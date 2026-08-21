@@ -85,6 +85,25 @@ export function mpEffWinIds(d, mpWin, type) {
 // the real IMS "Flower Pot" sub-category WITHOUT changing the item's name or its per-item floral pricing.
 export const itemImsSubcat = (rc) => { const a = (rc && rc.imsAlias != null) ? String(rc.imsAlias).trim() : ""; return a || (rc && rc.sub) || ""; };
 
+// Sub-category names get typed independently in two places that must agree by string alone — an
+// admin's labour-batching config (labourTiers[type].subCatBatches, heavyElementRanges) and an
+// inventory item's own sub-category field — with no shared foreign key between them (see
+// renameSubcat's comment in IMS.jsx, which already documents the intent as "matched case-
+// insensitively"). Casing/whitespace drift between the two (an admin typing "mattress", inventory
+// holding "Mattress") silently breaks the match: labour then falls back to the type's bare minimum
+// for that item, with no visible error — it just looks like the deal has "nothing to batch."
+// normSubcat/lookupBySubcat give every comparison the same case/whitespace-insensitive treatment
+// already used for palettes (normPaletteName) and venues (normVenueName) — use them instead of a raw
+// `batches[sub]` or `map[her.subCat]` lookup anywhere a config-typed name meets an inventory-typed one.
+export const normSubcat = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+export const lookupBySubcat = (map, key) => {
+  if (!map || !key) return undefined;
+  const nk = normSubcat(key);
+  if (!nk) return undefined;
+  const hit = Object.keys(map).find((k) => normSubcat(k) === nk);
+  return hit !== undefined ? map[hit] : undefined;
+};
+
 // Display string for an inventory item's physical dimensions, e.g. "3 × 2 × 4 Feet" — prefers the
 // precomputed `item.size` (written whenever the item is saved in IMS), falls back to building one
 // from the raw `dims_LxWxH` object. Empty string when the item has no dims at all.

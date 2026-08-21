@@ -75,7 +75,7 @@ import {
 } from "../../lib/studio/pricing";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
-import { itemImsSubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
+import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
@@ -4307,7 +4307,7 @@ export default function StudioApp() {
         const em = eventTypeMultipliers["outdoor_budgeted"] || 1; const base = Math.ceil(vm * em);
         const ss = seasonMap[fn.fnDate || ""]; const cand = [1.0]; if (ss === "kings") cand.push(sayaMultiplier); cand.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); const sm = Math.max(...cand, 1.0);
         const adj = Math.ceil(base * sm); const sc = {}; walk(fn, ({ rc, qty }) => { sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
-        let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, sc[her.subCat] || 0); });
+        let he = 0; heavyElementRanges.forEach(her => { he += heavyExtraLabour(her, lookupBySubcat(sc, her.subCat) || 0); });
         return { count: adj + he, basis: `venue min ${vm}${sm > 1 ? ` ×${sm.toFixed(2)} season/timing` : ""}${he ? ` + ${he} heavy-element` : ""}`, trace: { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he } };
       }
       if (type === "Fabric Bangali") {
@@ -4327,8 +4327,10 @@ export default function StudioApp() {
       const cfg = labourTiers[type];
       if (cfg && cfg.tier === 2) {
         const batches = cfg.subCatBatches || {}; const sc = {};
-        walk(fn, ({ rc, qty }) => { if (batches[rc.sub || ""]) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
-        const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: batches[k] || 3, need: v / (batches[k] || 3) }));
+        // Case/whitespace-insensitive — an admin's config chip and an inventory item's own sub-
+        // category are independently typed strings (see lookupBySubcat in lib/ims/helpers.js).
+        walk(fn, ({ rc, qty }) => { if (lookupBySubcat(batches, rc.sub || "") != null) sc[rc.sub || ""] = (sc[rc.sub || ""] || 0) + qty; });
+        const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: lookupBySubcat(batches, k) || 3, need: v / (lookupBySubcat(batches, k) || 3) }));
         const need = rows.reduce((s, r) => s + r.need, 0);
         const count = Math.max(cfg.minimum || 1, Math.ceil(need));
         return { count, basis: `⌈Σ(count÷batch)⌉ = ${count} (min ${cfg.minimum || 1})`, trace: { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count } };

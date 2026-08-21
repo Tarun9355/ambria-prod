@@ -18,6 +18,7 @@
 // auto-confirm pipeline itself.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
+import { lookupBySubcat } from "./helpers";
 
 export const resolveRealPct = (el, rcItem, fnFloralRatio) => {
   if (typeof el?.realPct === "number") return Math.max(0, Math.min(100, el.realPct));
@@ -262,10 +263,12 @@ export function calcAutoCrew(fnObj, projObj, settings, inventory){
       const subCatCounts={};
       items.forEach(it=>{
         const inv=inventory?.find(i=>i.id===it.invId);
-        if(inv&&batches[inv.subCat]) subCatCounts[inv.subCat]=(subCatCounts[inv.subCat]||0)+it.qty;
+        // Case/whitespace-insensitive — an admin's config chip and an inventory item's own sub-
+        // category are independently typed strings (see lookupBySubcat in lib/ims/helpers.js).
+        if(inv&&lookupBySubcat(batches, inv.subCat)!=null) subCatCounts[inv.subCat]=(subCatCounts[inv.subCat]||0)+it.qty;
       });
       Object.entries(subCatCounts).forEach(([sc,count])=>{
-        const batch=batches[sc]||3;
+        const batch=lookupBySubcat(batches, sc)||3;
         qty+=Math.ceil(count/batch);
       });
       qty=Math.max(cfg.minimum||1, qty);

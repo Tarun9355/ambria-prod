@@ -26,7 +26,7 @@ const DC_BG = Object.values(
 // The zone-row action marks, taken from Build so one action does not have two pictures.
 import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron } from "../../../components/icons.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
-import { deptMpReconciled, itemImsSubcat, itemDimsText } from "../../../lib/ims/helpers";
+import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, standingPillarCount } from "../../../lib/ims/fixedVenues";
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
@@ -605,7 +605,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const sc = {}; walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s]||0) + qty; });
                   // Net fixed-venue standing stock before heavy-element labour (fixed venues have installed pieces).
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
-                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat]||0) - (reduction[her.subCat]||0)); he += heavyExtraLabour(her, count); });
+                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat)||0) - (lookupBySubcat(reduction, her.subCat)||0)); he += heavyExtraLabour(her, count); });
                   // Usage-based labour (Σ qty÷per-unit) with the venue-min (adj+he) as a floor.
                   return labourUsageMode ? Math.max(adj + he, Math.ceil(labourUsageTotal)) : (adj + he);
                 };
@@ -640,8 +640,8 @@ export default function DealCheckOverlay({ ctx }) {
                 const cfg = labourTiers[type];
                 if (cfg && cfg.tier === 2) {
                   const batches = cfg.subCatBatches || {}; const sc = {};
-                  walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); if (batches[_s]) sc[_s] = (sc[_s]||0) + qty; });
-                  let need = 0; Object.entries(sc).forEach(([k,v]) => { need += v / (batches[k] || 3); }); // ⌈Σ(count÷batch)⌉ — matches the Deal Check derivation
+                  walkFn(fn, ({rc, qty}) => { const _s = itemImsSubcat(rc); if (lookupBySubcat(batches, _s) != null) sc[_s] = (sc[_s]||0) + qty; });
+                  let need = 0; Object.entries(sc).forEach(([k,v]) => { need += v / (lookupBySubcat(batches, k) || 3); }); // ⌈Σ(count÷batch)⌉ — matches the Deal Check derivation
                   return Math.max(cfg.minimum || 1, Math.ceil(need));
                 }
                 if (cfg && cfg.tier === 3) return calcTier3(fn);
@@ -682,7 +682,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (!dcMpIncludeMinusOne) { const c = [({ nearby: 1.0, medium: 1.1, far: 1.2 })[(dealCheckData?.venueDumping || {})[venueName] || "nearby"] || 1.0]; const ss = seasonMapMP[fn.fnDate || ""]; if (ss === "kings") c.push(sayaMultiplier); c.push(eventTimingMultFor(eventTimingMultipliers, shiftToTiming(fn.fnShift), "Labours", 1.0)); sm = Math.max(...c, 1.0); }
                   const adj = Math.ceil(base * sm); const sc = {}; walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); sc[_s] = (sc[_s] || 0) + qty; });
                   const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
-                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (sc[her.subCat] || 0) - (reduction[her.subCat] || 0)); he += heavyExtraLabour(her, count); });
+                  let he = 0; heavyElementRanges.forEach(her => { const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0)); he += heavyExtraLabour(her, count); });
                   return { kind: "labours", venueMin: vm, mult: sm, heavy: he, result: adj + he };
                 }
                 if (type === "Fabric Bangali") {
@@ -701,8 +701,8 @@ export default function DealCheckOverlay({ ctx }) {
                 const cfg = labourTiers[type];
                 if (cfg && cfg.tier === 2) {
                   const batches = cfg.subCatBatches || {}; const sc = {};
-                  walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); if (batches[_s]) sc[_s] = (sc[_s] || 0) + qty; });
-                  const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: batches[k] || 3, need: v / (batches[k] || 3) }));
+                  walkFn(fn, ({ rc, qty }) => { const _s = itemImsSubcat(rc); if (lookupBySubcat(batches, _s) != null) sc[_s] = (sc[_s] || 0) + qty; });
+                  const rows = Object.entries(sc).map(([k, v]) => ({ sub: k, count: v, batch: lookupBySubcat(batches, k) || 3, need: v / (lookupBySubcat(batches, k) || 3) }));
                   const need = rows.reduce((s, r) => s + r.need, 0); const count = Math.max(cfg.minimum || 1, Math.ceil(need));
                   return { kind: "tier2", rows, need, min: cfg.minimum || 1, result: count };
                 }
@@ -719,7 +719,7 @@ export default function DealCheckOverlay({ ctx }) {
               const labourUsageByFn = {};
               fns.forEach((fn, fi) => {
                 const byDept = {}; let total = 0;
-                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = _labBatches[itemImsSubcat(rc)]; if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
+                if (labourUsageMode) walkFn(freshFnMP(fn), ({ rc, qty }) => { const b = lookupBySubcat(_labBatches, itemImsSubcat(rc)); if (!b) return; const need = (Number(qty) || 0) / b; if (need <= 0) return; const dp = catToDept(rc.cat); byDept[dp] = (byDept[dp] || 0) + need; total += need; });
                 labourUsageByFn[fi] = { byDept, total };
                 Object.entries(byDept).forEach(([dp, n]) => { labourUsageByDept[dp] = (labourUsageByDept[dp] || 0) + n; });
                 labourUsageTotal += total;
