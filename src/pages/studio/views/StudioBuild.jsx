@@ -848,6 +848,15 @@ export default function StudioBuild({ ctx }) {
   // membership once grid mode is on for a zone (pre-loaded from the saved group, see the grid-view
   // toggle below), not just a pending pick. Ticking/unticking IS the group now — no separate confirm.
   const grpSelFor = (k) => grpSel[k] || EMPTY_SET;
+  // ── WHICH TICKS THE USER ACTUALLY ASKED FOR ──
+  // Opening the grid, and picking a photo to build with, both pre-tick that photo — a convenience, so
+  // whatever is driving the zone does not have to be re-found and re-ticked. But both of those also
+  // SAVED it, which quietly pinned the photo into the zone's permanent group. That is how a photo
+  // retagged to another zone kept appearing here: group membership is not derived from tags, so once
+  // pinned it stays, and nobody ever chose to pin it.
+  // These ids are ticked but NOT persisted. An explicit toggle promotes an id out of this set — at
+  // that point the user has said something about it — and only then can it reach the saved group.
+  const [grpAuto, setGrpAuto] = useState({});   // { [zoneKey]: Set<libraryPhotoId> }
   // { [zoneKey]: "saving" | "saved" | "error" } — feedback for the auto-save below, since there's no
   // button press to feel like confirmation anymore.
   const [grpSaveStatus, setGrpSaveStatus] = useState({});
@@ -878,29 +887,43 @@ export default function StudioBuild({ ctx }) {
       }
     }, 700);
   };
-  const toggleGrpPick = (k, id, srcType, label) => setGrpSel(prev => {
-    const cur = new Set(prev[k] || []);
-    cur.has(id) ? cur.delete(id) : cur.add(id);
-    scheduleGroupSave(k, srcType, label, cur);
-    return { ...prev, [k]: cur };
-  });
+  // An explicit tick or untick. This is the only path that may write, and the id stops being "auto"
+  // the moment it is touched here — the user has now said something about it either way.
+  const toggleGrpPick = (k, id, srcType, label) => {
+    let promoted = grpAuto[k];
+    if (promoted && promoted.has(id)) {
+      promoted = new Set(promoted); promoted.delete(id);
+      setGrpAuto(p => ({ ...p, [k]: promoted }));
+    }
+    setGrpSel(prev => {
+      const cur = new Set(prev[k] || []);
+      cur.has(id) ? cur.delete(id) : cur.add(id);
+      const auto = promoted;
+      const toSave = (auto && auto.size) ? new Set([...cur].filter(x => !auto.has(x))) : cur;
+      scheduleGroupSave(k, srcType, label, toSave);
+      return { ...prev, [k]: cur };
+    });
+  };
   // Add-only, never removes — used when picking a photo for the actual build (not ticking the
-  // checkbox) while grid mode is already open. Whatever gets chosen to build with should already
-  // be a group member, same as the grid-view-open pre-tick; a no-op (and no re-save) if it already is.
-  const ensureGrpPick = (k, id, srcType, label) => setGrpSel(prev => {
+  // checkbox) while grid mode is already open. It TICKS the photo so the grid reflects what the zone
+  // is built from, but it no longer saves: choosing a photo to build with is not the same as asking
+  // for it to be pinned into this zone forever, and conflating the two is what put a retagged photo
+  // back in Centre Pieces. It joins grpAuto, so a later explicit tick elsewhere cannot carry it in.
+  const ensureGrpPick = (k, id, srcType, label) => setGrpSel(prev => {   // eslint-disable-line no-unused-vars
     const cur = new Set(prev[k] || []);
     if (cur.has(id)) return prev;
     cur.add(id);
-    scheduleGroupSave(k, srcType, label, cur);
+    setGrpAuto(p => { const a = new Set(p[k] || []); a.add(id); return { ...p, [k]: a }; });
     return { ...prev, [k]: cur };
   });
   // Hide the ticks locally WITHOUT touching the saved group — used when leaving grid view, where
   // the ticks just stop being visible/actionable, same as the group being untouched always meant.
-  const hideGrpPick = (k) => setGrpSel(prev => ({ ...prev, [k]: new Set() }));
+  const hideGrpPick = (k) => { setGrpSel(prev => ({ ...prev, [k]: new Set() })); setGrpAuto(p => ({ ...p, [k]: new Set() })); };
   // Untick everything in this zone AND persist that — with the auto-save above, this empties the
   // saved group, same as unticking each photo individually would, just in one click.
   const clearGrpPick = (k, srcType, label) => setGrpSel(prev => {
     scheduleGroupSave(k, srcType, label, new Set());
+    setGrpAuto(p => ({ ...p, [k]: new Set() }));   // nothing is ticked, so nothing is auto either
     return { ...prev, [k]: new Set() };
   });
   // Both side rails fold away together, from the one control in the Photo filters header.
@@ -2555,19 +2578,23 @@ undefined
               const on=!g[k];
               if(on){
                 // Whatever's actually driving this zone's build right now shouldn't have to be
-                // re-found and re-ticked by hand — it starts in the group already, same as if it
-                // had been pinned earlier. Untick it here and it's simply excluded from now on.
+                // re-found and re-ticked by hand — it starts TICKED. It does not start SAVED.
+                // Opening a grid is not a request to pin anything, and it used to write: the tick set
+                // was persisted here, so merely looking at a zone's photos pinned whatever was
+                // selected into that zone's permanent group. Retag the photo afterwards and it kept
+                // showing up, because group membership does not follow tags.
+                // The auto-ticked ids go into grpAuto and are excluded from every save until the user
+                // toggles one by hand.
                 const initial=new Set(grpSaved);
+                const auto=new Set();
                 if(isMultiPhotoZone(el.label)){
-                  (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId) initial.add(p.eventId); });
+                  (elMultiPhotos[k]||[]).forEach(p=>{ if(p?.eventId && !initial.has(p.eventId)){ initial.add(p.eventId); auto.add(p.eventId); } });
                 } else {
                   const selP=elSelectedPhoto[k];
-                  if(selP?.eventId) initial.add(selP.eventId);
+                  if(selP?.eventId && !initial.has(selP.eventId)){ initial.add(selP.eventId); auto.add(selP.eventId); }
                 }
                 setGrpSel(p=>({...p,[k]:initial}));
-                // Only save if the currently-selected photo(s) actually added something new — no
-                // point re-writing an identical group every time someone opens the grid.
-                if(initial.size!==grpSaved.length) scheduleGroupSave(k,srcType,el.label,initial);
+                setGrpAuto(p=>({...p,[k]:auto}));
               } else hideGrpPick(k);
               return {...g,[k]:on};
             });
