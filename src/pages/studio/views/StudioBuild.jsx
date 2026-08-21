@@ -3703,7 +3703,28 @@ undefined
                 const tagged = tags?.areasElements || [];
                 return areas.length ? tagged.some(a => areas.includes(a)) : true;
               })();
-          if (!stillInZone) setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
+          if (!stillInZone) {
+            setElSelectedPhoto(p => { const n = { ...p }; delete n[zk]; return n; });
+            // ── AND UNPIN IT, OR IT COMES STRAIGHT BACK ──
+            // Releasing the selection and refetching is not enough. A zone's hand-picked GROUP is a
+            // separate channel from its tags, and a group member is resolved from libById and floated
+            // to the front whether or not the zone still returns it (see applyZoneGroupOrder). So a
+            // photo retagged to another zone left the query, lost its selection — and then reappeared
+            // first in the strip, pinned. That is the "it's still here" report.
+            // Retagging a photo out of a zone is an explicit statement that it does not belong there,
+            // which is exactly when stale curation should go. Only this photo is removed; the rest of
+            // the zone's group is untouched.
+            const area = groupAreaFor(czSrcZ?.sourceType || zk, czSrcZ?.label || zk);
+            const savedIds = zoneGroups?.[area]?.[groupFn] || [];
+            const pid = correctPhoto.libId || null;
+            if (pid && savedIds.includes(pid) && writeZoneGroup) {
+              writeZoneGroup(area, groupFn, savedIds.filter(id => id !== pid))
+                .catch(() => showMsg("Photo retagged, but couldn't unpin it from this zone — untick it in the grid.", "red"));
+            }
+            // The ticks on screen are rebuilt from the saved group next time the grid opens; clear the
+            // live set too so it does not keep showing a tick for a photo that just left.
+            setGrpSel(p => { const cur = p[zk]; if (!cur || !cur.has(pid)) return p; const n = new Set(cur); n.delete(pid); return { ...p, [zk]: n }; });
+          }
         }
         setCorrectPhoto(null);
       };
