@@ -893,18 +893,15 @@ function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckC
   Object.entries(zoneElements || {}).forEach(([zk, elems]) => {
     if (!enabledEls[zk] || !elems) return;
     elems.forEach(el => {
-      // An element's sub-category used to come ONLY from a legacy Rate-Card name match. Every
-      // IMS-inventory-backed element (el.invId — the normal path for anything added via the "+ Add
-      // element" search today) and every pure flower-recipe element (el.patternId) never matches by
-      // name, so `rc` came back undefined and this silently dropped it from the truck count — most
-      // of a real build, not an edge case, same gap already fixed for pricing (see
-      // calcFunctionBreakdown's zones loop, StudioApp.jsx). Resolve the sub-category the same way
-      // getElPriceForFn's own sources do, falling back to the legacy name match only when neither
-      // an inventory item nor a pattern applies.
+      // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
+      // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
+      // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback: Rate Card's
+      // own `.sub` is a separate, older vocabulary that doesn't track IMS's live Sub-Categories
+      // master, and letting a name coincidentally match a Rate Card row override the element's real
+      // Inventory sub-category was how this silently misclassified trucking for some elements.
       const invItem = el.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
       const pattern = (!invItem && el.patternId) ? (flowerPatterns || []).find(p => p.id === el.patternId) : null;
-      const rc = (!invItem && !pattern) ? rcItems.find(i => String(i.name || "").toLowerCase() === String(el.name || "").toLowerCase()) : null;
-      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+      const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
       const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
       if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
       else addSub(sub, Number(el.qty) || 0);
@@ -4011,18 +4008,17 @@ export default function StudioApp() {
       const capBySub = {}; (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
       const subAgg = {};
       const addSub = (sub, qty) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { perTruck: Number(tc.perTruck) || 0, qty: 0 }; subAgg[k].qty += qty; };
-      // Same fix as calcFunctionBreakdown's identical loop below — an element's sub-category used to
-      // come ONLY from a legacy Rate-Card name match, so every IMS-inventory-backed element, kit
-      // line, and pure flower-recipe element silently never counted toward the truck total feeding
-      // THIS total (Summary's top banner, Deal Check's quote).
+      // Same fix as calcFunctionBreakdown's identical loop below — an element's sub-category for
+      // truck-capacity purposes comes ONLY from live IMS identity (el.invId or el.patternId), never
+      // a Rate-Card name-match — Rate Card's own `.sub` is a separate, older vocabulary that doesn't
+      // track IMS's live Sub-Categories master.
       const fcFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           const pattern = (!invItem && el.patternId) ? fcFlowerPatterns.find(p => p.id === el.patternId) : null;
-          const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
-          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1)); }
           else addSub(sub, Number(el.qty) || 0);
@@ -4260,18 +4256,17 @@ export default function StudioApp() {
     if (!types.length || !(allFns || []).length) return [];
     const sizeFromMode = (mode, sz) => (mode === "flat" || !sz) ? "medium" : (String(sz).toLowerCase() || "medium");
     const shiftToTiming = (s) => { const sl = String(s || "").toLowerCase(); if (sl.includes("morning")) return "morning"; if (sl.includes("evening") || sl.includes("night")) return "evening"; return "day"; };
-    // An element's cat/sub/inhouseMode used to come ONLY from a legacy Rate-Card name match — the
-    // same gap already fixed for pricing, transport and florals elsewhere in this file. Every
-    // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
-    // element" today) and pure flower-recipe element (el.patternId) never matched by name, so `rc`
-    // came back undefined and EVERY manpower calculator below (Flowerists, Electricians, Labours,
-    // Fabric Bangali, Truss Labour, any Tier-2 labour type) silently skipped it — undercounting crew
-    // for any build that isn't old-style Rate-Card-only, which is most builds today. Synthesizing an
-    // rc-shaped view from whichever identity actually resolves means every consumer below (all of
-    // which read rc.cat/rc.sub/rc.inhouseMode/rc.name) keeps working unchanged.
+    // An element's cat/sub/inhouseMode for manpower purposes comes ONLY from live IMS identity now
+    // — el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
+    // el.patternId (a pure flower-recipe element). The legacy Rate-Card name-match fallback is
+    // gone: Rate Card's own `.sub` is a separate, older vocabulary that doesn't track IMS's live
+    // Sub-Categories master, and a name coincidentally matching a Rate Card row used to silently
+    // override the element's real Inventory sub-category for labour-batching purposes. An element
+    // with neither identity (should not exist in a build made through today's UI) simply doesn't
+    // count here, same as before this comment — it never did without SOME resolvable identity.
     const walk = (fn, cb) => { const en = fn.enabledEls || {}; const ze = fn.zoneElements || {}; Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
-      let rc = rcItems.find(r => String(r.name || "").toLowerCase() === String(el.name || "").toLowerCase());
-      if (!rc && el.invId) {
+      let rc = null;
+      if (el.invId) {
         const invItem = imsInventory.find(i => i.id === el.invId);
         if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category, sub: invItem.subCat || invItem.subcategory, inhouseMode: "flat" };
       }
@@ -4413,23 +4408,16 @@ export default function StudioApp() {
       // items[]: the zone/element lines that made up this sub-category's qty — lets the Transport
       // tab show WHAT is filling each truck-capacity row, not just its aggregate qty.
       const addSub = (sub, qty, zoneKey, itemName) => { const k = String(sub || "").toLowerCase().trim(); const tc = capBySub[k]; if (!tc || !(qty > 0)) return; if (!subAgg[k]) subAgg[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] }; subAgg[k].qty += qty; if (itemName) subAgg[k].items.push({ zoneKey: zoneKey || "", name: itemName, qty }); };
-      // An element's sub-category used to come ONLY from a legacy Rate-Card name match — the exact
-      // same gap already fixed for pricing above (see the zones-loop comment a few lines up). Every
-      // IMS-inventory-backed element (el.invId — the normal path for anything added via "+ Add
-      // element" today), kit line, and pure flower-recipe element (el.patternId) never matches by
-      // name, so `rc` came back undefined and this silently dropped it from the truck count — most
-      // of a real build's elements, which is why Transport's per-item breakdown could look like
-      // barely anything was contributing. Resolve the sub-category the same three ways
-      // getElPriceForFn does, falling back to the legacy name match only when neither an inventory
-      // item nor a pattern applies.
+      // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
+      // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
+      // el.patternId (a pure flower-recipe element). No Rate-Card name-match fallback.
       const fFlowerPatterns = (dealCheckData || studioFloralData)?.flowerPatterns || [];
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
         elems.forEach(el => {
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           const pattern = (!invItem && el.patternId) ? fFlowerPatterns.find(p => p.id === el.patternId) : null;
-          const rc = (!invItem && !pattern) ? rcItems.find(i => i.name.toLowerCase() === (el.name || "").toLowerCase()) : null;
-          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || rc?.sub || "";
+          const sub = invItem?.subCat || invItem?.subcategory || pattern?.sub || "";
           const tc = capBySub[String(sub || "").toLowerCase().trim()]; if (!tc) return;
           const elLabel = el.name || invItem?.name || pattern?.name || sub;
           if (String(tc.unit || "pc").toLowerCase().includes("sqft")) { const L = Number(el.L || el.l || 0), W = Number(el.W || el.w || el.H || el.h || 0); if (L > 0 && W > 0) addSub(sub, L * W * (Number(el.qty) || 1), zk, elLabel); }

@@ -514,16 +514,12 @@ export default function DealCheckOverlay({ ctx }) {
                 const en = fn.enabledEls || {};
                 const ze = fn.zoneElements || {};
                 Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk]||[]).forEach(el => {
-                  const elNm = (el.name || "").toLowerCase().trim();
-                  let rc = rcItems.find(r => (r.name||"").toLowerCase().trim() === elNm);
-                  if (!rc) {
-                    rc = rcItems.find(r => {
-                      if (String(r.cat || "").toLowerCase() !== "florals") return false;
-                      const n = (r.name || "").toLowerCase().trim();
-                      return n && (elNm.includes(n) || n.includes(elNm));
-                    });
-                  }
-                  if (!rc && el.invId) {
+                  // An element's identity for manpower purposes comes ONLY from live IMS — el.invId
+                  // (Inventory) or el.patternId (a pure flower-recipe element). No Rate-Card name-
+                  // match fallback: Rate Card's own `.sub` is a separate, older vocabulary that
+                  // doesn't track IMS's live Sub-Categories master.
+                  let rc = null;
+                  if (el.invId) {
                     const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
                     if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
                   }
@@ -1938,13 +1934,11 @@ export default function DealCheckOverlay({ ctx }) {
                                         {(()=>{
                                           // Always show the card's sub-category options — computed live from current inventory
                                           // so it works even on cached cards (no regenerate needed) and can never be blank when
-                                          // the sub-category has items. The card's true sub-category comes from its rate-card item.
+                                          // the sub-category has items. The card's true sub-category comes from its live matched
+                                          // IMS item — never from Rate Card (a separate, older vocabulary that doesn't track
+                                          // IMS's live Sub-Categories master).
                                           const cardAlts = Array.isArray(card.alternatives) ? card.alternatives : [];
-                                          const rcForCard = rcItems.find(r => String(r?.name||"").toLowerCase().trim() === String(card.rcName||"").toLowerCase().trim());
-                                          // IMS alias: a Studio placeholder sub-cat (e.g. "Centre Piece") searches its aliased IMS
-                                          // sub-cat (e.g. "Flower Pot Large") so the right stock/alternatives show up.
-                                          const inferredSub = (rcForCard && itemImsSubcat(rcForCard)) ? itemImsSubcat(rcForCard)
-                                            : item ? imsField.subcategory(item)
+                                          const inferredSub = item ? imsField.subcategory(item)
                                             : (cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean) ? imsField.subcategory(cardAlts.map(a => dcInventoryCache.find(x => x.id === a.imsId)).find(Boolean)) : "");
                                           const subToUse = inferredSub || (zoneCards[0]?.subcategory || "");
                                           const allSubItems = subToUse ? dcInventoryCache.filter(x => String(imsField.subcategory(x)||"").toLowerCase().trim() === String(subToUse).toLowerCase().trim()) : [];
@@ -1993,8 +1987,8 @@ export default function DealCheckOverlay({ ctx }) {
                                           const cQty = Number(card.qty)||1;
                                           const split = Array.isArray(card.split) ? card.split.filter(s=>s&&s.imsId) : [];
                                           const setSplit = (next)=> setDcCards(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[card._cardKey]:{...(prev[fnIdx]?.[card._cardKey]||{}),split:(Array.isArray(next)&&next.length)?next:undefined}}}));
-                                          const rcS = rcItems.find(r=>String(r?.name||"").toLowerCase().trim()===String(card.rcName||"").toLowerCase().trim());
-                                          const subS = (rcS&&rcS.sub)?rcS.sub:(item?imsField.subcategory(item):"");
+                                          // Live IMS sub-category only — never Rate Card (see the sub-category note above).
+                                          const subS = item ? imsField.subcategory(item) : "";
                                           const subItems = subS ? dcInventoryCache.filter(x=>String(imsField.subcategory(x)||"").toLowerCase().trim()===String(subS).toLowerCase().trim()) : [];
                                           if (!split.length) {
                                             if (cQty < 2) return null;

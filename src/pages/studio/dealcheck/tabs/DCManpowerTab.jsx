@@ -17,7 +17,7 @@ export default function DCManpowerTab({ ctx }) {
     // build / fn state
     collectAllFunctionData,
     // settings + zone meta + rate card
-    dealCheckData, rcItems, zoneMeta, dcCards, dcInventoryCache,
+    dealCheckData, zoneMeta, dcCards, dcInventoryCache,
     // pricing helpers (module-exposed via ctx)
     calcZoneTrussPreview,
     // manpower state
@@ -101,33 +101,18 @@ export default function DCManpowerTab({ ctx }) {
                     Object.entries(fn.zoneElements || {}).forEach(([zk, elems]) => {
                       if (!fn.enabledEls?.[zk]) return;
                       (elems || []).forEach(el => {
-                        // Same resolution as the Florals tab and calcFnFloralSourcingCost — all three
-                        // walk the same elements and must agree on which exist. An exact-only match
-                        // dropped "Blue Pottery Pot Big" (the row is "Blue Pottery Pot"), and an
-                        // element priced from its own patternId with no rate-card row at all
-                        // ("Floating Floral") was dropped outright — so the flowerist derivation
-                        // counted one element where the build has three.
-                        const elNm = (el.name || "").toLowerCase().trim();
-                        let rc = rcItems.find(i => (i.name || "").toLowerCase().trim() === elNm);
-                        if (!rc) {
-                          rc = rcItems.find(i => {
-                            if (String(i.cat || "").toLowerCase() !== "florals") return false;
-                            const n = (i.name || "").toLowerCase().trim();
-                            return n && (elNm.includes(n) || n.includes(elNm));
-                          });
-                        }
-                        // el.invId is Build's THIRD identity source — the normal path for anything
-                        // added via "+ Add element" today, and the one this walker had no branch for
-                        // at all: an IMS-inventory-sourced element only counted here if its name also
-                        // happened to match a Rate Card row, silently undercounting manpower for most
-                        // of a real build. Hand consumers a minimal stand-in from the inventory item
-                        // itself so their rc.cat/rc.sub reads stay valid.
-                        if (!rc && el.invId) {
+                        // An element's identity for manpower purposes comes ONLY from live IMS —
+                        // el.invId (Inventory, the normal path for anything added via "+ Add element"
+                        // today) or el.patternId (a pure flower-recipe element, "Floating Floral" with
+                        // no inventory row at all). No Rate-Card name-match fallback: Rate Card's own
+                        // `.sub` is a separate, older vocabulary that doesn't track IMS's live
+                        // Sub-Categories master, and a name coincidentally matching a Rate Card row
+                        // used to silently override the element's real Inventory sub-category.
+                        let rc = null;
+                        if (el.invId) {
                           const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
                           if (invItem) rc = { name: invItem.name, cat: invItem.cat || invItem.category || "", sub: invItem.subCat || invItem.subcategory || "" };
                         }
-                        // No rate-card row but a recipe of its own: still a floral element. Hand the
-                        // consumers a minimal stand-in so their rc.cat / rc.sub reads stay valid.
                         if (!rc && el.patternId) rc = { name: el.name || "", cat: "florals", sub: "" };
                         if (!rc) return;
                         const qty = el.qty || 0;
