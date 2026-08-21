@@ -13,6 +13,16 @@ import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
+
+// ══ THE PAGE'S GROUND ══
+// A glob, not an import, for the same reason every other background in this app uses one: if the file
+// is not there the glob resolves to {}, DC_BG is null, and the CSS wash below carries the page as it
+// did before. An import of a missing asset fails the whole build instead.
+// Drop the artwork in as src/assets/ambria-dealcheck-bg.(jpg|png|webp|jpeg) and it takes over on the
+// next reload — nothing else has to change.
+const DC_BG = Object.values(
+  import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
+)[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
 import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron } from "../../../components/icons.jsx";
 import { heavyExtraLabour, eventTimingMultFor } from "../../../lib/ims/constants";
@@ -944,7 +954,13 @@ export default function DealCheckOverlay({ ctx }) {
           // The modals inside Deal Check keep their 9100/9200 and are meant to: a focused dialog should
           // cover the navbar, which is exactly what those still do.
           <div className="dc-root" style={{position:"fixed",left:0,right:0,bottom:0,top:navH,zIndex:45,background:"#FAF9F6",display:"flex",flexDirection:"column"}}>
-            <div className="dc-wash" aria-hidden="true">
+            {/* data-img, not a conditional tree: the artwork and the CSS wash are the same LAYER, so
+                one attribute switching which of them paints keeps a single element to reason about.
+                The blobs, bands and grain stay in the markup and are hidden by CSS when the image is
+                present — the artwork already carries its own waves and gold line-work, and laying the
+                generated wash over it would only muddy both. */}
+            <div className="dc-wash" data-img={DC_BG?"1":"0"} aria-hidden="true"
+              style={DC_BG?{backgroundImage:`url(${DC_BG})`}:undefined}>
               <span className="dc-wash-a"/><span className="dc-wash-b"/><span className="dc-wash-c"/>
               <svg className="dc-bands" viewBox="0 0 1200 960" preserveAspectRatio="none" focusable="false">
                 {WASH_BANDS.map((b,i)=>(
@@ -997,6 +1013,16 @@ export default function DealCheckOverlay({ ctx }) {
   border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
   background:radial-gradient(circle,rgba(124,92,214,0.07) 0%,rgba(124,92,214,0) 74%)}
 .dc-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
+/* ── THE ARTWORK, WHEN THERE IS ONE ──
+   cover + center, and NOT background-attachment:fixed. Fixed makes the browser re-composite the image
+   against the scroll position on every frame, which is the same per-frame cost that was flickering
+   these pages on Mac — and it buys nothing here, because this layer does not scroll. The costing table
+   scrolls inside its own pane; the ground stays put either way.
+   The generated wash is hidden rather than removed, so pulling the file out restores it untouched. */
+.dc-wash[data-img="1"]{background-size:cover;background-position:center;background-repeat:no-repeat}
+.dc-wash[data-img="1"] span,
+.dc-wash[data-img="1"] .dc-bands,
+.dc-wash[data-img="1"] .dc-grain{display:none}
 .dc-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
   background-image:${GRAIN_URL};background-size:220px 220px}
 /* Static, so this blend is composited once — it is the moving ones that cost. */
