@@ -2816,6 +2816,11 @@ undefined
                 const isSelected = multiZone
                   ? (elMultiPhotos[k] || []).some(p => (p.eventId || p.src) === (ph.eventId || ph.src))
                   : elSelectedPhoto[k]?.src === ph.src;
+                // Distinct from isSelected: for a multi-photo zone isSelected means "ticked in the
+                // list", but Update master always acts on elSelectedPhoto[k] specifically (same
+                // condition the header button gates on) — the two only ever coincide for a normal,
+                // single-photo zone.
+                const isMasterSel = elSelectedPhoto[k]?.src === ph.src;
                 // For the zone's ACTIVE picture, show the zone's real live total (zoneTotal — the
                 // same figure the header and "By zone" row use) instead of recomputing from the
                 // photo's own stored baseline. calcPhotoCost prices only photo.elements + a bare
@@ -2942,19 +2947,22 @@ undefined
                     <div style={{fontSize:12,fontWeight:isSelected?700:600,color:isSelected?"#059669":textP,marginTop:1}}>
                       {ph.isLibrary ? `${(ph.elements||[]).length} elements` : (ph.fn || "Event") + " · " + (ph.space || "")}
                     </div>
-                    {isSelected&&<div style={{marginTop:5,fontSize:10.5,fontWeight:700,color:"#047857",display:"flex",alignItems:"center",gap:4}}>✓ Selected</div>}
-                    {/* Same action as the header's "Update master" — repeated right on the tile it
-                        acts on. The header one scrolls out of view the moment a long grid (hundreds
-                        of photos, paginated) puts any distance between you and the top of the card;
-                        this copy stays exactly where your eyes already are, selection or not. Always
-                        on rather than hover-only, so it works on touch too. */}
-                    {CORRECTION_MODE&&elSelectedPhoto[k]?.src===ph.src&&<button onClick={e=>{e.stopPropagation();openUpdateMaster();}}
-                      title={masterForSel
-                        ? "Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
-                        : "This photo isn't in the shared library yet — tag it and it will be added (permanent, for everyone)"}
-                      style={{marginTop:6,display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:600,padding:"3px 8px",borderRadius:7,border:`1px solid ${masterVerified?"#059669":"#7C3AED"}`,color:masterVerified?"#059669":"#7C3AED",background:"transparent",cursor:"pointer"}}>
-                      <IconPencil size={10}/>Update master
-                    </button>}
+                    {(isSelected||(CORRECTION_MODE&&isMasterSel))&&<div style={{marginTop:5,display:"flex",alignItems:"center",gap:6}}>
+                      {isSelected&&<span style={{fontSize:10.5,fontWeight:700,color:"#047857",display:"flex",alignItems:"center",gap:4}}>✓ Selected</span>}
+                      {/* Same action as the header's "Update master" — repeated right on the tile it
+                          acts on. The header one scrolls out of view the moment a long grid (hundreds
+                          of photos, paginated) puts any distance between you and the top of the card;
+                          this copy stays exactly where your eyes already are. Icon-only — the labelled
+                          button crowded the tile — and always-on rather than hover-only, so it still
+                          works on touch. */}
+                      {CORRECTION_MODE&&isMasterSel&&<button onClick={e=>{e.stopPropagation();openUpdateMaster();}}
+                        title={masterForSel
+                          ? "Update master — correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+                          : "Update master — this photo isn't in the shared library yet; tag it and it will be added (permanent, for everyone)"}
+                        style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:5,border:"none",background:masterVerified?"#059669":"#7C3AED",color:"#fff",cursor:"pointer",flexShrink:0}}>
+                        <IconPencil size={9}/>
+                      </button>}
+                    </div>}
                   </div>
                 </div>);
               })}
