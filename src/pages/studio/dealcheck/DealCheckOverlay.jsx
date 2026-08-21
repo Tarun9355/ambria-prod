@@ -73,7 +73,7 @@ export default function DealCheckOverlay({ ctx }) {
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
-    activeFnIdx, switchActiveFn,
+    activeFnIdx, switchActiveFn, dcShowAllFns, setDcShowAllFns,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
@@ -1183,6 +1183,19 @@ export default function DealCheckOverlay({ ctx }) {
               {/* LEFT SIDEBAR — function tabs + per-fn cost (skeletal in Patch 3, populated in Patch 5) */}
               <div className="dc-glass" style={{width:220,borderRight:`1px solid ${border}`,padding:"14px 12px",overflowY:"auto"}}>
                 <div style={{fontSize:11,color:"#1A1A2E",letterSpacing:1.4,textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Functions</div>
+                {/* Manpower/Transport/Power are booking-wide rollups — everywhere else (Inventory,
+                    Production, Buying) already scopes to whichever function is selected below, so
+                    this pill only needs to exist on the three tabs that used to ignore the
+                    selection entirely and dump every function's numbers on screen at once. */}
+                {["manpower","transport","power"].includes(dcActiveTab) && (
+                  <button onClick={()=>setDcShowAllFns(true)} data-on={dcShowAllFns?"1":"0"}
+                    style={{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:10,marginBottom:6,cursor:dcShowAllFns?"default":"pointer",
+                      border:dcShowAllFns?"1px solid transparent":`1px solid ${border}`,
+                      background:dcShowAllFns?"linear-gradient(150deg,#1F1A33,#2C2350)":"#fff",
+                      fontSize:13,fontWeight:700,color:dcShowAllFns?"#fff":"#1A1A2E"}}>
+                    🗂️ All functions
+                  </button>
+                )}
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                   {(() => {
                     const fns = collectAllFunctionData ? collectAllFunctionData() : [];
@@ -1252,14 +1265,14 @@ export default function DealCheckOverlay({ ctx }) {
                           if (area > 0 && cRate > 0) fnDecor += area * cRate;
                         });
                       }
-                      const isActive = fi === activeFnIdx;
+                      const isActive = fi === activeFnIdx && !dcShowAllFns;
                       return (
                         // THE SELECTED FUNCTION IS INKED, NOT TINTED. A gold-tinted card next to plain
                         // ones told you which was chosen only if you compared them; the sidebar's whole
                         // job is to answer that at a glance. Dark ground and light type inverts it
                         // outright, and the figure — the one number anyone came to this column for —
                         // goes gold on it, which it could not do while sitting on a gold tint.
-                        <button key={fi} onClick={()=>switchActiveFn(fi)} className="dc-fn" data-on={isActive?"1":"0"} style={{padding:"11px 12px",borderRadius:10,border:isActive?"1px solid transparent":`1px solid ${border}`,background:isActive?"linear-gradient(150deg,#1F1A33,#2C2350)":"#fff",cursor:isActive?"default":"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:3,boxShadow:isActive?"0 10px 24px -14px rgba(26,26,46,0.6)":"none"}}>
+                        <button key={fi} onClick={()=>{ setDcShowAllFns(false); switchActiveFn(fi); }} className="dc-fn" data-on={isActive?"1":"0"} style={{padding:"11px 12px",borderRadius:10,border:isActive?"1px solid transparent":`1px solid ${border}`,background:isActive?"linear-gradient(150deg,#1F1A33,#2C2350)":"#fff",cursor:isActive?"default":"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:3,boxShadow:isActive?"0 10px 24px -14px rgba(26,26,46,0.6)":"none"}}>
                           {/* The function's NAME is a name — Wedding, Sangeet, Haldi — so it takes the
                               display serif, the same voice the screen's own title uses. The date under
                               it is a label, so it goes to caps with tracking at a much smaller size.
@@ -2218,11 +2231,14 @@ export default function DealCheckOverlay({ ctx }) {
                   // Power tab below). Each truck-capacity row now also lists the zone/element lines that
                   // filled it (bd.transport.breakdown[].items), so this isn't just a sub-category total —
                   // it shows what is actually being loaded, same figures the truck-count math already used.
-                  const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+                  const allFns = collectAllFunctionData ? collectAllFunctionData() : [];
+                  if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+                  // Scoped to the selected function unless "All functions" is on — this used to
+                  // always dump every function's trucks on screen no matter which one was selected.
+                  const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      {fns.map((fn, fi) => {
+                      {fns.map(({fn, fi}) => {
                         let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
                         const tr = bd?.transport || null;
                         const truckTotal = Number(tr?.truckTotal) || 0;
@@ -2267,11 +2283,13 @@ export default function DealCheckOverlay({ ctx }) {
                 })() : dcActiveTab === "power" ? (() => {
                   // ═══ POWER TAB BODY — per-function genset plan, split out of Transport so genset
                   // units/rates/cost have their own home instead of being buried inside one lump sum. ═══
-                  const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+                  const allFns = collectAllFunctionData ? collectAllFunctionData() : [];
+                  if (allFns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
+                  // Scoped to the selected function unless "All functions" is on — see Transport tab above.
+                  const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      {fns.map((fn, fi) => {
+                      {fns.map(({fn, fi}) => {
                         let bd = null; try { bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; } catch { /* ignore */ }
                         const tr = bd?.transport || null;
                         const gensetCost = Number(tr?.gensetCost) || 0;

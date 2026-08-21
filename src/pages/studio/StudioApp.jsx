@@ -1610,6 +1610,11 @@ export default function StudioApp() {
   const [dcGenerating, setDcGenerating] = useState(false);
   const [dcGenStatus, setDcGenStatus] = useState("");
   const [dcActiveTab, setDcActiveTab] = useState("inventory");
+  // Manpower/Transport/Power are booking-wide rollups — by default they scope to whichever
+  // function is selected in the FUNCTIONS sidebar (matching Inventory/Production/Buying), and
+  // this flips them to show every function's data at once when the sidebar's "All" pill is on.
+  // Selecting a specific function clears it back off, so "All" never silently lingers.
+  const [dcShowAllFns, setDcShowAllFns] = useState(false);
   const [dcMpOverrides, setDcMpOverrides] = useState({});
   // Per-shift (per-dihari) crew counts set in Deal Check: { [type]: { [date]: { [winId]: count } } }.
   // Same shape as IMS Dept Ops mpWinCount → flows into the snapshot schedule so Deal Check, Dept Ops
@@ -8242,7 +8247,7 @@ export default function StudioApp() {
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
     dcFullPageOpen, setDcFullPageOpen, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
-    dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
+    dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
     amendRequests, submitAmendRequest, isLastMinute, makeAmendRequest,

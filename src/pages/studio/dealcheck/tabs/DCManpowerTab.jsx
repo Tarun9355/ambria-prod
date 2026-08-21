@@ -15,7 +15,7 @@ export default function DCManpowerTab({ ctx }) {
     // chrome / theme
     border, textS,
     // build / fn state
-    collectAllFunctionData,
+    collectAllFunctionData, activeFnIdx, dcShowAllFns,
     // settings + zone meta + rate card
     dealCheckData, zoneMeta, dcCards, dcInventoryCache,
     // pricing helpers (module-exposed via ctx)
@@ -723,9 +723,9 @@ export default function DCManpowerTab({ ctx }) {
 
                   // ── Compute booking-total cost (per-shift crew aware) ─────────
                   let bookingTotalCost = 0, bookingTotalDihari = 0;
-                  const dayCosts = {}; // { [date]: { total, byType: { [type]: { ppl, dihari, cost } } } }
+                  const dayCosts = {}; // { [date]: { total, slots, byType: { [type]: { ppl, dihari, cost } } } }
                   dayList.forEach(d => {
-                    const dayBreakdown = { total: 0, byType: {} };
+                    const dayBreakdown = { total: 0, slots: 0, byType: {} };
                     labourTypes.forEach(t => {
                       const ppl = countByDay[d.date][t] || 0;
                       if (ppl <= 0) return;
@@ -737,11 +737,25 @@ export default function DCManpowerTab({ ctx }) {
                       const cost = slots * effRate;
                       dayBreakdown.byType[t] = { ppl, dihari, cost, windowsTicked: wins };
                       dayBreakdown.total += cost;
-                      bookingTotalDihari += slots;
+                      dayBreakdown.slots += slots;
                     });
                     dayCosts[d.date] = dayBreakdown;
                     bookingTotalCost += dayBreakdown.total;
+                    bookingTotalDihari += dayBreakdown.slots;
                   });
+
+                  // ── Scope to the selected function unless "All functions" is on ──
+                  // The cumulative MAX rule above still has to run over every day of the WHOLE
+                  // booking — crew that arrives early for a later ceremony doesn't stop counting
+                  // just because this screen is only showing one function — so nothing above this
+                  // point is scoped. Only which day CARDS get rendered, and which total is shown
+                  // in the header, are. This used to always render every function's day no matter
+                  // which one was selected in the sidebar.
+                  const selectedFn = fns[activeFnIdx || 0];
+                  const scopedDayList = dayList.filter(d => d.phase === "event" && d.fns.includes(selectedFn));
+                  const visibleDayList = dcShowAllFns ? dayList : (scopedDayList.length ? scopedDayList : dayList); // fallback avoids a blank screen
+                  const visibleTotalCost = dcShowAllFns ? bookingTotalCost : visibleDayList.reduce((s, d) => s + (dayCosts[d.date]?.total || 0), 0);
+                  const visibleTotalDihari = dcShowAllFns ? bookingTotalDihari : visibleDayList.reduce((s, d) => s + (dayCosts[d.date]?.slots || 0), 0);
 
                   // ── UI ─────────────────────────────────────────────────────
                   const fmtDateShort = (iso) => {
@@ -781,13 +795,13 @@ export default function DCManpowerTab({ ctx }) {
                       <div style={{padding:"14px 16px",borderRadius:10,background:"rgba(251,191,36,0.06)",border:`1px solid rgba(251,191,36,0.20)`}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:10}}>
                           <div>
-                            <div style={{fontSize:13,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:4}}>👷 Manpower Forecast — Booking</div>
-                            <div style={{fontSize:12,color:"#1A1A2E"}}>{fns.length} ceremon{fns.length===1?"y":"ies"} · {dayList.length} day{dayList.length===1?"":"s"} · cumulative MAX rule applied</div>
+                            <div style={{fontSize:13,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:4}}>👷 Manpower Forecast — {dcShowAllFns ? "Booking" : (selectedFn?.fnType || "Function")}</div>
+                            <div style={{fontSize:12,color:"#1A1A2E"}}>{dcShowAllFns ? `${fns.length} ceremon${fns.length===1?"y":"ies"} · ${dayList.length} day${dayList.length===1?"":"s"}` : `${visibleDayList.length} day${visibleDayList.length===1?"":"s"}`} · cumulative MAX rule applied</div>
                           </div>
                           <div style={{textAlign:"right"}}>
                             <div style={{fontSize:13,color:"#1A1A2E"}}>Total cost</div>
-                            <div style={{fontSize:22,fontWeight:800,color:"#B45309",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(bookingTotalCost).toLocaleString("en-IN")}</div>
-                            <div style={{fontSize:12,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{bookingTotalDihari} dihari total</div>
+                            <div style={{fontSize:22,fontWeight:800,color:"#B45309",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(visibleTotalCost).toLocaleString("en-IN")}</div>
+                            <div style={{fontSize:12,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{visibleTotalDihari} dihari total</div>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
@@ -830,7 +844,7 @@ export default function DCManpowerTab({ ctx }) {
                       </div>
 
                       {/* Day rows */}
-                      {dayList.map((d, di) => {
+                      {visibleDayList.map((d, di) => {
                         const breakdown = dayCosts[d.date] || { total:0, byType:{} };
                         const fnsOnDay = d.fns || [];
                         return (
