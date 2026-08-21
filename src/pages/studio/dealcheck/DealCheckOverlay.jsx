@@ -975,18 +975,27 @@ export default function DealCheckOverlay({ ctx }) {
    No mix-blend-mode on the blobs: they drift, and a blended moving element re-composites against its
    backdrop every frame — the thing that was flickering the other pages on Mac. Over a near-white
    ground multiply returns the colour anyway, so there is nothing to miss. */
+/* TURNED DOWN, AND WARMED. The base was #F3F1F8 — a violet-grey — under a rose blob at 0.26 and a
+   violet one at 0.18, and the three together read as a pink-and-blue wash rather than as the app's
+   ground. On the other pages that same wash sits behind photographs and cream cards; here it sits
+   behind a table of rupee figures, and a coloured ground competes with the only thing on screen that
+   matters.
+   Base moved to a warm off-white (near the app's own #FAF9F6, a shade deeper so the glass panes still
+   have something to read against), and every blob roughly halved. Enough left that the surface is not
+   a flat fill — the panes still catch a difference across their width — without any of it being a
+   colour you notice. */
 .dc-wash{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
-  transform:translateZ(0);backface-visibility:hidden;contain:paint;background:#F3F1F8}
+  transform:translateZ(0);backface-visibility:hidden;contain:paint;background:#F7F5F1}
 .dc-wash span{position:absolute;display:block;filter:blur(80px)}
 .dc-wash-a{width:760px;height:700px;top:-190px;left:-120px;
   border-radius:62% 38% 46% 54% / 54% 47% 53% 46%;
-  background:radial-gradient(circle,rgba(201,169,110,0.30) 0%,rgba(201,169,110,0) 70%)}
+  background:radial-gradient(circle,rgba(201,169,110,0.15) 0%,rgba(201,169,110,0) 70%)}
 .dc-wash-b{width:640px;height:700px;top:90px;right:-170px;
   border-radius:41% 59% 66% 34% / 38% 62% 38% 62%;
-  background:radial-gradient(circle,rgba(214,158,140,0.26) 0%,rgba(214,158,140,0) 72%)}
+  background:radial-gradient(circle,rgba(214,158,140,0.10) 0%,rgba(214,158,140,0) 72%)}
 .dc-wash-c{width:740px;height:660px;top:520px;left:18%;
   border-radius:55% 45% 33% 67% / 61% 39% 61% 39%;
-  background:radial-gradient(circle,rgba(124,92,214,0.18) 0%,rgba(124,92,214,0) 74%)}
+  background:radial-gradient(circle,rgba(124,92,214,0.07) 0%,rgba(124,92,214,0) 74%)}
 .dc-bands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:blur(24px)}
 .dc-grain{position:absolute;inset:0;pointer-events:none;opacity:.5;mix-blend-mode:multiply;
   background-image:${GRAIN_URL};background-size:220px 220px}
