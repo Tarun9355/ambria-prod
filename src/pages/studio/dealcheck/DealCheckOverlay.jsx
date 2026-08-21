@@ -1238,8 +1238,16 @@ export default function DealCheckOverlay({ ctx }) {
                         // outright, and the figure — the one number anyone came to this column for —
                         // goes gold on it, which it could not do while sitting on a gold tint.
                         <button key={fi} onClick={()=>switchActiveFn(fi)} className="dc-fn" data-on={isActive?"1":"0"} style={{padding:"11px 12px",borderRadius:10,border:isActive?"1px solid transparent":`1px solid ${border}`,background:isActive?"linear-gradient(150deg,#1F1A33,#2C2350)":"#fff",cursor:isActive?"default":"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:3,boxShadow:isActive?"0 10px 24px -14px rgba(26,26,46,0.6)":"none"}}>
-                          <div style={{fontSize:13,fontWeight:700,color:isActive?"#fff":"#000",letterSpacing:0.2}}>{fn?.fnType || `Function ${fi+1}`}</div>
-                          <div style={{fontSize:11,color:isActive?"rgba(255,255,255,0.66)":"#000",letterSpacing:0.4}}>{fn?.fnDate || "—"}{fn?.fnShift?` · ${fn.fnShift}`:""}</div>
+                          {/* The function's NAME is a name — Wedding, Sangeet, Haldi — so it takes the
+                              display serif, the same voice the screen's own title uses. The date under
+                              it is a label, so it goes to caps with tracking at a much smaller size.
+                              Both were 13/11px bold sans at the same weight, which is why the card read
+                              as three stacked data points rather than a name with its details.
+                              (These two still carried pure black after the first ink pass: that pass
+                              matched only the plain literal form, and these set their colour through a
+                              conditional. Swept separately.) */}
+                          <div className="dc-title" style={{fontSize:17,color:isActive?"#fff":"#1A1A2E"}}>{fn?.fnType || `Function ${fi+1}`}</div>
+                          <div className="dc-cap" style={{fontSize:9.5,color:isActive?"rgba(255,255,255,0.6)":"#1A1A2E",opacity:isActive?1:0.5,letterSpacing:1.3}}>{fn?.fnDate || "—"}{fn?.fnShift?` · ${fn.fnShift}`:""}</div>
                           <div className="dc-money" style={{fontSize:15,fontWeight:700,color:fnDecor>0?(isActive?accent:"#1A1A2E"):(isActive?"rgba(255,255,255,0.5)":textS),marginTop:3}}>{fnDecor>0?`₹${Math.round(fnDecor).toLocaleString("en-IN")}`:"—"}</div>
                         </button>
                       );
@@ -1348,7 +1356,16 @@ export default function DealCheckOverlay({ ctx }) {
                   // which is the only part of this bar that was not about the button.
                   const genBar = (
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:9,background:"rgba(201,169,110,0.06)",border:`1px solid ${border}`,marginBottom:14,gap:10,flexWrap:"wrap"}}>
-                      <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1.2,textTransform:"uppercase",fontWeight:700}}>Function {fnIdx+1}{activeFn?.fnType?` · ${activeFn.fnType}`:""}{activeFn?.fnDate?` · ${activeFn.fnDate}`:""}</div>
+                      {/* One caps line carrying three facts, and all three were the same weight of the
+                          same ink — so it read as a run of text rather than as a heading with detail.
+                          The function TYPE is the fact you are here for, so it takes the ink and the
+                          gold; "Function 1" and the date are its context and step back. Wider tracking,
+                          because a caps line this short looks cramped at 1.2 and set at 1.8. */}
+                      <div style={{fontSize:11,letterSpacing:1.8,textTransform:"uppercase",fontWeight:700,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <span style={{color:"#1A1A2E",opacity:0.42}}>Function {fnIdx+1}</span>
+                        {activeFn?.fnType && <span style={{color:accent}}>{activeFn.fnType}</span>}
+                        {activeFn?.fnDate && <span style={{color:"#1A1A2E",opacity:0.42}}>{activeFn.fnDate}</span>}
+                      </div>
                       {dcGenerating && <div style={{fontSize:12,color:accent,fontWeight:600}}>Generating…</div>}
                     </div>
                   );
@@ -1374,7 +1391,13 @@ export default function DealCheckOverlay({ ctx }) {
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {genBar}
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                        <div style={{fontSize:13,color:"#1A1A2E"}}>{totalCards} card{totalCards===1?"":"s"} across {zoneList.length} zone{zoneList.length===1?"":"s"} · function {fnIdx + 1}</div>
+                        {/* A caption, set as one. At 13px full-ink it had the same presence as the zone
+                            names below it, so the eye stopped here on the way to the actual list. Caps
+                            with tracking at 10px reads as a summary line — which is all it is — and the
+                            two counts stay full-strength so the numbers are still the part you see. */}
+                        <div className="dc-cap" style={{color:"#1A1A2E",opacity:0.5,letterSpacing:1.4}}>
+                          {totalCards} card{totalCards===1?"":"s"} · {zoneList.length} zone{zoneList.length===1?"":"s"} · function {fnIdx + 1}
+                        </div>
                         {/* Same count, said as a state rather than as a word. "7 dirty" was grey text
                             at the same weight as everything around it — the one line on this header
                             that means SOMETHING NEEDS DOING, and it was the quietest thing there.
@@ -1465,8 +1488,15 @@ export default function DealCheckOverlay({ ctx }) {
                                     system font gave it and never quite matched the row. */}
                                 <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,flexShrink:0,color:collapsed?textS:"#1A1A2E",background:collapsed?"transparent":"rgba(26,26,46,0.05)",transition:"transform .16s ease,background .16s ease",transform:collapsed?"rotate(-90deg)":"rotate(0)"}}><IconChevron size={13}/></span>
                                 {zonePhoto && <img loading="lazy" decoding="async" src={thumbUrl(zonePhoto, 160)} alt={zonePhotoName||zk} onClick={e=>{e.stopPropagation();window.open(zonePhoto,"_blank");}} title={zonePhotoName?`${zonePhotoName} — click to enlarge`:"Zone reference photo — click to enlarge"} style={{width:46,height:34,objectFit:"cover",borderRadius:6,border:`1px solid ${border}`,cursor:"zoom-in",flexShrink:0}} />}
-                                <span style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2,textTransform:"capitalize"}}>{zk}</span>
-                                <span style={{fontSize:12,color:"#1A1A2E"}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
+                                {/* Zone names stay in the SANS, deliberately. They are the thing you scan
+                                    a list of — five or six of them, read in order, looking for one — and
+                                    a text serif slows that down for no gain. Premium here is negative
+                                    tracking and a heavier weight at a slightly larger size, which is how
+                                    a sans reads as set rather than as default.
+                                    "10 cards" drops to a caps micro-label: it qualifies the name, and at
+                                    12px full-ink it was competing with it. */}
+                                <span style={{fontSize:15,fontWeight:700,color:"#1A1A2E",letterSpacing:-0.2,textTransform:"capitalize"}}>{zk}</span>
+                                <span className="dc-cap" style={{color:"#1A1A2E",opacity:0.45,letterSpacing:1.2}}>{totalRowCount} card{totalRowCount===1?"":"s"}</span>
                                 {zoneRentalTotal>0 && <span title="Total rental of all inventory in this zone" style={{fontSize:13,padding:"3px 9px",borderRadius:5,background:"rgba(201,169,110,0.15)",color:accent,fontWeight:700}}>₹{zoneRentalTotal.toLocaleString("en-IN")} rental</span>}
                               </div>
                               <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -1772,7 +1802,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                     <div key={ci} style={unavailable?{padding:"3px 5px",borderRadius:6,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)"}:null}>
                                                     <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
                                                       {(() => { const cp = cItem ? imsField.photos(cItem)[0] : null; return cp ? <img loading="lazy" decoding="async" src={thumbUrl(cp, 48)} alt="" style={{width:22,height:22,borderRadius:4,objectFit:"cover",flexShrink:0}} /> : <span style={{width:22,height:22,borderRadius:4,background:"rgba(26, 26, 46,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>🌸</span>; })()}
-                                                      <span style={{color:cItem?(short?"#EF4444":"#000"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
+                                                      <span style={{color:cItem?(short?"#EF4444":"#1A1A2E"):"#EF4444",fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cItem?cItem.name:`⚠ ${c.itemId} not in IMS`}</span>
                                                       <div style={{display:"flex",alignItems:"center",gap:2}} title="per kit">
                                                         <span onClick={()=>setComps(comps.map((x,i)=>i===ci?{...x,qty:Math.max(1,qtyEach-1)}:x))} style={{cursor:"pointer",color:"#1A1A2E",fontSize:15.5,padding:"0 4px",userSelect:"none"}}>−</span>
                                                         <span style={{color:"#1A1A2E",minWidth:20,textAlign:"center"}}>×{qtyEach}</span>
@@ -1812,7 +1842,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                         return (
                                                           <div key={x.id} onClick={()=>{ if(isBlocked) return; setComps(comps.some(c=>c.itemId===x.id)?comps:[...comps,{itemId:x.id,qty:1}]); setDcKitAddSearch(prev=>({...prev,[editKey]:""})); }}
                                                             style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",cursor:isBlocked?"not-allowed":"pointer",borderBottom:`1px solid ${border}`,opacity:isBlocked?0.45:1}}>
-                                                            <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={imsField.subcategory(x) ? imsField.subcategory(x)+" › "+(x.cat||x.category||"") : (x.cat||x.category||"")} dims={itemDimsText(x)} border={border} cardBg="#FFFFFF" textP="#000" textS={textS} emptyBg="rgba(26, 26, 46,0.06)" />
+                                                            <ItemHoverThumb src={src} size={22} rounded={4} name={x.name} sub={imsField.subcategory(x) ? imsField.subcategory(x)+" › "+(x.cat||x.category||"") : (x.cat||x.category||"")} dims={itemDimsText(x)} border={border} cardBg="#FFFFFF" textP="#1A1A2E" textS={textS} emptyBg="rgba(26, 26, 46,0.06)" />
                                                             <div style={{flex:1,minWidth:0}}>
                                                               <div style={{fontSize:13,color:"#1A1A2E",display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</span>
@@ -1961,7 +1991,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                         {subItems.map(x=><option key={x.id} value={x.id}>{x.name} ({imsField.qtyOwned(x)})</option>)}
                                                         {!subItems.some(x=>x.id===s.imsId) && it2 && <option value={s.imsId}>{it2.name}</option>}
                                                       </select>
-                                                      <input type="number" min="0" value={q} onChange={e=>upd({qty:Math.max(0,parseInt(e.target.value)||0)})} style={{width:46,fontSize:13,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#000",textAlign:"center"}}/>
+                                                      <input type="number" min="0" value={q} onChange={e=>upd({qty:Math.max(0,parseInt(e.target.value)||0)})} style={{width:46,fontSize:13,padding:"3px 4px",borderRadius:5,border:`1px solid ${over?"#EF4444":border}`,background:"transparent",color:over?"#EF4444":"#1A1A2E",textAlign:"center"}}/>
                                                       <span style={{color:over?"#EF4444":"#10B981",fontSize:11,whiteSpace:"nowrap"}}>{owned} avail</span>
                                                       {split.length>1 && <span onClick={()=>setSplit(split.filter((_,i)=>i!==si))} style={{color:"#EF4444",cursor:"pointer",fontSize:14.5,padding:"0 2px"}}>×</span>}
                                                     </div>
@@ -2458,7 +2488,7 @@ export default function DealCheckOverlay({ ctx }) {
                           {rows.map((r, i) => (
                             <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 14px",borderTop:`1px solid ${border}22`,fontSize:13}}>
                               <span style={{color:r.note?"#10B981":textS}}>{r.label}{r.note && <span style={{display:"block",fontSize:11,color:"#1A1A2E",fontWeight:400}}>{r.note}</span>}</span>
-                              <span style={{color:r.note?"#10B981":"#000",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(r.value)}</span>
+                              <span style={{color:r.note?"#10B981":"#1A1A2E",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(r.value)}</span>
                             </div>
                           ))}
                           <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}`,fontSize:13.5,fontWeight:700}}>
@@ -2555,7 +2585,7 @@ export default function DealCheckOverlay({ ctx }) {
                               <div style={{fontSize:13,color:"#1A1A2E",marginBottom:10}}>Adjust your desired profit margin — see the revised quote to give the client:</div>
                               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
                                 {presets.map(p => (
-                                  <button key={p} onClick={()=>setDcDesiredMargin(p)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${desiredPct===p?accent:border}`,background:desiredPct===p?"rgba(99,102,241,0.15)":"transparent",color:desiredPct===p?"#000":textS,fontSize:13,fontWeight:desiredPct===p?700:500,cursor:"pointer"}}>{p}%</button>
+                                  <button key={p} onClick={()=>setDcDesiredMargin(p)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${desiredPct===p?accent:border}`,background:desiredPct===p?"rgba(99,102,241,0.15)":"transparent",color:desiredPct===p?"#1A1A2E":textS,fontSize:13,fontWeight:desiredPct===p?700:500,cursor:"pointer"}}>{p}%</button>
                                 ))}
                                 {dcDesiredMargin !== null && (
                                   <button onClick={()=>setDcDesiredMargin(null)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:12,cursor:"pointer"}}>Reset to actual</button>
@@ -2616,18 +2646,18 @@ export default function DealCheckOverlay({ ctx }) {
                       </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
                         {depts.map(d => { const on = dcDept === d; const t = dd[d]?.total || 0; return (
-                          <button key={d} onClick={() => setDcDept(d)} style={{ padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? "#000" : textS, cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, minWidth: 96, alignItems: "flex-start" }}>
+                          <button key={d} onClick={() => setDcDept(d)} style={{ padding: "8px 12px", borderRadius: 10, border: `1.5px solid ${on ? accent : border}`, background: on ? `${accent}18` : "transparent", color: on ? "#1A1A2E" : textS, cursor: "pointer", display: "flex", flexDirection: "column", gap: 2, minWidth: 96, alignItems: "flex-start" }}>
                             <span style={{ fontSize:13, fontWeight: on ? 700 : 500 }}>{deptIcon[d] || "🏦"} {d}</span>
-                            <span style={{ fontSize:14.5, fontWeight: 800, color: on ? "#000" : textP }}>{f2(t)}</span>
+                            <span style={{ fontSize:14.5, fontWeight: 800, color: on ? "#1A1A2E" : textP }}>{f2(t)}</span>
                           </button>); })}
                       </div>
                       <div style={{ borderRadius: 10, border: `1px solid ${border}`, overflow: "hidden" }}>
-                        <div style={{ padding: "10px 14px", background: "rgba(26, 26, 46,0.02)", fontSize:13.5, fontWeight: 700, color: "#000", display: "flex", justifyContent: "space-between" }}>
+                        <div style={{ padding: "10px 14px", background: "rgba(26, 26, 46,0.02)", fontSize:13.5, fontWeight: 700, color: "#1A1A2E", display: "flex", justifyContent: "space-between" }}>
                           <span>{deptIcon[dcDept]} {dcDept} — Department Income</span><span>{f2(cur.total)}</span>
                         </div>
                         {lines.length === 0
                           ? <div style={{ padding: 16, textAlign: "center", color:"#1A1A2E", fontSize:13 }}>No income for this department in the current deal.</div>
-                          : lines.map(([l, v], i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 14px", borderTop: `1px solid ${border}22`, fontSize:13.5 }}><span style={{ color:"#1A1A2E" }}>{l}</span><span style={{ color: "#000", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{f2(v)}</span></div>)}
+                          : lines.map(([l, v], i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 14px", borderTop: `1px solid ${border}22`, fontSize:13.5 }}><span style={{ color:"#1A1A2E" }}>{l}</span><span style={{ color: "#1A1A2E", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{f2(v)}</span></div>)}
                         <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderTop: `1px solid ${border}`, fontSize:13, color:"#1A1A2E" }}><span>Share of project</span><span style={{ fontWeight: 700, color: accent }}>{grandAll > 0 ? Math.round((cur.total / grandAll) * 100) : 0}%</span></div>
                       </div>
                       <div style={{ fontSize:12, color:"#1A1A2E", marginTop: 10, lineHeight: 1.5 }}>General labour & supervisors are split across departments by each one's direct-income share. Truss steel → Tenting · masking/drape fabric → Fabric · platform & carpet → Tenting · genset → Lighting · everything else → by its category.</div>
