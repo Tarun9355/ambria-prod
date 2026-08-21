@@ -1615,6 +1615,11 @@ export default function StudioApp() {
   // this flips them to show every function's data at once when the sidebar's "All" pill is on.
   // Selecting a specific function clears it back off, so "All" never silently lingers.
   const [dcShowAllFns, setDcShowAllFns] = useState(false);
+  // Explicit open/collapsed overrides for individual function/day blocks in Manpower & Transport,
+  // keyed per-tab (e.g. "transport:2", "manpower:2026-08-25). Undefined = no override yet — the
+  // block falls back to its default (open when one function is selected, collapsed under "All",
+  // so switching to "All" doesn't leave every block expanded and scrolling right back to square one).
+  const [dcCollapsedFnBlocks, setDcCollapsedFnBlocks] = useState({});
   const [dcMpOverrides, setDcMpOverrides] = useState({});
   // Per-shift (per-dihari) crew counts set in Deal Check: { [type]: { [date]: { [winId]: count } } }.
   // Same shape as IMS Dept Ops mpWinCount → flows into the snapshot schedule so Deal Check, Dept Ops
@@ -8247,7 +8252,7 @@ export default function StudioApp() {
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
     dcFullPageOpen, setDcFullPageOpen, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
-    dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
+    dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
     amendRequests, submitAmendRequest, isLastMinute, makeAmendRequest,

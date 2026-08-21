@@ -15,7 +15,7 @@ export default function DCManpowerTab({ ctx }) {
     // chrome / theme
     border, textS,
     // build / fn state
-    collectAllFunctionData, activeFnIdx, dcShowAllFns,
+    collectAllFunctionData, activeFnIdx, dcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
     // settings + zone meta + rate card
     dealCheckData, zoneMeta, dcCards, dcInventoryCache,
     // pricing helpers (module-exposed via ctx)
@@ -847,12 +847,22 @@ export default function DCManpowerTab({ ctx }) {
                       {visibleDayList.map((d, di) => {
                         const breakdown = dayCosts[d.date] || { total:0, byType:{} };
                         const fnsOnDay = d.fns || [];
+                        // Collapsible so "All functions" doesn't force scrolling past every other
+                        // day's crew breakdown to reach the one you actually want — expanded by
+                        // default when scoped to one function (usually just its own day or two),
+                        // collapsed by default under "All". Keyed by date, which is unique per day.
+                        const blockKey = `manpower:${d.date}`;
+                        const isOpen = dcCollapsedFnBlocks[blockKey] !== undefined ? dcCollapsedFnBlocks[blockKey] : !dcShowAllFns;
+                        const toggleOpen = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [blockKey]: !isOpen }));
                         return (
                           <div key={di} style={{padding:"12px 14px",borderRadius:10,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`}}>
                             {/* Day header */}
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:12,flexWrap:"wrap",borderBottom:`1px solid ${border}33`,paddingBottom:8,marginBottom:10}}>
+                            <div onClick={toggleOpen} style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:12,flexWrap:"wrap",borderBottom:isOpen?`1px solid ${border}33`:"none",paddingBottom:isOpen?8:0,marginBottom:isOpen?10:0,cursor:"pointer"}}>
                               <div>
-                                <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E"}}>{phaseEmoji(d.phase)} {fmtDateShort(d.date)} · <span style={{color:"#1A1A2E",fontWeight:500}}>{phaseLabel(d.phase)}</span></div>
+                                <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",display:"flex",alignItems:"center",gap:6}}>
+                                  <span style={{fontSize:11,opacity:0.6,transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.15s",display:"inline-block"}}>▸</span>
+                                  {phaseEmoji(d.phase)} {fmtDateShort(d.date)} · <span style={{color:"#1A1A2E",fontWeight:500}}>{phaseLabel(d.phase)}</span>
+                                </div>
                                 {fnsOnDay.length > 0 && (
                                   <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>
                                     {fnsOnDay.map((fn, fi) => `${fn.fnType||"?"}${fn.fnShift?` (${fn.fnShift})`:""}`).join(" · ")}
@@ -864,7 +874,7 @@ export default function DCManpowerTab({ ctx }) {
                               </div>
                             </div>
                             {/* Labour type rows */}
-                            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                            {isOpen && <div style={{display:"flex",flexDirection:"column",gap:8}}>
                               {labourTypes.map(t => {
                                 const ppl = countByDay[d.date][t] || 0;
                                 if (ppl <= 0) return null;
@@ -1146,7 +1156,7 @@ export default function DCManpowerTab({ ctx }) {
                               {Object.keys(breakdown.byType).length === 0 && (
                                 <div style={{fontSize:13,color:"#1A1A2E",fontStyle:"italic",padding:"6px 0"}}>No manpower needed this day. (Untick all windows to model labour going home.)</div>
                               )}
-                            </div>
+                            </div>}
                           </div>
                         );
                       })}

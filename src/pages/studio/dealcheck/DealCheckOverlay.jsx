@@ -73,7 +73,7 @@ export default function DealCheckOverlay({ ctx }) {
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
-    activeFnIdx, switchActiveFn, dcShowAllFns, setDcShowAllFns,
+    activeFnIdx, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
@@ -2244,16 +2244,26 @@ export default function DealCheckOverlay({ ctx }) {
                         const truckTotal = Number(tr?.truckTotal) || 0;
                         const trucks = Number(tr?.trucks) || 0;
                         const rows = tr?.breakdown || [];
+                        // Collapsible so "All functions" doesn't force scrolling past every other
+                        // function's truck list to reach the one you actually want — expanded by
+                        // default when one function is selected (nothing else to scroll past),
+                        // collapsed by default under "All" (fi picks the true absolute index).
+                        const blockKey = `transport:${fi}`;
+                        const isOpen = dcCollapsedFnBlocks[blockKey] !== undefined ? dcCollapsedFnBlocks[blockKey] : !dcShowAllFns;
+                        const toggleOpen = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [blockKey]: !isOpen }));
                         return (
                           <div key={fi} style={{borderRadius:9,background:"rgba(56,189,248,0.04)",border:`1px solid ${border}`,overflow:"hidden"}}>
-                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",borderBottom:rows.length?`1px solid ${border}`:"none"}}>
+                            <div onClick={rows.length?toggleOpen:undefined} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",borderBottom:(isOpen&&rows.length)?`1px solid ${border}`:"none",cursor:rows.length?"pointer":"default"}}>
                               <div>
-                                <div style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>🚚 {fn?.fnType || `Function ${fi+1}`}</div>
+                                <div style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E",display:"flex",alignItems:"center",gap:6}}>
+                                  {rows.length > 0 && <span style={{fontSize:11,opacity:0.6,transform:isOpen?"rotate(90deg)":"none",transition:"transform 0.15s",display:"inline-block"}}>▸</span>}
+                                  🚚 {fn?.fnType || `Function ${fi+1}`}
+                                </div>
                                 <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>{fn?.fnDate || "—"} · {fn?.fnVenue || "—"} · {fn?.fnShift || "—"}{trucks?` · ${trucks} truck${trucks===1?"":"s"}${tr?.tierLabel?` · ${tr.tierLabel}`:""}`:""}</div>
                               </div>
                               <div style={{fontSize:15.5,fontWeight:800,color:"#1A1A2E",whiteSpace:"nowrap"}}>{truckTotal>0?`₹${Math.round(truckTotal).toLocaleString("en-IN")}`:"—"}</div>
                             </div>
-                            {rows.length > 0 && (
+                            {isOpen && rows.length > 0 && (
                               <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:9}}>
                                 {rows.map((r, ri) => (
                                   <div key={ri} style={{display:"flex",flexDirection:"column",gap:4}}>
