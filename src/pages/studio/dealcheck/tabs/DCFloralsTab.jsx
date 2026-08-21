@@ -42,7 +42,7 @@ export default function DCFloralsTab({ ctx }) {
                   const fnIdx = activeFnIdx || 0;
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
                   const activeFn = fns[fnIdx];
-                  if (!activeFn) return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No function selected.</div>;
+                  if (!activeFn) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No function selected.</div>;
                   const flowerPatterns = dealCheckData?.flowerPatterns || [];
                   const mandiCatalogue = dealCheckData?.mandiCatalogue || [];
                   const mandiMults = dealCheckData?.mandiPriceMultipliers || {};
@@ -346,7 +346,7 @@ export default function DCFloralsTab({ ctx }) {
                     });
                   });
                   if (elementBreakdown.length === 0) {
-                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No floral elements in this function.</div>;
+                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No floral elements in this function.</div>;
                   }
                   // ═══ Tier 2.1 — Apply swap/split overrides onto auto-aggregation ═══
                   // For each row in floralOverrides.rows where swap took place:
@@ -426,12 +426,12 @@ export default function DCFloralsTab({ ctx }) {
                     <div style={{display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary */}
                       <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(236,72,153,0.06)",border:`1px solid rgba(236,72,153,0.20)`}}>
-                        <div style={{fontSize:13,color:"#000",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{activeFn.fnType || `Function ${fnIdx+1}`} · {activeFn.fnDate || "—"}</div>
+                        <div style={{fontSize:13,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{activeFn.fnType || `Function ${fnIdx+1}`} · {activeFn.fnDate || "—"}</div>
                         <div style={{display:"flex",alignItems:"baseline",gap:14,flexWrap:"wrap"}}>
-                          <div><span style={{fontSize:13,color:"#000"}}>Total Floral </span><span style={{fontSize:22,fontWeight:700,color:"#000"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</span></div>
+                          <div><span style={{fontSize:13,color:"#1A1A2E"}}>Total Floral </span><span style={{fontSize:22,fontWeight:700,color:"#1A1A2E"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</span></div>
                           <div><span style={{fontSize:12,color:"#10B981",fontWeight:600}}>● Real ₹{Math.round(totalReal).toLocaleString("en-IN")}</span></div>
                           <div><span style={{fontSize:12,color:"#EC4899",fontWeight:600}}>● Artificial ₹{Math.round(totalArtificial).toLocaleString("en-IN")}</span></div>
-                          <div style={{marginLeft:"auto",fontSize:12,color:"#000"}}>{overallRealPct}% real / {100-overallRealPct}% artificial overall</div>
+                          <div style={{marginLeft:"auto",fontSize:12,color:"#1A1A2E"}}>{overallRealPct}% real / {100-overallRealPct}% artificial overall</div>
                         </div>
                         {/* §26 — Artificial flower color allocation strip */}
                         {totalArtificial > 0 && <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid rgba(236,72,153,0.15)`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -439,7 +439,7 @@ export default function DCFloralsTab({ ctx }) {
                           {fnArtAlloc.length > 0 ? <>
                             {fnArtAlloc.map((a, i) => <span key={i} style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600}}>{a.colour} {a.qty}kg</span>)}
                             {fnArtAllocTotal < totalArtKg && <span style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>{Math.round((totalArtKg - fnArtAllocTotal) * 10) / 10}kg unassigned</span>}
-                          </> : <span style={{fontSize:11,color:"#000"}}>No color split — any color</span>}
+                          </> : <span style={{fontSize:11,color:"#1A1A2E"}}>No color split — any color</span>}
                           <button onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg || 0 })} style={{fontSize:11,padding:"3px 10px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.08)",color:"#EC4899",fontWeight:600,cursor:"pointer",marginLeft:"auto"}}>🎨 Split Colors</button>
                         </div>}
                       </div>
@@ -447,7 +447,7 @@ export default function DCFloralsTab({ ctx }) {
                       <div style={{padding:"10px 12px",borderRadius:10,background:"rgba(192,132,252,0.04)",border:`1px solid rgba(192,132,252,0.18)`}}>
                         <div style={{fontSize:12,color:"#9333EA",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
                           📝 Floral preference for {activeFn.fnType || `Function ${fnIdx+1}`}
-                          {fnIdx !== activeFnIdx && <span style={{fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(26, 26, 46,0.06)",color:"#000",fontWeight:400,letterSpacing:0.3}}>read-only · switch pill to edit</span>}
+                          {fnIdx !== activeFnIdx && <span style={{fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(26, 26, 46,0.06)",color:"#1A1A2E",fontWeight:400,letterSpacing:0.3}}>read-only · switch pill to edit</span>}
                         </div>
                         <textarea
                           value={fnOverrides.note || ""}
@@ -463,7 +463,7 @@ export default function DCFloralsTab({ ctx }) {
                             width:"100%",
                             padding:"7px 10px",
                             fontSize:13,
-                            color:"#000",
+                            color:"#1A1A2E",
                             background:fnIdx===activeFnIdx?"rgba(0,0,0,0.20)":"rgba(0,0,0,0.10)",
                             border:`1px solid ${border}`,
                             borderRadius:6,
@@ -474,7 +474,7 @@ export default function DCFloralsTab({ ctx }) {
                             boxSizing:"border-box"
                           }}
                         />
-                        <div style={{marginTop:4,fontSize:11,color:"#000",fontStyle:"italic"}}>Purchase manager reads this when buying from mandi — colours, themes, must-haves/avoids.</div>
+                        <div style={{marginTop:4,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>Purchase manager reads this when buying from mandi — colours, themes, must-haves/avoids.</div>
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
@@ -482,11 +482,11 @@ export default function DCFloralsTab({ ctx }) {
                           <div style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</div>
                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                             <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                              <th style={{textAlign:"left",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Flower</th>
-                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Qty</th>
-                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Rate</th>
-                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Total</th>
-                              <th style={{width:140,textAlign:"center",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Actions</th>
+                              <th style={{textAlign:"left",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Flower</th>
+                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Qty</th>
+                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Rate</th>
+                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Total</th>
+                              <th style={{width:140,textAlign:"center",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Actions</th>
                             </tr></thead>
                             <tbody>
                               {sortedAgg.map(f => {
@@ -495,7 +495,7 @@ export default function DCFloralsTab({ ctx }) {
                                 return (
                                 <Fragment key={f.flowerId||f.name}>
                                 <tr style={{borderBottom:open?"none":`1px solid ${border}33`}}>
-                                  <td style={{padding:"6px 4px",color:"#000"}}>
+                                  <td style={{padding:"6px 4px",color:"#1A1A2E"}}>
                                     {f.name}
                                     {f.realOnly && <span title="Real Only — always 100% regardless of element blend" style={{marginLeft:6,fontSize:11,color:"#F59E0B"}}>🔒</span>}
                                     {f._isSwapTarget && (
@@ -515,9 +515,9 @@ export default function DCFloralsTab({ ctx }) {
                                       </div>
                                     )}
                                   </td>
-                                  <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
-                                  <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
-                                  <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
+                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
+                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.unitPrice).toLocaleString("en-IN")}/{f.unit}</td>
+                                  <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums",fontWeight:600}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
                                   <td style={{padding:"6px 4px",textAlign:"right"}}>
                                     <div style={{display:"flex",gap:4,justifyContent:"flex-end",flexWrap:"wrap"}}>
                                       {fnIdx === activeFnIdx && (
@@ -553,49 +553,49 @@ export default function DCFloralsTab({ ctx }) {
                                       <div style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                         <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>How {f.totalQty.toFixed(2)} {f.unit} of {f.name} derived</div>
                                         {(!f.contributors || f.contributors.length === 0) ? (
-                                          <div style={{fontSize:12,color:"#000",fontStyle:"italic"}}>No element contributors recorded.</div>
+                                          <div style={{fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>No element contributors recorded.</div>
                                         ) : (
                                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                                             <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                                              <th style={{textAlign:"left",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>Element</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>El qty</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>×</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>per pattern</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>×</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>real %</th>
-                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#000",fontWeight:500}}>= contrib</th>
+                                              <th style={{textAlign:"left",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>Element</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>El qty</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>×</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>per pattern</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>×</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>real %</th>
+                                              <th style={{textAlign:"right",padding:"3px 4px 5px",color:"#1A1A2E",fontWeight:500}}>= contrib</th>
                                             </tr></thead>
                                             <tbody>
                                               {f.contributors.map((c, ci) => (
                                                 <tr key={ci}>
-                                                  <td style={{padding:"4px 4px",color:"#000"}}>{c.elName}<span style={{color:"#000",fontSize:11,marginLeft:4,textTransform:"capitalize"}}>({c.zoneKey})</span></td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{c.elQty}</td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#000"}}>×</td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{c.perPattern} {f.unit}</td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#000"}}>×</td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{Math.round(c.realFrac*100)}%</td>
-                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#000",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{c.contribution.toFixed(2)} {f.unit}</td>
+                                                  <td style={{padding:"4px 4px",color:"#1A1A2E"}}>{c.elName}<span style={{color:"#1A1A2E",fontSize:11,marginLeft:4,textTransform:"capitalize"}}>({c.zoneKey})</span></td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{c.elQty}</td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{c.perPattern} {f.unit}</td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{Math.round(c.realFrac*100)}%</td>
+                                                  <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{c.contribution.toFixed(2)} {f.unit}</td>
                                                 </tr>
                                               ))}
                                               <tr style={{borderTop:`1px solid ${border}`}}>
-                                                <td colSpan={6} style={{textAlign:"right",padding:"4px 4px",color:"#000"}}>Sum:</td>
+                                                <td colSpan={6} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>Sum:</td>
                                                 <td style={{textAlign:"right",padding:"4px 4px",color:"#B45309",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{f.totalQty.toFixed(2)} {f.unit}</td>
                                               </tr>
                                               <tr>
-                                                <td colSpan={6} style={{textAlign:"right",padding:"4px 4px",color:"#000"}}>× ₹{Math.round(f.unitPrice)}/{f.unit} =</td>
+                                                <td colSpan={6} style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>× ₹{Math.round(f.unitPrice)}/{f.unit} =</td>
                                                 <td style={{textAlign:"right",padding:"4px 4px",color:"#10B981",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(f.totalQty * f.unitPrice).toLocaleString("en-IN")}</td>
                                               </tr>
                                             </tbody>
                                           </table>
                                         )}
-                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#000",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real %) summed across all elements using this flower</div>
+                                        <div style={{marginTop:8,paddingTop:6,borderTop:`1px dashed ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Σ(element qty × per-pattern recipe × real %) summed across all elements using this flower</div>
                                       </div>
                                     </td>
                                   </tr>
                                 )}
                                 </Fragment>
                               );})}
-                              <tr><td colSpan={3} style={{padding:"8px 4px",textAlign:"right",color:"#000",fontWeight:600}}>Real Total</td><td style={{padding:"8px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</td><td></td></tr>
+                              <tr><td colSpan={3} style={{padding:"8px 4px",textAlign:"right",color:"#1A1A2E",fontWeight:600}}>Real Total</td><td style={{padding:"8px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</td><td></td></tr>
                             </tbody>
                           </table>
                         </div>
@@ -632,20 +632,20 @@ export default function DCFloralsTab({ ctx }) {
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:13}}>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(236,72,153,0.06)"}}>
                                 <div style={{fontSize:12,color:"#EC4899",fontWeight:600,marginBottom:4}}>🌹 Flower bunches</div>
-                                <div style={{color:"#000",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesFlower.toFixed(1)} bunches = <b>{flowerKg.toFixed(2)} kg</b></div>
-                                <div style={{fontSize:11,color:"#000",marginTop:2}}>× ₹{flowerRate}/kg = <span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span></div>
+                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesFlower.toFixed(1)} bunches = <b>{flowerKg.toFixed(2)} kg</b></div>
+                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× ₹{flowerRate}/kg = <span style={{color:"#EC4899",fontWeight:600}}>₹{Math.round(flowerCost).toLocaleString("en-IN")}</span></div>
                               </div>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(16,185,129,0.06)"}}>
                                 <div style={{fontSize:12,color:"#10B981",fontWeight:600,marginBottom:4}}>🌿 Green bunches</div>
-                                <div style={{color:"#000",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesGreen.toFixed(1)} bunches = <b>{greenKg.toFixed(2)} kg</b></div>
-                                <div style={{fontSize:11,color:"#000",marginTop:2}}>× ₹{greenRate}/kg = <span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span></div>
+                                <div style={{color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{totalArtBunchesGreen.toFixed(1)} bunches = <b>{greenKg.toFixed(2)} kg</b></div>
+                                <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× ₹{greenRate}/kg = <span style={{color:"#10B981",fontWeight:600}}>₹{Math.round(greenCost).toLocaleString("en-IN")}</span></div>
                               </div>
                             </div>
                             {mappedList.length > 0 && (
                               <div style={{marginTop:10,padding:"8px 10px",borderRadius:7,background:"rgba(59,130,246,0.06)",border:"1px solid rgba(59,130,246,0.2)"}}>
                                 <div style={{fontSize:12,color:"#3B82F6",fontWeight:600,marginBottom:4}}>🔗 Mapped substitutes</div>
                                 {mappedList.map((m, mi) => (
-                                  <div key={mi} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 0",color:"#000"}}>
+                                  <div key={mi} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 0",color:"#1A1A2E"}}>
                                     <span>{m.realFlowerName} → {m.mappedName || "no item mapped"} × {m.qty.toFixed(1)} {m.unit}</span>
                                     <span style={{color:"#3B82F6",fontWeight:600}}>₹{Math.round(m.cost).toLocaleString("en-IN")}</span>
                                   </div>
@@ -654,7 +654,7 @@ export default function DCFloralsTab({ ctx }) {
                               </div>
                             )}
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,paddingTop:8,borderTop:`1px solid ${border}`}}>
-                              <span style={{fontSize:13,color:"#000",fontWeight:500}}>Total Artificial</span>
+                              <span style={{fontSize:13,color:"#1A1A2E",fontWeight:500}}>Total Artificial</span>
                               <span style={{color:"#EC4899",fontWeight:700,fontSize:15.5,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalArtificial).toLocaleString("en-IN")}</span>
                             </div>
                             {/* §26 — Artificial flower color split */}
@@ -663,7 +663,7 @@ export default function DCFloralsTab({ ctx }) {
                               {fnArtAlloc.length > 0 ? <>
                                 {fnArtAlloc.map((a, ai) => <span key={ai} style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{a.photo&&<img src={a.photo} alt="" style={{width:14,height:14,borderRadius:3,objectFit:"cover"}}/>}{a.colour} {a.qty}kg</span>)}
                                 {fnArtAllocTotal < totalArtKg && <span style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>{Math.round((totalArtKg - fnArtAllocTotal) * 10) / 10}kg unassigned</span>}
-                              </> : <span style={{fontSize:11,color:"#000"}}>No split — any color</span>}
+                              </> : <span style={{fontSize:11,color:"#1A1A2E"}}>No split — any color</span>}
                               <button onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg })} style={{fontSize:11,padding:"4px 12px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.10)",color:"#EC4899",fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>🌸 Split Colors</button>
                             </div>
                             {missingRatios.size > 0 && (
@@ -699,7 +699,7 @@ export default function DCFloralsTab({ ctx }) {
                           <div style={{marginTop:14,padding:"12px 14px",borderRadius:10,background:"rgba(59,130,246,0.05)",border:"1px solid rgba(59,130,246,0.22)"}}>
                             <div style={{fontSize:13,fontWeight:700,color:"#3B82F6",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📦 Direct from Inventory</div>
                             {invList.map((r, ri) => (
-                              <div key={ri} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#000",padding:"3px 0"}}>
+                              <div key={ri} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#1A1A2E",padding:"3px 0"}}>
                                 <span style={{fontWeight:600}}>{r.name}</span>
                                 <span style={{opacity:0.7,fontVariantNumeric:"tabular-nums"}}>× {Math.round(r.qty * 100) / 100} {r.unit}</span>
                                 {r.unitPrice > 0 && <span style={{opacity:0.7,fontSize:11.5}}>@ ₹{Math.round(r.unitPrice).toLocaleString("en-IN")}</span>}
@@ -707,13 +707,13 @@ export default function DCFloralsTab({ ctx }) {
                               </div>
                             ))}
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:9,paddingTop:8,borderTop:`1px solid ${border}`}}>
-                              <span style={{fontSize:13,color:"#000",fontWeight:500}}>Total from Inventory</span>
+                              <span style={{fontSize:13,color:"#1A1A2E",fontWeight:500}}>Total from Inventory</span>
                               <span style={{color:"#3B82F6",fontWeight:700,fontSize:15.5,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(invTotal).toLocaleString("en-IN")}</span>
                             </div>
                             {/* Said plainly, because the number above is ALREADY inside Artificial —
                                 without this line the two totals look like they should add up and
                                 do not. */}
-                            <div style={{fontSize:11,color:"#000",opacity:0.65,marginTop:6,fontStyle:"italic"}}>
+                            <div style={{fontSize:11,color:"#1A1A2E",opacity:0.65,marginTop:6,fontStyle:"italic"}}>
                               Included in Total Artificial above — these are manufactured pieces charged in full, so the real/artificial blend does not scale them.
                             </div>
                           </div>
@@ -729,13 +729,13 @@ export default function DCFloralsTab({ ctx }) {
                             ⚠ {uncosted.length} element{uncosted.length===1?"":"s"} not costed as florals
                           </div>
                           {uncosted.map((u,ui)=>(
-                            <div key={ui} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#000",padding:"2px 0"}}>
-                              <span style={{color:"#000",fontWeight:600}}>{u.name}</span>
+                            <div key={ui} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#1A1A2E",padding:"2px 0"}}>
+                              <span style={{color:"#1A1A2E",fontWeight:600}}>{u.name}</span>
                               <span style={{opacity:0.7}}>{u.zoneKey} · ×{u.qty}</span>
                               <span style={{marginLeft:"auto",color:"#F59E0B"}}>{u.reason}</span>
                             </div>
                           ))}
-                          <div style={{fontSize:12,color:"#000",marginTop:6,fontStyle:"italic"}}>
+                          <div style={{fontSize:12,color:"#1A1A2E",marginTop:6,fontStyle:"italic"}}>
                             Add these to the Rate Card under “florals” to price them from a flower recipe. Until then they bill as rental.
                           </div>
                         </div>
@@ -761,15 +761,15 @@ export default function DCFloralsTab({ ctx }) {
                         });
                         return (
                       <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(26, 26, 46,0.02)",border:`1px solid ${border}`}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#000",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📋 Per-Element Breakdown ({merged.length} element{merged.length===1?"":"s"}{merged.length !== elementBreakdown.length ? ` · ${elementBreakdown.length} rows` : ""})</div>
+                        <div style={{fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📋 Per-Element Breakdown ({merged.length} element{merged.length===1?"":"s"}{merged.length !== elementBreakdown.length ? ` · ${elementBreakdown.length} rows` : ""})</div>
                         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                           <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                            <th style={{textAlign:"left",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Element</th>
-                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Qty</th>
-                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Real %</th>
-                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Real ₹</th>
-                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Artif ₹</th>
-                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#000",letterSpacing:0.4}}>Total</th>
+                            <th style={{textAlign:"left",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Element</th>
+                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Qty</th>
+                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Real %</th>
+                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Real ₹</th>
+                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Artif ₹</th>
+                            <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Total</th>
                             <th style={{width:60}}></th>
                           </tr></thead>
                           <tbody>
@@ -780,9 +780,9 @@ export default function DCFloralsTab({ ctx }) {
                               return (
                               <Fragment key={mgi}>
                               <tr style={{borderBottom:open?"none":`1px solid ${border}33`}}>
-                                <td style={{padding:"6px 4px",color:"#000"}}>{mg.name}{!mg.hasPattern && <span title="No IMS pattern" style={{marginLeft:6,fontSize:11,color:"#F59E0B"}}>⚠</span>}{mg.zones.length > 1 && <div style={{fontSize:11,color:"#000",marginTop:1}}>{zoneLabel}</div>}{mg.zones.length === 1 && <span style={{fontSize:11,color:"#000",marginLeft:6}}>{zoneLabel}</span>}</td>
-                                <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.totalQty}</td>
-                                <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.realPct}%</td>
+                                <td style={{padding:"6px 4px",color:"#1A1A2E"}}>{mg.name}{!mg.hasPattern && <span title="No IMS pattern" style={{marginLeft:6,fontSize:11,color:"#F59E0B"}}>⚠</span>}{mg.zones.length > 1 && <div style={{fontSize:11,color:"#1A1A2E",marginTop:1}}>{zoneLabel}</div>}{mg.zones.length === 1 && <span style={{fontSize:11,color:"#1A1A2E",marginLeft:6}}>{zoneLabel}</span>}</td>
+                                <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.totalQty}</td>
+                                <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.realPct}%</td>
                                 <td style={{padding:"6px 4px",color:"#10B981",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.realCost).toLocaleString("en-IN")}</td>
                                 {/* No badge on this figure. Inventory pieces are named in their own
                                     "Direct from Inventory" section above and marked in the "how"
@@ -793,7 +793,7 @@ export default function DCFloralsTab({ ctx }) {
                                   title={mg.invCost > 0 ? `Includes ₹${Math.round(mg.invCost).toLocaleString("en-IN")} of inventory pieces, charged in full` : undefined}>
                                   ₹{Math.round(mg.artCost).toLocaleString("en-IN")}
                                 </td>
-                                <td style={{padding:"6px 4px",color:"#000",textAlign:"right",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.total).toLocaleString("en-IN")}</td>
+                                <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.total).toLocaleString("en-IN")}</td>
                                 <td style={{padding:"6px 4px",textAlign:"right"}}>
                                   <button onClick={()=>setDcFloralCalcOpen(p=>({...p,[eKey]:!p[eKey]}))}
                                     style={{fontSize:12,padding:"2px 8px",borderRadius:7,cursor:"pointer",
@@ -821,7 +821,7 @@ export default function DCFloralsTab({ ctx }) {
                                                   const invCost=invLines.reduce((s,rl)=>s+(rl.lineCost||0),0);
                                           return (
                                           (mandiLines.length === 0) ? (
-                                            <div style={{color:"#000",fontStyle:"italic"}}>
+                                            <div style={{color:"#1A1A2E",fontStyle:"italic"}}>
                                               {invLines.length > 0
                                                 ? `No fresh flowers — ₹${Math.round(invCost).toLocaleString("en-IN")} of inventory pieces is costed as artificial.`
                                                 : eb.hasPattern ? "Recipe has no flowers." : "No IMS pattern found — Real ₹0."}
@@ -829,22 +829,22 @@ export default function DCFloralsTab({ ctx }) {
                                           ) : (
                                             <table style={{width:"100%",borderCollapse:"collapse"}}>
                                               <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                                                <th style={{textAlign:"left",padding:"3px 2px",color:"#000",fontWeight:500}}>Flower</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Per pattern</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Total qty</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Cost</th>
+                                                <th style={{textAlign:"left",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Flower</th>
+                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Per pattern</th>
+                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Total qty</th>
+                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Cost</th>
                                               </tr></thead>
                                               <tbody>
                                                 {mandiLines.map((rl, ri) => (
                                                   <tr key={ri}>
-                                                    <td style={{padding:"3px 2px",color:"#000"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{rl.perPattern} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{rl.qty.toFixed(2)} {rl.unit}</td>
+                                                    <td style={{padding:"3px 2px",color:"#1A1A2E"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{rl.perPattern} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{rl.qty.toFixed(2)} {rl.unit}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(rl.lineCost).toLocaleString("en-IN")}</td>
                                                   </tr>
                                                 ))}
                                                 <tr style={{borderTop:`1px solid ${border}`}}>
-                                                  <td colSpan={3} style={{textAlign:"right",padding:"3px 2px",color:"#000"}}>Real subtotal:</td>
+                                                  <td colSpan={3} style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E"}}>Real subtotal:</td>
                                                   <td style={{textAlign:"right",padding:"3px 2px",color:"#10B981",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(eb.realCost).toLocaleString("en-IN")}</td>
                                                 </tr>
                                               </tbody>
@@ -855,14 +855,14 @@ export default function DCFloralsTab({ ctx }) {
                                         <div>
                                           <div style={{color:"#EC4899",fontWeight:600,marginBottom:5}}>● Artificial bunches ({100-eb.realPct}% × {eb.qty} pattern{eb.qty===1?"":"s"})</div>
                                           {eb.artCost <= 0 ? (
-                                            <div style={{color:"#000",fontStyle:"italic"}}>{(!eb.artLines || eb.artLines.length === 0) ? "No artificial (100% real, no recipe, or bunches/unit not set on flowers)." : "Set Art Bunches/Unit on flowers in IMS Mandi tab."}</div>
+                                            <div style={{color:"#1A1A2E",fontStyle:"italic"}}>{(!eb.artLines || eb.artLines.length === 0) ? "No artificial (100% real, no recipe, or bunches/unit not set on flowers)." : "Set Art Bunches/Unit on flowers in IMS Mandi tab."}</div>
                                           ) : (
                                             <table style={{width:"100%",borderCollapse:"collapse"}}>
                                               <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                                                <th style={{textAlign:"left",padding:"3px 2px",color:"#000",fontWeight:500}}>Flower</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Real replaced</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Bunches</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#000",fontWeight:500}}>Cost</th>
+                                                <th style={{textAlign:"left",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Flower</th>
+                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Real replaced</th>
+                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Bunches</th>
+                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Cost</th>
                                               </tr></thead>
                                               <tbody>
                                                 {/* invItem is checked BEFORE realOnly. Inventory lines
@@ -875,20 +875,20 @@ export default function DCFloralsTab({ ctx }) {
                                                 {(eb.artLines || []).map((al, ai) => (
                                                   <tr key={ai}>
                                                     <td style={{padding:"3px 2px",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#000")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":"#EC4899"))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":"🌹"))}</span></td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#000",fontVariantNumeric:"tabular-nums"}}>{al.invItem ? <span style={{fontSize:11,fontStyle:"italic",color:textS}}>{al.qty} {al.unit}</span> : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{al.invItem ? <span style={{fontSize:11,fontStyle:"italic",color:textS}}>{al.qty} {al.unit}</span> : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:al.realOnly?textS:(al.missingRatio?"#F59E0B":"#000"),fontVariantNumeric:"tabular-nums"}}>{al.realOnly ? "—" : (al.missingRatio?"⚠ ratio?":al.bunches.toFixed(1))}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899")),fontVariantNumeric:"tabular-nums"}}>{al.invItem ? `₹${Math.round(al.lineCost).toLocaleString("en-IN")}` : al.realOnly ? "—" : `₹${Math.round(al.lineCost).toLocaleString("en-IN")}`}</td>
                                                   </tr>
                                                 ))}
                                                 <tr style={{borderTop:`1px solid ${border}`}}>
-                                                  <td colSpan={3} style={{textAlign:"right",padding:"3px 2px",color:"#000"}}>Art subtotal:</td>
+                                                  <td colSpan={3} style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E"}}>Art subtotal:</td>
                                                   <td style={{textAlign:"right",padding:"3px 2px",color:"#EC4899",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(eb.artCost).toLocaleString("en-IN")}</td>
                                                 </tr>
                                               </tbody>
                                             </table>
                                           )}
                                           {eb.artCost > 0 && (
-                                            <div style={{marginTop:5,fontSize:11,color:"#000",fontStyle:"italic"}}>
+                                            <div style={{marginTop:5,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>
                                               {eb.artBunchesFlower > 0 && <div>🌹 {eb.artBunchesFlower.toFixed(1)} flower bunches × ₹{eb.flowerPerBunchRate?.toFixed(2)}/bunch</div>}
                                               {eb.artBunchesGreen > 0 && <div>🌿 {eb.artBunchesGreen.toFixed(1)} green bunches × ₹{eb.greenPerBunchRate?.toFixed(2)}/bunch</div>}
                                             </div>
@@ -897,7 +897,7 @@ export default function DCFloralsTab({ ctx }) {
                                       </div>
 
                                       <div style={{marginTop:10,paddingTop:8,borderTop:`1px dashed ${border}`,display:"flex",justifyContent:"space-between",fontSize:13}}>
-                                        <span style={{color:"#000"}}>Total ({eb.zoneKey} × {eb.qty})</span>
+                                        <span style={{color:"#1A1A2E"}}>Total ({eb.zoneKey} × {eb.qty})</span>
                                         <span style={{color:"#B45309",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(eb.total).toLocaleString("en-IN")}</span>
                                       </div>
                                     </div>
@@ -921,7 +921,7 @@ export default function DCFloralsTab({ ctx }) {
         if (!parent) {
           return (
             <div onClick={()=>setDcColorModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#000",fontSize:13.5}}>Parent flower not found in mandi. <button onClick={()=>setDcColorModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:13,cursor:"pointer"}}>Close</button></div>
+              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Parent flower not found in mandi. <button onClick={()=>setDcColorModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
             </div>
           );
         }
@@ -953,21 +953,21 @@ export default function DCFloralsTab({ ctx }) {
             <div onClick={e=>e.stopPropagation()} style={{width:"min(640px, 100%)",maxHeight:"82vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
               <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{fontSize:14.5,fontWeight:700,color:"#000",letterSpacing:0.2}}>🎨 Pick colour for {parent.name}</div>
-                  <div style={{fontSize:12,color:"#000",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{variants.length} variant{variants.length===1?"":"s"} available · pick affects pricing only</div>
+                  <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2}}>🎨 Pick colour for {parent.name}</div>
+                  <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{variants.length} variant{variants.length===1?"":"s"} available · pick affects pricing only</div>
                 </div>
-                <button onClick={()=>setDcColorModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                <button onClick={()=>setDcColorModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
               </div>
               <div style={{padding:"14px 18px",overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(150px, 1fr))",gap:10}}>
                 {/* None / lowest (default) */}
                 <div onClick={()=>applyVariant(null)}
                   style={{cursor:"pointer",padding:12,borderRadius:10,border:currentVariantId===null?"2px solid #C084FC":`1px solid ${border}`,background:currentVariantId===null?"rgba(192,132,252,0.12)":"rgba(26, 26, 46,0.03)",display:"flex",flexDirection:"column",gap:6,minHeight:120}}>
-                  <div style={{width:"100%",height:50,borderRadius:6,background:"rgba(26, 26, 46,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#000"}}>📊</div>
-                  <div style={{fontSize:13,fontWeight:600,color:"#000"}}>None / lowest</div>
-                  <div style={{fontSize:11,color:"#000"}}>Uses ₹{Math.round(parent.currentPrice||0).toLocaleString("en-IN")} (lowest variant)</div>
+                  <div style={{width:"100%",height:50,borderRadius:6,background:"rgba(26, 26, 46,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>📊</div>
+                  <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>None / lowest</div>
+                  <div style={{fontSize:11,color:"#1A1A2E"}}>Uses ₹{Math.round(parent.currentPrice||0).toLocaleString("en-IN")} (lowest variant)</div>
                 </div>
                 {variants.length === 0 ? (
-                  <div style={{gridColumn:"2 / -1",padding:30,textAlign:"center",color:"#000",fontSize:13,fontStyle:"italic"}}>No colour variants set up for this flower in IMS yet.</div>
+                  <div style={{gridColumn:"2 / -1",padding:30,textAlign:"center",color:"#1A1A2E",fontSize:13,fontStyle:"italic"}}>No colour variants set up for this flower in IMS yet.</div>
                 ) : variants.map(v => {
                   const isSelected = currentVariantId === v.variantId;
                   return (
@@ -976,15 +976,15 @@ export default function DCFloralsTab({ ctx }) {
                       {v.photoUrl ? (
                         <img src={v.photoUrl} alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:"#1A1A2E"}} />
                       ) : (
-                        <div style={{width:"100%",height:50,borderRadius:6,background:"rgba(26, 26, 46,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#000"}}>🌸</div>
+                        <div style={{width:"100%",height:50,borderRadius:6,background:"rgba(26, 26, 46,0.05)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>🌸</div>
                       )}
-                      <div style={{fontSize:13,fontWeight:600,color:"#000",lineHeight:1.2}}>{v.name || "Unnamed"}</div>
+                      <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",lineHeight:1.2}}>{v.name || "Unnamed"}</div>
                       <div style={{fontSize:12,color:"#9333EA",fontWeight:600}}>₹{Math.round(Number(v.currentPrice)||0).toLocaleString("en-IN")}/{parent.unit||"unit"}</div>
                     </div>
                   );
                 })}
               </div>
-              <div style={{padding:"10px 18px",borderTop:`1px solid ${border}`,fontSize:12,color:"#000",fontStyle:"italic"}}>Purchase manager may substitute on the day based on mandi availability — your pick is a preference, not a lock.</div>
+              <div style={{padding:"10px 18px",borderTop:`1px solid ${border}`,fontSize:12,color:"#1A1A2E",fontStyle:"italic"}}>Purchase manager may substitute on the day based on mandi availability — your pick is a preference, not a lock.</div>
             </div>
           </div>
         );
@@ -997,7 +997,7 @@ export default function DCFloralsTab({ ctx }) {
         if (!parent) {
           return (
             <div onClick={()=>setDcPrefModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,color:"#000",fontSize:13.5}}>Flower not found in mandi. <button onClick={()=>setDcPrefModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:13,cursor:"pointer"}}>Close</button></div>
+              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Flower not found in mandi. <button onClick={()=>setDcPrefModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
             </div>
           );
         }
@@ -1027,10 +1027,10 @@ export default function DCFloralsTab({ ctx }) {
             <div onClick={e=>e.stopPropagation()} style={{width:"min(640px, 100%)",maxHeight:"82vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
               <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{fontSize:14.5,fontWeight:700,color:"#000"}}>🎨 Pick colours for {parent.name}</div>
-                  <div style={{fontSize:12,color:"#000",marginTop:2}}>Tap in order of preference (max 3). 1st choice = selected color + price.</div>
+                  <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E"}}>🎨 Pick colours for {parent.name}</div>
+                  <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>Tap in order of preference (max 3). 1st choice = selected color + price.</div>
                 </div>
-                <button onClick={()=>setDcPrefModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:14.5,cursor:"pointer"}}>✕</button>
+                <button onClick={()=>setDcPrefModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer"}}>✕</button>
               </div>
               {/* Current ranked preferences */}
               {prefs.length > 0 && (
@@ -1039,18 +1039,18 @@ export default function DCFloralsTab({ ctx }) {
                     <div key={p.variantId} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",borderRadius:8,border:`1.5px solid ${rankColors[i]}`,background:`${rankColors[i]}15`}}>
                       <span style={{fontSize:13,fontWeight:700,color:rankColors[i]}}>{i+1}</span>
                       {p.photoUrl && <img src={p.photoUrl} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover"}}/>}
-                      <span style={{fontSize:13,fontWeight:600,color:"#000"}}>{p.label}</span>
-                      <span style={{fontSize:11,color:"#000"}}>₹{Math.round(p.rate)}</span>
+                      <span style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{p.label}</span>
+                      <span style={{fontSize:11,color:"#1A1A2E"}}>₹{Math.round(p.rate)}</span>
                       <button onClick={()=>togglePref({variantId:p.variantId})} style={{fontSize:12,color:"#EF4444",background:"none",border:"none",cursor:"pointer",padding:0,lineHeight:1}}>✕</button>
                     </div>
                   ))}
-                  <button onClick={clearAll} style={{fontSize:11,color:"#000",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
+                  <button onClick={clearAll} style={{fontSize:11,color:"#1A1A2E",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
                 </div>
               )}
               {/* Variant grid */}
               <div style={{padding:"14px 18px",overflowY:"auto",flex:1}}>
                 {variants.length === 0 ? (
-                  <div style={{padding:30,textAlign:"center",color:"#000",fontSize:13,fontStyle:"italic"}}>No colour variants set up for {parent.name} in IMS Mandi yet.</div>
+                  <div style={{padding:30,textAlign:"center",color:"#1A1A2E",fontSize:13,fontStyle:"italic"}}>No colour variants set up for {parent.name} in IMS Mandi yet.</div>
                 ) : (
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:10}}>
                     {variants.map(v => {
@@ -1064,14 +1064,14 @@ export default function DCFloralsTab({ ctx }) {
                             background:isSelected?`${rankColors[rank]}12`:isDark?"rgba(26, 26, 46,0.03)":"#FAFAFA",
                             opacity:isFull?0.4:1,display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
                           {isSelected && (
-                            <div style={{position:"absolute",top:-6,right:-6,width:22,height:22,borderRadius:"50%",background:rankColors[rank],color:"#000",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>{rank+1}</div>
+                            <div style={{position:"absolute",top:-6,right:-6,width:22,height:22,borderRadius:"50%",background:rankColors[rank],color:"#1A1A2E",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(0,0,0,0.3)"}}>{rank+1}</div>
                           )}
                           {v.photoUrl ? (
                             <img src={v.photoUrl} alt={v.name||""} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1A1A2E":"#eee"}} />
                           ) : (
-                            <div style={{width:"100%",height:50,borderRadius:6,background:isDark?"rgba(26, 26, 46,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#000"}}>🌸</div>
+                            <div style={{width:"100%",height:50,borderRadius:6,background:isDark?"rgba(26, 26, 46,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:"#1A1A2E"}}>🌸</div>
                           )}
-                          <div style={{fontSize:13,fontWeight:600,color:"#000",lineHeight:1.2}}>{v.name || "Unnamed"}</div>
+                          <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",lineHeight:1.2}}>{v.name || "Unnamed"}</div>
                           <div style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{Math.round(Number(v.currentPrice)||0).toLocaleString("en-IN")}/{parent.unit||"unit"}</div>
                         </div>
                       );
@@ -1080,8 +1080,8 @@ export default function DCFloralsTab({ ctx }) {
                 )}
               </div>
               <div style={{padding:"12px 18px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:12,color:"#000"}}>{prefs.length}/3 selected{prefs.length>0?` · Costing: ₹${Math.round(prefs[0].rate)}/${parent.unit||"unit"}`:""}</span>
-                <button onClick={()=>setDcPrefModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#9333EA",color:"#000",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
+                <span style={{fontSize:12,color:"#1A1A2E"}}>{prefs.length}/3 selected{prefs.length>0?` · Costing: ₹${Math.round(prefs[0].rate)}/${parent.unit||"unit"}`:""}</span>
+                <button onClick={()=>setDcPrefModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#9333EA",color:"#1A1A2E",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
               </div>
             </div>
           </div>
@@ -1128,37 +1128,37 @@ export default function DCFloralsTab({ ctx }) {
               {/* Header */}
               <div style={{padding:"16px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{fontSize:15.5,fontWeight:700,color:"#000"}}>🌸 Artificial Flower Color Split</div>
-                  <div style={{fontSize:13,color:"#000",marginTop:3}}>Total: <strong>{Math.round(totalKg * 10) / 10} kg</strong> · Allocated: <strong style={{color:remaining <= 0 ? "#10B981" : "#F59E0B"}}>{allocated} kg</strong> · Remaining: <strong>{remaining} kg</strong></div>
+                  <div style={{fontSize:15.5,fontWeight:700,color:"#1A1A2E"}}>🌸 Artificial Flower Color Split</div>
+                  <div style={{fontSize:13,color:"#1A1A2E",marginTop:3}}>Total: <strong>{Math.round(totalKg * 10) / 10} kg</strong> · Allocated: <strong style={{color:remaining <= 0 ? "#10B981" : "#F59E0B"}}>{allocated} kg</strong> · Remaining: <strong>{remaining} kg</strong></div>
                 </div>
-                <button onClick={() => setDcArtFlowerModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:14.5,cursor:"pointer"}}>✕</button>
+                <button onClick={() => setDcArtFlowerModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer"}}>✕</button>
               </div>
               {/* Current allocation */}
               <div style={{padding:"14px 20px",overflowY:"auto",flex:1}}>
                 {draft.length > 0 && <div style={{marginBottom:16}}>
-                  <div style={{fontSize:12,fontWeight:700,color:"#000",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Current Allocation</div>
+                  <div style={{fontSize:12,fontWeight:700,color:"#1A1A2E",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Current Allocation</div>
                   {draft.map((a, idx) => <div key={a.itemId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,background:"rgba(236,72,153,0.06)",border:"1px solid rgba(236,72,153,0.2)",marginBottom:6}}>
                     {a.photo ? <img src={a.photo} alt="" style={{width:40,height:40,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:40,height:40,borderRadius:6,background:"rgba(236,72,153,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🌸</div>}
                     <div style={{flex:1}}>
-                      <div style={{fontSize:13.5,fontWeight:600,color:"#000"}}>{a.colour || a.name}</div>
-                      <div style={{fontSize:11,color:"#000"}}>{a.name}</div>
+                      <div style={{fontSize:13.5,fontWeight:600,color:"#1A1A2E"}}>{a.colour || a.name}</div>
+                      <div style={{fontSize:11,color:"#1A1A2E"}}>{a.name}</div>
                     </div>
-                    <input type="number" value={a.qty} min={0} max={rowMax(idx)} step={0.5} onChange={e => setQty(idx, e.target.value)} style={{width:60,padding:"5px 6px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:14.5,fontWeight:700,textAlign:"center"}} />
-                    <span style={{fontSize:12,color:"#000"}}>kg</span>
+                    <input type="number" value={a.qty} min={0} max={rowMax(idx)} step={0.5} onChange={e => setQty(idx, e.target.value)} style={{width:60,padding:"5px 6px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,fontWeight:700,textAlign:"center"}} />
+                    <span style={{fontSize:12,color:"#1A1A2E"}}>kg</span>
                     <button onClick={() => removeItem(idx)} style={{padding:"4px 8px",borderRadius:4,border:"none",background:"rgba(239,68,68,0.15)",color:"#EF4444",fontSize:13,cursor:"pointer",fontWeight:700}}>✕</button>
                   </div>)}
                 </div>}
                 {remaining > 0 && draft.length > 0 && <div style={{padding:"6px 12px",borderRadius:6,background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",fontSize:12,color:"#F59E0B",fontWeight:600,marginBottom:16,textAlign:"center"}}>{remaining} kg unassigned — add more colors or increase quantities</div>}
                 {/* Available colors from IMS */}
-                <div style={{fontSize:12,fontWeight:700,color:"#000",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Available Colors {available.length === 0 && artItems.length === 0 ? "(none in IMS yet)" : `(${available.length})`}</div>
+                <div style={{fontSize:12,fontWeight:700,color:"#1A1A2E",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Available Colors {available.length === 0 && artItems.length === 0 ? "(none in IMS yet)" : `(${available.length})`}</div>
                 {artItems.length > 6 && (
                   <input value={artFlowerSearch} onChange={e => setArtFlowerSearch(e.target.value)} placeholder="🔍 Search flower colour by name…"
-                    style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:13.5,marginBottom:10}} />
+                    style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13.5,marginBottom:10}} />
                 )}
                 {artItems.length === 0 ? (
-                  <div style={{padding:"30px 20px",textAlign:"center",color:"#000",fontSize:13,borderRadius:10,border:`1px dashed ${border}`}}>No artificial flower items in IMS inventory yet. Add items with subcategory "Artificial Flowers" in IMS to see them here.</div>
+                  <div style={{padding:"30px 20px",textAlign:"center",color:"#1A1A2E",fontSize:13,borderRadius:10,border:`1px dashed ${border}`}}>No artificial flower items in IMS inventory yet. Add items with subcategory "Artificial Flowers" in IMS to see them here.</div>
                 ) : available.length === 0 ? (
-                  <div style={{padding:"16px 20px",textAlign:"center",color:"#000",fontSize:13}}>{artFlowerSearch.trim() ? `No colours match "${artFlowerSearch}".` : "All available colors are already added above."}</div>
+                  <div style={{padding:"16px 20px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>{artFlowerSearch.trim() ? `No colours match "${artFlowerSearch}".` : "All available colors are already added above."}</div>
                 ) : (
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:10}}>
                     {available.map(it => {
@@ -1166,8 +1166,8 @@ export default function DCFloralsTab({ ctx }) {
                       return (
                         <div key={it.id} onClick={() => hasStock && addItem(it)} style={{cursor:hasStock?"pointer":"not-allowed",padding:10,borderRadius:10,border:`1px solid ${border}`,background:isDark?"rgba(26, 26, 46,0.03)":"#FAFAFA",opacity:hasStock?1:0.4,display:"flex",flexDirection:"column",gap:6}}>
                           {it._photo ? <img src={it._photo} alt="" style={{width:"100%",height:60,objectFit:"cover",borderRadius:6}} /> : <div style={{width:"100%",height:60,borderRadius:6,background:"rgba(236,72,153,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>🌸</div>}
-                          <div style={{fontSize:13,fontWeight:600,color:"#000",lineHeight:1.2}}>{it.name}</div>
-                          <div style={{fontSize:11,color:"#000"}}>{it._stock || 0} kg stock</div>
+                          <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",lineHeight:1.2}}>{it.name}</div>
+                          <div style={{fontSize:11,color:"#1A1A2E"}}>{it._stock || 0} kg stock</div>
                         </div>
                       );
                     })}
@@ -1176,8 +1176,8 @@ export default function DCFloralsTab({ ctx }) {
               </div>
               {/* Footer */}
               <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <button onClick={() => { updateDraft([]); }} style={{fontSize:13,color:"#000",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
-                <button onClick={() => setDcArtFlowerModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#EC4899",color:"#000",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
+                <button onClick={() => { updateDraft([]); }} style={{fontSize:13,color:"#1A1A2E",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
+                <button onClick={() => setDcArtFlowerModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#EC4899",color:"#1A1A2E",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
               </div>
             </div>
           </div>
@@ -1194,7 +1194,7 @@ export default function DCFloralsTab({ ctx }) {
         if (!fromParent) {
           return (
             <div onClick={()=>setDcSwapModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#000",fontSize:13.5}}>Flower not found in mandi. <button onClick={()=>setDcSwapModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:13,cursor:"pointer"}}>Close</button></div>
+              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Flower not found in mandi. <button onClick={()=>setDcSwapModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
             </div>
           );
         }
@@ -1246,10 +1246,10 @@ export default function DCFloralsTab({ ctx }) {
             <div onClick={e=>e.stopPropagation()} style={{width:"min(820px, 100%)",maxHeight:"88vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
               <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div>
-                  <div style={{fontSize:14.5,fontWeight:700,color:"#000",letterSpacing:0.2}}>🔄 Swap {fromParent.name}</div>
-                  <div style={{fontSize:12,color:"#000",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{totalQty.toFixed(2)} {fromParent.unit||""} @ ₹{Math.round(fromRate)} · type-{fromType} · pick a replacement of same type</div>
+                  <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2}}>🔄 Swap {fromParent.name}</div>
+                  <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{totalQty.toFixed(2)} {fromParent.unit||""} @ ₹{Math.round(fromRate)} · type-{fromType} · pick a replacement of same type</div>
                 </div>
-                <button onClick={()=>setDcSwapModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                <button onClick={()=>setDcSwapModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
               </div>
               <div style={{padding:"12px 18px",borderBottom:`1px solid ${border}`,display:"flex",gap:10,alignItems:"center"}}>
                 <input
@@ -1257,7 +1257,7 @@ export default function DCFloralsTab({ ctx }) {
                   value={dcSwapSearch}
                   onChange={e=>setDcSwapSearch(e.target.value)}
                   placeholder={"Search " + fromType + " flowers..."}
-                  style={{flex:1,padding:"7px 10px",fontSize:13,color:"#000",background:"rgba(0,0,0,0.20)",border:`1px solid ${border}`,borderRadius:6,outline:"none"}}
+                  style={{flex:1,padding:"7px 10px",fontSize:13,color:"#1A1A2E",background:"rgba(0,0,0,0.20)",border:`1px solid ${border}`,borderRadius:6,outline:"none"}}
                 />
                 <div style={{display:"flex",background:"rgba(26, 26, 46,0.06)",borderRadius:8,padding:3}}>
                   {["full","split"].map(m => (
@@ -1267,28 +1267,28 @@ export default function DCFloralsTab({ ctx }) {
               </div>
               {dcSwapMode === "split" && (
                 <div style={{padding:"10px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{fontSize:13,color:"#000"}}>Divert to swap:</div>
+                  <div style={{fontSize:13,color:"#1A1A2E"}}>Divert to swap:</div>
                   <input
                     type="number" min={0} max={totalQty} step={0.1}
                     value={dcSwapSplitQty}
                     onChange={e=>setDcSwapSplitQty(Math.max(0, Math.min(totalQty, Number(e.target.value)||0)))}
-                    style={{width:90,padding:"5px 8px",fontSize:13,color:"#000",background:"rgba(0,0,0,0.20)",border:`1px solid ${border}`,borderRadius:6,outline:"none",fontVariantNumeric:"tabular-nums"}}
+                    style={{width:90,padding:"5px 8px",fontSize:13,color:"#1A1A2E",background:"rgba(0,0,0,0.20)",border:`1px solid ${border}`,borderRadius:6,outline:"none",fontVariantNumeric:"tabular-nums"}}
                   />
-                  <div style={{fontSize:13,color:"#000"}}>{fromParent.unit||""}</div>
-                  <div style={{fontSize:12,color:"#000",marginLeft:"auto"}}>Keeps {remainingOriginalQty.toFixed(2)} {fromParent.unit||""} of original</div>
+                  <div style={{fontSize:13,color:"#1A1A2E"}}>{fromParent.unit||""}</div>
+                  <div style={{fontSize:12,color:"#1A1A2E",marginLeft:"auto"}}>Keeps {remainingOriginalQty.toFixed(2)} {fromParent.unit||""} of original</div>
                 </div>
               )}
               <div style={{padding:"14px 18px",overflowY:"auto",flex:1,display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(170px, 1fr))",gap:10}}>
                 {filtered.length === 0 ? (
-                  <div style={{gridColumn:"1 / -1",padding:30,textAlign:"center",color:"#000",fontSize:13,fontStyle:"italic"}}>No matching {fromType} flowers in mandi.</div>
+                  <div style={{gridColumn:"1 / -1",padding:30,textAlign:"center",color:"#1A1A2E",fontSize:13,fontStyle:"italic"}}>No matching {fromType} flowers in mandi.</div>
                 ) : filtered.map(p => {
                   const isPicked = dcSwapPicked?.id === p.id;
                   const variantCount = (p.colorVariants||[]).length;
                   return (
                     <div key={p.id} onClick={()=>setDcSwapPicked(p)}
                       style={{cursor:"pointer",padding:12,borderRadius:10,border:isPicked?"2px solid #FBBF24":`1px solid ${border}`,background:isPicked?"rgba(251,191,36,0.10)":"rgba(26, 26, 46,0.03)",display:"flex",flexDirection:"column",gap:4}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"#000",lineHeight:1.2}}>{p.name}</div>
-                      <div style={{fontSize:11,color:"#000"}}>{variantCount} colour{variantCount===1?"":"s"} · {p.unit||""}</div>
+                      <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",lineHeight:1.2}}>{p.name}</div>
+                      <div style={{fontSize:11,color:"#1A1A2E"}}>{variantCount} colour{variantCount===1?"":"s"} · {p.unit||""}</div>
                       <div style={{fontSize:13,color:"#B45309",fontWeight:600,marginTop:2}}>₹{Math.round(Number(p.currentPrice)||0).toLocaleString("en-IN")}/{p.unit||"unit"}</div>
                     </div>
                   );
@@ -1298,15 +1298,15 @@ export default function DCFloralsTab({ ctx }) {
               {dcSwapPicked && (
                 <div style={{padding:"12px 18px",borderTop:`1px solid ${border}`,background:"rgba(251,191,36,0.04)"}}>
                   <div style={{fontSize:12,color:"#B45309",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>Preview · {dcSwapMode === "full" ? "Full replace" : "Split"}</div>
-                  <div style={{fontSize:13,color:"#000",lineHeight:1.7}}>
-                    <div>Before: {totalQty.toFixed(2)} {fromParent.unit||""} {fromParent.name} × ₹{Math.round(fromRate)} = <span style={{color:"#000",fontWeight:600}}>₹{Math.round(rowDeltaBefore).toLocaleString("en-IN")}</span></div>
+                  <div style={{fontSize:13,color:"#1A1A2E",lineHeight:1.7}}>
+                    <div>Before: {totalQty.toFixed(2)} {fromParent.unit||""} {fromParent.name} × ₹{Math.round(fromRate)} = <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaBefore).toLocaleString("en-IN")}</span></div>
                     {dcSwapMode === "full" ? (
-                      <div>After: {swapQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = <span style={{color:"#000",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
+                      <div>After: {swapQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
                     ) : (
                       <>
                         <div>After (original): {remainingOriginalQty.toFixed(2)} {fromParent.unit||""} × ₹{Math.round(fromRate)} = ₹{Math.round(remainingOriginalQty * fromRate).toLocaleString("en-IN")}</div>
                         <div>After (swap): {swapQty.toFixed(2)} {dcSwapPicked.unit||""} {dcSwapPicked.name} × ₹{Math.round(targetRate)} = ₹{Math.round(swapQty * targetRate).toLocaleString("en-IN")}</div>
-                        <div>Row total: <span style={{color:"#000",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
+                        <div>Row total: <span style={{color:"#1A1A2E",fontWeight:600}}>₹{Math.round(rowDeltaAfter).toLocaleString("en-IN")}</span></div>
                       </>
                     )}
                     <div style={{marginTop:5,paddingTop:5,borderTop:`1px dashed ${border}`}}>
@@ -1316,7 +1316,7 @@ export default function DCFloralsTab({ ctx }) {
                 </div>
               )}
               <div style={{padding:"10px 18px",borderTop:`1px solid ${border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-                <button onClick={()=>setDcSwapModal(null)} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:"#000",fontSize:13,cursor:"pointer",fontWeight:500}}>Cancel</button>
+                <button onClick={()=>setDcSwapModal(null)} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer",fontWeight:500}}>Cancel</button>
                 <button onClick={confirmSwap} disabled={!dcSwapPicked || swapQty <= 0}
                   style={{padding:"7px 14px",borderRadius:7,border:"none",background:(!dcSwapPicked || swapQty<=0)?"rgba(251,191,36,0.20)":"#B45309",color:(!dcSwapPicked || swapQty<=0)?textS:"#0F0F1A",fontSize:13,cursor:(!dcSwapPicked || swapQty<=0)?"not-allowed":"pointer",fontWeight:700,letterSpacing:0.3}}>Confirm swap</button>
               </div>

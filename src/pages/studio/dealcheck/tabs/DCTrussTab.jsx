@@ -28,10 +28,10 @@ export default function DCTrussTab({ ctx }) {
                   // §23 Phase 3 (26 May 2026) — adds reservation status banner showing
                   // soft-hold / hard-block state per fn date + held-by-other warnings.
                   const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>No functions configured yet.</div>;
+                  if (fns.length === 0) return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>No functions configured yet.</div>;
                   const trussInv = dealCheckData?.trussInv;
                   if (!trussInv) {
-                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>
+                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>
                       <div style={{fontSize:32,marginBottom:10}}>🏗️</div>
                       <div style={{color:"#B45309",fontWeight:600,marginBottom:6}}>IMS Truss Inventory not loaded</div>
                       <div>Ask Ops to fill Settings → Truss &amp; Batta in IMS, then close + reopen Deal Check.</div>
@@ -106,7 +106,7 @@ export default function DCTrussTab({ ctx }) {
 
                   const totalZonesShown = previewsByFn.reduce((s, x) => s + x.previews.length, 0);
                   if (totalZonesShown === 0) {
-                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#000",fontSize:13}}>
+                    return <div style={{padding:"50px 30px",textAlign:"center",color:"#1A1A2E",fontSize:13}}>
                       <div style={{fontSize:32,marginBottom:10}}>🏗️</div>
                       <div style={{marginBottom:4}}>No truss configured in any zone.</div>
                       <div>Add Truss Width/Depth/Height dimensions in Build → any zone to see preview here.</div>
@@ -173,7 +173,7 @@ export default function DCTrussTab({ ctx }) {
                             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
                               <div style={{display:"flex",alignItems:"center",gap:8}}>
                                 <span style={{fontSize:15.5}}>{icon}</span>
-                                <span style={{fontSize:13.5,fontWeight:700,color:"#000"}}>{label}</span>
+                                <span style={{fontSize:13.5,fontWeight:700,color:"#1A1A2E"}}>{label}</span>
                               </div>
                               {others.length > 0 && (
                                 <div style={{fontSize:11,color:"#B45309"}}>
@@ -181,11 +181,11 @@ export default function DCTrussTab({ ctx }) {
                                 </div>
                               )}
                             </div>
-                            <div style={{marginTop:4,fontSize:12,color:"#000"}}>{sublabel}</div>
+                            <div style={{marginTop:4,fontSize:12,color:"#1A1A2E"}}>{sublabel}</div>
                             {/* Show stock pressure indicator: who else holds what */}
                             {others.length > 0 && (() => {
                               const summary = others.map(o => `${o.heldBy || "—"} (${Object.values(o.totalPillarsUsed||{}).reduce((s,n)=>s+n,0)}P+${Object.values(o.totalBeamsUsed||{}).reduce((s,n)=>s+n,0)}B${o.state==="hard"?", SOLD":""})`).join(" · ");
-                              return <div style={{marginTop:4,fontSize:11,color:"#000",fontStyle:"italic"}}>Same-date pool: {summary}</div>;
+                              return <div style={{marginTop:4,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>Same-date pool: {summary}</div>;
                             })()}
                           </div>
                         );
@@ -196,32 +196,32 @@ export default function DCTrussTab({ ctx }) {
                         <div style={{padding:"12px 16px",borderRadius:10,background:"rgba(239, 68, 68, 0.10)",border:"1px solid rgba(239, 68, 68, 0.40)"}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
                             <span style={{fontSize:17.5}}>📝</span>
-                            <span style={{fontSize:14.5,fontWeight:700,color:"#000"}}>Amend request preview · {dcAmendDiff.date}</span>
+                            <span style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E"}}>Amend request preview · {dcAmendDiff.date}</span>
                           </div>
-                          <div style={{fontSize:12,color:"#000",marginBottom:8}}>
+                          <div style={{fontSize:12,color:"#1A1A2E",marginBottom:8}}>
                             This event is already SOLD. Submitting will update the truss block and create an audit log entry.
                           </div>
                           <div style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr",gap:6,fontSize:12,marginBottom:8}}>
-                            <div style={{color:"#000",fontWeight:600}}>Resource</div>
-                            <div style={{color:"#000",fontWeight:600}}>Before</div>
-                            <div style={{color:"#000",fontWeight:600}}>After (Δ)</div>
+                            <div style={{color:"#1A1A2E",fontWeight:600}}>Resource</div>
+                            <div style={{color:"#1A1A2E",fontWeight:600}}>Before</div>
+                            <div style={{color:"#1A1A2E",fontWeight:600}}>After (Δ)</div>
                             {Object.entries(dcAmendDiff.diff.pillars || {}).map(([sz, ch]) => (
                               <Fragment key={"p"+sz}>
-                                <div style={{color:"#000"}}>Pillar {sz}ft</div>
-                                <div style={{color:"#000"}}>{ch.before}</div>
+                                <div style={{color:"#1A1A2E"}}>Pillar {sz}ft</div>
+                                <div style={{color:"#1A1A2E"}}>{ch.before}</div>
                                 <div style={{color: ch.delta > 0 ? "#EF4444" : (ch.delta < 0 ? "#10B981" : "#000")}}>{ch.after} ({ch.delta > 0 ? "+" : ""}{ch.delta})</div>
                               </Fragment>
                             ))}
                             {Object.entries(dcAmendDiff.diff.beams || {}).map(([sz, ch]) => (
                               <Fragment key={"b"+sz}>
-                                <div style={{color:"#000"}}>Beam {sz}ft</div>
-                                <div style={{color:"#000"}}>{ch.before}</div>
+                                <div style={{color:"#1A1A2E"}}>Beam {sz}ft</div>
+                                <div style={{color:"#1A1A2E"}}>{ch.before}</div>
                                 <div style={{color: ch.delta > 0 ? "#EF4444" : (ch.delta < 0 ? "#10B981" : "#000")}}>{ch.after} ({ch.delta > 0 ? "+" : ""}{ch.delta})</div>
                               </Fragment>
                             ))}
                           </div>
                           <div style={{display:"flex",gap:8}}>
-                            <button onClick={() => setDcAmendDiff(null)} style={{flex:1,padding:"8px 12px",fontSize:13,borderRadius:8,border:"1px solid "+textS,background:"transparent",color:"#000",cursor:"pointer"}}>
+                            <button onClick={() => setDcAmendDiff(null)} style={{flex:1,padding:"8px 12px",fontSize:13,borderRadius:8,border:"1px solid "+textS,background:"transparent",color:"#1A1A2E",cursor:"pointer"}}>
                               Cancel
                             </button>
                             <button onClick={async () => {
@@ -246,7 +246,7 @@ export default function DCTrussTab({ ctx }) {
                               } catch (e) {
                                 showMsg("Amend failed: " + (e?.message || "unknown"), "red");
                               }
-                            }} style={{flex:2,padding:"8px 12px",fontSize:13,borderRadius:8,border:"none",background:"linear-gradient(135deg,#EF4444,#DC2626)",color:"#000",fontWeight:700,cursor:"pointer"}}>
+                            }} style={{flex:2,padding:"8px 12px",fontSize:13,borderRadius:8,border:"none",background:"linear-gradient(135deg,#EF4444,#DC2626)",color:"#1A1A2E",fontWeight:700,cursor:"pointer"}}>
                               Submit Amend Request
                             </button>
                           </div>
@@ -258,23 +258,23 @@ export default function DCTrussTab({ ctx }) {
                         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                           <div style={{display:"flex",alignItems:"center",gap:8}}>
                             <span style={{fontSize:17.5}}>🏗️</span>
-                            <span style={{fontSize:14.5,fontWeight:700,color:"#000"}}>Truss preview · {totalZonesShown} zone{totalZonesShown===1?"":"s"} across {fns.length} fn{fns.length===1?"":"s"}</span>
+                            <span style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E"}}>Truss preview · {totalZonesShown} zone{totalZonesShown===1?"":"s"} across {fns.length} fn{fns.length===1?"":"s"}</span>
                           </div>
                         </div>
-                        <div style={{display:"flex",gap:14,fontSize:12,color:"#000",flexWrap:"wrap"}}>
-                          <div>Pillar RFT: <span style={{color:"#000",fontWeight:600}}>{Math.round(grandPillarRft)}</span></div>
-                          <div>Beam RFT: <span style={{color:"#000",fontWeight:600}}>{Math.round(grandBeamRft)}</span></div>
-                          <div>Batta RFT (with buffer): <span style={{color:"#000",fontWeight:600}}>{Math.round(grandBattaRft)}</span></div>
+                        <div style={{display:"flex",gap:14,fontSize:12,color:"#1A1A2E",flexWrap:"wrap"}}>
+                          <div>Pillar RFT: <span style={{color:"#1A1A2E",fontWeight:600}}>{Math.round(grandPillarRft)}</span></div>
+                          <div>Beam RFT: <span style={{color:"#1A1A2E",fontWeight:600}}>{Math.round(grandBeamRft)}</span></div>
+                          <div>Batta RFT (with buffer): <span style={{color:"#1A1A2E",fontWeight:600}}>{Math.round(grandBattaRft)}</span></div>
                         </div>
                         {anyDefault && <div style={{marginTop:6,fontSize:12,color:"#F59E0B"}}>ℹ️ Some zones defaulted to Half Box (sales didn't pick) — review &amp; pick in Build to lock the type.</div>}
                         {anyShortage && <div style={{marginTop:4,fontSize:12,color:"#EF4444"}}>⚠️ One or more zones have invalid truss dimensions — fix in Build before SOLD.</div>}
-                        <div style={{marginTop:6,fontSize:11,color:"#000",fontStyle:"italic"}}>§23 Phase 3 active — Generate writes a 24h soft-hold to IMS; SOLD promotes to hard block.</div>
+                        <div style={{marginTop:6,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>§23 Phase 3 active — Generate writes a 24h soft-hold to IMS; SOLD promotes to hard block.</div>
                       </div>
 
                       {/* ── Per-fn / per-zone cards ── */}
                       {previewsByFn.map(({ fn, previews }, fi) => (previews.length === 0 || fi !== (activeFnIdx || 0)) ? null : (
                         <div key={fi} style={{display:"flex",flexDirection:"column",gap:8}}>
-                          <div style={{fontSize:13,fontWeight:600,color:"#000",letterSpacing:0.4,textTransform:"uppercase",paddingLeft:4}}>
+                          <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",letterSpacing:0.4,textTransform:"uppercase",paddingLeft:4}}>
                             {fn?.fnType || `Function ${fi+1}`} · {fn?.fnDate || "—"} · {fn?.fnVenue || "—"}
                           </div>
                           {previews.map(({ zk, zLabel, pv, row, rowIdx }) => {
@@ -290,12 +290,12 @@ export default function DCTrussTab({ ctx }) {
                                 {/* Header line */}
                                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                                   <div>
-                                    <div style={{fontSize:14.5,fontWeight:700,color:"#000",display:"flex",alignItems:"center",gap:6}}>
+                                    <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",display:"flex",alignItems:"center",gap:6}}>
                                       <span>{flagEmoji(pv.smartFlag)}</span>
                                       <span>{zLabel}</span>
                                       <span style={{fontSize:12,fontWeight:600,padding:"2px 8px",borderRadius:5,background:"rgba(26, 26, 46,0.06)",color:flagColor(pv.smartFlag)}}>{configLabel}</span>
                                     </div>
-                                    {topo && <div style={{fontSize:12,color:"#000",marginTop:3}}>
+                                    {topo && <div style={{fontSize:12,color:"#1A1A2E",marginTop:3}}>
                                       Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · {topo.totals?.totalJoints || (topo.pillarCount + topo.beamCount - 1)} joint{((topo.totals?.totalJoints || 0))===1?"":"s"} expected
                                     </div>}
                                   </div>
@@ -326,12 +326,12 @@ export default function DCTrussTab({ ctx }) {
                                           : `${phyW}W × ${phyL}D × ${dH}H ft`;
                                         return <>
                                           <div style={{flex:1,padding:"6px 10px",background:"rgba(26, 26, 46,0.03)",borderRadius:6}}>
-                                            <div style={{color:"#000",marginBottom:2}}>Customer demand</div>
-                                            <div style={{color:"#000",fontWeight:600}}>{demanded}</div>
+                                            <div style={{color:"#1A1A2E",marginBottom:2}}>Customer demand</div>
+                                            <div style={{color:"#1A1A2E",fontWeight:600}}>{demanded}</div>
                                           </div>
                                           <div style={{flex:1,padding:"6px 10px",background:"rgba(26, 26, 46,0.03)",borderRadius:6}}>
-                                            <div style={{color:"#000",marginBottom:2}}>Physical footprint</div>
-                                            <div style={{color:"#000",fontWeight:600}}>{physical}</div>
+                                            <div style={{color:"#1A1A2E",marginBottom:2}}>Physical footprint</div>
+                                            <div style={{color:"#1A1A2E",fontWeight:600}}>{physical}</div>
                                           </div>
                                         </>;
                                       })()}
@@ -340,16 +340,16 @@ export default function DCTrussTab({ ctx }) {
                                     {/* Structure breakdown */}
                                     <div style={{display:"flex",gap:10,marginBottom:8,flexWrap:"wrap"}}>
                                       <div style={{flex:"1 1 200px",padding:"6px 10px",background:"rgba(26, 26, 46,0.02)",borderRadius:6,fontSize:12}}>
-                                        <div style={{color:"#000",marginBottom:3,fontWeight:600}}>🏛️ Pillars ({topo.pillars.length})</div>
-                                        <div style={{color:"#000",lineHeight:1.5}}>
+                                        <div style={{color:"#1A1A2E",marginBottom:3,fontWeight:600}}>🏛️ Pillars ({topo.pillars.length})</div>
+                                        <div style={{color:"#1A1A2E",lineHeight:1.5}}>
                                           {topo.pillars.length} × {topo.pillars[0]?.H || "?"}ft = {costs?.pillarRft || 0} RFT
                                         </div>
                                       </div>
                                       <div style={{flex:"1 1 200px",padding:"6px 10px",background:"rgba(26, 26, 46,0.02)",borderRadius:6,fontSize:12}}>
-                                        <div style={{color:"#000",marginBottom:3,fontWeight:600}}>🔗 Beams ({topo.beams.length})</div>
-                                        <div style={{color:"#000",lineHeight:1.5}}>
+                                        <div style={{color:"#1A1A2E",marginBottom:3,fontWeight:600}}>🔗 Beams ({topo.beams.length})</div>
+                                        <div style={{color:"#1A1A2E",lineHeight:1.5}}>
                                           {topo.beams.map((b, i) => <span key={i}>{b.side}: {Math.ceil(b.lengthFt)}ft{i<topo.beams.length-1?" · ":""}</span>)}
-                                          <span style={{color:"#000"}}> ({costs?.beamRft || 0} RFT total)</span>
+                                          <span style={{color:"#1A1A2E"}}> ({costs?.beamRft || 0} RFT total)</span>
                                         </div>
                                       </div>
                                     </div>
@@ -357,10 +357,10 @@ export default function DCTrussTab({ ctx }) {
                                     {/* Per-zone Truss + Batta cost */}
                                     {costs && (
                                       <div style={{display:"flex",gap:10,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
-                                        <div style={{flex:"1 1 auto",display:"flex",gap:12,flexWrap:"wrap",fontSize:12,color:"#000"}}>
-                                          {costs.pillarCost > 0 && <span>Pillars: <span style={{color:"#000",fontWeight:600}}>₹{costs.pillarCost.toLocaleString("en-IN")}</span></span>}
-                                          {costs.beamCost > 0 && <span>Beams: <span style={{color:"#000",fontWeight:600}}>₹{costs.beamCost.toLocaleString("en-IN")}</span></span>}
-                                          {costs.battaCost > 0 && <span>Batta: <span style={{color:"#000",fontWeight:600}}>₹{costs.battaCost.toLocaleString("en-IN")}</span></span>}
+                                        <div style={{flex:"1 1 auto",display:"flex",gap:12,flexWrap:"wrap",fontSize:12,color:"#1A1A2E"}}>
+                                          {costs.pillarCost > 0 && <span>Pillars: <span style={{color:"#1A1A2E",fontWeight:600}}>₹{costs.pillarCost.toLocaleString("en-IN")}</span></span>}
+                                          {costs.beamCost > 0 && <span>Beams: <span style={{color:"#1A1A2E",fontWeight:600}}>₹{costs.beamCost.toLocaleString("en-IN")}</span></span>}
+                                          {costs.battaCost > 0 && <span>Batta: <span style={{color:"#1A1A2E",fontWeight:600}}>₹{costs.battaCost.toLocaleString("en-IN")}</span></span>}
                                         </div>
                                         {costs.actual > 0 && <div style={{fontSize:13,fontWeight:700,color:"#C9A96E"}}>Truss: ₹{costs.actual.toLocaleString("en-IN")}</div>}
                                       </div>
@@ -443,8 +443,8 @@ export default function DCTrussTab({ ctx }) {
                                             const cObj = (imsColourCatalogue||[]).find(c => c.name === a.colour);
                                             return <span key={i} style={{display:"inline-flex",alignItems:"center",gap:3,padding:"1px 6px",borderRadius:4,background:"rgba(26, 26, 46,0.06)",fontSize:12}}>
                                               <span style={{width:9,height:9,borderRadius:2,background:cObj?.hex||"#999",border:"1px solid rgba(26, 26, 46,0.2)"}} />
-                                              <span style={{color:"#000",fontWeight:600}}>{a.colour}</span>
-                                              <span style={{color:"#000"}}>×{a.qty}{unitLabel}</span>
+                                              <span style={{color:"#1A1A2E",fontWeight:600}}>{a.colour}</span>
+                                              <span style={{color:"#1A1A2E"}}>×{a.qty}{unitLabel}</span>
                                             </span>;
                                           })}
                                         </span>
@@ -459,13 +459,13 @@ export default function DCTrussTab({ ctx }) {
                                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                                               <div style={{display:"flex",alignItems:"center",gap:6,fontSize:13}}>
                                                 <span>{emoji}</span>
-                                                <span style={{color:"#000",fontWeight:600}}>{label}</span>
-                                                <span style={{color:"#000",fontSize:12}}>· {qty}{unitLabel} needed</span>
-                                                {breakdown && <span style={{color:"#000",fontSize:11,fontStyle:"italic"}}>({breakdown})</span>}
+                                                <span style={{color:"#1A1A2E",fontWeight:600}}>{label}</span>
+                                                <span style={{color:"#1A1A2E",fontSize:12}}>· {qty}{unitLabel} needed</span>
+                                                {breakdown && <span style={{color:"#1A1A2E",fontSize:11,fontStyle:"italic"}}>({breakdown})</span>}
                                               </div>
                                               <button
                                                 onClick={() => setFabricPickerTarget({ fnIdx: fn.fnIdx, zoneKey: zk, fabricType, rowIdx })}
-                                                style={{padding:"3px 8px",borderRadius:5,border:`1px solid ${border}`,background:"rgba(26, 26, 46,0.04)",color:"#000",fontSize:12,cursor:"pointer",fontWeight:600}}>
+                                                style={{padding:"3px 8px",borderRadius:5,border:`1px solid ${border}`,background:"rgba(26, 26, 46,0.04)",color:"#1A1A2E",fontSize:12,cursor:"pointer",fontWeight:600}}>
                                                 🎨 {allocs.length === 0 ? "Pick" : "Edit"}
                                               </button>
                                             </div>
@@ -476,9 +476,9 @@ export default function DCTrussTab({ ctx }) {
                                                   ⚠️ {shortQty}{unitLabel} fresh · {fmtRs(totals.total)} <span style={{opacity:0.8,fontWeight:400}}>(incl. {fmtRs(marginLoss)} fresh)</span>
                                                 </span>
                                               ) : allocs.length > 0 ? (
-                                                <span style={{fontSize:12,color:"#10B981",whiteSpace:"nowrap"}}>✓ in stock · <span style={{color:"#000",fontWeight:600}}>{fmtRs(totals.total)}</span> rental</span>
+                                                <span style={{fontSize:12,color:"#10B981",whiteSpace:"nowrap"}}>✓ in stock · <span style={{color:"#1A1A2E",fontWeight:600}}>{fmtRs(totals.total)}</span> rental</span>
                                               ) : (
-                                                <span style={{fontSize:12,color:"#000",whiteSpace:"nowrap"}}>— not allocated</span>
+                                                <span style={{fontSize:12,color:"#1A1A2E",whiteSpace:"nowrap"}}>— not allocated</span>
                                               )}
                                             </div>
                                           </div>
@@ -488,10 +488,10 @@ export default function DCTrussTab({ ctx }) {
                                       const fabricSubtotal = (showMasking ? (maskingTotals.total||0) : 0) + (showLiza ? (lizaTotals.total||0) : 0) + (showCurtain ? (curtainTotals.total||0) : 0);
                                       return (
                                         <div style={{marginTop:8,padding:"8px 10px",background:"rgba(99,102,241,0.04)",border:`1px dashed ${border}`,borderRadius:6}}>
-                                          <div style={{fontSize:12,fontWeight:700,color:"#000",letterSpacing:0.5,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+                                          <div style={{fontSize:12,fontWeight:700,color:"#1A1A2E",letterSpacing:0.5,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                                             <span style={{display:"flex",alignItems:"center",gap:6}}>
                                               <span>🧵 Fabric Allocation</span>
-                                              <span style={{fontSize:10,fontWeight:500,color:"#000",textTransform:"none",letterSpacing:0,fontStyle:"italic"}}>(rental — charged under truss cost)</span>
+                                              <span style={{fontSize:10,fontWeight:500,color:"#1A1A2E",textTransform:"none",letterSpacing:0,fontStyle:"italic"}}>(rental — charged under truss cost)</span>
                                             </span>
                                             {fabricSubtotal > 0 && <span style={{fontSize:12,fontWeight:700,color:"#4338CA",textTransform:"none",letterSpacing:0}}>Fabric: {fmtRs(fabricSubtotal)}</span>}
                                           </div>
@@ -580,8 +580,8 @@ export default function DCTrussTab({ ctx }) {
                             <div style={{padding:"7px 12px",background:"rgba(26, 26, 46,0.03)",borderRadius:6,marginBottom:5,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,flex:"1 1 200px",minWidth:0}}>
                                 <span style={{fontSize:15.5}}>{emoji}</span>
-                                <span style={{fontSize:13,color:"#000",fontWeight:600}}>{label}: {data.qty}{unit}</span>
-                                <span style={{fontSize:12,color:"#000",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>({colourStrs || "none allocated"})</span>
+                                <span style={{fontSize:13,color:"#1A1A2E",fontWeight:600}}>{label}: {data.qty}{unit}</span>
+                                <span style={{fontSize:12,color:"#1A1A2E",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>({colourStrs || "none allocated"})</span>
                               </div>
                               {data.shortQty > 0 ? (
                                 <span style={{fontSize:12,color:"#F59E0B",fontWeight:700,whiteSpace:"nowrap"}}>
@@ -598,10 +598,10 @@ export default function DCTrussTab({ ctx }) {
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                               <div style={{display:"flex",alignItems:"center",gap:8}}>
                                 <span style={{fontSize:17.5}}>📊</span>
-                                <span style={{fontSize:14.5,fontWeight:700,color:"#000"}}>{(fns[activeFnIdx || 0]?.fnType || "Function")} — Fabric Breakdown</span>
+                                <span style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E"}}>{(fns[activeFnIdx || 0]?.fnType || "Function")} — Fabric Breakdown</span>
                               </div>
                               <div style={{textAlign:"right"}}>
-                                <div style={{fontSize:11,color:"#000"}}>Fabric rental (charged under truss)</div>
+                                <div style={{fontSize:11,color:"#1A1A2E"}}>Fabric rental (charged under truss)</div>
                                 <div style={{fontSize:16.5,fontWeight:700,color:"#4338CA"}}>{fmtRs(totalFabricCost)}</div>
                                 {totalMarginLoss > 0 && <div style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>incl. {fmtRs(totalMarginLoss)} fresh stock</div>}
                               </div>
@@ -609,7 +609,7 @@ export default function DCTrussTab({ ctx }) {
                             <SummaryRow emoji="🧱" label="Wall Masking" data={agg.masking} unit="pc" />
                             <SummaryRow emoji="🪡" label="Liza"          data={agg.liza}    unit="kg" />
                             <SummaryRow emoji="🎀" label="Velvet Curtains" data={agg.curtain} unit="pc" />
-                            <div style={{marginTop:6,fontSize:11,color:"#000",fontStyle:"italic"}}>
+                            <div style={{marginTop:6,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>
                               This function only. Client pays one truss rate (fabric not itemised to client); internally fabric rental is charged under truss cost. Fresh stock (shortage) adds margin impact. All-functions total is in the bottom TRUSS chip. IMS auto-POs any shortage at SOLD.
                             </div>
                           </div>
@@ -639,13 +639,13 @@ export default function DCTrussTab({ ctx }) {
                         if (grand <= 0) return null;
                         const Card = ({ label, value, accentColour }) => (
                           <div style={{flex:"1 1 80px",padding:"8px 10px",borderRadius:6,background:accentColour?"rgba(16,185,129,0.10)":"rgba(26, 26, 46,0.03)",textAlign:"center"}}>
-                            <div style={{fontSize:11,color:"#000",marginBottom:2}}>{label}</div>
+                            <div style={{fontSize:11,color:"#1A1A2E",marginBottom:2}}>{label}</div>
                             <div style={{fontSize:16.5,fontWeight:700,color:accentColour||"#000"}}>{fmtRs(value)}</div>
                           </div>
                         );
                         return (
                           <div style={{marginTop:2,padding:"11px 14px",borderRadius:9,background:"rgba(99,102,241,0.08)",border:"1px solid rgba(99,102,241,0.35)"}}>
-                            <div style={{fontSize:12,fontWeight:700,color:"#000",letterSpacing:0.4,textTransform:"uppercase",marginBottom:7}}>{fn?.fnType || "Function"} — Truss Cost Total</div>
+                            <div style={{fontSize:12,fontWeight:700,color:"#1A1A2E",letterSpacing:0.4,textTransform:"uppercase",marginBottom:7}}>{fn?.fnType || "Function"} — Truss Cost Total</div>
                             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                               <Card label="🏗️ Truss" value={trussStruct} />
                               <Card label="🎗️ Batta" value={battaC} />
