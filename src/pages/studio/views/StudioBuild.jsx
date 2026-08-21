@@ -2522,12 +2522,27 @@ undefined
               const verified = !!master?._verified;
               return <button onClick={e=>{
                 e.stopPropagation();
-                if(!master){showMsg("Couldn't find the master photo for this image.","red");return;}
+                // ── NO MASTER IS A VALID CASE, NOT AN ERROR ──
+                // This bailed out with "Couldn't find the master photo" whenever the selected photo was
+                // not already a Library item — a fresh upload, or a photo off an event. But the button is
+                // deliberately shown for ANY selected photo (see the note above), and the save path is
+                // built for exactly this: it reads `isNewMaster = !correctPhoto.libId` and CREATES a
+                // library entry instead of updating one. The guard made that branch unreachable, so on
+                // those photos the button did nothing but show a red message.
+                // Opened with no libId, the photo's own name, and empty tags to fill in — which is what
+                // the save path is waiting for.
+                if(!master){
+                  setCorrVenueGrp("");
+                  setCorrectPhoto({ libId:null, zoneKey:k, name: selP.eventName||"", tags:{} });
+                  return;
+                }
                 // Open the full tag-correction panel (tier/venue/event/style/palette/zone + elements) pre-filled from master.
                 const mv=master.tags?.venue||"";
                 setCorrVenueGrp(allInhouseVenues.includes(mv)?"inhouse":(mv?"outside":""));
                 setCorrectPhoto({ libId: selP.eventId, zoneKey:k, name: master.name||"", tags: JSON.parse(JSON.stringify(master.tags||{})) });
-              }} title="Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+              }} title={master
+                ? "Correct this photo's tags + elements and save back to the shared library photo (permanent, for everyone)"
+                : "This photo isn't in the shared library yet — tag it and it will be added (permanent, for everyone)"}
                 style={{...S.btn(false),display:"inline-flex",alignItems:"center",gap:5,fontSize:10,padding:"4px 10px",border:`1px solid ${verified?"#059669":"#7C3AED"}`,color:verified?"#059669":"#7C3AED",fontWeight:600}}>
                 <IconPencil size={11}/>Update master
               </button>;
