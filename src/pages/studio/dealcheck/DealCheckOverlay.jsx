@@ -1017,6 +1017,15 @@ export default function DealCheckOverlay({ ctx }) {
    nobody can see has no business being drawn. These rules live in THIS stylesheet, which mounts and
    unmounts with the overlay, so the edges come straight back the moment Deal Check closes. */
 .sb-rail-edge,.bd-rail-edge{display:none !important}
+/* ── ONE FUNCTION SWITCHER ON SCREEN, NOT TWO ──
+   The navbar carries a row of function pills, and Deal Check has its own FUNCTIONS column with the
+   per-function cost on each card. Both switch the same thing, so two of them is two answers to "which
+   function am I on" sitting a few pixels apart — and the sidebar is the one that belongs to this
+   screen, because it is the one that shows what each function costs.
+   Hidden from the BAR, not from the sidebar. Same mechanism as the rail edges above: the rule lives in
+   this stylesheet, which mounts and unmounts with the overlay, so the navbar row is back the moment
+   Deal Check closes. Nothing in StudioApp had to learn that Deal Check exists. */
+.sa-fnrow{display:none !important}
 /* Close reveals its intent on hover rather than wearing it at rest: a permanently red ring in the
    corner of a screen that is fine reads as an error. Quiet until you reach for it. */
 /* Chrome and Safari want the pseudo-element; scrollbarWidth on the element covers Firefox. Ten pills
