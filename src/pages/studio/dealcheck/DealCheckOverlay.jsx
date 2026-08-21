@@ -1068,8 +1068,18 @@ export default function DealCheckOverlay({ ctx }) {
             {/* Back to the reference: light ground, close on the left, title ranged left. The navy bar
                 with the title centred was a different idea and it is gone — the mockup this is being
                 matched to has neither. */}
-            <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"14px 20px",borderBottom:`1px solid ${border}`}}>
-              <div style={{display:"flex",alignItems:"center",gap:14,minWidth:0}}>
+            {/* gap 0 between the three zones: the title's column width already sets where the tabs
+                start, and a flex gap on top of it would push them past the content column's edge by
+                however much the gap was. The close keeps its own breathing room from its group's gap. */}
+            <div className="dc-glass" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:0,padding:"13px 20px",borderBottom:`1px solid ${border}`}}>
+              {/* ── THE TITLE HOLDS A COLUMN, NOT JUST ITS OWN WIDTH ──
+                  200px is the 220px sidebar below minus this header's own 20px of left padding, so the
+                  title sits over the FUNCTIONS column and the tabs begin exactly where the main
+                  content column begins. Hugging the text instead let the strip start at whatever x the
+                  client's name happened to end at — which is a different x for every deal, and lined
+                  up with nothing.
+                  flexShrink:0 so the column holds when the tab row is full and wants the room. */}
+              <div style={{display:"flex",alignItems:"center",gap:14,width:200,flexShrink:0,minWidth:0}}>
                 {/* ── TWO LINES, TWO JOBS ──
                     Both were sans: 21px bold over 10px caps at 55% ink. That is a heading and a
                     subtitle in the same voice, so the pair read as one grey block and neither carried.
@@ -1097,7 +1107,10 @@ export default function DealCheckOverlay({ ctx }) {
                   child refuses to shrink below its content and the overflow never engages.
                   scrollbarWidth:none because a scrollbar under ten pills reads as a broken element;
                   the row scrolls by wheel, trackpad and drag regardless. */}
-              <div className="dc-tabs" style={{display:"flex",gap:2,flex:"1 1 auto",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
+              {/* gap 7, not 2. At 2 the pills were touching and the row read as one long bar with
+                  colour changes in it rather than as ten separate things to press — which is the same
+                  complaint the platform control had. The gap is what makes them countable. */}
+              <div className="dc-tabs" style={{display:"flex",gap:7,flex:"1 1 auto",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
                 {/* inline-flex with a gap rather than a marginRight on the emoji: the pair centres as
                     one object instead of the glyph hanging off the label's baseline. */}
                 {TABS.map(t => (
@@ -1107,7 +1120,7 @@ export default function DealCheckOverlay({ ctx }) {
                   </button>
                 ))}
               </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flexShrink:0}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:10,flexShrink:0,paddingLeft:14}}>
                 {/* The "Cached · <time>", "↻ Regenerate" and run-counter badges are gone from this
                     header. Generate below is the one control that matters, and it already states
                     what it will do ("4 zones changed…" / "no changes — uses cache") plus the run
