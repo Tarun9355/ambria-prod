@@ -113,9 +113,9 @@ export default function StudioEventInfo({ ctx }) {
     venue, setVenue, fn, setFn,
     clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
-    clientVenueOther, setClientVenueOther, setClientPalette, setFnBuilds,
+    clientVenueOther, setClientVenueOther, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx,
+    activeFnIdx, setActiveFnIdx, switchActiveFn,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
     activeClient, loadClientSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
@@ -246,6 +246,13 @@ export default function StudioEventInfo({ ctx }) {
   // Hoisted out of the render map so the confirm dialog can invoke it. Reindexing logic is
   // verbatim from the previous inline `doDelete`.
   const removeFunction = (idx) => {
+    // Was the function being removed the one currently LIVE in Build (zoneConfig/zoneElements/etc,
+    // as opposed to sitting frozen in fnBuilds)? If so, that live canvas is about to be relabelled
+    // under whatever function ends up at the new activeFnIdx — a different function's real saved
+    // build, or (idx===0) the promoted Fn1's — and left alone it would silently carry the JUST-
+    // DELETED function's leftover data forward under that new label. The next fn-switch would then
+    // snapshot that stale garbage and overwrite the real function's build with it. See the fix below.
+    const wasActive = idx === activeFnIdx;
     if (idx === 0) {
       // Function 1 is not an array entry — it lives in the top-level client fields. Removing it
       // therefore means PROMOTING the next function into that slot, not splicing. Guarded by
@@ -268,17 +275,23 @@ export default function StudioEventInfo({ ctx }) {
     // wrong function. Drop the removed function's build and shift the rest down. Without this,
     // deleting function 2 silently moved function 3's zones onto function 2 — and deleting
     // function 1 would have shifted every build in the deal.
-    setFnBuilds(prev => {
-      const next = {};
-      Object.entries(prev || {}).forEach(([k, v]) => {
-        const i = Number(k);
-        if (i === idx) return;                 // the removed function's own build goes with it
-        next[i > idx ? i - 1 : i] = v;
-      });
-      return next;
+    // Computed plainly (not via setFnBuilds's updater) so `restoreBuildState` below can read the
+    // reindexed map in the same tick — the updater form wouldn't have committed yet.
+    const reindexedBuilds = {};
+    Object.entries(fnBuilds || {}).forEach(([k, v]) => {
+      const i = Number(k);
+      if (i === idx) return;                 // the removed function's own build goes with it
+      reindexedBuilds[i > idx ? i - 1 : i] = v;
     });
+    setFnBuilds(reindexedBuilds);
     if (expandedFnIdx >= idx) setExpandedFnIdx(Math.max(0, expandedFnIdx - 1));
-    if (activeFnIdx >= idx) setActiveFnIdx(Math.max(0, activeFnIdx - 1)); // Commit 3 — keep pill on same semantic function after reindex
+    const newActiveIdx = activeFnIdx >= idx ? Math.max(0, activeFnIdx - 1) : activeFnIdx;
+    if (activeFnIdx >= idx) setActiveFnIdx(newActiveIdx); // Commit 3 — keep pill on same semantic function after reindex
+    // The removed function WAS live — pull whatever function now sits at newActiveIdx's real saved
+    // build back into live state (or blank it if that function has never been visited/built). Without
+    // this the just-deleted function's leftover zoneConfig/zoneElements rides along mislabeled as the
+    // new active function, and the next fn-switch snapshots that garbage over the real one's build.
+    if (wasActive) restoreBuildState(reindexedBuilds[newActiveIdx] || null);
   };
   const cancelRemove = () => {
     setConfirmRemove(null);
@@ -906,7 +919,15 @@ export default function StudioEventInfo({ ctx }) {
     // Commit 3 hotfix — pre-seed Browse from Function 1 (the default active pill) only.
     // Previous Commit 2 polish pre-seeded ALL functions; that contradicts the new pill-is-write-target policy.
     // The sync useEffect handles subsequent pill switches.
-    setActiveFnIdx(0);
+    //
+    // switchActiveFn(0), not a bare setActiveFnIdx(0): a user can switch pills while still on Event
+    // Info (the header row is visible on every step but Build), so the live build state on screen
+    // here might already belong to Function 2/3, not Function 1. A bare setActiveFnIdx relabels the
+    // pill without touching that live state, so Browse/Build would show under "Function 1" whatever
+    // function was last viewed — and the next real switch would overwrite Function 1's actual saved
+    // build with it. switchActiveFn snapshots the current function's live state into fnBuilds first
+    // and restores Function 1's own build before flipping the index, exactly like clicking its pill.
+    if (activeFnIdx !== 0) switchActiveFn(0); else setActiveFnIdx(0);
     const startType = String(fn || "").trim();
     const startVenue = String(venue || "").trim();
     setFilterFn(startType ? [startType] : []);

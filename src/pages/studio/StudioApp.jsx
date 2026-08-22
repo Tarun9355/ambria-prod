@@ -6054,13 +6054,20 @@ export default function StudioApp() {
     }
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
-      restoreBuildState(fn0Snap);
       const restoredBuilds = {};
       Object.entries(session.fnSnapshots).forEach(([k, v]) => {
         const idx = parseInt(k);
         if (!isNaN(idx) && idx !== 0 && v) restoredBuilds[idx] = v;
       });
+      // The mount-restore effect (refresh/reopen) passes the function that was actually active
+      // before — landing everyone back on Fn0's live state while labelling it "Function N" (a bare
+      // setActiveFnIdx after this call, with no matching restore) mislabelled whatever was on screen:
+      // the next real fn-switch would then snapshot Fn0's build over the true Function N's saved one.
+      // Only trust a requested index this session actually has a snapshot for (or 0, always valid).
+      const landingFnIdx = (Number.isInteger(opts.landingFnIdx) && opts.landingFnIdx > 0 && restoredBuilds[opts.landingFnIdx]) ? opts.landingFnIdx : 0;
+      restoreBuildState(landingFnIdx === 0 ? fn0Snap : restoredBuilds[landingFnIdx]);
       setFnBuilds(restoredBuilds);
+      setActiveFnIdx(landingFnIdx);
       if (session.eventDate) setClientDate(session.eventDate);
       if (session.venue) setVenue(session.venue);
       if (session.fn) setFn(session.fn);
@@ -6161,8 +6168,10 @@ export default function StudioApp() {
     // With a session and no usable stored step, Summary stays the default as before. Without one
     // there is nothing to summarise, so fall back to Event Info instead.
     const landingStep = (savedStep !== null && savedStep >= 1) ? savedStep : (session ? 3 : 0);
-    loadClientSession(client, session, landingStep, { isNewVisit: false });
-    if (savedFn > 0) setActiveFnIdx(savedFn);
+    // landingFnIdx, not a follow-up setActiveFnIdx: loadClientSession needs to know which function
+    // to land on BEFORE it decides what to restore into live state, or the label and the canvas
+    // disagree (see loadClientSession's own comment on this).
+    loadClientSession(client, session, landingStep, { isNewVisit: false, landingFnIdx: savedFn });
   }, [clientLedger, activeClientId, loadClientSession]);
 
   // Backstop: if the ledger never arrives — offline, a failed fetch — drop the gate anyway rather
