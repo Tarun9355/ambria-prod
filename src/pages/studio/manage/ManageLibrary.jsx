@@ -940,7 +940,7 @@ export default function ManageLibrary({ ctx }) {
             and disabled at the ends, so the row doesn't reflow as you move. */}
         {!libPage.loading && libVisible.length > 0 && (libPage.pageIdx > 0 || libPage.hasMore) && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 16 }}>
-            <button onClick={() => { libPage.prevPage(); libScrollTop(); }} disabled={libPage.pageIdx === 0}
+            <button className="ml-page-btn" onClick={() => { libPage.prevPage(); libScrollTop(); }} disabled={libPage.pageIdx === 0}
               style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: libPage.pageIdx === 0 ? 0.4 : 1, cursor: libPage.pageIdx === 0 ? "default" : "pointer" }}>← Prev</button>
             {/* "Page 3 of 25", not a bare "Page 3" — on its own the number says where you are but not
                 how much is left, which is the thing you actually want before clicking Next twenty
@@ -953,7 +953,7 @@ export default function ManageLibrary({ ctx }) {
                 Page {libPage.pageIdx + 1}{pages > 0 ? ` of ${pages}` : ""}
               </span>;
             })()}
-            <button onClick={() => { libPage.nextPage(); libScrollTop(); }} disabled={!libPage.hasMore}
+            <button className="ml-page-btn" onClick={() => { libPage.nextPage(); libScrollTop(); }} disabled={!libPage.hasMore}
               style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: libPage.hasMore ? 1 : 0.4, cursor: libPage.hasMore ? "pointer" : "default" }}>Next →</button>
           </div>
         )}
@@ -1954,6 +1954,18 @@ export default function ManageLibrary({ ctx }) {
    keeps this heading. Sized to match the kit's section labels above so it does not read as a different
    kind of thing sitting on top of them. Colour left as it was. */
 .ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:0.6;margin-bottom:8px}
+/* ── HOVER ON THE TWO CONTROLS THAT HAD NONE ──
+   Everything card-shaped on this page lifts under .ml-tile, but the view tabs and the pager were
+   flat: nothing happened until you clicked, which on a pager reading "Page 3 of 25" leaves you
+   unsure the arrows are live at all.
+   The tabs respond only when NOT selected — data-on marks the current one, and hovering the tab you
+   are already on suggests something is still to be gained by clicking it.
+   The pager responds only when NOT disabled, for the same reason: an end-stop that highlights reads
+   as a button that will do something. */
+.ml-tab:not([data-on]):hover{background:rgba(26,26,46,0.055) !important;color:#1a1a2e !important}
+.ml-page-btn:not(:disabled){transition:background .14s ease, color .14s ease, transform .14s ease}
+.ml-page-btn:not(:disabled):hover{background:rgba(26,26,46,0.075) !important;color:#1a1a2e !important;transform:translateY(-1px)}
+@media (prefers-reduced-motion: reduce){.ml-page-btn:not(:disabled):hover{transform:none}}
 /* Figures line up: the four status cards sit in a row and their counts are meant to be compared. */
 .ml-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
 /* ── THE PHOTO GRID: EIGHT UP ──
@@ -2210,10 +2222,10 @@ export default function ManageLibrary({ ctx }) {
           baseline, and flexWrap so a user whose permissions allow every tab doesn't get the field
           squeezed to nothing — it drops to its own line instead. */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        {libAllowed("images") && <button onClick={() => setLibView("images")} style={libTab(libView === "images")}><IconCamera size={14} />Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
-        {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={libTab(libView === "videos")}><IconPlay size={14} />Videos ({allVideos.length})</button>}
-        {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={libTab(libView === "corrections")}><IconClipboardCheck size={14} />Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
-        <button onClick={() => setLibView("palettes")} style={libTab(libView === "palettes")}><IconPalette size={14} />Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
+        {libAllowed("images") && <button onClick={() => setLibView("images")} className="ml-tab" data-on={libView === "images" ? "1" : undefined} style={libTab(libView === "images")}><IconCamera size={14} />Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
+        {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} className="ml-tab" data-on={libView === "videos" ? "1" : undefined} style={libTab(libView === "videos")}><IconPlay size={14} />Videos ({allVideos.length})</button>}
+        {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} className="ml-tab" data-on={libView === "corrections" ? "1" : undefined} style={libTab(libView === "corrections")}><IconClipboardCheck size={14} />Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
+        <button onClick={() => setLibView("palettes")} className="ml-tab" data-on={libView === "palettes" ? "1" : undefined} style={libTab(libView === "palettes")}><IconPalette size={14} />Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
         {/* Images view only. libSearch drives the photo query and nothing else, so on Videos or
             Palettes this box would take typing and change nothing — a field that silently does not
             apply is worse than no field.
@@ -2327,7 +2339,10 @@ export default function ManageLibrary({ ctx }) {
                   ["untagged", "❓", "Untagged", "no tags yet", untaggedN, "#9CA3AF"],
                 ].map(([k, icon, label, sub, count, col]) => {
                   const on = ytFilterLinked === k;
-                  return <div key={k} onClick={() => setYtFilterLinked(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
+                  // ml-tile only when NOT selected — same rule the Images status cards follow: the
+                  // chosen one keeps its own tinted border and fill, and glassing it would take away
+                  // the only thing saying which is active.
+                  return <div key={k} className={on ? undefined : "ml-tile"} onClick={() => setYtFilterLinked(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : "transparent"}`, background: on ? `${col}14` : undefined, display: "flex", flexDirection: "column", gap: 1 }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: on ? col : textS }}>{icon} {label}</div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}><span style={{ fontSize: 17, fontWeight: 800, color: on ? col : textP }}>{count}</span><span style={{ fontSize: 8, color: textS }}>{sub}</span></div>
                   </div>;
@@ -2473,8 +2488,12 @@ export default function ManageLibrary({ ctx }) {
               const rank=vidRank(v.id); // 0 = most recently tagged, 1e9 = not touched this session
               const linkedEvts=(savedTag.linkedEvents||[]).map(eid=>events.find(e=>e.id===eid)).filter(Boolean);
               const hasTag=savedTag.venue||savedTag.fn||(savedTag.styles||[]).length||savedTag.tier||savedTag.io||(savedTag.colors||[]).length;
+              // ml-tile (glass + hover lift) only on the plain cards. A card that is being edited or
+              // is rank-highlighted carries an accent border that says so, and the glass would
+              // overwrite the fill that border is sitting on — the same exception the Images grid
+              // and both status rows make.
               return(
-              <div key={v.id} style={{...S.card,overflow:"hidden",border:(isEditing||rank===0)?`2px solid ${accent}`:rank<1e9?`1px solid ${accent}66`:`1px solid ${border}`,transition:"border 0.2s"}}>
+              <div key={v.id} className={(isEditing||rank<1e9)?undefined:"ml-tile"} style={{...S.card,overflow:"hidden",border:(isEditing||rank===0)?`2px solid ${accent}`:rank<1e9?`1px solid ${accent}66`:"1px solid transparent",transition:"border 0.2s"}}>
                 {/* Thumbnail */}
                 <div style={{position:"relative",cursor:"pointer"}} onClick={()=>{
                   if(ytPicker){
@@ -2706,10 +2725,10 @@ export default function ManageLibrary({ ctx }) {
                 the estimate the cursor-paged Images grid needs. */}
             {vidPages > 1 && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 16 }}>
-                <button onClick={() => { setVidPage(p => Math.max(0, p - 1)); libScrollTop(); }} disabled={vp === 0}
+                <button className="ml-page-btn" onClick={() => { setVidPage(p => Math.max(0, p - 1)); libScrollTop(); }} disabled={vp === 0}
                   style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: vp === 0 ? 0.4 : 1, cursor: vp === 0 ? "default" : "pointer" }}>← Prev</button>
                 <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>Page {vp + 1} of {vidPages} · {vidFiltered.length} videos</span>
-                <button onClick={() => { setVidPage(p => Math.min(vidPages - 1, p + 1)); libScrollTop(); }} disabled={vp >= vidPages - 1}
+                <button className="ml-page-btn" onClick={() => { setVidPage(p => Math.min(vidPages - 1, p + 1)); libScrollTop(); }} disabled={vp >= vidPages - 1}
                   style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: vp >= vidPages - 1 ? 0.4 : 1, cursor: vp >= vidPages - 1 ? "default" : "pointer" }}>Next →</button>
               </div>
             )}
