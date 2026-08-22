@@ -229,7 +229,7 @@ export default function StudioSummary({ ctx }) {
     // admin-only client delete (same helper the Client Tracker uses)
     isAdmin, clientLedger, saveClientLedger, eventOrders, activeClientId, askConfirm,
     // events / cost sheet
-    eventGrandTotal, collectAllFunctionData, calcFunctionBreakdown,
+    eventGrandTotal, pricingReady, collectAllFunctionData, calcFunctionBreakdown,
     buildCombinedCostSheetData, csData, setCsData, saveSession, showMsg,
     // summary accordion state
     expandedSummaryFnIdx, setExpandedSummaryFnIdx,
@@ -1972,6 +1972,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
    loops forever as a slow pulse rather than a continuous strobe. */
 @keyframes shHalo{0%{opacity:.45;transform:scale(.86)}58%,100%{opacity:0;transform:scale(1.55)}}
 @keyframes shRule{0%{width:0;opacity:0}100%{width:56px;opacity:1}}
+/* The total's loading bar, shown until the rate tables land — see pricingReady in StudioApp.
+   Named shPulse rather than reusing Build's pt-pulse: this page injects its own stylesheet, it
+   namespaces everything sh-, and Build's copy is not mounted here. Opacity only, so it cannot shift
+   the hero's layout. */
+@keyframes shPulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@media (prefers-reduced-motion: reduce){[style*="shPulse"]{animation:none !important}}
 .sh-badge{opacity:0;animation:shPop .62s cubic-bezier(.34,1.4,.5,1) .05s forwards}
 .sh-halo{animation:shHalo 3.6s ease-out .55s infinite}
 .sh-1{opacity:0;animation:shRise .5s cubic-bezier(.22,.61,.36,1) .18s forwards}
@@ -2441,8 +2447,23 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             with digits sitting at different heights and descenders hanging below the line — elegant
             in a sentence, and wrong for the one figure a client reads off the screen.
             The size from that attempt is worth keeping. */}
-        <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={eventGrandTotal} fmt={fmt}/></div>
-        <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
+        {/* Held back until the rate tables are in — same pricingReady gate as Build's live estimate,
+            and the same reason: eventGrandTotal sums calcFunctionCost over the functions, and that
+            reads the rate card, its scaling factors and the truss/masking/carpet/platform tables.
+            Until they land it is a real total over seed defaults.
+            The count-up makes it worse here than on Build, not better: AnimatedTotal rolls smoothly
+            to whatever it is handed, so each intermediate figure got animated to in turn — which
+            reads as the number being carefully calculated rather than as it being wrong.
+            The tier pill goes with it; it is derived from the same figure. */}
+        {pricingReady ? <>
+          <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={eventGrandTotal} fmt={fmt}/></div>
+          <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
+        </> : <>
+          <div className="sh-te-amt" style={{fontSize:46,marginBottom:11,display:"flex",justifyContent:"center"}}>
+            <span style={{display:"inline-block",width:260,height:44,borderRadius:10,background:"rgba(255,255,255,0.13)",animation:"shPulse 1.15s ease-in-out infinite"}}/>
+          </div>
+          <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:"rgba(255,255,255,0.10)",color:"#E8CF9A"}}>Loading rates…</div>
+        </>}
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
             rather than a full-width bar above the panel. */}
         <div className="sh-te-cta" style={{marginTop:12}}>
@@ -2515,7 +2536,12 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                   </div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-                  <div style={{fontSize:18,fontWeight:700,color:accentText}}>{fmt(fnGrand)}</div>
+                  {/* Per-function total, from the same calcFunctionBreakdown as the hero figure, so
+                      it is gated with it. Leaving these live under a loading hero would be the worst
+                      of both: the sum hidden while its parts sit there looking settled. */}
+                  {pricingReady
+                    ? <div style={{fontSize:18,fontWeight:700,color:accentText}}>{fmt(fnGrand)}</div>
+                    : <span style={{display:"inline-block",width:82,height:16,borderRadius:5,background:isDark?"rgba(255,255,255,0.12)":"rgba(26,26,46,0.10)",animation:"shPulse 1.15s ease-in-out infinite"}}/>}
                   <span style={{fontSize:14,color:textS,transition:"transform 0.2s",transform:isExpanded?"rotate(180deg)":"rotate(0deg)",display:"inline-block"}}>▼</span>
                 </div>
               </div>
@@ -2622,7 +2648,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                   {/* Function grand total */}
                   <div style={{display:"flex",justifyContent:"space-between",padding:"16px 20px",background:"linear-gradient(135deg,#0F0F1A,#2d1b69)"}}>
                     <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>{fnData.fnType || "Function"} Total</div>
-                    <div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(fnGrand)}</div>
+                    {pricingReady
+                      ? <div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(fnGrand)}</div>
+                      : <span style={{display:"inline-block",width:96,height:18,borderRadius:5,background:"rgba(255,255,255,0.14)",animation:"shPulse 1.15s ease-in-out infinite"}}/>}
                   </div>
                 </div>
               )}
