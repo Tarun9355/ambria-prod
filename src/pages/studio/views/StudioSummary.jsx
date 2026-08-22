@@ -246,7 +246,7 @@ export default function StudioSummary({ ctx }) {
     showSoldConfetti, markSold,
     // step + reset. The 48 individual setters that used to be listed here existed only to feed the
     // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
-    setStep, setActiveClientId, startNewDeal,
+    setStep, setActiveClientId, startNewDeal, isFnSwitching,
   } = ctx;
 
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
@@ -2661,7 +2661,7 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         ) : null;
       })()}
       <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}>
-        <button className="sh-nav" onClick={()=>setStep(2)} style={S.btn(false)}>{"←"} Adjust</button>
+        <button className="sh-nav" onClick={()=>{ if (!isFnSwitching) setStep(2); }} style={S.btn(false)}>{"←"} Adjust</button>
         {/* Admin only, and deliberately a quiet text link rather than a third button: it sits a
             few pixels from "Start New" and must not read as an equal peer of it. Deletes the client
             whose summary this is, then resets to a blank deal — the confirm spells out the damage. */}

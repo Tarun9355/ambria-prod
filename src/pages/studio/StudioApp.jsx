@@ -8720,7 +8720,7 @@ export default function StudioApp() {
               <Fragment key={i}>
                 {i > 0 && <span aria-hidden="true" style={{ width: 17, height: 1, flexShrink: 0, margin: "0 3px",
                   background: i <= step ? `${accent}8C` : "rgba(255,255,255,0.13)", transition: "background .18s ease" }} />}
-                <div onClick={() => { if (reachable) setStep(i); }}
+                <div onClick={() => { if (reachable && !isFnSwitching) setStep(i); }}
                   className={reachable && !active ? "sa-step sa-step-on" : "sa-step"}
                   style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 9,
                     padding: "5px 15px 5px 5px", borderRadius: 13, whiteSpace: "nowrap", border: "none",
