@@ -2240,10 +2240,9 @@ export default function ManageLibrary({ ctx }) {
                 placeholder="Search venue, event, style, element…"
                 title="Searches the photo's tags as well as its name. Multiple words all have to match — “wedding gold” means both."
                 style={{ ...S.input, fontSize: 12.5, flex: "1 1 240px", maxWidth: 420, minWidth: 160 }} />
-            /* Title only, and the placeholder says so — ytSearch tests v.title and nothing else, so
-               promising tags here would send people hunting for "Mandap" and finding nothing. */
             : <input value={ytSearch} onChange={e => setYtSearch(e.target.value)}
-                placeholder="Search videos by title…"
+                placeholder="Search title, venue, event, style, colour…"
+                title="Searches the video's tags as well as its title. Multiple words all have to match — “wedding gold” means both."
                 style={{ ...S.input, fontSize: 12.5, flex: "1 1 240px", maxWidth: 420, minWidth: 160 }} />}
         </>}
       </div>
@@ -2457,7 +2456,29 @@ export default function ManageLibrary({ ctx }) {
               if(ytFilterLinked==="hidden") return isHid;
               if(isHid && !showHidden) return false;
               if(ytFilterPL!=="all"&&v.playlistId!==ytFilterPL) return false;
-              if(ytSearch.trim()&&!v.title.toLowerCase().includes(ytSearch.toLowerCase())) return false;
+              // ── SEARCH ACROSS THE TAGS, NOT JUST THE TITLE ──
+              // Every field the filter rail offers is searchable here too, so typing "exotica" or
+              // "sangeet" finds what picking it from the rail would. Matches the Images search, which
+              // does the same thing against the photo tags (SEARCH_TAG_KEYS in libraryQueries.js) —
+              // except that one has to ask Postgres and this list is already in memory.
+              // Each WORD must match somewhere; within a word, any field will do. So "wedding gold"
+              // means both, which is the point — those two words live in different tag fields and no
+              // single string contains them together.
+              // Reads ytVideoTags directly rather than the `tag` const, which is declared further down
+              // this predicate — referencing it here would be a temporal dead zone, i.e. a runtime
+              // ReferenceError that the build does not catch.
+              if(ytSearch.trim()){
+                const st=ytVideoTags[v.id];
+                // The six the rail filters on — venue, event, tier, in/out, style, colour — plus
+                // palette and time/setting, which the tag carries but the rail has no section for.
+                // Including them costs nothing and means a word the video genuinely IS tagged with
+                // never comes back empty. venue_custom needs no entry: it maps to a boolean flag and
+                // the name itself is always in `venue` (rowToVideoTag).
+                const hay=[v.title,st?.venue,st?.tier,st?.io,st?.palette,st?.timeSetting,
+                  ...(Array.isArray(st?.fn)?st.fn:[st?.fn]),
+                  ...(st?.styles||[]),...(st?.colors||[])].filter(Boolean).join(" ").toLowerCase();
+                if(!ytSearch.toLowerCase().trim().split(/\s+/).every(w=>hay.includes(w))) return false;
+              }
               // Already-tagged videos from this session keep their spot at the top instead of
               // vanishing out of the folder they no longer belong to (e.g. Untagged). Search and
               // the hidden filter above still apply — this only exempts the folder/tag filters.
