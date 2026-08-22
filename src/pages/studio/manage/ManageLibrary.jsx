@@ -1616,14 +1616,17 @@ export default function ManageLibrary({ ctx }) {
     <div className="ml-root" style={{ position: "relative" }}>
       <style>{`
 /* ── THE GROUND ──
-   The artwork sits on its own absolute layer, not on the root's background, for the same reason it
-   does on Deal Check: it needs to cover the full scroll height and sit UNDER everything without
-   joining the flow. Fixed would re-composite it against the scroll position every frame, which is
-   the cost that was flickering these pages on Mac — this scrolls with the page instead, once.
-   Children are lifted above it by the rule below rather than each one carrying a z-index: a static
-   sibling paints BELOW a positioned layer however late it comes in the DOM, so without this the
+   position:FIXED, and that is the whole trick. Absolute + inset:0 made this layer as tall as the
+   PAGE, and this page scrolls for thousands of pixels — so background-size:cover scaled the artwork
+   up to cover all of it and what landed in view was one empty corner of the image. Fixed sizes the
+   layer to the VIEWPORT, which is what Deal Check gets for free by living inside a fixed overlay.
+   This is NOT background-attachment:fixed. That property re-composites the image against the scroll
+   offset on every frame, which is the cost that was flickering these pages on Mac. A fixed ELEMENT
+   with a static background is painted once and simply does not move.
+   Children are lifted above it by the rule below rather than each carrying its own z-index: a static
+   sibling paints BELOW a positioned layer however late it comes in the DOM, so without that rule the
    cards would sit under the artwork. */
-.ml-wash{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+.ml-wash{position:fixed;inset:0;z-index:0;pointer-events:none;
   background:#F7F5F1;background-size:cover;background-position:center;background-repeat:no-repeat}
 .ml-root > *:not(.ml-wash){position:relative;z-index:1}
 /* ── GLASS, PAINTED NOT SAMPLED ──
