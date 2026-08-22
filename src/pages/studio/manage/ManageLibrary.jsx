@@ -1758,6 +1758,19 @@ export default function ManageLibrary({ ctx }) {
    cards would sit under the artwork. */
 .ml-wash{position:fixed;inset:0;z-index:0;pointer-events:none;
   background:#F7F5F1;background-size:cover;background-position:center;background-repeat:no-repeat}
+/* ── VIGNETTE ──
+   A soft darkening that stays out of the middle and gathers in the corners. Two things it earns:
+   the pale artwork stops competing with the white glass panels sitting on it, and the grid reads as
+   lit from the centre instead of evenly flat.
+   The colour is the app's navy ink, NOT black — black over this warm off-white goes grey and muddy,
+   while the navy keeps the shade inside the palette the rest of the page uses.
+   It lives on a pseudo-element rather than in the .ml-wash background, because that background is
+   set INLINE from the artwork URL and an inline background-image would win over anything layered
+   into the shorthand here. Fixed parent, absolute child, so it costs one paint and does not
+   re-composite while the page scrolls. */
+.ml-wash::after{content:"";position:absolute;inset:0;
+  background:radial-gradient(125% 95% at 50% 38%,
+    rgba(26,26,46,0) 40%, rgba(26,26,46,0.07) 72%, rgba(26,26,46,0.17) 100%)}
 .ml-root > *:not(.ml-wash){position:relative;z-index:1}
 /* ── GLASS, PAINTED NOT SAMPLED ──
    No backdrop-filter anywhere here. It re-reads and re-blurs whatever is behind it every frame, and
