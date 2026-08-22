@@ -2226,18 +2226,25 @@ export default function ManageLibrary({ ctx }) {
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} className="ml-tab" data-on={libView === "videos" ? "1" : undefined} style={libTab(libView === "videos")}><IconPlay size={14} />Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} className="ml-tab" data-on={libView === "corrections" ? "1" : undefined} style={libTab(libView === "corrections")}><IconClipboardCheck size={14} />Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} className="ml-tab" data-on={libView === "palettes" ? "1" : undefined} style={libTab(libView === "palettes")}><IconPalette size={14} />Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
-        {/* Images view only. libSearch drives the photo query and nothing else, so on Videos or
-            Palettes this box would take typing and change nothing — a field that silently does not
-            apply is worse than no field.
+        {/* The search box for whichever view is showing, in the one position — right end of the tab
+            row. Images and Videos each have their own search state and each searches something
+            different, so this switches between them rather than being one shared field.
+            Not rendered on Contributions or Palettes: neither has a search, and a box that takes
+            typing and changes nothing is worse than no box.
             The spacer is what pushes it right; a max-width stops it running the full width of a wide
-            monitor, where a 900px search field reads as the page's main event. Same input style the
-            page already used, just relocated — nothing added to it. */}
-        {libView === "images" && <>
+            monitor, where a 900px search field reads as the page's main event. */}
+        {(libView === "images" || libView === "videos") && <>
           <div style={{ flex: 1, minWidth: 12 }} />
-          <input value={libSearch} onChange={e => setLibSearch(e.target.value)}
-            placeholder="Search venue, event, style, element…"
-            title="Searches the photo's tags as well as its name. Multiple words all have to match — “wedding gold” means both."
-            style={{ ...S.input, fontSize: 12.5, flex: "1 1 240px", maxWidth: 420, minWidth: 160 }} />
+          {libView === "images"
+            ? <input value={libSearch} onChange={e => setLibSearch(e.target.value)}
+                placeholder="Search venue, event, style, element…"
+                title="Searches the photo's tags as well as its name. Multiple words all have to match — “wedding gold” means both."
+                style={{ ...S.input, fontSize: 12.5, flex: "1 1 240px", maxWidth: 420, minWidth: 160 }} />
+            /* Title only, and the placeholder says so — ytSearch tests v.title and nothing else, so
+               promising tags here would send people hunting for "Mandap" and finding nothing. */
+            : <input value={ytSearch} onChange={e => setYtSearch(e.target.value)}
+                placeholder="Search videos by title…"
+                style={{ ...S.input, fontSize: 12.5, flex: "1 1 240px", maxWidth: 420, minWidth: 160 }} />}
         </>}
       </div>
       {libView === "palettes" && !paletteCatalogueLoaded && (
@@ -2318,9 +2325,11 @@ export default function ManageLibrary({ ctx }) {
         <div style={{ display: "flex", alignItems: "flex-start", gap: 18, minHeight: "70vh" }}>
         {vidRail()}
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Search + Refresh + Add Video row */}
-          <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
-            <input value={ytSearch} onChange={e=>setYtSearch(e.target.value)} placeholder="Search videos by title..." style={{...S.input,flex:1,marginBottom:0,fontSize:12}}/>
+          {/* Refresh + Add Video. Search used to lead this row and now sits on the tab row above,
+              where the Images search is — same field, same state, one position on both views.
+              justifyContent:flex-end because without the input taking the slack the two buttons
+              would otherwise sit stranded on the left of an empty row. */}
+          <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center",justifyContent:"flex-end"}}>
             <button onClick={()=>openCldVideoBrowser()} style={{...S.btn(true),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Add Video</button>
             <button onClick={()=>loadAllYT(true)} disabled={ytLoading} style={{...S.btn(false),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap",opacity:ytLoading?0.5:1}}>{ytLoading?"⏳":"🔄"} Refresh YT</button>
           </div>
