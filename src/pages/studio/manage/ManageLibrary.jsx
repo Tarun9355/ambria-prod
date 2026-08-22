@@ -9,7 +9,7 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 // The same filter kit Browse and Build use — collapsible sections with the bullet, the caps label, the
 // count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
 // at all: three hand-rolled copies of one panel is how they drift apart.
-import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
+import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconSliders, IconChevron } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
@@ -496,6 +496,17 @@ export default function ManageLibrary({ ctx }) {
   // inside LibraryBrowse, because that is re-created on every render of this component — state
   // declared in there would be a fresh hook each time.
   const [libRailOpen, setLibRailOpen] = useState(true);
+  // The rail sticks below the header instead of scrolling away with the grid — with 1966 photos the
+  // grid is thousands of pixels tall, and the filters were only reachable by scrolling all the way
+  // back up. 70 is the sticky offset Build already uses for its own rails, so the two pages clear the
+  // header the same way. The MAX HEIGHT is measured, not guessed: useRailMaxHeight (the same kit hook
+  // Browse and Build use) reads the rail's real distance from the top of the viewport on scroll and
+  // resize, so it fills the space that's actually there and scrolls internally past that.
+  // Declared here, not inside LibraryBrowse — that is called conditionally (libView === "images"),
+  // and a hook behind a condition changes the hook order when the tab changes.
+  const LIB_RAIL_TOP = 70;
+  const libRailRef = useRef(null);
+  const libRailMaxH = useRailMaxHeight(libRailRef, LIB_RAIL_TOP);
   const [brokenImgIds, setBrokenImgIds] = useState(() => new Set());
   const markImgBroken = useCallback((id) => setBrokenImgIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id))), []);
   const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
@@ -520,7 +531,7 @@ export default function ManageLibrary({ ctx }) {
            Build folds its own filter rail into (railTab there), so this reads as one behaviour in
            two places rather than a second invention. Vertical label to keep the strip narrow. */
         ? <div className="ml-tile" onClick={() => setLibRailOpen(true)} title="Show filters"
-            style={{ width: 38, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: 70, cursor: "pointer",
+            style={{ width: 38, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: LIB_RAIL_TOP, cursor: "pointer",
               display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "12px 0 14px",
               borderRadius: 10, border: `1px solid ${border}`, background: cardBg }}>
             <span style={{ display: "flex", color: accent }}><IconSliders size={14} /></span>
@@ -536,7 +547,7 @@ export default function ManageLibrary({ ctx }) {
             })()}
             <span style={{ display: "flex", color: textS, transform: "rotate(-90deg)" }}><IconChevron size={11} /></span>
           </div>
-      : <div className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", overflowY: "auto", maxHeight: "80vh" }}>
+      : <div ref={libRailRef} className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: LIB_RAIL_TOP, overflowY: "auto", maxHeight: libRailMaxH }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
