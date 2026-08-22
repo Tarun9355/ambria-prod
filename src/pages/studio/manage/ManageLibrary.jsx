@@ -1687,9 +1687,32 @@ export default function ManageLibrary({ ctx }) {
    instead of as body text shrunk down, which is what most of this screen was doing. */
 .ml-cap{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;line-height:1.25}
 /* Section headings in the filter rail. Same idea one step up. */
-.ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;opacity:0.6;margin-bottom:7px}
+/* The Venue group is still hand-rolled (two-level — venue names nest under Inhouse/Outside), so it
+   keeps this heading. Sized to match the kit's section labels above so it does not read as a different
+   kind of thing sitting on top of them. Colour left as it was. */
+.ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:0.6;margin-bottom:8px}
 /* Figures line up: the four status cards sit in a row and their counts are meant to be compared. */
 .ml-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
+/* ── THE RAIL'S TYPE, TURNED UP ──
+   Size only. The kit's colours stay exactly as they are — an earlier pass darkened them too and that
+   was the part that was wrong, so this deliberately touches nothing but font-size and the padding that
+   has to grow with it.
+   !important because the kit sets these inline (see pill() and Section in filterUI.jsx), and an inline
+   declaration beats a plain rule. Scoped to .ml-rail so Browse and Build keep the kit's own sizing —
+   this is a local turn-up, not a change to the shared component.
+   The section label is the SECOND span in the header: bullet, label, optional count badge, chevron.
+   nth-of-type(2) holds whether or not the badge is there, since the badge comes after it. */
+/* ── THE WHOLE ROW IS THE TARGET, NOT THE WORDS ──
+   The kit stretches this header with negative margins written against a 12px panel padding
+   (margin:0 -12px, see Section in filterUI.jsx). This rail pads 14, so the row stopped 2px short of
+   each edge and the strip beside the label — most of the row's width — was not part of the button.
+   Matching the margin to this padding makes the hit area run the full width of the pane, which is
+   what an accordion row should be: you press the row, not the word.
+   The taller padding is the same idea vertically — a 12px-tall target for a 12px label is a target
+   you have to aim at. */
+.ml-rail .sb-head{margin:0 -14px !important;padding:11px 14px !important;width:auto !important}
+.ml-rail .sb-head > span:nth-of-type(2){font-size:12px !important;letter-spacing:1px !important}
+.ml-rail .sb-pill{font-size:12.5px !important;padding:7px 12px !important;min-height:30px !important}
 /* The filter rail: same glass, and its pills lift on hover so the column reads as pressable rather
    than as a list of labels. */
 .ml-rail{border-radius:14px;padding:14px 14px 16px}
@@ -1697,6 +1720,10 @@ export default function ManageLibrary({ ctx }) {
 @media (prefers-reduced-motion: reduce){
   .ml-tile{transition:none}
   .ml-tile:hover{transform:none}
+  /* The kit states this as a caller's job (see the note at the end of filterUI.jsx): it ships the
+     transitions but leaves the reduced-motion opt-out to whoever mounts it, so each page can decide
+     without the kit second-guessing. Honoured here now that this page is one of those callers. */
+  .sb-pill,.sb-head{transition:none}
 }
 `}</style>
       {/* The kit's own CSS — the section-header hover fill (.sb-head) and its pill states live there,
