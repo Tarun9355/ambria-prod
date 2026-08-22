@@ -2262,27 +2262,29 @@ undefined
       const vTag=ytVideoTags[sourceVideo.id]||{};
       const vid=allVideos.find(v=>v.id===sourceVideo.id);
       const embedUrl=sourceVideo.id?`https://www.youtube.com/embed/${sourceVideo.id}`:null;
+      const title=sourceVideo.title||vid?.title||"Video";
+      // Mirrors the reference banner's subtitle line (venue · fn · space) with whatever the
+      // video's own tags give us, instead of the old full tag-chip wall (tier + every color +
+      // every style + io) that made this card read as a tagging summary rather than a source card.
+      const subLine=[vTag.tier,vTag.io].filter(Boolean).join(" · ");
       return <div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
         <div style={{display:"flex",flexDirection:"column",gap:0}}>
           <div style={{width:"100%",height:140,flexShrink:0,position:"relative",background:"linear-gradient(135deg,#1a1a2e,#C9A96E)",overflow:"hidden"}}>
-            <LazyYT src={embedUrl} gradient="linear-gradient(135deg,#1a1a2e,#C9A96E)" poster={vid?.thumb} title={sourceVideo.title||vid?.title||"Video"} style={{position:"absolute",inset:0}}/>
+            <LazyYT src={embedUrl} gradient="linear-gradient(135deg,#1a1a2e,#C9A96E)" poster={vid?.thumb} title={title} style={{position:"absolute",inset:0}}/>
           </div>
           <div style={{flex:1,padding:"10px 12px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6,marginBottom:6}}>
               <div>
-                <div style={{fontSize:10,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:4}}>Building from video</div>
-                <div style={{fontSize:13,fontWeight:700,lineHeight:1.3}}>{sourceVideo.title||vid?.title||"Video"}</div>
+                <div style={{fontSize:9,color:textS,textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:3}}>Building from video</div>
+                <div title={title} style={{fontSize:12.5,fontWeight:700,lineHeight:1.4,
+                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{title}</div>
+                {subLine&&<div style={{fontSize:11,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subLine}</div>}
               </div>
-              {showCosts&&<div style={{textAlign:"right"}}>
-                <div style={{fontSize:18,fontWeight:700,color:textP}}>{fmt(grandTotal)}</div>
-                <span style={{fontSize:10,padding:"3px 10px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
-              </div>}
-            </div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
-              {vTag.tier&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(148,163,184,0.2)",color:textP,fontWeight:600}}>{vTag.tier}</span>}
-              {(vTag.colors||[]).map(c=><span key={c} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(249,115,22,0.12)",color:"#F97316",fontWeight:600}}>{c}</span>)}
-              {(vTag.styles||[]).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:600}}>{s}</span>)}
-              {vTag.io&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(16,185,129,0.12)",color:"#10B981",fontWeight:600}}>{vTag.io}</span>}
+              <div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%",
+                justifyContent:showCosts?"space-between":"flex-end"}}>
+                {showCosts&&<span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>}
+                {BANNER_UPLOAD}
+              </div>
             </div>
           </div>
         </div>
