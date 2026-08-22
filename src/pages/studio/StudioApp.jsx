@@ -8081,7 +8081,7 @@ export default function StudioApp() {
   // executeConfirmBlocks/ApprovalsTab's own real-block behavior (only the kit shell gets a row).
   const reconcileSoldInventoryBlocks = useCallback(async (fnsToProcess, newCards, inventoryList, cli) => {
     const eo = (eventOrders || []).find(e => e.clientId === cli.id);
-    if (!eo) return; // not through markSold yet — nothing to reconcile against
+    if (!eo) { console.warn("[reconcile] no event_orders row for this client — skipping (not through markSold yet?)", cli.id); return; }
 
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
     // entire function from a sold deal (not just items within one) leaves that function's prior
@@ -8140,7 +8140,15 @@ export default function StudioApp() {
       const { data, error } = await supabase.from("blocks").select("*").in("item_id", ids);
       if (error) throw error;
       blockRows = data || [];
-    } catch { return; } // best-effort — a failed fetch here shouldn't fail the whole regenerate
+    } catch (e) {
+      // Best-effort — a failed fetch here shouldn't fail the whole regenerate — but silent used to
+      // mean SILENT: nothing logged anywhere, which is exactly what made "IMS still shows 0 blocked
+      // after opening Deal Check" impossible to diagnose from the outside. Logging the real reason
+      // (RLS/permission errors on a table only IMS has ever written to before are the leading
+      // suspect) so it shows up in the browser console instead of vanishing.
+      console.error("[reconcile] blocks fetch failed:", e?.message || e);
+      return;
+    }
 
     const byId = new Map(blockRows.map((r) => [r.item_id, Array.isArray(r.data) ? r.data : []]));
     fnsToProcess.forEach((fn, i) => {
@@ -8156,9 +8164,14 @@ export default function StudioApp() {
       });
     });
     try {
-      await supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" });
-    } catch { return; }
+      const { error } = await supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" });
+      if (error) throw error;
+    } catch (e) {
+      console.error("[reconcile] blocks upsert failed:", e?.message || e);
+      return;
+    }
 
+    console.info("[reconcile] wrote blocks for", ids.length, "item(s), event", eo.id);
     // Persist what we just reserved so the NEXT run diffs against this, not the initial markSold state.
     const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn } : c));
     saveClientLedger(nextLedger);
