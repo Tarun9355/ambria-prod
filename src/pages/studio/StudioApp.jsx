@@ -1345,6 +1345,13 @@ export default function StudioApp() {
   // work" versus "we do not know yet". Browse was answering the first while the truth was the
   // second — see the skeleton condition there.
   const [ledgerReady, setLedgerReady] = useState(false);
+  // Did the client_ledger fetch on mount actually FAIL (network blip, offline), as opposed to just
+  // legitimately coming back empty? A failure used to be swallowed by a bare `catch { /* ignore */ }`
+  // — the ledger stayed empty, the mount-restore effect couldn't find the client sessionStorage
+  // remembered was open, gave up after its 6s backstop, and the user landed on a blank "start a new
+  // deal" Event Info with zero indication anything was wrong. The data was always safe server-side;
+  // only the UI's sense of "where was I" was lost. See ledgerLoadErrorBanner / retryLedgerLoad below.
+  const [ledgerLoadError, setLedgerLoadError] = useState(false);
   const [activeClientId, setActiveClientId] = useState(null);
   const [clientSearch, setClientSearch] = useState("");
   // The identity (name/phone) an ACTIVE client last loaded with, or was confirmed-renamed to.
@@ -2439,8 +2446,9 @@ export default function StudioApp() {
           const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
           clientJsonRef.current = seed;
           setClientLedger(list);
+          if (!cancelled) setLedgerLoadError(false);
         }
-      } catch { /* ignore */ }
+      } catch { if (!cancelled) setLedgerLoadError(true); }
       // Marked ready whether the read SUCCEEDED or THREW. A failed load leaves the ledger empty,
       // and treating that as "still loading" would hold the skeleton up for the rest of the session
       // with nothing on the way to replace it. Ready means "we have asked", not "we found work".
@@ -6134,6 +6142,56 @@ export default function StudioApp() {
   // inline version `undefined` for it, so the reset THREW there and the ten setters after it never
   // ran: bride/groom, shift, pax, the other venue, the extra functions, the function index and its
   // builds, floral overrides and the palette all survived "Start New" into the next deal.
+  // Retries JUST the client_ledger fetch (not the whole mount-effect's other reference-data loads —
+  // those are lower-stakes and already have their own independent try/catch-and-ignore). Used both
+  // by an auto-retry below and by the manual "🔄 Retry" banner button, so a transient network blip on
+  // refresh doesn't strand someone mid-deal on a blank Event Info with no way back short of a second
+  // full page reload.
+  const retryLedgerLoad = useCallback(async () => {
+    try {
+      const rows = await loadClientRows();
+      if (!Array.isArray(rows)) throw new Error("client_ledger: unexpected response");
+      const list = rows.map(rowToClient).filter(Boolean);
+      try {
+        const srows = await loadSessionRows();
+        if (Array.isArray(srows) && srows.length) {
+          const byClient = new Map();
+          for (const r of srows) {
+            if (!r?.client_id) continue;
+            let g = byClient.get(r.client_id);
+            if (!g) { g = []; byClient.set(r.client_id, g); }
+            g.push(r);
+          }
+          for (const c of list) {
+            const mine = byClient.get(c.id);
+            if (mine && mine.length) c.sessions = rowsToSessions(mine);
+          }
+        }
+      } catch { /* table absent or unreadable — the blob history stands */ }
+      const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
+      clientJsonRef.current = seed;
+      setClientLedger(list);
+      setLedgerLoadError(false);
+      setLedgerReady(true);
+    } catch {
+      setLedgerLoadError(true);
+    }
+  }, []);
+  // Auto-retry a couple of times on its own before asking the user to click anything — most blips
+  // clear within a few seconds. Only engages while there's actually a deal to restore (a `savedId`
+  // in sessionStorage) and the ledger hasn't already loaded; a genuinely fresh session with no saved
+  // deal and a failed reference-data fetch elsewhere has nothing here worth retrying for.
+  const ledgerRetryCountRef = useRef(0);
+  useEffect(() => {
+    if (!ledgerLoadError) { ledgerRetryCountRef.current = 0; return; }
+    if (clientLedger.length > 0) return; // a later successful load already arrived
+    if (!restoreRef.current?.id) return; // nothing was open — no urgency to retry automatically
+    if (ledgerRetryCountRef.current >= 3) return; // give up automatically; the banner's button remains
+    ledgerRetryCountRef.current += 1;
+    const t = setTimeout(() => { retryLedgerLoad(); }, 2000 * ledgerRetryCountRef.current);
+    return () => clearTimeout(t);
+  }, [ledgerLoadError, clientLedger.length, retryLedgerLoad]);
+
   const startNewDeal = useCallback(() => {
     setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");
     loadedClientIdentityRef.current = { name: "", phone: "" };
@@ -8236,6 +8294,12 @@ export default function StudioApp() {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
+    // True only while there WAS an in-progress deal (sessionStorage remembers one) that hasn't been
+    // restored yet AND the last client_ledger fetch actually failed — not "still loading", a real
+    // error. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
+    // like a fresh, empty deal while a retry runs in the background (retryLedgerLoad).
+    showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
+    retryLedgerLoad,
     deleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,

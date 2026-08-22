@@ -121,6 +121,7 @@ export default function StudioEventInfo({ ctx }) {
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
     refreshLmsSync, lmsSyncing,
+    showLedgerRestoreWarning, retryLedgerLoad,
     taxonomy,
     customTripRate, setCustomTripRate, customGensets, setCustomGensets,
     setFilterFn, setBrowseVenues, setVenueGroup,
@@ -1027,6 +1028,19 @@ export default function StudioEventInfo({ ctx }) {
                 </div>
               </div>
               <div style={{padding:"22px 24px 26px"}}>
+                {/* There WAS a deal open when this tab last closed/refreshed, but the client_ledger
+                    fetch actually failed to bring it back (network blip, not "nothing to restore").
+                    The data itself is safe server-side — this exists so the user doesn't mistake a
+                    failed restore for a genuinely fresh, empty deal and start retyping/duplicating a
+                    client that's really just one retry away. retryLedgerLoad is already firing itself
+                    a few times in the background; this button is for after it gives up, or for "now",
+                    not "in 2-6 seconds". */}
+                {showLedgerRestoreWarning && (
+                  <div style={{marginBottom:16,padding:"10px 14px",borderRadius:10,background:"rgba(239,68,68,0.06)",border:"1px solid rgba(239,68,68,0.25)",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                    <span style={{fontSize:12,color:"#B91C1C",flex:1,minWidth:200}}>⚠ Couldn't reach the server to restore your in-progress deal. Your data is safe — this is just a connection hiccup. Retrying automatically…</span>
+                    <button type="button" onClick={retryLedgerLoad} style={{padding:"4px 12px",borderRadius:6,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.1)",color:"#B91C1C",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Retry now</button>
+                  </div>
+                )}
                 <div className="ei-two" style={{marginBottom:18}}>
                   <div><div style={label}>Guest Name <span style={{color:C.red}}>*</span></div><input value={clientName} onChange={e=>{setClientName(e.target.value);setClientSearch(e.target.value);}} placeholder="Full name" style={S.input}/></div>
                   <div>
