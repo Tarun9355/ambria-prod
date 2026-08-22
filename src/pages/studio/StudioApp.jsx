@@ -6208,9 +6208,20 @@ export default function StudioApp() {
     // one specific LMS lead could silently attach to a COMPLETELY unrelated client, then have its
     // name overwritten by whatever this lead's guestName/typed text happened to be. Prefer the
     // client THIS exact lead is already linked to (the "LMS #01234" tag on its card); with no
-    // definitive link and 2+ candidates, don't guess — mint a fresh client instead.
+    // definitive link and 2+ OPEN candidates, don't guess — mint a fresh client instead.
+    //
+    // A booked match is never reused anyway (see `existing` below), so it must not count toward
+    // that "2+ candidates, ambiguous" tally either — a phone with one already-booked deal plus one
+    // ongoing conversation is NOT ambiguous, there is exactly one open client to continue. Counting
+    // the booked one as a second "candidate" here used to force a fresh client on every subsequent
+    // load of a repeat/duplicate LMS entry for that phone: that new client became the phone's
+    // second OPEN match, so the load after THAT one was ambiguous too, and so on — every distinct
+    // LMS entryNo for the same guest minted one more permanent duplicate instead of ever settling
+    // back onto the one real ongoing conversation (see the Client Tracker screenshot this was
+    // debugged from: 6 identical "Ongoing" rows stacked up behind a single already-Booked one).
     const linkedMatch = phoneMatches.find(c => c.lmsLeadId === lead.entryNo);
-    const phoneMatch = linkedMatch || (phoneMatches.length === 1 ? phoneMatches[0] : null);
+    const openMatches = phoneMatches.filter(c => c.status !== "booked");
+    const phoneMatch = linkedMatch || (openMatches.length === 1 ? openMatches[0] : null);
     // A BOOKED match is a closed, past deal — a new inbound lead on the same number is a repeat
     // guest booking something ELSE, not a revision of the old one. Reusing it would silently
     // overwrite the old booking's venue/date/functions and interleave the new meeting history
