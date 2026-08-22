@@ -694,7 +694,7 @@ export default function ManageLibrary({ ctx }) {
             (8 → 6 → 4 → 2). The thumb height rides along in the same media queries, otherwise a
             fixed 150px on a narrower card turns every photo into a portrait crop.
             See .ml-grid in the injected stylesheet below. */}
-        <div className="ml-grid">
+        <div className="ml-grid" style={{ "--mlc": libRailOpen ? 6 : 8 }}>
           {libVisible.map(img => {
             const isSel = libSelected.has(img.id);
             // ml-tile drives the glass and the hover lift. Selected and being-edited keep their own
@@ -1760,7 +1760,15 @@ export default function ManageLibrary({ ctx }) {
    be ~40px thumbnails on a 13" laptop, and the thumbnails are the reason the page exists.
    --mlt is the thumb height, dropped in step with the count so a narrower card doesn't become a
    portrait crop of a landscape photo. */
-.ml-grid{display:grid;gap:12px;grid-template-columns:repeat(8,minmax(0,1fr));--mlt:132px}
+/* The count comes from --mlc, set inline from libRailOpen: 6 while the filter rail is showing, 8 once
+   it is hidden. The rail is 264px + an 18px gap, so holding 8 either way meant the open state paid
+   for the rail out of the thumbnails and the hidden state left the reclaimed space unused.
+   Inline is the right place for it precisely BECAUSE an inline custom property beats a stylesheet
+   one — the breakpoints below therefore cannot fight it, and they don't try: they set
+   grid-template-columns outright, which caps the count on narrow windows regardless of rail state.
+   The fallback in var() keeps the grid at 6 rather than collapsing to one column if the property
+   ever fails to arrive. */
+.ml-grid{display:grid;gap:12px;grid-template-columns:repeat(var(--mlc,6),minmax(0,1fr));--mlt:132px}
 /* Fallback in the var() on purpose: with no height at all a width:100% thumb renders at the photo's
    own aspect ratio, which is a full-bleed image per row. A missing custom property should cost a few
    pixels of height, not the whole layout. */
