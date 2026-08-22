@@ -5880,15 +5880,24 @@ export default function StudioApp() {
   // Never mid-switch: a switch replaces the whole build state, and a save landing partway through
   // writes a session that is half one function and half another. The switch's own settled state
   // schedules a save straight after, so nothing is skipped — only mistimed.
+  // True from the moment an edit schedules the 1.5s debounce until autoSaveBuild actually runs it —
+  // i.e. exactly the window a real browser refresh/tab-close can race against pagehide's
+  // fire-and-forget save and win (confirmed gap: pagehide fires the save, but nothing guarantees its
+  // network write lands before the browser tears the page down). Backs the beforeunload prompt below.
+  const unsavedEditRef = useRef(false);
   const autoSaveBuild = useCallback(() => {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
     if (switchingRef.current || fnSwitchingRef.current) return;
-    if (buildHasDataRef.current) { try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ } }
+    if (buildHasDataRef.current) {
+      try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ }
+      unsavedEditRef.current = false;
+    }
   }, []);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
+    unsavedEditRef.current = true;
     const t = setTimeout(autoSaveBuild, 1500);
     return () => clearTimeout(t);
     // Event Info fields are in here too — date, venue, function, shift, pax, the extra functions.
@@ -5905,6 +5914,21 @@ export default function StudioApp() {
     window.addEventListener("pagehide", autoSaveBuild);
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); autoSaveBuild(); /* save on unmount → covers Studio↔IMS route switch (no pagehide fires) */ };
   }, [autoSaveBuild]);
+  // No beforeunload handler existed anywhere in Studio — a real F5/close/address-bar navigation had
+  // no warning at all, only the best-effort pagehide save above. This can't GUARANTEE the pending
+  // write lands (browsers don't allow blocking unload for that), but it gives the user the chance to
+  // cancel and let the ~1.5s debounce actually settle instead of racing it blind. Only engages while
+  // unsavedEditRef is true — most refreshes happen with everything already flushed, and warning on
+  // every single one would just train people to click through it without reading it.
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (!unsavedEditRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
   // 4) On-demand flush for the "new version available" banner (App.jsx), which lives above the
   // router and reloads the page on click. pagehide fires on reload too, but a reload can cancel an
   // in-flight fetch before it lands — the same network write that pagehide kicks off has no guarantee
