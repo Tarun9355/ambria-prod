@@ -674,6 +674,15 @@ export default function ManageLibrary({ ctx }) {
           <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} style={{ accentColor: accent }} />
           Show hidden
         </label>
+        {/* Add Video / Refresh YT. These are ACTIONS, not filters, so they get their own divider and
+            sit full-width at the foot rather than blending into the pill sections above.
+            Note they now fold away with the rail — anything the panel holds does. That is fine for
+            filters; for these two it means Hide also hides the way to add a video, one click from
+            being back. Say the word and I'll leave them out on the grid instead. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${border}` }}>
+          <button onClick={() => openCldVideoBrowser()} style={{ ...S.btn(true), fontSize: 11, padding: "8px 14px", whiteSpace: "nowrap" }}>+ Add Video</button>
+          <button onClick={() => loadAllYT(true)} disabled={ytLoading} style={{ ...S.btn(false), fontSize: 11, padding: "8px 14px", whiteSpace: "nowrap", opacity: ytLoading ? 0.5 : 1 }}>{ytLoading ? "⏳" : "🔄"} Refresh YT</button>
+        </div>
       </div>
     );
   };
@@ -2324,14 +2333,9 @@ export default function ManageLibrary({ ctx }) {
         <div style={{ display: "flex", alignItems: "flex-start", gap: 18, minHeight: "70vh" }}>
         {vidRail()}
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Refresh + Add Video. Search used to lead this row and now sits on the tab row above,
-              where the Images search is — same field, same state, one position on both views.
-              justifyContent:flex-end because without the input taking the slack the two buttons
-              would otherwise sit stranded on the left of an empty row. */}
-          <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center",justifyContent:"flex-end"}}>
-            <button onClick={()=>openCldVideoBrowser()} style={{...S.btn(true),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap"}}>+ Add Video</button>
-            <button onClick={()=>loadAllYT(true)} disabled={ytLoading} style={{...S.btn(false),fontSize:10,padding:"8px 14px",whiteSpace:"nowrap",opacity:ytLoading?0.5:1}}>{ytLoading?"⏳":"🔄"} Refresh YT</button>
-          </div>
+          {/* Add Video and Refresh YT moved into the foot of the filter rail — see vidRail. The row
+              that held them (and, before that, the search) is gone entirely rather than left as an
+              empty flex container taking up 10px of margin. */}
           {/* ── Status "folders" + bulk video AI tag (mirrors the Images tab) ── */}
           {(() => {
             const vis = allVideos.filter(v => !hiddenVideos[v.id]);
