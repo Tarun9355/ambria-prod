@@ -8927,7 +8927,12 @@ export default function StudioApp() {
         const canSettings = isAdmin || hasStudioTab("settings");
         const okFor = (t) => (t === "library" && canLib) || (t === "settings" && canSettings);
         const effManageTab = okFor(manageTab) ? manageTab : (canLib ? "library" : canSettings ? "settings" : null);
-        return <div style={S.main}>
+        // S.main caps every Studio page at 1200 and centres it, which is right for the form-shaped
+        // screens it was written for — Event Info, Summary, Settings. The Library is not one of those:
+        // it is a filter rail beside a photo grid, and at 1200 on a wide monitor it was leaving ~350px
+        // of empty ground down each side while the thumbnails stayed small. Widened for that tab only,
+        // so nothing else moves.
+        return <div style={effManageTab === "library" ? { ...S.main, maxWidth: 1640 } : S.main}>
           {effManageTab === "library" ? (
             <ManageLibrary ctx={ctx} />
           ) : effManageTab === "settings" ? (
