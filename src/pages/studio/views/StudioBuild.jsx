@@ -2250,20 +2250,23 @@ undefined
         </div>
       </div>
     </div>}
-    {/* ═══ SOURCE VIDEO BANNER ═══ */}
+    {/* ═══ SOURCE VIDEO BANNER ═══ Rebuilt on LazyYT (the same component the reference banner above
+        uses) instead of a hand-rolled thumbnail + Play/Copy buttons. The old version only showed a
+        thumbnail at all when `vid?.thumb` happened to resolve (allVideos containing this id with a
+        thumb field) — anything short of that (video not in allVideos yet, thumb missing) silently
+        fell back to a bare text stack with no image area, which is what made this banner look broken
+        next to the reference banner's version. LazyYT already handles its own poster/gradient
+        fallback, click-to-play-inline, a fullscreen expand button and its own copy-link footer bar —
+        reusing it gives this banner the same reliability, not just the same look. */}
     {sourceVideo&&!sourceEvent&&(()=>{
       const vTag=ytVideoTags[sourceVideo.id]||{};
       const vid=allVideos.find(v=>v.id===sourceVideo.id);
-      const ytWatchUrl=sourceVideo.id?`https://www.youtube.com/watch?v=${sourceVideo.id}`:"";
       const embedUrl=sourceVideo.id?`https://www.youtube.com/embed/${sourceVideo.id}`:null;
       return <div className="sb-rcard" style={{...S.card,marginBottom:0,overflow:"hidden",flexShrink:0}}>
         <div style={{display:"flex",flexDirection:"column",gap:0}}>
-          {vid?.thumb&&<div style={{width:"100%",height:140,flexShrink:0,position:"relative",overflow:"hidden",cursor:"pointer"}} onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}}>
-            <img src={vid.thumb} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.style.display="none"}}/>
-            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.2)"}}>
-              <div style={{width:48,height:34,borderRadius:8,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 12px rgba(255,0,0,0.4)"}}><div style={{width:0,height:0,borderLeft:"12px solid #fff",borderTop:"7px solid transparent",borderBottom:"7px solid transparent",marginLeft:2}}/></div>
-            </div>
-          </div>}
+          <div style={{width:"100%",height:140,flexShrink:0,position:"relative",background:"linear-gradient(135deg,#1a1a2e,#C9A96E)",overflow:"hidden"}}>
+            <LazyYT src={embedUrl} gradient="linear-gradient(135deg,#1a1a2e,#C9A96E)" poster={vid?.thumb} title={sourceVideo.title||vid?.title||"Video"} style={{position:"absolute",inset:0}}/>
+          </div>
           <div style={{flex:1,padding:"10px 12px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:6}}>
               <div>
@@ -2280,10 +2283,6 @@ undefined
               {(vTag.colors||[]).map(c=><span key={c} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(249,115,22,0.12)",color:"#F97316",fontWeight:600}}>{c}</span>)}
               {(vTag.styles||[]).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:600}}>{s}</span>)}
               {vTag.io&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:4,background:"rgba(16,185,129,0.12)",color:"#10B981",fontWeight:600}}>{vTag.io}</span>}
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
-              <button onClick={()=>{setVideoModal({name:sourceVideo.title||vid?.title||"Video",venue:venue||"",fn:fn||"",desc:"",video:embedUrl?`https://www.youtube.com/embed/${sourceVideo.id}`:"",gradient:"linear-gradient(135deg,#1a1a2e,#C9A96E)",photos:[vid?.thumb].filter(Boolean),tags:[]});setVideoPlaying(true);}} style={{padding:"4px 14px",borderRadius:6,border:"none",background:"rgba(255,0,0,0.9)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>{"▶"} Play Video</button>
-              {ytWatchUrl&&<button onClick={()=>{try{navigator.clipboard.writeText(ytWatchUrl);showMsg("✓ YouTube link copied!","green");}catch{}}} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:10,fontWeight:600,cursor:"pointer"}}><IconCopy size={11}/> Copy Link</button>}
             </div>
           </div>
         </div>
