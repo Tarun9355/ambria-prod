@@ -6206,28 +6206,25 @@ export default function StudioApp() {
     // before this lead was ever linked, or two genuinely separate past deals). Phone alone can't
     // tell them apart, and picking "whichever comes first" — the old behaviour — meant clicking
     // one specific LMS lead could silently attach to a COMPLETELY unrelated client, then have its
-    // name overwritten by whatever this lead's guestName/typed text happened to be. Prefer the
-    // client THIS exact lead is already linked to (the "LMS #01234" tag on its card); with no
-    // definitive link and 2+ OPEN candidates, don't guess — mint a fresh client instead.
+    // name overwritten by whatever this lead's guestName/typed text happened to be.
     //
-    // A booked match is never reused anyway (see `existing` below), so it must not count toward
-    // that "2+ candidates, ambiguous" tally either — a phone with one already-booked deal plus one
-    // ongoing conversation is NOT ambiguous, there is exactly one open client to continue. Counting
-    // the booked one as a second "candidate" here used to force a fresh client on every subsequent
-    // load of a repeat/duplicate LMS entry for that phone: that new client became the phone's
-    // second OPEN match, so the load after THAT one was ambiguous too, and so on — every distinct
-    // LMS entryNo for the same guest minted one more permanent duplicate instead of ever settling
-    // back onto the one real ongoing conversation (see the Client Tracker screenshot this was
-    // debugged from: 6 identical "Ongoing" rows stacked up behind a single already-Booked one).
+    // Priority: (1) the client THIS exact lead is already linked to (the "LMS #01234" tag on its
+    // card) — most specific signal there is. (2) A single BOOKED match — the confirmed, real deal
+    // for this phone. Opening that directly (view/edit in place) is what a salesperson actually
+    // wants when they search a name/number that's already booked, instead of landing on a blank
+    // 0-estimate client while the real numbers sit in a different record entirely. This also
+    // reads as "closed deal wins" over any stray ongoing duplicates for the same phone, which is
+    // the right call — those are noise next to a confirmed booking, not genuine alternatives to
+    // pick between. (3) With no booked match (or 2+ of them — genuinely ambiguous, which past deal?
+    // — don't guess), fall back to a single OPEN match. 2+ open matches is still the "don't guess,
+    // mint a fresh client" case from before.
     const linkedMatch = phoneMatches.find(c => c.lmsLeadId === lead.entryNo);
+    const bookedMatches = phoneMatches.filter(c => c.status === "booked");
     const openMatches = phoneMatches.filter(c => c.status !== "booked");
-    const phoneMatch = linkedMatch || (openMatches.length === 1 ? openMatches[0] : null);
-    // A BOOKED match is a closed, past deal — a new inbound lead on the same number is a repeat
-    // guest booking something ELSE, not a revision of the old one. Reusing it would silently
-    // overwrite the old booking's venue/date/functions and interleave the new meeting history
-    // into the old deal's `sessions`. Only reuse an open (not-yet-booked) match; a booked one
-    // just gets a heads-up note below and a brand new client record for this deal.
-    const existing = phoneMatch && phoneMatch.status !== "booked" ? phoneMatch : null;
+    const phoneMatch = linkedMatch
+      || (bookedMatches.length === 1 ? bookedMatches[0] : null)
+      || (bookedMatches.length === 0 && openMatches.length === 1 ? openMatches[0] : null);
+    const existing = phoneMatch || null;
     let client;
     if (existing) {
       client = {
@@ -6272,10 +6269,13 @@ export default function StudioApp() {
     const latestSession = (client.sessions && client.sessions.length > 0) ? client.sessions[0] : null;
     if (latestSession) {
       loadClientSession(client, latestSession, 3);
-      showMsg(`Loaded LMS lead #${lead.entryNo} + restored last session`, "green");
-    } else if (phoneMatch && phoneMatch.status === "booked") {
-      const when = phoneMatch.eventDate ? new Date(phoneMatch.eventDate + "T00:00:00").toLocaleDateString("en-IN") : "an earlier deal";
-      showMsg(`Loaded LMS lead #${lead.entryNo} — ℹ️ this phone already booked with us (${when}); starting a fresh deal for this one`, "green");
+      showMsg(existing?.status === "booked"
+        ? `Loaded LMS lead #${lead.entryNo} — opened the existing BOOKED deal for this phone (₹${Math.round(latestSession.total || 0).toLocaleString("en-IN")} estimate)`
+        : `Loaded LMS lead #${lead.entryNo} + restored last session`, "green");
+    } else if (existing) {
+      // Matched an existing client (booked or open) that has no saved session to restore —
+      // an edge case (e.g. a legacy record), not the normal booked-with-a-real-estimate path above.
+      showMsg(`Loaded LMS lead #${lead.entryNo} — matched existing ${existing.status} client, no saved estimate to restore`, "green");
     } else {
       showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
     }
