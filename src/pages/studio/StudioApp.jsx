@@ -2089,6 +2089,25 @@ export default function StudioApp() {
     );
   }, [zoneUploadReview]);
 
+  // Holds the pending debounced Deal Check save's own flush function, so closeDealCheck (below) can
+  // run it immediately instead of losing it — the debounce effect's cleanup (much further down, near
+  // Deal Check's own state) only ever CANCELLED the pending timeout on close, silently dropping up to
+  // 2.5s of edits every time Deal Check was closed (Back button or ×) shortly after a change.
+  // Declared here (not next to the effect that fills it) — and closeDealCheck right after it — so
+  // both exist before the Back-button popstate guard below, which references closeDealCheck in its
+  // effect's DEPENDENCY ARRAY. That array is a plain expression evaluated the moment this component's
+  // render reaches the useEffect(...) call — not deferred like the effect body itself — so a forward
+  // reference there throws "Cannot access before initialization" (a real prod crash hit this exact
+  // way), unlike a reference inside a callback body that only runs later, once render has finished.
+  const flushDcAutosaveRef = useRef(null);
+  // Closes Deal Check, flushing any pending debounced save first (see flushDcAutosaveRef above) —
+  // both the Back-button guard and the × button route through this instead of a bare
+  // setDcFullPageOpen(false), so neither one silently drops up to 2.5s of unsaved edits on close.
+  const closeDealCheck = useCallback(() => {
+    if (flushDcAutosaveRef.current) { flushDcAutosaveRef.current(); flushDcAutosaveRef.current = null; }
+    setDcFullPageOpen(false);
+  }, []);
+
   const doLogout = () => { logout(); };
   // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
   // reference Studio used "admin". Also honor the seeded u_admin id.
@@ -7825,11 +7844,6 @@ export default function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dcFullPageOpen]);
 
-  // Holds the pending debounced Deal Check save's own flush function, so closeDealCheck (below) can
-  // run it immediately instead of losing it — the debounce effect's cleanup only ever CANCELLED the
-  // pending timeout on close, silently dropping up to 2.5s of edits every time Deal Check was closed
-  // (Back button or ×) shortly after a change.
-  const flushDcAutosaveRef = useRef(null);
   // ═══ Tier 2.2 — Deal Check cache writer (debounced, per-client) — VERBATIM ═══
   useEffect(() => {
     if (!activeClientId || !dcFullPageOpen) return;
@@ -7908,14 +7922,6 @@ export default function StudioApp() {
     const t = setTimeout(doSave, 2500);
     return () => { clearTimeout(t); flushDcAutosaveRef.current = null; };
   }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
-
-  // Closes Deal Check, flushing any pending debounced save first (see flushDcAutosaveRef above) —
-  // both the Back-button guard and the × button route through this instead of a bare
-  // setDcFullPageOpen(false), so neither one silently drops up to 2.5s of unsaved edits on close.
-  const closeDealCheck = useCallback(() => {
-    if (flushDcAutosaveRef.current) { flushDcAutosaveRef.current(); flushDcAutosaveRef.current = null; }
-    setDcFullPageOpen(false);
-  }, []);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
