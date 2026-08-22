@@ -1852,16 +1852,14 @@ export default function StudioApp() {
   // That is the four-or-five different prices on a refresh: not a render glitch, a real calculation
   // over an incomplete dataset, several times over.
   // This flag marks the point where all of them have arrived. It gates the estimate tile (skeleton
-  // until then) and — the part that matters — the autosave's fnTotals write, which otherwise
-  // persists a seed-default total AND the tier derived from it.
+  // until then) and the price-derived fields (tier/total/decorTotal/transportTotal/fnTotals) that
+  // saveSession writes — NOT the save itself (see autoSaveBuild's own comment): a real edit must
+  // never wait on this, only the numbers that would otherwise be a wrong sum over seed-default
+  // rates. No ref counterpart needed — saveSession reads this via its own closure (it's in its
+  // dependency array), not off a ref like the switchingRef/fnSwitchingRef guards autoSaveBuild uses.
   // The same seed-defaults-look-real trap already cost this codebase real data once; see the guard
   // comment on the genset migration effect below.
   const [pricingReady, setPricingReady] = useState(false);
-  // Ref alongside the state because autoSaveBuild is a useCallback with [] deps and reads its guards
-  // off refs — switchingRef, fnSwitchingRef, buildHasDataRef. A state read in there would be the
-  // first render's `false` forever. Same pattern, same reason.
-  const pricingReadyRef = useRef(false);
-  useEffect(() => { pricingReadyRef.current = pricingReady; }, [pricingReady]);
   // Backstop. The flag is set inline once the last rate table lands; every step of that boot
   // sequence is individually try/caught, but a throw between an await and the flag would leave the
   // tile on a skeleton forever. Ten seconds is far past a normal boot, so this only ever fires when
@@ -5704,10 +5702,19 @@ export default function StudioApp() {
       savedBy: authUser?.name || "—",
       eventDate: clientDate,
       venue, fn,
-      tier: getCat(grandTotal).label,
-      total: grandTotal,
-      decorTotal: totalCost(),
-      transportTotal: transportCalc.total,
+      // Owner decision: a real edit (an added Production item, a zone change, anything) must never
+      // be dropped just because the rate tables haven't finished loading yet — that's a data-loss
+      // risk, worse than the stale-price-on-boot problem pricingReady exists for. So the save itself
+      // is no longer gated on it (see autoSaveBuild below) — only these four PRICE-DERIVED fields
+      // still are: while !pricingReady, grandTotal/totalCost()/transportCalc.total are a real sum
+      // over seed-default rates, not "unknown", so writing them here would still persist a wrong
+      // total/tier. Carrying forward the previous save's values (same source fnTotals's own
+      // carry-forward already reads, prevSnapForTotals) means the actual edit lands immediately and
+      // the price simply catches up on the NEXT save, moments later once pricing is ready.
+      tier: pricingReady ? getCat(grandTotal).label : (prevSnapForTotals?.tier ?? getCat(grandTotal).label),
+      total: pricingReady ? grandTotal : (prevSnapForTotals?.total ?? grandTotal),
+      decorTotal: pricingReady ? totalCost() : (prevSnapForTotals?.decorTotal ?? totalCost()),
+      transportTotal: pricingReady ? transportCalc.total : (prevSnapForTotals?.transportTotal ?? transportCalc.total),
       enabledEls: { ...enabledEls },
       elTiers: { ...elTiers },
       zoneConfig: JSON.parse(JSON.stringify(zoneConfig)),
@@ -5989,14 +5996,13 @@ export default function StudioApp() {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
     if (switchingRef.current || fnSwitchingRef.current) return;
-    // Nor before the rate tables have landed. The snapshot this writes carries total / tier /
-    // decorTotal / transportTotal as plain fields, and during boot those are a real sum over the
-    // SEED-DEFAULT rate card — so an autosave firing in that window records a wrong price and a
-    // wrong tier onto the session, which is what Browse then shows on the card. Unlike the fnTotals
-    // entry there is no way to omit the field, so the save itself has to wait.
-    // Nothing is lost by waiting: boot finishes in well under a second and unsavedEditRef is left
-    // alone, so a genuine edit made in that window still gets saved by the next run.
-    if (!pricingReadyRef.current) return;
+    // Deliberately NOT gated on pricingReady. That used to block the save itself, on the theory that
+    // boot "finishes in well under a second" — but a slow network can leave pricingReady false for
+    // several seconds, which is easily enough time for a real edit (e.g. adding a Production item)
+    // followed by a quick refresh to lose the edit entirely, with no save ever having happened. An
+    // edit is never wrong to persist; only the four PRICE-DERIVED fields (tier/total/decorTotal/
+    // transportTotal) can be — those still carry forward the previous save's values while pricing
+    // isn't ready (see the snapshot construction in saveSession) instead of holding up everything.
     if (buildHasDataRef.current) {
       try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ }
       unsavedEditRef.current = false;
