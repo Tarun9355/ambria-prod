@@ -2020,7 +2020,17 @@ export default function ManageLibrary({ ctx }) {
    what an accordion row should be: you press the row, not the word.
    The taller padding is the same idea vertically — a 12px-tall target for a 12px label is a target
    you have to aim at. */
-.ml-rail .sb-head{margin:0 -14px !important;padding:11px 14px !important;width:auto !important}
+/* ── THE WHOLE SECTION ROW IS THE BUTTON ──
+   The kit stretches its header with negative margins (margin:0 -12px; width:auto) so the hover fill
+   bleeds past the panel padding. That works in Browse and Build, whose panels don't scroll. This
+   rail sets overflow-y:auto — and per spec, once one overflow axis is not visible the other
+   computes to auto as well, so the overhang became horizontal overflow: clipped, and shorter still
+   once the scrollbar took its width. The row ended before the panel edge and the dead strip beside
+   the label was not part of the button.
+   width:100% + margin:0 instead. The fill no longer bleeds to the very edge, but it spans every
+   pixel of the row you can actually see and click, which is the point. box-sizing so the padding
+   stays inside that 100% rather than pushing it wide again and reintroducing the overflow. */
+.ml-rail .sb-head{margin:0 !important;width:100% !important;box-sizing:border-box !important;padding:11px 12px !important}
 .ml-rail .sb-head > span:nth-of-type(2){font-size:12px !important;letter-spacing:1px !important}
 .ml-rail .sb-pill{font-size:12.5px !important;padding:7px 12px !important;min-height:30px !important}
 /* The filter rail: same glass, and its pills lift on hover so the column reads as pressable rather
