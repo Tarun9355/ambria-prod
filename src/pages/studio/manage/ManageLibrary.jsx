@@ -10,7 +10,6 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 // count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
 // at all: three hand-rolled copies of one panel is how they drift apart.
 import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
-import { IconSliders, IconChevron } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
 // The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
@@ -515,40 +514,21 @@ export default function ManageLibrary({ ctx }) {
           maxHeight stays as the ceiling for when every section IS open, with its own scrollport.
           225 → 264: the sections are two columns of pills now, and at 225 the longer labels
           ("Indoor + Outdoor", "Garden Inspired") had nowhere to go but their own line. */}
-      {!libRailOpen
-        /* Folded: a 38px strip on the grid's edge that brings the rail back — the same affordance
-           Build folds its own filter rail into (railTab there), so this reads as one behaviour in
-           two places rather than a second invention. Vertical label to keep the strip narrow. */
-        ? <div className="ml-tile" onClick={() => setLibRailOpen(true)} title="Show filters"
-            style={{ width: 38, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: 70, cursor: "pointer",
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "12px 0 14px",
-              borderRadius: 10, border: `1px solid ${border}`, background: cardBg }}>
-            <span style={{ display: "flex", color: accent }}><IconSliders size={14} /></span>
-            <span style={{ writingMode: "vertical-rl", textOrientation: "mixed", fontSize: 9.5, fontWeight: 700,
-              letterSpacing: 1, textTransform: "uppercase", color: textS, whiteSpace: "nowrap" }}>Filters</span>
-            {/* Count of what is still filtering while hidden — a folded rail must not hide the fact
-                that the grid below it is a filtered subset. */}
-            {(() => {
-              const n = Object.values(libFilters).reduce((s, a) => s + (a?.length || 0), 0)
-                + (libVenueGroup !== "all" ? 1 : 0) + libVenueNames.length;
-              return n > 0 ? <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: accent,
-                borderRadius: 9, minWidth: 17, textAlign: "center", padding: "2px 4px" }}>{n}</span> : null;
-            })()}
-            <span style={{ display: "flex", color: textS, transform: "rotate(-90deg)" }}><IconChevron size={11} /></span>
-          </div>
-      : <div className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", overflowY: "auto", maxHeight: "80vh" }}>
+      {/* No folded strip any more, and no Hide button in the header below: the funnel on the tab row
+          is now the single switch for this rail, which is what the reference shows. The strip existed
+          only because a Hide inside the panel takes the way back out with it — a toggle that stays put
+          doesn't have that problem, so both halves of that pair are gone. */}
+      {libRailOpen && <div className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", overflowY: "auto", maxHeight: "80vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
-            {/* Hide, worded and shaped like Build's. Chevron rotated to point the way the rail folds. */}
-            <button type="button" onClick={() => setLibRailOpen(false)} title="Hide the filters and widen the grid"
-              style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 8,
-                flexShrink: 0, cursor: "pointer", whiteSpace: "nowrap", border: `1px solid ${border}`,
-                background: "transparent", color: textS, fontSize: 10.5, fontWeight: 600, letterSpacing: 0.2 }}>
-              <span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><IconChevron size={10} /></span>Hide
-            </button>
-          </div>
+          {/* "Reset all" with a ↻, and no longer alarm-red. It undoes a search-narrowing, which is a
+              routine thing to do — red is the colour this page uses for deleting photos, and spending
+              it here made the two read as the same weight of action. Still only rendered when there
+              IS something to reset. */}
+          {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <button type="button" onClick={clearLibFilters} className="ml-reset">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+            Reset all
+          </button>}
         </div>
         {/* Venue filter (2-level — mirrors Browse page) */}
         <div style={{ marginBottom: 12 }}>
@@ -592,7 +572,8 @@ export default function ManageLibrary({ ctx }) {
       </div>}
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name..." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
+        {/* The search box moved up onto the tab row (see .ml-search there) — same libSearch state,
+            same query, just no longer sitting inside this column. */}
         {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
@@ -703,7 +684,10 @@ export default function ManageLibrary({ ctx }) {
                   : st === LIB_STATUS.REVIEW ? "AI-tagged — needs review" : "Untagged";
                 return (
                   <div style={{ position: "absolute", top: 6, left: 6, right: 30, display: "flex", alignItems: "center", gap: 3 }}>
-                    <div title={tip} style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 9, background: "rgba(0,0,0,0.6)", border: `1.5px solid ${m.c}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>{m.t}</div>
+                    {/* Rounded square, not a circle, and filled with the status colour rather than
+                        black-with-a-coloured-ring: at 18px the ring was the only thing carrying the
+                        status and it was 1.5px of it. Same glyph, same tooltip, same three states. */}
+                    <div title={tip} style={{ flexShrink: 0, width: 21, height: 21, borderRadius: 7, background: m.c, boxShadow: "0 1px 4px rgba(0,0,0,0.28)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>{m.t}</div>
                     {verifier && <div title={tip} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 8, fontWeight: 700, color: "#fff", background: "rgba(0,0,0,0.6)", padding: "2px 5px", borderRadius: 6 }}>{verifier}</div>}
                   </div>
                 );
@@ -1744,18 +1728,50 @@ export default function ManageLibrary({ ctx }) {
    is folded. minmax(0,1fr) rather than (Npx,1fr) so the columns can go below their content's natural
    width instead of overflowing the row.
    Stepping down at real widths is what keeps this honest — eight columns held at every width would
-   be ~40px thumbnails on a 13" laptop, and the thumbnails are the reason the page exists.
-   --mlt is the thumb height, dropped in step with the count so a narrower card doesn't become a
-   portrait crop of a landscape photo. */
-.ml-grid{display:grid;gap:12px;grid-template-columns:repeat(8,minmax(0,1fr));--mlt:132px}
-/* Fallback in the var() on purpose: with no height at all a width:100% thumb renders at the photo's
-   own aspect ratio, which is a full-bleed image per row. A missing custom property should cost a few
-   pixels of height, not the whole layout. */
-.ml-thumb{height:var(--mlt,140px)}
-@media (max-width:1500px){.ml-grid{grid-template-columns:repeat(6,minmax(0,1fr));--mlt:142px}}
-@media (max-width:1180px){.ml-grid{grid-template-columns:repeat(4,minmax(0,1fr));--mlt:150px}}
-@media (max-width:820px){.ml-grid{grid-template-columns:repeat(3,minmax(0,1fr));--mlt:140px}}
-@media (max-width:560px){.ml-grid{grid-template-columns:repeat(2,minmax(0,1fr));--mlt:132px}}
+   be ~40px thumbnails on a 13" laptop, and the thumbnails are the reason the page exists. */
+.ml-grid{display:grid;gap:12px;grid-template-columns:repeat(8,minmax(0,1fr))}
+/* 3:2, which is the shape the reference crops to and the shape most of these photos already are.
+   This replaced a set of fixed pixel heights stepped per breakpoint: a fixed height on a column
+   whose width changes means the crop tightens as the cards narrow, so the same photo showed more of
+   itself at 4-up than at 8-up. A ratio holds the crop steady and the row heights even at every count.
+   min-height is the floor for the degenerate case of a very narrow column. */
+.ml-thumb{aspect-ratio:3/2;min-height:64px}
+@media (max-width:1500px){.ml-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@media (max-width:1180px){.ml-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:820px){.ml-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:560px){.ml-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* ── SEARCH ON THE TAB ROW ──
+   A pill that owns the right end of the row. flex:1 with a max so it grows into the space the tabs
+   leave but never runs the full width of a wide monitor, where a 900px search field looks like the
+   page's main event. */
+.ml-search{position:relative;display:flex;align-items:center;flex:1 1 220px;max-width:420px;min-width:150px}
+.ml-search-i{position:absolute;left:11px;display:flex;pointer-events:none;color:${textS};opacity:0.75}
+.ml-search input{width:100%;box-sizing:border-box;padding:8px 14px 8px 32px;border-radius:999px;font:inherit;
+  font-size:12.5px;color:${textP};
+  border:1px solid ${isDark?"rgba(255,255,255,0.14)":"rgba(255,255,255,0.85)"};
+  background:${isDark?"rgba(255,255,255,0.06)":"linear-gradient(148deg,rgba(255,255,255,0.62) 0%,rgba(250,249,255,0.40) 100%)"};
+  transition:border-color .15s ease, box-shadow .15s ease}
+.ml-search input::placeholder{color:${textS};opacity:0.8}
+.ml-search input:focus{outline:none;border-color:${accent};box-shadow:0 0 0 3px ${accent}22}
+/* ── THE FILTER TOGGLE ──
+   data-on is the rail's state, and it has to be visible on the button itself: this is a switch, and a
+   switch that looks identical in both positions is a button you press twice to find out what it does. */
+.ml-funnel{position:relative;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  width:34px;height:34px;padding:0;border-radius:10px;cursor:pointer;color:${textS};
+  border:1px solid ${isDark?"rgba(255,255,255,0.14)":"rgba(255,255,255,0.85)"};
+  background:${isDark?"rgba(255,255,255,0.06)":"linear-gradient(148deg,rgba(255,255,255,0.62) 0%,rgba(250,249,255,0.40) 100%)"};
+  transition:background .15s ease, color .15s ease, border-color .15s ease}
+.ml-funnel:hover{color:${accent};border-color:${accent}66}
+.ml-funnel[data-on]{color:${accent};border-color:${accent}66;background:${accent}18}
+/* Sits on the corner rather than inline: the button is a fixed 34px square and the count must not
+   change its size, or the row shifts every time a filter is added. */
+.ml-funnel-n{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;
+  border-radius:8px;background:${accent};color:#fff;font-size:9.5px;font-weight:800;line-height:16px;text-align:center}
+/* ── RESET ALL ── */
+.ml-reset{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:8px;flex-shrink:0;
+  cursor:pointer;white-space:nowrap;border:1px solid transparent;background:transparent;
+  color:${textS};font-size:11px;font-weight:600;transition:background .14s ease, color .14s ease}
+.ml-reset:hover{color:${textP};background:${isDark?"rgba(255,255,255,0.08)":"rgba(26,26,46,0.055)"}}
 /* ── THE RAIL'S TYPE, TURNED UP ──
    Size only. The kit's colours stay exactly as they are — an earlier pass darkened them too and that
    was the part that was wrong, so this deliberately touches nothing but font-size and the padding that
@@ -1979,12 +1995,51 @@ export default function ManageLibrary({ ctx }) {
         </>}
         {!cldLoading&&cldFolders.length===0&&cldImages.length===0&&cldPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>Empty folder</div>}
       </div>}
-      {/* Images / Videos toggle */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+      {/* Images / Videos toggle — and, on the images view, the search box and the filter toggle sit
+          on this same line, which is where the reference puts them. Search used to be the first thing
+          inside the grid column; up here it reads as a control on the whole library rather than as a
+          field belonging to the status cards under it.
+          alignItems:center + a flex:1 spacer, so the tabs stay left and the search runs to the right
+          edge no matter how many tabs this user's permissions allow. */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
+        {/* Images view only. libSearch drives the photo query and nothing else, so on Videos or
+            Palettes this box would take typing and change nothing — a search field that silently
+            does not apply is worse than no field. Same reasoning for the funnel: the filter rail
+            only exists on this view. */}
+        {libView === "images" && <>
+          <div style={{ flex: 1, minWidth: 12 }} />
+          <div className="ml-search">
+            <span className="ml-search-i" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.2-4.2"/></svg>
+            </span>
+            {/* PLACEHOLDER SAYS NAME, AND ONLY NAME, ON PURPOSE. The query behind this is a single
+                ilike on the name column (libraryQueries.js, applyCommonFilters) — it does not look at
+                tags, venue or event type. Promising those in the placeholder would send people
+                hunting for "Mandap" here and finding nothing, when the rail beside it is what filters
+                by tag. Widening the search itself is a functionality change, so it is not done here. */}
+            {/* No clear-X inside the field: that would be a control this page did not have before. */}
+            <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name…" aria-label="Search photos by name" />
+          </div>
+          {/* The filter rail's toggle. This replaced the Hide button that used to live inside the rail
+              header: one control that both opens and closes reads as a switch, and it stays reachable
+              when the rail is shut — the old pair needed a second affordance to get back. */}
+          {(() => {
+            const nActive = Object.values(libFilters).reduce((s, a) => s + (a?.length || 0), 0)
+              + (libVenueGroup !== "all" ? 1 : 0) + libVenueNames.length;
+            return <button type="button" onClick={() => setLibRailOpen(o => !o)}
+              title={libRailOpen ? "Hide filters" : nActive ? `Show filters (${nActive} active)` : "Show filters"}
+              aria-expanded={libRailOpen} className="ml-funnel" data-on={libRailOpen ? "1" : undefined}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>
+              {/* Count only while the rail is shut. Open, the rail shows its own state; shut, this is
+                  the only thing telling you the grid below is a filtered subset. */}
+              {!libRailOpen && nActive > 0 && <span className="ml-funnel-n">{nActive}</span>}
+            </button>;
+          })()}
+        </>}
       </div>
       {libView === "palettes" && !paletteCatalogueLoaded && (
         <div style={{ maxWidth: 650, padding: "24px 18px", textAlign: "center", color: textS, fontSize: 12 }}>Loading palette catalogue…</div>
