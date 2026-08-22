@@ -3705,6 +3705,19 @@ undefined
           // Mirror the primary dims into the master's Library-shape dims too, so browse thumbnails,
           // the Library editor and buildZoneConfig's fallback all reflect the corrected measurements.
           const d=liveCfg.dims||{},fd=liveCfg.floorDims||{};
+          // Extra rows (Build's "+ Add Truss" / "+ Add Platform") only ever lived in zoneConfigByType,
+          // in zoneConfig's OWN shape (dims:{L,W,H} / floorDims:{L,W}) — never mirrored into this
+          // legacy `dims` object at all. ManageLibrary.jsx's Truss/Platform editor reads exclusively
+          // from THIS shape (dims.trussRows/platformRows, Library's own trussL/trussW/floorL/floorW
+          // naming — see buildZoneConfig's mapTrussRow/mapPlatformRow for the inverse), so a second
+          // truss added in Build saved correctly to zoneConfigByType (Build itself shows it fine on
+          // reselect) but was invisible from the Library editor: it simply had nowhere to land here.
+          const rowToLibTruss=(row)=>({id:row.id,trussL:row.dims?.L||0,trussW:row.dims?.W||0,trussH:row.dims?.H||0,
+            trussQty:row.trussQty||1,trussFrontExt:row.trussFrontExt||0,trussFrontExtH:row.trussFrontExtH||0,
+            mkOn:!!row.mkOn,mkT:row.mkT||"",mkWalls:row.mkWalls||{},
+            trussMaterial:row.trussMaterial??null,drapeDensity:row.drapeDensity??null,
+            customCeilingItemId:row.customCeilingItemId??null,customMaskingItemId:row.customMaskingItemId??null});
+          const rowToLibPlatform=(row)=>({id:row.id,plH:row.plH||"",floorL:row.floorDims?.L||0,floorW:row.floorDims?.W||0});
           libDims={...(master?.dims||{}),
             trussL:d.L||0,trussW:d.W||0,trussH:d.H||0,floorL:fd.L||0,floorW:fd.W||0,
             plH:liveCfg.plH||master?.dims?.plH||"",cpT:liveCfg.cpT??master?.dims?.cpT??null,
@@ -3712,7 +3725,9 @@ undefined
             trussFrontExt:liveCfg.trussFrontExt||0,trussFrontExtH:liveCfg.trussFrontExtH||0,
             trussMaterial:liveCfg.trussMaterial??master?.dims?.trussMaterial??null,
             drapeDensity:liveCfg.drapeDensity??master?.dims?.drapeDensity??null,
-            customCeilingItemId:liveCfg.customCeilingItemId??null,customMaskingItemId:liveCfg.customMaskingItemId??null};
+            customCeilingItemId:liveCfg.customCeilingItemId??null,customMaskingItemId:liveCfg.customMaskingItemId??null,
+            trussRows:(liveCfg.extraTrussRows||[]).map(rowToLibTruss),
+            platformRows:(liveCfg.extraPlatformRows||[]).map(rowToLibPlatform)};
         }
         // Keep the original verifier's credit — a later editor's correction updates tags/elements
         // but shouldn't steal the "verified by" attribution from whoever verified it first.
