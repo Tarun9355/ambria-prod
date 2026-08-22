@@ -6008,6 +6008,20 @@ export default function StudioApp() {
       unsavedEditRef.current = false;
     }
   }, []);
+  // Production/Buying items (dcCustomItems) get an instant save on top of the normal 1.5s debounce —
+  // owner decision, after "add one, refresh shortly after, it's gone" kept resurfacing even with the
+  // debounce/pricingReady fixes above. Adding one is exactly the kind of edit someone makes and then
+  // immediately navigates away from (to Summary, to see the new total) rather than sitting on Build
+  // for the debounce to catch up — so instead of trusting the timer, every add/edit/remove through
+  // this setter (used by CustomItemModal's Add/Update AND the ✕ remove in Build's zone card — both
+  // Production and Buying share the one setter, so both are covered the same way) flushes right away.
+  // setTimeout(0), not a direct call: setDcCustomItems is async, and autoSaveBuild reads dcCustomItems
+  // via saveSessionRef's closure, which only picks up the new value after this commit lands — the
+  // ref-sync effect that keeps it current runs on every render, so one tick is enough.
+  const setDcCustomItemsAndFlush = useCallback((updater) => {
+    setDcCustomItems(updater);
+    setTimeout(() => autoSaveBuild(), 0);
+  }, [autoSaveBuild]);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
@@ -8707,7 +8721,7 @@ export default function StudioApp() {
     dcInventoryCache, setDcInventoryCache, dcBrowseAllOpen, setDcBrowseAllOpen, dcSwapModal, setDcSwapModal, dcColorModal, setDcColorModal,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
-    dcCustomItems, setDcCustomItems, dcCustomModal, setDcCustomModal,
+    dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
