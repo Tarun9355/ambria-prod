@@ -23,7 +23,8 @@ import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import DealCheckOverlay from "./dealcheck/DealCheckOverlay.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
-import { AMEND_SK, isLastMinute, makeAmendRequest } from "../../lib/ims/amend";
+import { makeAmendRequest } from "../../lib/ims/amend";
+import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, isStandingAt, rentalSplit } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts } from "../../lib/ims/lms";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
@@ -7989,6 +7990,116 @@ export default function StudioApp() {
     return () => { clearTimeout(t); doSave(); flushDcAutosaveRef.current = null; };
   }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
+  // ═══ SOLD-DEAL INCREMENTAL INVENTORY RESERVATION ═══
+  // Owner decision: a change to a SOLD deal's matched inventory reserves immediately — no
+  // department-head approval gate first (see the removed AmendRequestPanel/isLastMinute). Heads are
+  // informed AFTER the fact instead (the "logged" amend_requests rows this writes, read-only in
+  // IMS → Planning → Dept Ops), not gated before it.
+  //
+  // Deliberately separate from IMS's own auto-confirm engine (executeConfirmBlocks/autoConfirmEO,
+  // lib/ims/eventAutoConfirm.js) rather than re-running it: that engine is one-shot by design
+  // (guarded by autoConfirmedRef) and NOT idempotent — it always appends fresh block rows without
+  // first releasing this event's existing ones, so calling it again would double-reserve. This
+  // function instead tracks exactly what IT reserved last time (cli.dcReservedInventory) and only
+  // ever adds/updates/removes block rows tagged with THIS event's own id — it can never touch
+  // another event's reservation. It also never expands a kit into its component items, matching
+  // executeConfirmBlocks/ApprovalsTab's own real-block behavior (only the kit shell gets a row).
+  const reconcileSoldInventoryBlocks = useCallback(async (fnsToProcess, newCards, inventoryList, cli) => {
+    const eo = (eventOrders || []).find(e => e.clientId === cli.id);
+    if (!eo) return; // not through markSold yet — nothing to reconcile against
+
+    // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
+    // entire function from a sold deal (not just items within one) leaves that function's prior
+    // reservations un-released here — its fnDate is gone along with it, and this path doesn't
+    // (yet) track dates for functions that no longer exist to release them correctly. Rare in
+    // practice (a whole-function delete on an already-sold, already-reserved deal); flagged rather
+    // than silently handled.
+    // Required qty per (fnIdx, itemId) from THIS run's matched cards.
+    const requiredByFn = {};
+    fnsToProcess.forEach((fn, i) => {
+      const fnIdx = fn.fnIdx ?? i;
+      const byItem = {};
+      Object.values(newCards[fnIdx] || {}).forEach((c) => {
+        if (!c.imsId) return;
+        byItem[c.imsId] = (byItem[c.imsId] || 0) + (Number(c.qty) || 0);
+      });
+      requiredByFn[fnIdx] = byItem;
+    });
+
+    const prevByFn = (cli.dcReservedInventory && typeof cli.dcReservedInventory === "object") ? cli.dcReservedInventory : {};
+    const isFirstRun = Object.keys(prevByFn).length === 0;
+
+    const allItemIds = new Set();
+    Object.values(requiredByFn).forEach((m) => Object.keys(m).forEach((id) => allItemIds.add(id)));
+    Object.values(prevByFn).forEach((m) => Object.keys(m).forEach((id) => allItemIds.add(id)));
+    if (allItemIds.size === 0) return;
+
+    // Diff vs the last reconcile — only proceed (and only fetch/write blocks) if something actually
+    // changed. changesByDept feeds the department-head log below; skipped on the very first run
+    // (that baseline is markSold's own initial confirm, not a "change" worth notifying anyone about).
+    let changed = false;
+    const changesByDept = {};
+    fnsToProcess.forEach((fn, i) => {
+      const fnIdx = fn.fnIdx ?? i;
+      const req = requiredByFn[fnIdx] || {};
+      const prev = prevByFn[fnIdx] || {};
+      const ids = new Set([...Object.keys(req), ...Object.keys(prev)]);
+      ids.forEach((id) => {
+        const now = req[id] || 0, was = prev[id] || 0;
+        if (now === was) return;
+        changed = true;
+        if (isFirstRun) return;
+        const item = (inventoryList || []).find((x) => x.id === id);
+        const dept = catToDept(item?.cat || item?.category, dealCheckData?.categoryDepartments);
+        const change = now === 0 ? "removed" : was === 0 ? "added" : "qty_changed";
+        if (!changesByDept[dept]) changesByDept[dept] = [];
+        changesByDept[dept].push({ name: item?.name || id, qty: now || was, change });
+      });
+    });
+    if (!changed) return;
+
+    // Fetch current blocks rows for every affected item, reconcile only THIS event's own entries.
+    const ids = [...allItemIds];
+    let blockRows = [];
+    try {
+      const { data, error } = await supabase.from("blocks").select("*").in("item_id", ids);
+      if (error) throw error;
+      blockRows = data || [];
+    } catch { return; } // best-effort — a failed fetch here shouldn't fail the whole regenerate
+
+    const byId = new Map(blockRows.map((r) => [r.item_id, Array.isArray(r.data) ? r.data : []]));
+    fnsToProcess.forEach((fn, i) => {
+      const fnIdx = fn.fnIdx ?? i;
+      const req = requiredByFn[fnIdx] || {};
+      const date = fn.fnDate || "";
+      if (!date) return;
+      ids.forEach((id) => {
+        const qty = req[id] || 0;
+        const arr = (byId.get(id) || []).filter((b) => !(b.eventId === eo.id && b.date === date));
+        if (qty > 0) arr.push({ date, eventId: eo.id, qty, status: "confirmed", createdAt: Date.now(), source: "studio-incremental" });
+        byId.set(id, arr);
+      });
+    });
+    try {
+      await supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" });
+    } catch { return; }
+
+    // Persist what we just reserved so the NEXT run diffs against this, not the initial markSold state.
+    const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn } : c));
+    saveClientLedger(nextLedger);
+
+    // Notify department heads — one plain, terminal log entry per affected department. Never gates
+    // anything: the reservation above already happened regardless of this.
+    for (const [dept, items] of Object.entries(changesByDept)) {
+      const amendReq = { ...makeAmendRequest({
+        eventOrderId: eo.id, clientId: cli.id, clientName: cli.name || "",
+        department: dept, items, reason: "Auto-logged: items changed on a sold deal",
+        requestedBy: authUser?.name || "—",
+      }), status: "logged" };
+      submitAmendRequest(amendReq);
+    }
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser]);
+
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
   // That mode is free and repeatable, so it neither consumes the run allowance nor needs a limit
@@ -8200,6 +8311,9 @@ export default function StudioApp() {
       // Row-per-item to the soft_holds TABLE (off the whole-blob write) — only the items we just held.
       try { if (holdRows.length) await supabase.from("soft_holds").upsert(holdRows, { onConflict: "id" }); } catch {}
     }
+    // Owner decision: a SOLD deal's inventory changes reserve immediately (no approval gate) —
+    // see reconcileSoldInventoryBlocks above.
+    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, newCards, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
     // ════════════════════════════════════════════════════════════════════════
     // §23 PHASE 3 — Write truss soft-hold draft to the truss_allocations TABLE.
     // Pre-SOLD only. Merges Studio's soft event into each date row, preserving IMS
@@ -8254,7 +8368,7 @@ export default function StudioApp() {
     setDcAbortRef(null);
     showMsg(`Deal Check generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match (no AI cost) · ${cardsAi} AI calls`, "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
 
   // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
   // used to do this is gone, and matching is free in this mode (knowledge + name-match, no vision
@@ -8524,7 +8638,7 @@ export default function StudioApp() {
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,
-    amendRequests, submitAmendRequest, isLastMinute, makeAmendRequest,
+    amendRequests, submitAmendRequest,
     dcInventoryCache, setDcInventoryCache, dcBrowseAllOpen, setDcBrowseAllOpen, dcSwapModal, setDcSwapModal, dcColorModal, setDcColorModal,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
+import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 
 // Small in-browser voice-note recorder → uploads to Cloudinary, hands the URL back via onSave.
@@ -48,7 +49,7 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
 // Per-department backend for department heads: see their department's requirements + income for any
 // event (blocked inventory with photos, manpower), override the manpower plan, and log ACTUALS
 // (real mandi cost + on-site expenses) so projected cost converts to exact cost (reflected to Studio).
-const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
+const DEPTS = SHARED_DEPTS;
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 // Primary manpower types per department (for the editable crew plan).
 const DEPT_MP = {
@@ -59,18 +60,6 @@ const DEPT_MP = {
   Lighting: ["Electricians", "Labours"],
   Transport: ["Drivers"],
   Furniture: ["Labours"],
-};
-
-const kwDept = (cat) => {
-  const s = String(cat || "").toLowerCase();
-  if (s.includes("floral") || s.includes("flower")) return "Floral";
-  if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting";
-  if (s.includes("truss")) return "Tenting";
-  if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric";
-  if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting";
-  if (s.includes("transport") || s.includes("truck")) return "Transport";
-  if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture";
-  return "Structure";
 };
 
 // Suggested essential tools per department — one-tap to add to the reusable template.
@@ -84,9 +73,9 @@ const DEFAULT_TOOLS = {
   Furniture: ["Trolley", "Covers", "Cleaning cloth", "Cushion spares"],
 };
 
-export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser }) {
+export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
-  const catToDept = (cat) => { const k = String(cat || "").toLowerCase().trim(); if (catDeptCfg[k] && DEPTS.includes(catDeptCfg[k])) return catDeptCfg[k]; return kwDept(cat); };
+  const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const dihari = settings?.dihariSchemes || {};
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   // Department-head role → department (role name contains a department, e.g. "Tenting Head").
@@ -875,6 +864,33 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
               </div>
               {nearby.length > 0 && <div className="text-xs text-gray-500">📅 {nearby.length} nearby event{nearby.length > 1 ? "s" : ""} (±7 days)</div>}
             </div>
+
+            {/* Recent changes — a salesperson can now add/remove/change items on a sold deal at any
+                time, no approval needed (owner decision, replaces the old last-minute amendment gate).
+                This is purely informational: what changed, who changed it, when — read-only, no
+                action required. Written by StudioApp.jsx's reconcileSoldInventoryBlocks whenever this
+                event's + this department's reserved items actually change. */}
+            {(() => {
+              const recent = (amendRequests || [])
+                .filter(r => r.eventOrderId === sel.id && r.department === dept && r.status === "logged")
+                .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0))
+                .slice(0, 8);
+              if (!recent.length) return null;
+              return (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <div className="text-xs font-bold text-amber-800 mb-1.5">🔔 Recent changes</div>
+                  <div className="space-y-1.5">
+                    {recent.map(r => (
+                      <div key={r.id} className="text-xs text-amber-900">
+                        <span className="font-semibold">{r.requestedBy || "—"}</span>
+                        {" "}{(r.items || []).map(it => `${it.change === "removed" ? "removed" : it.change === "qty_changed" ? "changed qty of" : "added"} ${it.name}${it.qty ? ` ×${it.qty}` : ""}`).join(", ")}
+                        <span className="text-amber-600"> · {r.requestedAt ? new Date(r.requestedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Sub-view: Planning (dept head) vs On-site (ops manager — receiving & dismantle) */}
             <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">

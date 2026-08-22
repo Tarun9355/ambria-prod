@@ -9,9 +9,9 @@ import { useState, useEffect, useRef } from "react";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
 import DCTrussTab from "./tabs/DCTrussTab.jsx";
-import AmendRequestPanel from "./AmendRequestPanel.jsx";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
+import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept } from "../../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 
@@ -225,7 +225,7 @@ export default function DealCheckOverlay({ ctx }) {
             return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100;
           };
           // ═══ §Department income (7 depts) — every rupee tagged to a department ═══
-          const DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
+          const DEPTS = OPS_DEPTS;
           const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
           const deptInv = {}; DEPTS.forEach(d => { deptInv[d] = []; }); // per-dept blocked-inventory detail (name/photo/qty/unit/total)
           const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
@@ -248,20 +248,7 @@ export default function DealCheckOverlay({ ctx }) {
           // Category (rate-card OR inventory) → department. First the admin-editable map
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
           const catDeptCfg = dealCheckData?.categoryDepartments || {};
-          const catToDept = (cat) => {
-            const s = String(cat || "").toLowerCase().trim();
-            if (!s) return "Structure";
-            if (catDeptCfg[s] && DEPTS.includes(catDeptCfg[s])) return catDeptCfg[s];
-            if (s.includes("floral") || s.includes("flower")) return "Floral";
-            if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting";
-            if (s.includes("truss")) return "Tenting";
-            if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric";
-            if (s.includes("platform") || s.includes("carpet") || s.includes("tent")) return "Tenting";
-            if (s.includes("transport") || s.includes("truck") || s.includes("logistic")) return "Transport";
-            if (s.includes("furnitur") || s.includes("sofa") || s.includes("chair") || s.includes("couch")) return "Furniture";
-            if (s.includes("arch") || s.includes("prop") || s.includes("wrought") || s.includes("glass") || s.includes("struct") || s.includes("pillar") || s.includes("stage") || s.includes("platform")) return "Structure";
-            return "Structure"; // catch-all
-          };
+          const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
           // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
           // (venue-specific standing qty + that item's own IMS discount, falling back to the
           // sub-category default at any other venue). This just says WHICH zones are Repeat.
@@ -1309,9 +1296,13 @@ export default function DealCheckOverlay({ ctx }) {
               </div>
               {/* MAIN CONTENT */}
               <div style={{flex:1,overflowY:"auto",padding:"18px 22px"}}>
-                {isSold && ctx.isLastMinute && ctx.isLastMinute((() => { const fns = collectAllFunctionData ? collectAllFunctionData() : []; return fns[activeFnIdx]?.fnDate || clientDate; })()) && (
-                  <AmendRequestPanel ctx={ctx} fnIdx={activeFnIdx || 0} fnDate={(() => { const fns = collectAllFunctionData ? collectAllFunctionData() : []; return fns[activeFnIdx]?.fnDate || clientDate; })()} />
-                )}
+                {/* Last-minute changes to a SOLD deal used to require a department-head-approved
+                    amendment request here before the item actually reserved (AmendRequestPanel).
+                    Owner decision: remove that gate — a salesperson can add/remove/change items on a
+                    booked deal exactly like any other deal, no waiting. Inventory now reserves
+                    immediately (reconcileSoldInventoryBlocks in StudioApp.jsx); department heads are
+                    informed afterward, not gated beforehand — see the "Recent changes" panel in
+                    IMS → Planning → Dept Ops instead of this now-removed panel. */}
                 {!activeTabDef.live ? (
                   <div style={{padding:"60px 30px",textAlign:"center",color:"#1A1A2E"}}>
                     <div style={{fontSize:42,marginBottom:14}}>{activeTabDef.icon}</div>

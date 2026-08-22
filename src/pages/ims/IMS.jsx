@@ -1289,7 +1289,7 @@ export default function IMS() {
             settings={settings} setSettings={setSettings}
             trussInv={trussInv} setTrussInv={setTrussInv}
             trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
-            studio={studio} authUser={user}
+            studio={studio} authUser={user} amendRequests={amendRequests}
           />
         ) : tab === "finance" ? (
           <FinanceTab
