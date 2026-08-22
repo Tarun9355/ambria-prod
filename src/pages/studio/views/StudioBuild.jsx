@@ -2317,7 +2317,12 @@ undefined
           background:current===v?`${accent}18`:"transparent",
           color:current===v?accent:textP}}>{v}</div>
       );
-      return <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:14,flexWrap:"wrap"}}>
+      // Not covered by the isFnSwitching veil below (that wrapper starts further down, around the
+      // element cards only) — without this a click landing here mid-switch set the palette on
+      // whichever function the switch settles onto, not the one the user was actually looking at
+      // when they clicked. Same reason for the Floral Ratio control just below.
+      return <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:14,flexWrap:"wrap",
+        opacity:ctx.isFnSwitching?0.45:undefined,pointerEvents:ctx.isFnSwitching?"none":undefined,transition:"opacity .15s ease"}}>
         <span style={{display:"flex",color:accent}}><IconPalette size={13}/></span>
         <span style={{fontSize:11.5,fontWeight:600,color:textP}}>Fabric Palette</span>
         <span title="Sets masking/drape colour allocation in Deal Check — doesn't affect the photo filters above" style={{fontSize:10,color:textS,cursor:"help"}}>ⓘ</span>
@@ -2352,7 +2357,9 @@ undefined
 
 
     {/* ═══ FLORAL RATIO CONTROL — art/real split is a design control, show it even when costs are hidden ═══ */}
-    {<div style={{borderRadius:10,padding:"13px 18px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12}}>
+    {/* Not covered by the isFnSwitching veil below either — see the Fabric Palette comment above for why. */}
+    {<div style={{borderRadius:10,padding:"13px 18px",marginBottom:14,border:`1px solid ${border}`,background:isDark?"rgba(255,255,255,0.02)":"#F9F9F9",display:"flex",alignItems:"center",gap:12,
+      opacity:ctx.isFnSwitching?0.45:undefined,pointerEvents:ctx.isFnSwitching?"none":undefined,transition:"opacity .15s ease"}}>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
         <span style={{display:"flex",color:accent}}><IconFlower size={16}/></span>
         <span style={{fontSize:12.5,fontWeight:600,color:textP}}>Artificial</span>
