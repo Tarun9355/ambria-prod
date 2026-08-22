@@ -7,7 +7,9 @@
 import { supabase } from "../supabase";
 import { libPhotoIsTagged } from "./taxonomy";
 
-export const LIBRARY_PAGE_SIZE = 50;
+// One page of the Manage → Library grid. Also the pagination step: the grid shows exactly this many
+// and you move between pages, rather than appending forever as you scroll.
+export const LIBRARY_PAGE_SIZE = 80;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Two INDEPENDENT dimensions on a library photo — deliberately NOT one combined enum (spec §9-D):

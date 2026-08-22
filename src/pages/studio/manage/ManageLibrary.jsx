@@ -20,7 +20,7 @@ const ML_BG = Object.values(
   import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
 )[0] || null;
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
-import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
+import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE, LIBRARY_PAGE_SIZE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
 import { supabase, subscribeTable } from "../../../lib/supabase";
 import { deleteStorageObjects, listStorageTree } from "../../../lib/storage";
@@ -29,11 +29,24 @@ import { addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 
 // Server-side paginated + status-scoped browse grid. Resets to page 1 whenever the status chip,
-// any sidebar filter, venue selection, or (debounced) search term changes; loadMore() appends.
+// any sidebar filter, venue selection, or (debounced) search term changes.
 // Chip counts are scoped to the same filters/search but NOT the status chip itself, per spec.
+//
+// ── PAGES, NOT AN ENDLESS SCROLL ──
+// This used to append: a sentinel at the foot of the grid auto-loaded the next page whenever it came
+// into view, so the DOM grew for as long as you kept scrolling — nearly 2000 tiles in one grid on
+// "Needs review". Now exactly LIBRARY_PAGE_SIZE rows are mounted and you step between pages.
+//
+// The queries underneath are KEYSET paginated (a cursor of the last row's sort value + id), not
+// OFFSET, so page N stays fast at any depth — but a cursor only points FORWARD. Going back therefore
+// needs the cursor each page started from, which is what cursorsRef keeps: index i holds the cursor
+// that opens page i, and page 0's is null. That makes Prev free (a cursor we already hold) and means
+// no page can be jumped to before it has been walked past — which is why this is Prev/Next and not
+// numbered pages, rather than numbered pages that quietly re-fetch everything before them.
 function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhouseVenueNames, search, mergeLibItems }) {
   const [items, setItems] = useState([]);
-  const [cursor, setCursor] = useState(null);
+  const [pageIdx, setPageIdx] = useState(0);
+  const cursorsRef = useRef([null]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [counts, setCounts] = useState({ verified: 0, review: 0, untagged: 0, manual: 0, build: 0 });
@@ -59,19 +72,34 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
   const tagSource = isTagSourceChip ? libStatus : undefined;
   const filterKey = JSON.stringify(filters);
   const venueKey = `${venueGroup}|${venueNames.join(",")}`;
+  // Everything that defines WHICH rows this grid is showing. When it changes, the cursors collected
+  // for the old query are meaningless and page 0 is the only page we can open.
+  const queryKey = `${status}|${tagSource}|${filterKey}|${venueKey}|${debouncedSearch}`;
+  const lastQueryKeyRef = useRef(queryKey);
 
   useEffect(() => {
+    // A new query resets the walk. Returning early when we were not already on page 0 lets the
+    // setPageIdx re-run do the fetch, so the change costs one request rather than two — the stale
+    // one would only have been thrown away by the reqId guard anyway.
+    if (lastQueryKeyRef.current !== queryKey) {
+      lastQueryKeyRef.current = queryKey;
+      cursorsRef.current = [null];
+      if (pageIdx !== 0) { setPageIdx(0); return; }
+    }
     const id = ++reqIdRef.current;
-    setLoading(true); setItems([]); setCursor(null); setHasMore(true); setError(null);
-    fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
+    setLoading(true); setItems([]); setHasMore(true); setError(null);
+    fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch, cursor: cursorsRef.current[pageIdx] || null })
       .then(({ items: page, nextCursor, hasMore: more }) => {
         if (id !== reqIdRef.current) return;
-        setItems(page); mergeLibItems(page); setCursor(nextCursor); setHasMore(more);
+        // Remember where the NEXT page starts. This is the only place cursors are recorded, so a page
+        // can never be opened without having been reached.
+        cursorsRef.current[pageIdx + 1] = nextCursor;
+        setItems(page); mergeLibItems(page); setHasMore(more);
       })
       .catch((e) => { if (id === reqIdRef.current) { setHasMore(false); setError(e?.message || "Failed to load images"); } })
       .finally(() => { if (id === reqIdRef.current) setLoading(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, retryTick]);
+  }, [queryKey, pageIdx, retryTick]);
 
   const refreshCounts = useCallback(() => {
     fetchLibraryCounts({ filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
@@ -96,23 +124,26 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
     return () => { if (timer) clearTimeout(timer); try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, [refreshCounts]);
 
-  const loadMore = useCallback(() => {
-    if (loading || !hasMore || !cursor) return;
-    setLoading(true);
-    fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch, cursor })
-      .then(({ items: page, nextCursor, hasMore: more }) => {
-        setItems((prev) => [...prev, ...page]); mergeLibItems(page); setCursor(nextCursor); setHasMore(more);
-      })
-      .catch(() => setHasMore(false))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, cursor, hasMore, loading]);
+  // Page moves just set the index — the effect above owns every fetch, so there is one code path
+  // that loads a page and one place cursors are written.
+  const nextPage = useCallback(() => {
+    if (loading || !hasMore) return;
+    setPageIdx((i) => i + 1);
+  }, [loading, hasMore]);
+  const prevPage = useCallback(() => {
+    if (loading) return;
+    setPageIdx((i) => (i > 0 ? i - 1 : 0));
+  }, [loading]);
 
   // Live "new tags stream in" during batch tagging: refetch page 1 (which is ordered most-recently-
   // tagged first) and PREPEND any rows not already shown — so freshly-tagged photos appear at the top
-  // of Needs review as the batch runs, without resetting scroll or the loadMore cursor. Guarded by the
+  // of Needs review as the batch runs, without resetting scroll or the page cursors. Guarded by the
   // request id so it no-ops if a full reload (status/filter change) happened meanwhile.
   const refreshNew = useCallback(() => {
+    // Page 0 only. This prepends newly-tagged rows, and page 1 is the newest-first page they belong
+    // to — doing it while the user is on page 4 would splice unrelated rows into the middle of the
+    // run and push that page's last rows off the end.
+    if (pageIdx !== 0) return;
     const id = reqIdRef.current;
     fetchLibraryPage({ status, tagSource, filters, venueGroup, venueNames, inhouseVenueNames, search: debouncedSearch })
       .then(({ items: page }) => {
@@ -130,25 +161,14 @@ function usePaginatedLibrary({ libStatus, filters, venueGroup, venueNames, inhou
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, tagSource, filterKey, venueGroup, venueKey, debouncedSearch, pageIdx]);
 
   const updateItem = useCallback((id, patch) => setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it))), []);
   const removeItem = useCallback((id) => setItems((prev) => prev.filter((it) => it.id !== id)), []);
   const prependItems = useCallback((newItems) => setItems((prev) => [...newItems, ...prev]), []);
 
-  return { items, counts, loading, hasMore, loadMore, updateItem, removeItem, prependItems, error, retry, refreshCounts, refreshNew };
-}
-
-function LoadMoreSentinel({ onIntersect }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting) onIntersect(); }, { rootMargin: "300px" });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [onIntersect]);
-  return <div ref={ref} style={{ height: 1 }} />;
+  return { items, counts, loading, hasMore, nextPage, prevPage, pageIdx, pageSize: LIBRARY_PAGE_SIZE, updateItem, removeItem, prependItems, error, retry, refreshCounts, refreshNew };
 }
 
 // ═══ MANAGE: LIBRARY & CONTENT ═══
@@ -504,6 +524,13 @@ export default function ManageLibrary({ ctx }) {
   // resize, so it fills the space that's actually there and scrolls internally past that.
   // Declared here, not inside LibraryBrowse — that is called conditionally (libView === "images"),
   // and a hook behind a condition changes the hook order when the tab changes.
+  // The pager sits under the grid, so a page change leaves you parked at the BOTTOM of a page whose
+  // content starts 80 tiles above — you'd land looking at the end of what you just asked to see.
+  // Scrolls the whole window rather than an inner container because the grid has no scrollport of
+  // its own; the page is what scrolls. `smooth` so it reads as a move, not a jump cut.
+  const libScrollTop = useCallback(() => {
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { window.scrollTo(0, 0); }
+  }, []);
   const LIB_RAIL_TOP = 70;
   const libRailRef = useRef(null);
   const libRailMaxH = useRailMaxHeight(libRailRef, LIB_RAIL_TOP);
@@ -653,7 +680,16 @@ export default function ManageLibrary({ ctx }) {
         </div>
         {bulkTag?.running && <div style={{ height: 4, background: border, borderRadius: 2, marginBottom: 8 }}><div style={{ height: 4, width: `${bulkTag.total ? (bulkTag.done / bulkTag.total) * 100 : 0}%`, background: "#7C3AED", borderRadius: 2, transition: "width 0.3s" }} /></div>}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libPage.counts[libStatus] ?? libVisible.length}{libPage.loading ? "…" : ""}</span>
+          {/* The RANGE, not just a count: with pages, "Showing 80 of 1966" on page 4 tells you the
+              size of the page and nothing about where you are in the set. */}
+          {(() => {
+            const total = libPage.counts[libStatus] ?? libVisible.length;
+            const from = libPage.pageIdx * libPage.pageSize + 1;
+            const to = libPage.pageIdx * libPage.pageSize + libVisible.length;
+            return <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>
+              {libVisible.length === 0 ? `0 of ${total}` : `Showing ${from}–${to} of ${total}`}{libPage.loading ? "…" : ""}
+            </span>;
+          })()}
           {libStatus === LIB_STATUS.UNTAGGED && libVisible.length > 0 && (
             <>
               <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 12, padding: "5px 11px" }}>
@@ -757,13 +793,19 @@ export default function ManageLibrary({ ctx }) {
           })}
         </div>
         {libPage.loading && <div style={{ textAlign: "center", padding: 16, fontSize: 11, color: textS }}>Loading…</div>}
-        {!libPage.loading && libPage.hasMore && libVisible.length > 0 && (
-          <>
-            <LoadMoreSentinel onIntersect={libPage.loadMore} />
-            <div style={{ textAlign: "center", marginTop: 12 }}>
-              <button onClick={libPage.loadMore} style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px" }}>Load more</button>
-            </div>
-          </>
+        {/* Pager. No auto-load sentinel any more — the grid holds one page and you step through it.
+            Prev/Next rather than page numbers because the queries are keyset-paginated: a cursor
+            points forward only, so a page can be opened once it has been reached, and offering "go to
+            page 17" would mean silently walking sixteen pages first. Both buttons are always rendered
+            and disabled at the ends, so the row doesn't reflow as you move. */}
+        {!libPage.loading && libVisible.length > 0 && (libPage.pageIdx > 0 || libPage.hasMore) && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 16 }}>
+            <button onClick={() => { libPage.prevPage(); libScrollTop(); }} disabled={libPage.pageIdx === 0}
+              style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: libPage.pageIdx === 0 ? 0.4 : 1, cursor: libPage.pageIdx === 0 ? "default" : "pointer" }}>← Prev</button>
+            <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>Page {libPage.pageIdx + 1}</span>
+            <button onClick={() => { libPage.nextPage(); libScrollTop(); }} disabled={!libPage.hasMore}
+              style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: libPage.hasMore ? 1 : 0.4, cursor: libPage.hasMore ? "pointer" : "default" }}>Next →</button>
+          </div>
         )}
         {/* House tagging-rules editor — saved to taxonomy.taggingStandards, injected into the tagger */}
         {tagRules !== null && (
