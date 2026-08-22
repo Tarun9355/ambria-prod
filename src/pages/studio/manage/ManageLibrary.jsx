@@ -2873,12 +2873,6 @@ export default function ManageLibrary({ ctx }) {
                       ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
                       : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} title={v.title} />}
                   </div>
-                  {/* The source URL, readable and selectable. Not a copy button — that would be a new
-                      control; the text is selectable so the link is still gettable. */}
-                  {v.source !== "cloudinary" && <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.03)" : "#fff", fontSize: 11, color: textS, overflow: "hidden" }}>
-                    <span style={{ flexShrink: 0, opacity: 0.7 }}>🔗</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "all" }}>{`https://www.youtube.com/watch?v=${bigTagVid}`}</span>
-                  </div>}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, minWidth: 0 }}>
                   {sumTile(<IconFactory size={14} />, "Venue", vTag.venue)}
