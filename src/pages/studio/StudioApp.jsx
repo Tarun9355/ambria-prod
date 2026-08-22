@@ -2070,6 +2070,25 @@ export default function StudioApp() {
       onYes: () => resolve(true), onCancel: () => resolve(false),
     });
   }), []);
+  // Closing the zone-upload review (Back button, Cancel, or the modal's own backdrop click) used to
+  // discard it instantly with no confirmation at all — a real gap, since this form can hold several
+  // minutes of manually-entered truss/masking dimensions and an edited element list, all held ONLY
+  // in this one piece of state (never autosaved; "Apply to Zone" is what actually commits it). A
+  // reflexive Back tap (mobile hardware Back, Alt+Left) or a stray click on the dark backdrop threw
+  // all of it away in one motion. Confirm only when there's something to lose — an untouched/empty
+  // review (AI failed and nothing was typed) can close silently, same as before.
+  const closeZoneUploadReview = useCallback(() => {
+    const r = zoneUploadReview;
+    if (!r) return;
+    const hasContent = (Array.isArray(r.elements) && r.elements.length > 0) || (r.dims && Object.keys(r.dims).length > 0);
+    if (!hasContent) { setZoneUploadReview(null); return; }
+    askConfirm(
+      "Discard this zone review? The dimensions, truss/masking rows and element list entered here will be lost — the photo stays uploaded, just not linked to any of this.",
+      () => setZoneUploadReview(null),
+      { yesLabel: "Discard" }
+    );
+  }, [zoneUploadReview]);
+
   const doLogout = () => { logout(); };
   // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
   // reference Studio used "admin". Also honor the seeded u_admin id.
@@ -2156,13 +2175,13 @@ export default function StudioApp() {
       if (dcFullPageOpen) { setDcFullPageOpen(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
       if (premiaGate) { setPremiaGate(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
       if (videoModal) { setVideoModal(null); setVideoPlaying(false); setVideoOverlay(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
-      if (zoneUploadReview) { setZoneUploadReview(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (zoneUploadReview) { closeZoneUploadReview(); window.history.pushState({ studioNavGuard: true }, ""); return; }
       if (step > 0) { setStep((s) => Math.max(0, s - 1)); window.history.pushState({ studioNavGuard: true }, ""); return; }
       // Nothing left to step back through — let this Back actually leave the app.
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [dcFullPageOpen, premiaGate, videoModal, zoneUploadReview, step]);
+  }, [dcFullPageOpen, premiaGate, videoModal, zoneUploadReview, step, closeZoneUploadReview]);
 
   // ═══ YOUTUBE BROWSER STATE ═══
   const [ytVideos, setYtVideos] = useState([]);
@@ -8261,7 +8280,7 @@ export default function StudioApp() {
     // zone photo filters + upload
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
     zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch,
-    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
+    zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, closeZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
     // app mode + steps
