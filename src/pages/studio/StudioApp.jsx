@@ -5788,7 +5788,16 @@ export default function StudioApp() {
       }
     }
     setActiveClientId(client.id);
-    const finalLedger = updated.slice(0, 200);
+    // NOT capped. This used to be `updated.slice(0, 200)` — a brand-new client (no phone/activeClientId
+    // match) is pushed onto the END of `updated` a few lines above, so once the ledger already held
+    // 200+ clients that cap silently dropped every fresh client from `finalLedger` the instant it was
+    // created: saveClientLedger's dirty-diff never saw it, so it was never upserted, and the very next
+    // autosave (activeClientId no longer found in the now-200-capped clientLedgerRef) minted ANOTHER
+    // orphaned client and dropped that one too — an infinite churn, none of it ever reaching Supabase,
+    // discovered only on refresh when the whole deal had silently vanished. The cap had no functional
+    // purpose here (saveClientLedger's own upsert only ever sends the dirty subset, not this array), so
+    // there was nothing to bound by removing it.
+    const finalLedger = updated;
     // saveClientLedger is async (a real Supabase upsert) but every existing caller here is
     // fire-and-forget — timers and unmount handlers that can't await anyway. Handing back the
     // promise costs them nothing (they just don't read it) and lets a caller that DOES need to
