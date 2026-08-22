@@ -531,21 +531,22 @@ export default function ManageLibrary({ ctx }) {
   // its own; the page is what scrolls. `smooth` so it reads as a move, not a jump cut.
   // ── THE VIEW TABS ──
   // These were S.btn(active), whose active state is the gold gradient (accent #C9A96E). Gold is the
-  // NAVBAR's accent — it reads on that dark navy bar — but on this light page it was the one loud
-  // thing on the screen, and it disagreed with every other "this one is selected" on the page: the
-  // Venue pills right below use S.pill, which is accentText (#6D28D9) on accentBg. So these now use
-  // the same violet, filled, which is the convention the rest of the app already follows.
+  // NAVBAR's accent — it reads on that dark navy bar — but on this light page it was the loudest
+  // thing on the screen.
+  // The fill is the app's dark navy: linear-gradient(135deg,#1a1a2e,#2d1b69), the exact pair Summary
+  // uses for .total-hero and .grand and Build reuses — so "selected" here is the same dark navy
+  // blue as the anchor surfaces on those pages, rather than a third colour invented for this row.
   // Written as one helper rather than four copies of a spread so the four tabs cannot drift apart.
   const libTab = (active) => ({
     display: "inline-flex", alignItems: "center", gap: 6,
     padding: "8px 15px", borderRadius: 10, fontSize: 11.5, fontWeight: active ? 700 : 600,
     cursor: "pointer", whiteSpace: "nowrap",
     border: `1px solid ${active ? "transparent" : border}`,
-    background: active ? "linear-gradient(135deg,#6D28D9,#5B21B6)" : (isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.55)"),
+    background: active ? "linear-gradient(135deg,#1a1a2e,#2d1b69)" : (isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.55)"),
     color: active ? "#fff" : textS,
     // Only the selected tab is lifted. Shadowing all four would make the row read as four cards
     // rather than one control with one choice made.
-    boxShadow: active ? "0 2px 5px rgba(91,33,182,0.28)" : "none",
+    boxShadow: active ? "0 2px 6px rgba(26,26,46,0.30)" : "none",
     transition: "background .15s ease, color .15s ease",
   });
   const libScrollTop = useCallback(() => {
