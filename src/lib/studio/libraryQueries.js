@@ -140,6 +140,37 @@ function pgLit(v) { return `"${String(v).replace(/"/g, '\\"')}"`; }
 // will do.
 function pgArrayLit(v) { return JSON.stringify([v]); }
 
+// ── SEARCH ACROSS TAGS, NOT JUST THE FILENAME ──
+// `name` on a library row is the storage name — "huvordh6mli01tbcadzp.jpg" — so a name-only search
+// was a box that could not find anything a person would actually type. These are the tag keys it
+// looks in as well. They are the array-valued keys of the taxonomy, which is the same set the filter
+// rail builds its sections from (ManageLibrary: Object.keys(taxonomy).filter(k => Array.isArray(…))).
+// KEEP THIS IN STEP with that: a category added to the taxonomy shows up in the rail automatically
+// but will NOT be searchable until its key is listed here.
+// `venue` is deliberately not in the list — it is a scalar string, not an array, and is handled
+// separately below.
+const SEARCH_TAG_KEYS = [
+  "tier", "eventType", "venueType", "designStyle",
+  "timeSetting", "categoryTier", "colorPalette", "areasElements",
+];
+
+// How the tag arrays become searchable: `tags->>key` on a jsonb ARRAY returns that array's JSON
+// text — '["Wedding", "Sangeet"]' — so an ilike over it sees the element strings. There is no need
+// for a jsonb array operator, and `cs` (used by the rail's filters) cannot do this because it needs
+// a whole exact value, not a fragment. Verified against the live table before writing this.
+//
+// The value is double-quoted so the DSL's own separators — comma, parens — inside a search term
+// cannot end the filter or start a new condition; backslash and quote are escaped for the same
+// reason. A typed `%` stays a wildcard, which is harmless.
+function searchOrClause(word) {
+  const pat = `"%${String(word).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}%"`;
+  return [
+    `name.ilike.${pat}`,
+    `tags->>venue.ilike.${pat}`,
+    ...SEARCH_TAG_KEYS.map((k) => `tags->>${k}.ilike.${pat}`),
+  ].join(",");
+}
+
 // Shared WHERE-clause builder for both the paginated list query and the count query —
 // everything except the status/tagSource filter, which callers apply themselves (the
 // count query needs the SAME base filters applied once per status bucket).
@@ -157,7 +188,15 @@ function applyCommonFilters(q, { filters = {}, venueGroup, venueNames = [], inho
     q = q.not("tags->>venue", "is", null);
     if (inhouseVenueNames.length) q = q.not("tags->>venue", "in", `(${inhouseVenueNames.map(pgLit).join(",")})`);
   }
-  if (search.trim()) q = q.ilike("name", `%${search.trim()}%`);
+  // Each WORD must match somewhere; within a word, any field will do. So "wedding gold" finds photos
+  // tagged Wedding that also carry a gold palette — which is the thing people are actually asking for
+  // when they type two words, and what a single-substring search cannot do, because the two words
+  // live in different tag keys and no one string contains both.
+  // Words AND by CHAINING .or() calls, the same mechanism the category filters above rely on:
+  // chained filters AND, and PostgrestFilterBuilder has no .and() (see the note above).
+  // Capped at 6 words so a pasted paragraph cannot build an unbounded URL.
+  const words = search.trim().split(/\s+/).filter(Boolean).slice(0, 6);
+  for (const w of words) q = q.or(searchOrClause(w));
   return q;
 }
 

@@ -592,7 +592,10 @@ export default function ManageLibrary({ ctx }) {
       </div>}
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name..." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
+        {/* The placeholder can name tags and venue now that the query actually looks there — see
+            SEARCH_TAG_KEYS in libraryQueries.js. It used to say name only, which was the honest
+            description of an ilike on a column full of storage hashes. */}
+        <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search venue, event, style, element…" title="Searches the photo's tags as well as its name. Multiple words all have to match — “wedding gold” means both." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
         {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
