@@ -1842,6 +1842,35 @@ export default function StudioApp() {
   // a write gated on trVenues alone (below, the genset migration) would fire on THAT seed state
   // during the async fetch's window and persist the seed truckCap over whatever was really saved.
   const trSettingsLoadedRef = useRef(false);
+  // ── ARE THE PRICING INPUTS IN YET? ──
+  // Every input the estimate is built from starts at a hardcoded SEED default, not at "unknown":
+  // rcItems = RC_D (57 real items with real rates), trVenues = TR_DV, truckCap = TR_DTC,
+  // bufferTiers = TR_DBT, gensetRate = 28000, and the truss/masking/carpet/print/platform rate
+  // tables start []. So the first render computes a complete, entirely plausible total out of stale
+  // defaults, and then each dataset landing in its own await/setState tick moves it again — the
+  // rate card, the scaling factors, inventory, transport, then the five structure-rate tables.
+  // That is the four-or-five different prices on a refresh: not a render glitch, a real calculation
+  // over an incomplete dataset, several times over.
+  // This flag marks the point where all of them have arrived. It gates the estimate tile (skeleton
+  // until then) and — the part that matters — the autosave's fnTotals write, which otherwise
+  // persists a seed-default total AND the tier derived from it.
+  // The same seed-defaults-look-real trap already cost this codebase real data once; see the guard
+  // comment on the genset migration effect below.
+  const [pricingReady, setPricingReady] = useState(false);
+  // Ref alongside the state because autoSaveBuild is a useCallback with [] deps and reads its guards
+  // off refs — switchingRef, fnSwitchingRef, buildHasDataRef. A state read in there would be the
+  // first render's `false` forever. Same pattern, same reason.
+  const pricingReadyRef = useRef(false);
+  useEffect(() => { pricingReadyRef.current = pricingReady; }, [pricingReady]);
+  // Backstop. The flag is set inline once the last rate table lands; every step of that boot
+  // sequence is individually try/caught, but a throw between an await and the flag would leave the
+  // tile on a skeleton forever. Ten seconds is far past a normal boot, so this only ever fires when
+  // something has genuinely gone wrong — and a possibly-settling price beats a permanent spinner.
+  useEffect(() => {
+    if (pricingReady) return;
+    const t = setTimeout(() => setPricingReady(true), 10000);
+    return () => clearTimeout(t);
+  }, [pricingReady]);
   const [floralPerTruck, setFloralPerTruck] = useState(50000);
   // Two genset sizes are hired, and an event can need BOTH — a big unit plus a smaller one — so
   // each size carries its own count. 125 KVA keeps the original `gensetRate` key and the existing
@@ -2562,6 +2591,10 @@ export default function StudioApp() {
       try { const trv = await kvGet("trussRates"); if (trv != null) { const tr = parse(trv); if (Array.isArray(tr) && !cancelled) setImsTrussRates(tr); } } catch {}
       try { const mrv = await kvGet("maskingRates"); if (mrv != null) { const mr = parse(mrv); if (Array.isArray(mr) && !cancelled) setImsMaskingRates(mr); } } catch {}
       try { const prv = await kvGet("platformRates"); if (prv != null) { const pr = parse(prv); if (Array.isArray(pr) && !cancelled) setImsPlatformRates(pr); } } catch {}
+      // Every input the estimate reads has now landed: the rate card and its scaling factors,
+      // inventory, the transport settings, and all five structure-rate tables above. Anything loaded
+      // after this line does not feed grandTotal. See pricingReady where it is declared.
+      if (!cancelled) setPricingReady(true);
       // Deal Check boot loaders
       try { const rows = await fetchAll("amend_requests"); if (Array.isArray(rows) && !cancelled) setAmendRequests(rows.map((r) => ({ ...(r.data || {}), id: r.id, status: r.status ?? r.data?.status }))); } catch { /* ignore */ }
       // Knowledge set — learned photo→IMS visual identity (fail-safe: table may not exist yet).
@@ -5717,7 +5750,12 @@ export default function StudioApp() {
           const carried = prev[i] || prev[String(i)];
           if (carried && typeof carried.total === "number" && carried.total > 0) next[i] = carried;
         }
-        if (grandTotal > 0 && fnSnapHasBuild(fnSnapshots[liveIdx])) {
+        // pricingReady, and not just grandTotal > 0. During boot grandTotal IS > 0 — it is a real
+        // sum over the seed-default rate card — so a save landing in that window wrote a wrong
+        // figure and, worse, the TIER derived from it, which is what the Browse card shows. The
+        // carry-forward above still runs, so an existing good price is kept rather than replaced;
+        // this only declines to write a NEW one until the inputs are real.
+        if (pricingReady && grandTotal > 0 && fnSnapHasBuild(fnSnapshots[liveIdx])) {
           next[liveIdx] = { total: grandTotal, tier: getCat(grandTotal).label };
         }
         return next;
@@ -5901,7 +5939,13 @@ export default function StudioApp() {
     const savePromise = saveClientLedger(finalLedger);
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
     return { client, ledger: finalLedger, savePromise };
-  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems]);
+  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems,
+    // Explicitly listed, not left to be picked up by accident. grandTotal is in this list and does
+    // usually change when the real rates land, which would rebuild this callback and pick up the new
+    // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
+    // happens to equal its real one would leave this callback holding pricingReady=false forever,
+    // and then no total would be written at all. That is a worse failure than the one being fixed.
+    pricingReady]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
@@ -5945,6 +5989,14 @@ export default function StudioApp() {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
     if (switchingRef.current || fnSwitchingRef.current) return;
+    // Nor before the rate tables have landed. The snapshot this writes carries total / tier /
+    // decorTotal / transportTotal as plain fields, and during boot those are a real sum over the
+    // SEED-DEFAULT rate card — so an autosave firing in that window records a wrong price and a
+    // wrong tier onto the session, which is what Browse then shows on the card. Unlike the fnTotals
+    // entry there is no way to omit the field, so the save itself has to wait.
+    // Nothing is lost by waiting: boot finishes in well under a second and unsavedEditRef is left
+    // alone, so a genuine edit made in that window still gets saved by the next run.
+    if (!pricingReadyRef.current) return;
     if (buildHasDataRef.current) {
       try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ }
       unsavedEditRef.current = false;
@@ -8647,7 +8699,7 @@ export default function StudioApp() {
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn,
-    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal,
+    calcPhotoCost, calcStructCost, calcFullEventCost, getFullCost, totalCost, transportCalc, grandTotal, pricingReady,
     collectAllFunctionData, calcFunctionCost, calcFnFloralSourcingCost, eventGrandTotal, calcFunctionBreakdown, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
     // deal check orchestration + persistence (overlay)
     openDealCheck, runDealCheckGenerate, getStudioAvailable, loadAvailability, getActiveSoftHold, reliableSave, DC_CACHE_SK,

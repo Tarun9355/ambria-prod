@@ -566,7 +566,7 @@ export default function StudioBuild({ ctx }) {
     // date demand
     dateTypes, clientLedger, activeClientId,
     // build canvas
-    setShowCosts, grandTotal, totalCost, transportCalc,
+    setShowCosts, grandTotal, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
@@ -1551,10 +1551,16 @@ export default function StudioBuild({ ctx }) {
     // zone was a hunt down a list that reshuffled itself whenever a price changed. The build order
     // is the order the salesperson is thinking in.
     const zonesSum = rows.reduce((a,r)=>a+r.amt,0);
+    // While the rate tables are still arriving, EVERY figure on this card is a real sum over an
+    // incomplete dataset — not just the headline. So the whole card goes to a skeleton rather than
+    // showing some numbers and hiding others, which would be the most misleading of the three
+    // options: a settled-looking zone list under a loading total reads as trustworthy.
+    // A bar sized to the figure it replaces, so nothing moves when the real number lands.
+    const bar = (w) => <span style={{display:"inline-block",width:w,height:10,borderRadius:5,background:isDark?"rgba(255,255,255,0.11)":"rgba(26,26,46,0.09)",animation:"pt-pulse 1.15s ease-in-out infinite"}}/>;
     const line = (label, value, opts={}) => (
       <div style={{display:"flex",alignItems:"baseline",gap:8,padding:"5px 0",fontSize:11.5,color:opts.strong?textP:textS}}>
         <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:opts.strong?600:400}}>{label}</span>
-        <span style={{fontWeight:opts.strong?700:600,color:textP,fontVariantNumeric:"tabular-nums"}}>{value}</span>
+        <span style={{fontWeight:opts.strong?700:600,color:textP,fontVariantNumeric:"tabular-nums"}}>{pricingReady?value:bar(opts.strong?62:52)}</span>
       </div>
     );
     return (
@@ -1572,9 +1578,19 @@ export default function StudioBuild({ ctx }) {
               Hide<span style={{display:"inline-flex",transform:"rotate(-90deg)"}}><IconChevron size={10}/></span>
             </span>
           </div>
-          <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:5,flexWrap:"wrap"}}>
-            <div style={{fontSize:23,fontWeight:700,color:textP,letterSpacing:-0.6,fontVariantNumeric:"tabular-nums"}}>{fmt(grandTotal)}</div>
-            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:6,background:cat.bg,color:cat.color}}>{cat.label}</span>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginTop:5,flexWrap:"wrap",minHeight:29}}>
+            {pricingReady
+              ? <>
+                  <div style={{fontSize:23,fontWeight:700,color:textP,letterSpacing:-0.6,fontVariantNumeric:"tabular-nums"}}>{fmt(grandTotal)}</div>
+                  <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:6,background:cat.bg,color:cat.color}}>{cat.label}</span>
+                </>
+              /* The tier chip is held back with the number. It is derived from the total, so on seed
+                 defaults it can read Platinum on a deal that is actually Gold — a wrong word is
+                 stickier than a wrong figure. */
+              : <>
+                  <span style={{display:"inline-block",width:132,height:22,borderRadius:7,background:isDark?"rgba(255,255,255,0.11)":"rgba(26,26,46,0.09)",animation:"pt-pulse 1.15s ease-in-out infinite"}}/>
+                  <span style={{fontSize:9.5,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",color:textS}}>Loading rates…</span>
+                </>}
           </div>
         </div>
         <div style={{padding:"9px 15px",borderBottom:`1px solid ${rule}`}}>
@@ -2042,6 +2058,12 @@ export default function StudioBuild({ ctx }) {
 .pt-row{transition:background .13s ease}
 .pt-row:hover{background:${isDark?"rgba(201,169,110,0.10)":"rgba(201,169,110,0.12)"}}
 @media (prefers-reduced-motion: reduce){.pt-card,.pt-row{transition:none}}
+/* The estimate's loading bars, shown until every rate table has landed — see pricingReady in
+   StudioApp. Opacity only, so it costs nothing to composite and cannot shift the layout it sits in.
+   Held still under reduced-motion: the bar's shape already says "not a number yet", so the pulse is
+   decoration rather than the message. */
+@keyframes pt-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@media (prefers-reduced-motion: reduce){[style*="pt-pulse"]{animation:none !important}}
 /* clickable inline-styled divs (wall chips, pickers) — same ring so nothing is left dead */
 .zone-row div[style*="cursor:pointer"]:not([style*="padding:14px"]):hover{box-shadow:0 0 0 2px ${accent}55 !important;border-radius:7px}
 /* ═══ ZONE UPLOAD ═══ It sits on its own strip now, outside .zone-row, so none of the rules above
@@ -3646,9 +3668,19 @@ undefined
       ))}
       {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Grand Total</span>
+        {/* The page's OTHER grand total. Gated on pricingReady like the estimate tile — the same
+            seed-default figure and the same tier chip derived from it, so fixing only one of the two
+            would just move where you watch the price change. */}
         <div style={{textAlign:"right"}}>
-          <div style={{fontSize:28,fontWeight:700}}>{fmt(grandTotal)}</div>
-          <span style={{fontSize:11,padding:"3px 12px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+          {pricingReady
+            ? <>
+                <div style={{fontSize:28,fontWeight:700}}>{fmt(grandTotal)}</div>
+                <span style={{fontSize:11,padding:"3px 12px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+              </>
+            : <>
+                <div style={{width:150,height:26,borderRadius:8,marginLeft:"auto",background:isDark?"rgba(255,255,255,0.11)":"rgba(26,26,46,0.09)",animation:"pt-pulse 1.15s ease-in-out infinite"}}/>
+                <span style={{fontSize:10,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",color:textS}}>Loading rates…</span>
+              </>}
         </div>
       </div>}
     </div>}
