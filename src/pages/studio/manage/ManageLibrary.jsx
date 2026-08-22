@@ -6,6 +6,14 @@ import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
+
+// ══ THE PAGE'S GROUND ══
+// The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
+// in this app: if the file is not there the glob resolves to {}, ML_BG is null, and the plain page
+// colour carries it. An import of a missing asset fails the whole build instead.
+const ML_BG = Object.values(
+  import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
+)[0] || null;
 import { applyAiTagResult } from "../../../lib/studio/tagging/applyResult.js";
 import { fetchLibraryPage, fetchLibraryCounts, checkExistingLibraryUrls, fetchAllLibraryRowsMinimal, LIB_STATUS, TAG_SOURCE } from "../../../lib/studio/libraryQueries";
 import { isHiddenSubcat } from "../../../lib/rateCard";
@@ -478,8 +486,9 @@ export default function ManageLibrary({ ctx }) {
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   const LibraryBrowse = () => (
     <div style={{ display: "flex", gap: 16, minHeight: "70vh" }}>
-      {/* Filter sidebar */}
-      <div style={{ width: 190, flexShrink: 0, overflowY: "auto", maxHeight: "75vh" }}>
+      {/* Filter sidebar — its own pane rather than bare labels on the page, which is what the
+          reference shows and what Browse and Build already do with their rails. */}
+      <div className="ml-glass ml-rail" style={{ width: 190, flexShrink: 0, overflowY: "auto", maxHeight: "75vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: accent }}>Filters</div>
           {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>Clear all</div>}
@@ -537,7 +546,11 @@ export default function ManageLibrary({ ctx }) {
             [TAG_SOURCE.BUILD, "🏗️", "Build Added", "uploaded from Build — cross-check before verifying", libPage.counts.build, "#EC4899"],
           ].map(([k, icon, label, sub, count, col]) => {
             const on = libStatus === k;
-            return <div key={k} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : border}`, background: on ? `${col}14` : cardBg, display: "flex", flexDirection: "column", gap: 1 }}>
+            // ml-tile only when NOT selected: the selected card keeps its own tinted border and fill,
+            // which is the one thing telling you which status is active. Glassing it too would take
+            // that away, and the hover lift on the current selection reads as if it were still a
+            // choice to make.
+            return <div key={k} className={on ? undefined : "ml-tile"} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : "transparent"}`, background: on ? `${col}14` : undefined, display: "flex", flexDirection: "column", gap: 1 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: on ? col : textS }}>{icon} {label}</div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}><span style={{ fontSize: 17, fontWeight: 800, color: on ? col : textP }}>{count}</span><span style={{ fontSize: 8, color: textS }}>{sub}</span></div>
             </div>;
@@ -606,8 +619,10 @@ export default function ManageLibrary({ ctx }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
           {libVisible.map(img => {
             const isSel = libSelected.has(img.id);
+            // ml-tile drives the glass and the hover lift. Selected and being-edited keep their own
+            // border colour — that is state, and it has to win over the glass edge.
             return (
-            <div key={img.id} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : border}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : cardBg, position: "relative" }}>
+            <div key={img.id} className={(isSel || libEditImg?.id === img.id) ? undefined : "ml-tile"} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : "transparent"}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : libEditImg?.id === img.id ? cardBg : undefined, position: "relative" }}>
               <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
@@ -1598,9 +1613,52 @@ export default function ManageLibrary({ ctx }) {
 
   // ═══ MANAGE: LIBRARY & CONTENT ═══ (reference ManageLibrary() ~11684)
   return (
-    <div>
+    <div className="ml-root" style={{ position: "relative" }}>
+      <style>{`
+/* ── THE GROUND ──
+   The artwork sits on its own absolute layer, not on the root's background, for the same reason it
+   does on Deal Check: it needs to cover the full scroll height and sit UNDER everything without
+   joining the flow. Fixed would re-composite it against the scroll position every frame, which is
+   the cost that was flickering these pages on Mac — this scrolls with the page instead, once.
+   Children are lifted above it by the rule below rather than each one carrying a z-index: a static
+   sibling paints BELOW a positioned layer however late it comes in the DOM, so without this the
+   cards would sit under the artwork. */
+.ml-wash{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:#F7F5F1;background-size:cover;background-position:center;background-repeat:no-repeat}
+.ml-root > *:not(.ml-wash){position:relative;z-index:1}
+/* ── GLASS, PAINTED NOT SAMPLED ──
+   No backdrop-filter anywhere here. It re-reads and re-blurs whatever is behind it every frame, and
+   what reads as glass is the bright top edge, the diagonal sheen and the shadow — all of which are
+   just paint. Same decision as the cost sheet and Deal Check, and the reason Safari stopped dimming
+   those panels.
+   !important because most of these surfaces set their background inline from cardBg, and an inline
+   declaration beats a plain rule. */
+.ml-glass{
+  background:linear-gradient(148deg,rgba(255,255,255,0.78) 0%,rgba(250,249,255,0.58) 100%) !important;
+  border:1px solid rgba(255,255,255,0.85) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 6px rgba(26,26,46,0.04), 0 18px 40px -22px rgba(26,26,46,0.26) !important}
+/* Panes that sit ON the glass are clearer again — two sheets at the same strength composite to
+   opaque and the pair reads as one flat slab. */
+.ml-tile{
+  background:linear-gradient(148deg,rgba(255,255,255,0.52) 0%,rgba(250,249,255,0.30) 100%) !important;
+  border:1px solid rgba(255,255,255,0.8) !important;
+  transition:background .16s ease, box-shadow .18s ease, transform .16s ease}
+.ml-tile:hover{transform:translateY(-2px);
+  background:linear-gradient(148deg,rgba(255,255,255,0.68) 0%,rgba(250,249,255,0.44) 100%) !important;
+  box-shadow:0 1px 2px rgba(26,26,46,0.05), 0 14px 30px -14px rgba(26,26,46,0.34) !important}
+/* The filter rail: same glass, and its pills lift on hover so the column reads as pressable rather
+   than as a list of labels. */
+.ml-rail{border-radius:14px;padding:12px 12px 14px}
+.ml-rail button,.ml-rail [role="button"]{transition:background .14s ease, border-color .14s ease}
+@media (prefers-reduced-motion: reduce){
+  .ml-tile{transition:none}
+  .ml-tile:hover{transform:none}
+}
+`}</style>
+      {/* Under everything, above nothing. See .ml-wash. */}
+      <div className="ml-wash" aria-hidden="true" style={ML_BG ? { backgroundImage: `url(${ML_BG})` } : undefined} />
       {/* Inline add bar */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", padding: 12, background: cardBg, border: `1px dashed ${accent}40`, borderRadius: 12, marginBottom: 14 }}>
+      <div className="ml-glass" style={{ display: "flex", gap: 8, alignItems: "center", padding: 12, borderRadius: 12, marginBottom: 14 }}>
         <button onClick={() => {if(!cldOpen){setCldOpen("library");setCldPath([]);setCldFolders([]);setCldImages([]);fetchCldFolders("");}else setCldOpen(null);}} style={{ ...S.btn(cldOpen==="library"), fontSize: 11 }}>🗂️ Storage</button>
         <button onClick={handleRebuildLibrary} disabled={rebuildRunning} title="Scan all Storage folders and add any missing images to the Library" style={{ ...S.btn(false), fontSize: 11, opacity: rebuildRunning ? 0.5 : 1, border: `1px solid ${rebuildRunning ? "#9CA3AF" : "#7C3AED"}`, color: rebuildRunning ? "#9CA3AF" : "#7C3AED" }}>{rebuildRunning ? "⏳ Rebuilding…" : "🔄 Rebuild Library"}</button>
         <button onClick={handleFindOrphaned} disabled={orphanScan.running} title="Scan Storage and flag Library rows whose image no longer exists there" style={{ ...S.btn(false), fontSize: 11, opacity: orphanScan.running ? 0.5 : 1, border: `1px solid ${orphanScan.running ? "#9CA3AF" : "#E11D48"}`, color: orphanScan.running ? "#9CA3AF" : "#E11D48" }}>{orphanScan.running ? "⏳ Scanning…" : "🧹 Find Orphaned"}</button>
