@@ -69,7 +69,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcCollapsedZones, setDcCollapsedZones, setDcBrowseAllOpen, dcBrowseAllOpen, setDcCustomModal,
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
-    dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
+    dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, closeDealCheck,
     dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
@@ -1191,7 +1191,7 @@ export default function DealCheckOverlay({ ctx }) {
                     needs no label to be understood.
                     A ring, not a filled box, and red only on HOVER: a permanently red control in the
                     corner of a screen that is fine reads as an error rather than as an exit. */}
-                <button onClick={()=>setDcFullPageOpen(false)} className="dc-x" title="Close Deal Check"
+                <button onClick={()=>closeDealCheck()} className="dc-x" title="Close Deal Check"
                   style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
               </div>
             </div>

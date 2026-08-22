@@ -2172,7 +2172,7 @@ export default function StudioApp() {
   useEffect(() => {
     window.history.pushState({ studioNavGuard: true }, "");
     const onPopState = () => {
-      if (dcFullPageOpen) { setDcFullPageOpen(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
+      if (dcFullPageOpen) { closeDealCheck(); window.history.pushState({ studioNavGuard: true }, ""); return; }
       if (premiaGate) { setPremiaGate(null); window.history.pushState({ studioNavGuard: true }, ""); return; }
       if (videoModal) { setVideoModal(null); setVideoPlaying(false); setVideoOverlay(false); window.history.pushState({ studioNavGuard: true }, ""); return; }
       if (zoneUploadReview) { closeZoneUploadReview(); window.history.pushState({ studioNavGuard: true }, ""); return; }
@@ -2181,7 +2181,7 @@ export default function StudioApp() {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [dcFullPageOpen, premiaGate, videoModal, zoneUploadReview, step, closeZoneUploadReview]);
+  }, [dcFullPageOpen, premiaGate, videoModal, zoneUploadReview, step, closeZoneUploadReview, closeDealCheck]);
 
   // ═══ YOUTUBE BROWSER STATE ═══
   const [ytVideos, setYtVideos] = useState([]);
@@ -7801,6 +7801,11 @@ export default function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dcFullPageOpen]);
 
+  // Holds the pending debounced Deal Check save's own flush function, so closeDealCheck (below) can
+  // run it immediately instead of losing it — the debounce effect's cleanup only ever CANCELLED the
+  // pending timeout on close, silently dropping up to 2.5s of edits every time Deal Check was closed
+  // (Back button or ×) shortly after a change.
+  const flushDcAutosaveRef = useRef(null);
   // ═══ Tier 2.2 — Deal Check cache writer (debounced, per-client) — VERBATIM ═══
   useEffect(() => {
     if (!activeClientId || !dcFullPageOpen) return;
@@ -7823,7 +7828,7 @@ export default function StudioApp() {
     // then would overwrite the good saved draft with empty and permanently corrupt it — every reload
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
-    const t = setTimeout(() => {
+    const doSave = () => {
       const snapshot = {
         resolved: dcResolved,
         cards: dcCards,
@@ -7874,9 +7879,19 @@ export default function StudioApp() {
           dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
         }
       }
-    }, 2500);
-    return () => clearTimeout(t);
+    };
+    flushDcAutosaveRef.current = doSave;
+    const t = setTimeout(doSave, 2500);
+    return () => { clearTimeout(t); flushDcAutosaveRef.current = null; };
   }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
+
+  // Closes Deal Check, flushing any pending debounced save first (see flushDcAutosaveRef above) —
+  // both the Back-button guard and the × button route through this instead of a bare
+  // setDcFullPageOpen(false), so neither one silently drops up to 2.5s of unsaved edits on close.
+  const closeDealCheck = useCallback(() => {
+    if (flushDcAutosaveRef.current) { flushDcAutosaveRef.current(); flushDcAutosaveRef.current = null; }
+    setDcFullPageOpen(false);
+  }, []);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
@@ -8407,7 +8422,7 @@ export default function StudioApp() {
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
     dcManualSearch, setDcManualSearch, dcDedupOverrides, setDcDedupOverrides, dcBlockedFnOpen, setDcBlockedFnOpen, dcBlockedSubOpen, setDcBlockedSubOpen,
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
-    dcFullPageOpen, setDcFullPageOpen, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
+    dcFullPageOpen, setDcFullPageOpen, closeDealCheck, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
     dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
