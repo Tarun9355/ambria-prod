@@ -10,6 +10,7 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 // count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
 // at all: three hand-rolled copies of one panel is how they drift apart.
 import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
+import { IconSliders, IconChevron } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
 // The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
@@ -491,6 +492,10 @@ export default function ManageLibrary({ ctx }) {
   // was the reason it scrolled for a screen and a half — the point of an accordion is that the list of
   // GROUPS is the thing you scan first.
   const [libSecOpen, setLibSecOpen] = useState({});
+  // Rail shown or folded, same as Build's leftRailOpen. It lives up here with libSecOpen and NOT
+  // inside LibraryBrowse, because that is re-created on every render of this component — state
+  // declared in there would be a fresh hook each time.
+  const [libRailOpen, setLibRailOpen] = useState(true);
   const [brokenImgIds, setBrokenImgIds] = useState(() => new Set());
   const markImgBroken = useCallback((id) => setBrokenImgIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id))), []);
   const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
@@ -510,10 +515,40 @@ export default function ManageLibrary({ ctx }) {
           maxHeight stays as the ceiling for when every section IS open, with its own scrollport.
           225 → 264: the sections are two columns of pills now, and at 225 the longer labels
           ("Indoor + Outdoor", "Garden Inspired") had nowhere to go but their own line. */}
-      <div className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", overflowY: "auto", maxHeight: "80vh" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      {!libRailOpen
+        /* Folded: a 38px strip on the grid's edge that brings the rail back — the same affordance
+           Build folds its own filter rail into (railTab there), so this reads as one behaviour in
+           two places rather than a second invention. Vertical label to keep the strip narrow. */
+        ? <div className="ml-tile" onClick={() => setLibRailOpen(true)} title="Show filters"
+            style={{ width: 38, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: 70, cursor: "pointer",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "12px 0 14px",
+              borderRadius: 10, border: `1px solid ${border}`, background: cardBg }}>
+            <span style={{ display: "flex", color: accent }}><IconSliders size={14} /></span>
+            <span style={{ writingMode: "vertical-rl", textOrientation: "mixed", fontSize: 9.5, fontWeight: 700,
+              letterSpacing: 1, textTransform: "uppercase", color: textS, whiteSpace: "nowrap" }}>Filters</span>
+            {/* Count of what is still filtering while hidden — a folded rail must not hide the fact
+                that the grid below it is a filtered subset. */}
+            {(() => {
+              const n = Object.values(libFilters).reduce((s, a) => s + (a?.length || 0), 0)
+                + (libVenueGroup !== "all" ? 1 : 0) + libVenueNames.length;
+              return n > 0 ? <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: accent,
+                borderRadius: 9, minWidth: 17, textAlign: "center", padding: "2px 4px" }}>{n}</span> : null;
+            })()}
+            <span style={{ display: "flex", color: textS, transform: "rotate(-90deg)" }}><IconChevron size={11} /></span>
+          </div>
+      : <div className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", overflowY: "auto", maxHeight: "80vh" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
-          {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
+            {/* Hide, worded and shaped like Build's. Chevron rotated to point the way the rail folds. */}
+            <button type="button" onClick={() => setLibRailOpen(false)} title="Hide the filters and widen the grid"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 8,
+                flexShrink: 0, cursor: "pointer", whiteSpace: "nowrap", border: `1px solid ${border}`,
+                background: "transparent", color: textS, fontSize: 10.5, fontWeight: 600, letterSpacing: 0.2 }}>
+              <span style={{ display: "inline-flex", transform: "rotate(90deg)" }}><IconChevron size={10} /></span>Hide
+            </button>
+          </div>
         </div>
         {/* Venue filter (2-level — mirrors Browse page) */}
         <div style={{ marginBottom: 12 }}>
@@ -554,7 +589,7 @@ export default function ManageLibrary({ ctx }) {
               })}
           </FSection>);
         })}
-      </div>
+      </div>}
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search by name..." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
@@ -640,17 +675,22 @@ export default function ManageLibrary({ ctx }) {
             <div style={{ fontSize: 12 }}>Try a different status tab or clear filters — or switch to "Add images"/"Bulk import" to add photos.</div>
           </div>
         )}
-        {/* 150 → 200 and a wider gutter. The thumbnails are the reason this page exists and they were
-            being shown at a size where you could not tell two centrepieces apart — which is the one
-            job the grid has. auto-fill still decides the column count, so nothing needs breakpoints. */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 12 }}>
+        {/* EIGHT to a row, so the column count is now fixed rather than derived from a min width —
+            which is why this moved out of an inline style into .ml-grid: a fixed 8 at every width
+            would put ~40px thumbnails on a laptop, so the count steps down at real breakpoints
+            (8 → 6 → 4 → 2). The thumb height rides along in the same media queries, otherwise a
+            fixed 150px on a narrower card turns every photo into a portrait crop.
+            See .ml-grid in the injected stylesheet below. */}
+        <div className="ml-grid">
           {libVisible.map(img => {
             const isSel = libSelected.has(img.id);
             // ml-tile drives the glass and the hover lift. Selected and being-edited keep their own
             // border colour — that is state, and it has to win over the glass edge.
             return (
             <div key={img.id} title={img.name || "Untitled"} className={(isSel || libEditImg?.id === img.id) ? undefined : "ml-tile"} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : "transparent"}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : libEditImg?.id === img.id ? cardBg : undefined, position: "relative" }}>
-              <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 150, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
+              {/* Height comes from .ml-grid's breakpoints (var set there), not from a fixed inline
+                  value, so it tracks the column count. */}
+              <img className="ml-thumb" src={img.url} alt="" loading="lazy" style={{ width: "100%", objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
                 const m = st === LIB_STATUS.VERIFIED ? { t: "✅", c: "#059669" } : st === LIB_STATUS.REVIEW ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
@@ -1698,6 +1738,24 @@ export default function ManageLibrary({ ctx }) {
 .ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:0.6;margin-bottom:8px}
 /* Figures line up: the four status cards sit in a row and their counts are meant to be compared. */
 .ml-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
+/* ── THE PHOTO GRID: EIGHT UP ──
+   A fixed count, not auto-fill: the ask was eight to a row, and auto-fill cannot promise a count —
+   it divides by a min width, so the answer changes with the window and with whether the filter rail
+   is folded. minmax(0,1fr) rather than (Npx,1fr) so the columns can go below their content's natural
+   width instead of overflowing the row.
+   Stepping down at real widths is what keeps this honest — eight columns held at every width would
+   be ~40px thumbnails on a 13" laptop, and the thumbnails are the reason the page exists.
+   --mlt is the thumb height, dropped in step with the count so a narrower card doesn't become a
+   portrait crop of a landscape photo. */
+.ml-grid{display:grid;gap:12px;grid-template-columns:repeat(8,minmax(0,1fr));--mlt:132px}
+/* Fallback in the var() on purpose: with no height at all a width:100% thumb renders at the photo's
+   own aspect ratio, which is a full-bleed image per row. A missing custom property should cost a few
+   pixels of height, not the whole layout. */
+.ml-thumb{height:var(--mlt,140px)}
+@media (max-width:1500px){.ml-grid{grid-template-columns:repeat(6,minmax(0,1fr));--mlt:142px}}
+@media (max-width:1180px){.ml-grid{grid-template-columns:repeat(4,minmax(0,1fr));--mlt:150px}}
+@media (max-width:820px){.ml-grid{grid-template-columns:repeat(3,minmax(0,1fr));--mlt:140px}}
+@media (max-width:560px){.ml-grid{grid-template-columns:repeat(2,minmax(0,1fr));--mlt:132px}}
 /* ── THE RAIL'S TYPE, TURNED UP ──
    Size only. The kit's colours stay exactly as they are — an earlier pass darkened them too and that
    was the part that was wrong, so this deliberately touches nothing but font-size and the padding that
