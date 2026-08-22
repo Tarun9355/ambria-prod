@@ -5741,7 +5741,19 @@ export default function StudioApp() {
       // Collapse consecutive auto-drafts into the same slot — UNLESS a Load just opened a new visit
       // (sessionBoundaryRef), in which case this save must start a fresh entry so the resumed draft
       // (the previous meeting's build) survives instead of being overwritten in place.
-      const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current;
+      //
+      // ALSO unless the draft being replaced was saved by SOMEONE ELSE. Two salespeople opening the
+      // same client (one covering for another, or by accident) both autosave every 15s with no
+      // ownership check — collapsing in place meant whoever's tick landed second deleted the other's
+      // studio_sessions rows and overwrote their draft in the array with zero warning, on the
+      // completely silent default background autosave path (confirmed: no lock, no presence signal,
+      // no per-field merge anywhere in this app). Requiring the SAME author to collapse turns that
+      // into "append a fresh entry instead" — worst case is one extra history slot spent; either
+      // author's work always survives in `client.sessions`/`studio_sessions` rather than one silently
+      // deleting the other's. A legacy draft with no `savedBy` recorded also fails this check and is
+      // treated the same safe way (append, don't assume it's safe to collapse).
+      const savedByMe = (prevSessions[0]?.savedBy || null) === (authUser?.name || "—");
+      const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current && savedByMe;
       // TEN PER CLIENT, and the table holds the same ten. Browse shows the newest as the full card
       // and the five after it in the collapsed list, so ten is the history with room to spare — and a
       // bounded row count is the point of keeping this in a table rather than letting a blob grow.
@@ -7350,12 +7362,19 @@ export default function StudioApp() {
   // echo / the deal-check auto-save) — doing so clobbered in-progress kit/card edits ~1s after
   // typing (the reported "number snaps back" bug). The ref makes it fire once per (client × open).
   const dcRestoredRef = useRef(null);
+  // What server state THIS user's edits are currently based on — captured once at restore, then
+  // advanced by our own successful saves below. Lets the autosave effect tell "someone else's draft
+  // landed while I was editing" apart from "my own last write echoing back" without needing to
+  // diff the whole dcCards/dcZoneState blob.
+  const dcSaveBaselineRef = useRef(null);
+  const dcConflictWarnedAtRef = useRef(0);
   useEffect(() => {
-    if (!dcFullPageOpen) { dcRestoredRef.current = null; return; }
+    if (!dcFullPageOpen) { dcRestoredRef.current = null; dcSaveBaselineRef.current = null; return; }
     const cli = clientLedger.find(c => c.id === activeClientId);
     if (!cli) return;
     if (dcRestoredRef.current === activeClientId) return; // already restored this open — keep live edits
     dcRestoredRef.current = activeClientId;
+    dcSaveBaselineRef.current = { savedAt: cli.dcDraftSavedAt || 0, savedBy: cli.dcDraftSavedBy || null };
     const saved = cli.dcCards;
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
       let isNewShape = false;
@@ -7739,11 +7758,35 @@ export default function StudioApp() {
       // Durable auto-save → client_ledger ROW (per-client, clobber-safe). dcDraft (full snapshot for
       // openDealCheck) + the top-level fields loadClientSession restores. One write, after edits settle.
       const cur = clientLedgerRef.current || [];
-      if (cur.some(c => c.id === activeClientId)) {
-        saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
-          dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
-          dcMpIncludeMinusOne, dcMpIncludeDismantle,
-          dcDraft: snapshot, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" } : c));
+      const curClient = cur.find(c => c.id === activeClientId);
+      if (curClient) {
+        // Two salespeople in Deal Check for the same client at once used to be pure last-write-wins:
+        // dcCards/dcZoneState are live "current state", not a history list, so unlike the session-array
+        // fix above there's no safe "append instead" — whoever's 2.5s tick lands second silently wipes
+        // out everything the other person had just saved. dcSaveBaselineRef records the remote
+        // dcDraftSavedAt/dcDraftSavedBy this user's edits actually started from; if the remote stamp has
+        // moved past that AND it wasn't THIS user who moved it, someone else's draft landed while we
+        // were editing. Skip the overwrite and say so, rather than silently destroying their save —
+        // local edits stay in memory (nothing here is discarded), and the next tick simply re-checks.
+        const baseline = dcSaveBaselineRef.current;
+        const remoteSavedAt = curClient.dcDraftSavedAt || 0;
+        const remoteSavedBy = curClient.dcDraftSavedBy || null;
+        const me = authUser?.name || "—";
+        const conflict = !!(baseline && remoteSavedAt > baseline.savedAt && remoteSavedBy && remoteSavedBy !== me);
+        if (conflict) {
+          // Warn once per newly-detected remote save, not on every 2.5s retick while it's unresolved.
+          if (dcConflictWarnedAtRef.current !== remoteSavedAt) {
+            dcConflictWarnedAtRef.current = remoteSavedAt;
+            showMsg?.(`⚠ ${remoteSavedBy} saved changes to this deal while you were editing — your changes were NOT auto-saved to avoid overwriting theirs. Reload Deal Check to see the latest before continuing.`, "red");
+          }
+        } else {
+          const nowStamp = Date.now();
+          saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
+            dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
+            dcMpIncludeMinusOne, dcMpIncludeDismantle,
+            dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c));
+          dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
+        }
       }
     }, 2500);
     return () => clearTimeout(t);
@@ -8274,6 +8317,7 @@ export default function StudioApp() {
     dcFloralExpanded, setDcFloralExpanded, dcFloralUnmatchedExpanded, setDcFloralUnmatchedExpanded, dcResolved, setDcResolved, dcResolving, setDcResolving, dcAbortRef, setDcAbortRef,
     dcFullPageOpen, setDcFullPageOpen, dcCards, setDcCards, dcZoneState, setDcZoneState, dcKitEdits, setDcKitEdits, dcCarpetPick, setDcCarpetPick,
     dcCarpetSearch, setDcCarpetSearch, dcDesiredMargin, setDcDesiredMargin, dcRunCounter, setDcRunCounter, dcCache, setDcCache, dcGenerating, setDcGenerating,
+    dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcGenStatus, setDcGenStatus, dcActiveTab, setDcActiveTab, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks, dcMpOverrides, setDcMpOverrides, dcMpWinCount, setDcMpWinCount, dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle, dcMpCalcOpen, setDcMpCalcOpen, dcFloralCalcOpen, setDcFloralCalcOpen, dcCollapsedZones, setDcCollapsedZones,
     floralHardPropMap, setFloralHardPropMap, softHolds, setSoftHolds, trussAlloc, setTrussAlloc, dcAmendDiff, setDcAmendDiff, dcSavingDraft, setDcSavingDraft,

@@ -70,6 +70,7 @@ export default function DealCheckOverlay({ ctx }) {
     dcCustomItems, setDcCustomItems, elSelectedPhoto, dcDedupOverrides, setDcDedupOverrides,
     photoKnowledge, saveKnowledgeEntry, dcKnowledgeKey,
     dcDesiredMargin, setDcDesiredMargin, dcSavingDraft, setDcSavingDraft, setDcFullPageOpen,
+    dcSaveBaselineRef, dcConflictWarnedAtRef,
     dcZoneState, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
@@ -1136,6 +1137,23 @@ export default function DealCheckOverlay({ ctx }) {
                   <div className="dc-cap" style={{color:accent,marginTop:4,paddingTop:4,letterSpacing:2,borderTop:`1px solid ${accent}33`,display:"inline-block",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>
                     {cli?.name || clientName || "(no client)"}{isSold?" · Booked":""}
                   </div>
+                  {/* Passive heads-up for the two-people-same-client case: whoever opens this second
+                      sees who last touched it and when, BEFORE they start editing — the only warning
+                      this screen gives ahead of time (the conflict check above only fires once an
+                      autosave/Save Draft actually collides). */}
+                  {cli?.dcDraftSavedBy && cli?.dcDraftSavedAt && (
+                    <div style={{fontSize:10.5,color:"#1A1A2E",opacity:0.55,marginTop:3}}>
+                      Deal Check last saved by <strong>{cli.dcDraftSavedBy}</strong> · {(() => {
+                        const ms = Date.now() - cli.dcDraftSavedAt;
+                        const min = Math.floor(ms / 60000);
+                        if (min < 1) return "just now";
+                        if (min < 60) return `${min}m ago`;
+                        const hr = Math.floor(min / 60);
+                        if (hr < 24) return `${hr}h ago`;
+                        return `${Math.floor(hr / 24)}d ago`;
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
               {/* ── THE TABS SHARE THE TITLE'S LINE ──
@@ -2740,9 +2758,25 @@ export default function DealCheckOverlay({ ctx }) {
                 if (dcSavingDraft) return;
                 setDcSavingDraft(true);
                 try {
+                  // Same conflict check as the background autosave (StudioApp.jsx's Deal Check
+                  // auto-save effect) — a manual Save Draft can clobber a concurrent editor's work
+                  // exactly the same way a silent autosave tick can, so it needs the same guard rather
+                  // than assuming "the user clicked Save, so overwriting must be fine."
+                  const curClient = clientLedger.find(c => c.id === activeClientId);
+                  const baseline = dcSaveBaselineRef?.current;
+                  const remoteSavedAt = curClient?.dcDraftSavedAt || 0;
+                  const remoteSavedBy = curClient?.dcDraftSavedBy || null;
+                  const me = authUser?.name || "—";
+                  const conflict = !!(baseline && remoteSavedAt > baseline.savedAt && remoteSavedBy && remoteSavedBy !== me);
+                  if (conflict) {
+                    showMsg(`⚠ ${remoteSavedBy} saved changes to this deal while you were editing — Save Draft was NOT applied to avoid overwriting theirs. Reload Deal Check to see the latest before continuing.`, "red");
+                    return;
+                  }
                   // Persist dcCards + dcZoneState + manpower overrides onto active client record · saved via existing client ledger flow
-                  const ledger = clientLedger.map(c => c.id !== activeClientId ? c : ({ ...c, dcCards: dcCards, dcZoneState: dcZoneState, dcKitEdits: dcKitEdits, dcCarpetPick: dcCarpetPick, dcMpOverrides: dcMpOverrides, dcMpWinCount: dcMpWinCount, dcMpIncludeMinusOne: dcMpIncludeMinusOne, dcMpIncludeDismantle: dcMpIncludeDismantle, dcDraftSavedAt: Date.now(), dcDraftSavedBy: authUser?.name || "—" }));
+                  const nowStamp = Date.now();
+                  const ledger = clientLedger.map(c => c.id !== activeClientId ? c : ({ ...c, dcCards: dcCards, dcZoneState: dcZoneState, dcKitEdits: dcKitEdits, dcCarpetPick: dcCarpetPick, dcMpOverrides: dcMpOverrides, dcMpWinCount: dcMpWinCount, dcMpIncludeMinusOne: dcMpIncludeMinusOne, dcMpIncludeDismantle: dcMpIncludeDismantle, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me }));
                   await saveClientLedger(ledger);
+                  if (dcSaveBaselineRef) dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
                   showMsg("✓ Deal Check draft saved", "green");
                 } catch (e) { showMsg("⚠ Save failed — try again", "red"); }
                 finally { setDcSavingDraft(false); }
