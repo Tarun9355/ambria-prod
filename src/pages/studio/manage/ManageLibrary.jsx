@@ -488,14 +488,16 @@ export default function ManageLibrary({ ctx }) {
     <div style={{ display: "flex", gap: 16, minHeight: "70vh" }}>
       {/* Filter sidebar — its own pane rather than bare labels on the page, which is what the
           reference shows and what Browse and Build already do with their rails. */}
-      <div className="ml-glass ml-rail" style={{ width: 190, flexShrink: 0, overflowY: "auto", maxHeight: "75vh" }}>
+      {/* 190 → 225. The pills grew, and at 190 the wider ones ("Indoor + Outdoor", "Garden Inspired")
+          were wrapping to their own line and making the column look ragged. */}
+      <div className="ml-glass ml-rail" style={{ width: 225, flexShrink: 0, overflowY: "auto", maxHeight: "78vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: accent }}>Filters</div>
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
           {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>Clear all</div>}
         </div>
         {/* Venue filter (2-level — mirrors Browse page) */}
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: textS, marginBottom: 4 }}>Venue</div>
+          <div className="ml-rail-h" style={{ color: textS }}>Venue</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 4 }}>
             <span onClick={() => { setLibVenueGroup("all"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "all"), fontSize: 10, padding: "3px 8px" }}>All</span>
             <span onClick={() => { setLibVenueGroup("inhouse"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "inhouse"), fontSize: 10, padding: "3px 8px" }}>Inhouse</span>
@@ -524,11 +526,11 @@ export default function ManageLibrary({ ctx }) {
             : taxonomy[k];
           return (
           <div key={k} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: textS, marginBottom: 4 }}>{k === "colorPalette" ? "Palette" : getTaxLabel(k)}</div>
+            <div className="ml-rail-h" style={{ color: textS }}>{k === "colorPalette" ? "Palette" : getTaxLabel(k)}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
               {vals.map(v => {
                 const sel = (libFilters[k] || []).includes(v);
-                return <span key={v} onClick={() => toggleLibFilter(k, v)} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{k === "venueType" ? venueTypeLabel(v) : v}</span>;
+                return <span key={v} onClick={() => toggleLibFilter(k, v)} style={{ padding: "5px 11px", fontSize: 12, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{k === "venueType" ? venueTypeLabel(v) : v}</span>;
               })}
             </div>
           </div>);
@@ -551,8 +553,11 @@ export default function ManageLibrary({ ctx }) {
             // that away, and the hover lift on the current selection reads as if it were still a
             // choice to make.
             return <div key={k} className={on ? undefined : "ml-tile"} onClick={() => setLibStatus(k)} title={sub} style={{ cursor: "pointer", minWidth: 104, padding: "7px 12px", borderRadius: 10, border: `1.5px solid ${on ? col : "transparent"}`, background: on ? `${col}14` : undefined, display: "flex", flexDirection: "column", gap: 1 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: on ? col : textS }}>{icon} {label}</div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}><span style={{ fontSize: 17, fontWeight: 800, color: on ? col : textP }}>{count}</span><span style={{ fontSize: 8, color: textS }}>{sub}</span></div>
+              {/* The count is the whole point of these cards, so it gets the size. The caption was at
+                  8px — below the point where it is read rather than squinted at — and the label at 10
+                  was the same weight of small as everything else on the page. */}
+              <div className="ml-cap" style={{ color: on ? col : textS }}>{icon} {label}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.4, fontVariantNumeric: "tabular-nums", color: on ? col : textP }}>{count}</span><span style={{ fontSize: 10.5, color: textS, lineHeight: 1.3 }}>{sub}</span></div>
             </div>;
           })}
           <div style={{ flex: 1 }} />
@@ -616,14 +621,17 @@ export default function ManageLibrary({ ctx }) {
             <div style={{ fontSize: 12 }}>Try a different status tab or clear filters — or switch to "Add images"/"Bulk import" to add photos.</div>
           </div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 8 }}>
+        {/* 150 → 200 and a wider gutter. The thumbnails are the reason this page exists and they were
+            being shown at a size where you could not tell two centrepieces apart — which is the one
+            job the grid has. auto-fill still decides the column count, so nothing needs breakpoints. */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 12 }}>
           {libVisible.map(img => {
             const isSel = libSelected.has(img.id);
             // ml-tile drives the glass and the hover lift. Selected and being-edited keep their own
             // border colour — that is state, and it has to win over the glass edge.
             return (
             <div key={img.id} className={(isSel || libEditImg?.id === img.id) ? undefined : "ml-tile"} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : "transparent"}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : libEditImg?.id === img.id ? cardBg : undefined, position: "relative" }}>
-              <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 110, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
+              <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 150, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
                 const m = st === LIB_STATUS.VERIFIED ? { t: "✅", c: "#059669" } : st === LIB_STATUS.REVIEW ? { t: "🤖", c: "#7C3AED" } : { t: "❓", c: "#9CA3AF" };
@@ -657,11 +665,14 @@ export default function ManageLibrary({ ctx }) {
                   {img._aiConfidence}%
                 </div>
               )}
-              <div style={{ padding: "6px 8px" }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginTop: 3 }}>
-                  {(img.tags?.categoryTier || []).map(t => <span key={t} style={{ fontSize: 8, padding: "1px 5px", borderRadius: 6, background: t === "Enhanced" ? "#0EA5E922" : "#6B728022", color: t === "Enhanced" ? "#0EA5E9" : textS }}>{t}</span>)}
-                  {(img.tags?.areasElements || []).slice(0, 2).map(t => <span key={t} style={{ fontSize: 8, padding: "1px 5px", borderRadius: 6, background: `${accent}12`, color: accent }}>{t}</span>)}
+              {/* The filename was 10px and the tag chips 8px — chips that small stop being read and
+                  start being texture, which is what made the grid look like a wall of thumbnails with
+                  noise under each one. 12 / 10 keeps two chips on a line at this card width. */}
+              <div style={{ padding: "8px 10px 10px" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: textP, letterSpacing: -0.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
+                  {(img.tags?.categoryTier || []).map(t => <span key={t} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: t === "Enhanced" ? "#0EA5E922" : "#6B728022", color: t === "Enhanced" ? "#0EA5E9" : textS }}>{t}</span>)}
+                  {(img.tags?.areasElements || []).slice(0, 2).map(t => <span key={t} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: `${accent}12`, color: accent }}>{t}</span>)}
                 </div>
               </div>
             </div>
@@ -1649,9 +1660,20 @@ export default function ManageLibrary({ ctx }) {
 .ml-tile:hover{transform:translateY(-2px);
   background:linear-gradient(148deg,rgba(255,255,255,0.68) 0%,rgba(250,249,255,0.44) 100%) !important;
   box-shadow:0 1px 2px rgba(26,26,46,0.05), 0 14px 30px -14px rgba(26,26,46,0.34) !important}
+/* ── TYPOGRAPHY ──
+   Defined here rather than borrowed from Deal Check's .dc-cap: that stylesheet mounts only while the
+   Deal Check overlay is open, so the class would silently not exist on this page and every caption
+   would fall back to inherited body type. A page's own type belongs to the page.
+   Captions are small-and-wide, not just small — the tracking is what makes 11px read as a LABEL
+   instead of as body text shrunk down, which is what most of this screen was doing. */
+.ml-cap{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;line-height:1.25}
+/* Section headings in the filter rail. Same idea one step up. */
+.ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;opacity:0.6;margin-bottom:7px}
+/* Figures line up: the four status cards sit in a row and their counts are meant to be compared. */
+.ml-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
 /* The filter rail: same glass, and its pills lift on hover so the column reads as pressable rather
    than as a list of labels. */
-.ml-rail{border-radius:14px;padding:12px 12px 14px}
+.ml-rail{border-radius:14px;padding:14px 14px 16px}
 .ml-rail button,.ml-rail [role="button"]{transition:background .14s ease, border-color .14s ease}
 @media (prefers-reduced-motion: reduce){
   .ml-tile{transition:none}
