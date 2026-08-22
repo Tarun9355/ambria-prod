@@ -6,7 +6,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders, IconStar } from "../../../components/icons.jsx";
 import {
-  ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, venueTypeLabel,
+  ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
   platformRowCost,
 } from "../../../lib/studio/taxonomy";
@@ -582,7 +582,7 @@ export default function StudioBuild({ ctx }) {
     zoneElSearch, setZoneElSearch, zonePrintSearch, setZonePrintSearch,
     // zone-photo filters
     zpFilterOpen, setZpFilterOpen, zpHasFilters, zpFilters, setZpFilters, zpToggleFilter, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
-    zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch,
+    zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch, zpTierMatch,
     // rate card — kept for legacy/AI-tagged elements without invId
     rcItems, rcCats, rcIsSMB, isSubTagHidden,
     // IMS inventory — "+Add element" sources from here now, not the Rate Card
@@ -1456,9 +1456,12 @@ export default function StudioBuild({ ctx }) {
         { key:"designStyle",  label:"Design style",  opts: taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]) },
         { key:"colorPalette", label:"Color palette", cols:3, opts: paletteNames(imsPaletteCatalogue, taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"]) },
         { key:"timeSetting",  label:"Day / Night",   opts: taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"]) },
+        // Tier ranks rather than hides — see zpTierMatch in StudioApp. Three short values, so it
+        // takes the default column count and needs no search box.
+        { key:"tier",         label:"Tier",          opts: taxOr(taxonomy.tier, CATEGORIES) },
       ];
       const total = Object.values(zpFilters).flat().length;
-      const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]});
+      const clearAll = () => setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[],tier:[]});
       {/* "Filters", not "Photo filters", and no "Applies to every zone" note. The panel is the only
           filter surface on the page and it sits under a heading that already says what it filters;
           the note was a caption on a caption, and at this width it crowded the row.
@@ -2452,8 +2455,9 @@ undefined
       const venueTypeOn = !!(zpFilters.venueType || []).length;
       const designStyleOn = !!(zpFilters.designStyle || []).length;
       const timeSettingOn = !!(zpFilters.timeSetting || []).length;
-      const anyPrefOn = venueOn || venueTypeOn || designStyleOn || timeSettingOn;
-      let venuePrefCount = 0, venueTypePrefCount = 0, designStylePrefCount = 0, timeSettingPrefCount = 0;
+      const tierOn = !!(zpFilters.tier || []).length;
+      const anyPrefOn = venueOn || venueTypeOn || designStyleOn || timeSettingOn || tierOn;
+      let venuePrefCount = 0, venueTypePrefCount = 0, designStylePrefCount = 0, timeSettingPrefCount = 0, tierPrefCount = 0;
       if (anyPrefOn) {
         const byScore = new Map();
         for (const ph of matchedPhotos) {
@@ -2463,6 +2467,7 @@ undefined
           if (venueTypeOn && zpVenueTypeMatch(li)) { score++; venueTypePrefCount++; }
           if (designStyleOn && zpDesignStyleMatch(li)) { score++; designStylePrefCount++; }
           if (timeSettingOn && zpTimeSettingMatch(li)) { score++; timeSettingPrefCount++; }
+          if (tierOn && zpTierMatch(li)) { score++; tierPrefCount++; }
           if (!byScore.has(score)) byScore.set(score, []);
           byScore.get(score).push(ph);
         }
@@ -2668,6 +2673,7 @@ undefined
                 {venueTypeOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{venueTypePrefCount} {zpFilters.venueType.length===1?zpFilters.venueType[0]:"selected venue types"}</span>}
                 {designStyleOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{designStylePrefCount} {zpFilters.designStyle.length===1?zpFilters.designStyle[0]:"selected styles"}</span>}
                 {timeSettingOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{timeSettingPrefCount} {zpFilters.timeSetting.length===1?zpFilters.timeSetting[0]:"selected times"}</span>}
+                {tierOn&&<span style={{padding:"1px 6px",borderRadius:5,background:`${accent}18`,color:accent,fontWeight:700,fontSize:9}}>{tierPrefCount} {zpFilters.tier.length===1?zpFilters.tier[0]:"selected tiers"}</span>}
                 <span>shown first, then the rest of this zone's {matchedPhotos.length} photo{matchedPhotos.length===1?"":"s"}</span>
               </div>}
               {zpFilterOpen===k&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:10,marginBottom:8,borderRadius:10,border:`1px solid ${accent}30`,background:isDark?"rgba(201,169,110,0.03)":"rgba(201,169,110,0.05)"}}>
@@ -2726,6 +2732,16 @@ undefined
                     {azSort(taxOr(taxonomy.timeSetting, ["Day","Night","Twilight"])).map(v=><span key={v} onClick={()=>zpToggleFilter("timeSetting",v)} style={zpPill(zpFilters.timeSetting.includes(v))}>{v}</span>)}
                   </div>
                 </div>
+                {/* Tier here too. This popover and the rail edit the SAME zpFilters, so leaving it out
+                    of one would mean a tier picked in the rail was live but invisible — and unclearable
+                    — from here. */}
+                <div>
+                  <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>Tier</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <span onClick={()=>setZpFilters(p=>({...p,tier:[]}))} style={zpPill((zpFilters.tier||[]).length===0)}>All</span>
+                    {azSort(taxOr(taxonomy.tier, CATEGORIES)).map(v=><span key={v} onClick={()=>zpToggleFilter("tier",v)} style={zpPill((zpFilters.tier||[]).includes(v))}>{v}</span>)}
+                  </div>
+                </div>
                 <div style={{gridColumn:"1/-1"}}>
                   <div style={{fontSize:9,fontWeight:600,color:accent,marginBottom:3}}>
                     Venue{zpInlineVenueGroup==="inhouse"?" — Inhouse":zpInlineVenueGroup==="outside"?" — Outside":""}{zpWantIndoor&&!zpWantOutdoor?" · Indoor":zpWantOutdoor&&!zpWantIndoor?" · Outdoor":""}
@@ -2756,7 +2772,7 @@ undefined
                     </>;
                   })()}
                 </div>
-                {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
+                {zpHasFilters&&<div style={{gridColumn:"1/-1",textAlign:"right"}}><span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[],tier:[]})} style={{fontSize:9,color:"#E11D48",cursor:"pointer"}}>Clear filters</span></div>}
               </div>}
               {matchedPhotos.length>0 ? (()=>{
                 // BOTH views page now. The strip shows PH_PER_PAGE at a time so each card is large
@@ -2777,7 +2793,7 @@ undefined
                 // on whichever page its tier happens to start on explains nothing.
                 const secOf = (ph) => {
                   const li = ph.isLibrary && ph.eventId ? libById.get(ph.eventId) : null;
-                  if ((venueOn && zpVenueMatch(li)) || (venueTypeOn && zpVenueTypeMatch(li)) || (designStyleOn && zpDesignStyleMatch(li)) || (timeSettingOn && zpTimeSettingMatch(li))) return 0;
+                  if ((venueOn && zpVenueMatch(li)) || (venueTypeOn && zpVenueTypeMatch(li)) || (designStyleOn && zpDesignStyleMatch(li)) || (timeSettingOn && zpTimeSettingMatch(li)) || (tierOn && zpTierMatch(li))) return 0;
                   return (li?.tags?.venue || ph.venue) ? 1 : 2;
                 };
                 const sectioned = gridZones[k] && anyPrefOn;
@@ -2788,6 +2804,7 @@ undefined
                   venueTypeOn && (zpFilters.venueType.length === 1 ? zpFilters.venueType[0] : "Selected venue types"),
                   designStyleOn && (zpFilters.designStyle.length === 1 ? zpFilters.designStyle[0] : "Selected styles"),
                   timeSettingOn && (zpFilters.timeSetting.length === 1 ? zpFilters.timeSetting[0] : "Selected times"),
+                  tierOn && (zpFilters.tier.length === 1 ? zpFilters.tier[0] : "Selected tiers"),
                 ].filter(Boolean).join(" · ") || "Selected";
                 const SEC_META = [
                   [prefLabel, (n) => `${n} tagged here`],
@@ -2999,7 +3016,7 @@ undefined
               <div style={{flex:1,minWidth:200}}><div style={{fontSize:12,fontWeight:600,color:"#B45309"}}>{zpHasFilters?`No ${el.label} photos match your filters`:`No ${el.label} photos yet`}</div>
               <div style={{fontSize:10.5,color:textS,marginTop:2,lineHeight:1.4}}>{zpHasFilters?"Your photo filters hid everything for this zone. Clear them to see all photos again.":"Upload a client photo or add Library photos to see options here."}</div></div>
               <div style={{display:"flex",gap:7,flexShrink:0,flexWrap:"wrap"}}>
-                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
+                {zpHasFilters&&<button onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[],tier:[]})} style={{padding:"6px 13px",borderRadius:8,border:`1px solid ${accent}`,background:"transparent",color:accent,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Clear filters</button>}
                 <label style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:8,border:"none",background:accent,color:"#0F0F1A",fontSize:11,fontWeight:600,whiteSpace:"nowrap",cursor:zoneUploading?"wait":"pointer"}}>
                   {zoneUploading===k?"Uploading…":<><IconCamera size={12}/>Upload Client Photo</>}
                   <input type="file" accept="image/*" style={{display:"none"}} disabled={!!zoneUploading} onChange={e=>{const f=e.target.files?.[0];if(f)handleZoneUpload(k,f);e.target.value="";}}/>

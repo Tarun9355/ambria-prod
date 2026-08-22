@@ -1682,9 +1682,19 @@ export default function StudioApp() {
   // boolean, which every zone read -- so opening the filter on one zone opened it on all of them
   // at once. Keying it also makes "only one open at a time" fall out for free.
   const [zpFilterOpen, setZpFilterOpen] = useState(null);
-  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [] });
+  // Every key the filter UI can toggle MUST start as an array here: zpToggleFilter reads
+  // prev[cat].includes(...), so a missing key throws the moment that group's first pill is clicked.
+  const [zpFilters, setZpFilters] = useState({ eventType: [], venueType: [], designStyle: [], colorPalette: [], timeSetting: [], venue: [], tier: [] });
   const zpToggleFilter = useCallback((cat, val) => {
-    setZpFilters(prev => ({ ...prev, [cat]: prev[cat].includes(val) ? prev[cat].filter(v => v !== val) : [...prev[cat], val] }));
+    // `prev[cat] || []` is a deliberate backstop, not defensive noise. Several places REPLACE this
+    // whole object (clear-all in two spots on Build, and the video-tag seed), so any category whose
+    // key one of them forgets to list would arrive here undefined and throw on .includes — a filter
+    // pill that crashes the build page. Every such site does list every key today; this makes
+    // forgetting one a no-op instead of a crash.
+    setZpFilters(prev => {
+      const cur = prev[cat] || [];
+      return { ...prev, [cat]: cur.includes(val) ? cur.filter(v => v !== val) : [...cur, val] };
+    });
   }, []);
   const zpHasFilters = Object.values(zpFilters).some(a => a.length > 0);
   // Which categories HIDE a photo. Event type and colour palette are the two the salesperson never
@@ -1747,6 +1757,16 @@ export default function StudioApp() {
     if (!vals.length) return true;
     if (!li) return true;
     return vals.some(v => (li.tags?.timeSetting || []).includes(v));
+  }, [zpFilters]);
+  // Tier (Gold / Silver / Platinum) — a preference, NOT a hard filter, for the reason stated above,
+  // and measured rather than assumed: only about half the library carries a tier tag at all. Hiding
+  // on it would drop every untagged photo the moment a tier was picked, which is most of what there
+  // is to build from. So it ranks: pick Gold and the Gold-tagged photos come first, the rest stay.
+  const zpTierMatch = useCallback((li) => {
+    const vals = zpFilters.tier || [];
+    if (!vals.length) return true;
+    if (!li) return true;
+    return vals.some(v => (li.tags?.tier || []).includes(v));
   }, [zpFilters]);
 
   // ═══ ZONE UPLOAD STATE — VERBATIM (Cloudinary + AI tag) ═══
@@ -5553,6 +5573,10 @@ export default function StudioApp() {
       setZpFilters({
         eventType: arr(vTag.fn), venueType: arr(vTag.io), designStyle: arr(vTag.styles),
         colorPalette: arr(vTag.colors), timeSetting: arr(vTag.timeSetting), venue: arr(vTag.venue),
+        // Video tags carry a tier of their own, so seed it the same way as the rest. Listing the key
+        // is not optional even when there is nothing to seed: this REPLACES the whole object, and a
+        // key missing here is a key missing from state.
+        tier: arr(vTag.tier),
       });
       // Default the Build palette to the one tagged on the video (salesperson can still change it).
       const vidPalette = vTag.palette || (Array.isArray(vTag.colors) ? vTag.colors[0] : "") || "";
@@ -8324,7 +8348,7 @@ export default function StudioApp() {
     lmsCacheRef,
     // zone photo filters + upload
     zpFilterOpen, setZpFilterOpen, zpFilters, setZpFilters, zpToggleFilter, zpHasFilters, zpFilterPhoto, zpVenueMatch, zpPaletteMatch,
-    zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch,
+    zpVenueTypeMatch, zpDesignStyleMatch, zpTimeSettingMatch, zpTierMatch,
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, closeZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
