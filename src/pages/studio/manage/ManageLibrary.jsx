@@ -10,8 +10,9 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 // count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
 // at all: three hand-rolled copies of one panel is how they drift apart.
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
-import { IconCamera, IconPlay, IconClipboardCheck, IconPalette } from "../../../components/icons.jsx";
-import { IconSliders, IconChevron } from "../../../components/icons.jsx";
+import { IconCamera, IconPlay, IconClipboardCheck, IconPalette, IconSliders, IconChevron,
+  IconCheck, IconFactory, IconCalendar, IconWall, IconCrown, IconSparkle, IconBulb, IconRepeat,
+  IconFlower } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
 // The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
@@ -1975,6 +1976,18 @@ export default function ManageLibrary({ ctx }) {
 .ml-page-btn:not(:disabled){transition:background .14s ease, color .14s ease, transform .14s ease}
 .ml-page-btn:not(:disabled):hover{background:rgba(26,26,46,0.075) !important;color:#1a1a2e !important;transform:translateY(-1px)}
 @media (prefers-reduced-motion: reduce){.ml-page-btn:not(:disabled):hover{transform:none}}
+/* ── THE VIDEO TAG EDITOR ──
+   The tagging groups flow down CSS columns rather than sitting in a grid. Their heights are wildly
+   uneven — Colors is thirty chips, In/Out is three — and in a grid every card in a row is sized to
+   the tallest one in it, which left craters under the short groups. Columns let each card be its own
+   height; break-inside:avoid is what stops one being sliced across a column boundary.
+   The video/summary pair above it goes one-column when there is no longer room for a 700px player
+   beside a readable summary. */
+.vt-cols{column-count:3;column-gap:14px}
+.vt-cols > div{break-inside:avoid}
+@media (max-width:1250px){.vt-cols{column-count:2}}
+@media (max-width:1100px){.vt-top{grid-template-columns:minmax(0,1fr) !important}}
+@media (max-width:760px){.vt-cols{column-count:1}}
 /* Figures line up: the four status cards sit in a row and their counts are meant to be compared. */
 .ml-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
 /* ── THE PHOTO GRID: EIGHT UP ──
@@ -2798,33 +2811,96 @@ export default function ManageLibrary({ ctx }) {
         const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
         const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
         const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 5 };
-        const chipRow = { display: "flex", flexWrap: "wrap", gap: 5 };
-        const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : "transparent", color: on ? (isDark ? "#1a1a2e" : "#fff") : textS, border: `1px solid ${on ? accent : border}` }}>{label}</span>;
+        const chipRow = { display: "flex", flexWrap: "wrap", gap: 6 };
+        // Chip: unchanged signature and behaviour, restyled to the reference — a filled amber pill
+        // when on, a light outline when off, both a touch larger than before.
+        const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "6px 12px", borderRadius: 9, fontSize: 11.5, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : (isDark ? "rgba(255,255,255,0.04)" : "#fff"), color: on ? "#fff" : textS, border: `1px solid ${on ? accent : border}`, transition: "background .13s ease, border-color .13s ease", whiteSpace: "nowrap" }}>{label}</span>;
+        // One tagging group = one card. n is the number shown in the reference's headings.
+        const tagCard = (n, icon, title, body, extra) => (
+          <div key={title} style={{ breakInside: "avoid", background: isDark ? "rgba(255,255,255,0.03)" : "#fff", border: `1px solid ${border}`, borderRadius: 14, padding: "14px 16px 16px", marginBottom: 14, boxShadow: isDark ? "none" : "0 1px 2px rgba(26,26,46,0.04)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ display: "inline-flex", color: accent }}>{icon}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: textP }}>{n}. {title}</span>
+              {extra}
+            </div>
+            {body}
+          </div>
+        );
+        // Read-only summary tile. Shows what is already set, so the state of the video is legible
+        // without reading down every group below. Values come straight off vTag — nothing computed,
+        // nothing stored.
+        const sumTile = (icon, label, value) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: `1px solid ${border}`, borderRadius: 12, background: isDark ? "rgba(255,255,255,0.03)" : "#fff", minWidth: 0 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: `${accent}1A`, color: accent }}>{icon}</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.9, textTransform: "uppercase", color: textS }}>{label}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: value ? textP : textS, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value || "—"}</div>
+            </div>
+          </div>
+        );
+        const lastTs = vTag._lastEditedAt || vTag._verifiedAt || vTag._savedAt || null;
         return <div onClick={() => setBigTagVid(null)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.85)", display: "flex", justifyContent: "center", alignItems: "flex-start", overflow: "auto", padding: "2vh 1vw" }}>
           <div onClick={e => e.stopPropagation()} style={{ background: bg, borderRadius: 16, width: "98vw", maxWidth: 1600, minHeight: "92vh", border: `1px solid ${border}`, overflow: "hidden" }}>
-            <div style={{ position: "sticky", top: 0, zIndex: 2, background: bg, borderBottom: `1px solid ${border}`, padding: "14px 22px", display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🎬 {v.title || "Video"}</div>
-                <div style={{ fontSize: 11, color: textS, marginTop: 2 }}>changes save instantly</div>
+            {/* Header. Same four actions, same handlers — restyled so the destructive-ish one (Hide)
+                and the affirming one (Verify) are told apart by colour rather than by reading them,
+                and Close is pushed to the corner. */}
+            <div style={{ position: "sticky", top: 0, zIndex: 2, background: bg, borderBottom: `1px solid ${border}`, padding: "14px 22px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 10, flexShrink: 0, background: `${accent}1A`, color: accent }}><IconPlay size={16} /></span>
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: textP, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.title || "Video"}</div>
+                {/* "Saved" is a restatement of the line beside it, not a live save indicator — every
+                    edit here goes straight through saveYtTags with no draft state to be out of sync
+                    with. Left as plain text for that reason: a spinner would imply a state that does
+                    not exist. */}
+                <div style={{ fontSize: 11, color: textS, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                  Changes save instantly
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#059669", fontWeight: 700 }}><IconCheck size={11} />Saved</span>
+                </div>
               </div>
-              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "📋 Tag from description"}</button>
-              <button onClick={() => { const nowHidden = !hiddenVideos[bigTagVid]; saveHiddenVideos({ [bigTagVid]: nowHidden ? true : null }); showMsg(nowHidden ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "8px 14px", color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
-              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; saveYtTags({ [bigTagVid]: (prev) => ({ ...prev, _verified: true, ...stamp }) }); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "8px 16px", background: "#059669" }}>{vTag._verified ? "✅ Verified" : "✅ Verify"}</button>
-              <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 13, padding: "8px 16px" }}>✕ Close</button>
+              <button onClick={() => aiTagVideoSave?.(bigTagVid)} disabled={aiTaggingVideo === bigTagVid} style={{ ...S.btn(false), fontSize: 12, padding: "9px 14px", borderRadius: 10, color: accent, opacity: aiTaggingVideo === bigTagVid ? 0.5 : 1 }}>{aiTaggingVideo === bigTagVid ? "⏳ Tagging…" : "🏷 Tag from description"}</button>
+              <button onClick={() => { const nowHidden = !hiddenVideos[bigTagVid]; saveHiddenVideos({ [bigTagVid]: nowHidden ? true : null }); showMsg(nowHidden ? "🙈 Video hidden — won't show in the app or Needs-review" : "👁 Video visible again", "green"); }} style={{ ...S.btn(false), fontSize: 12, padding: "9px 14px", borderRadius: 10, color: hiddenVideos[bigTagVid] ? "#059669" : "#E11D48" }}>{hiddenVideos[bigTagVid] ? "👁 Unhide" : "🙈 Hide"}</button>
+              <button onClick={() => { const wasVerified = !!vTag._verified; const stamp = wasVerified ? { _lastEditedBy: authUser?.name || "—", _lastEditedAt: Date.now() } : { _verifiedBy: authUser?.name || "—", _verifiedAt: Date.now() }; saveYtTags({ [bigTagVid]: (prev) => ({ ...prev, _verified: true, ...stamp }) }); if (!wasVerified) logVerificationEvent?.({ photoId: bigTagVid, photoName: v.title, source: "video", kind: "video" }); showMsg("✅ Video tags verified", "green"); }} style={{ ...S.btn(true), fontSize: 12, padding: "9px 18px", borderRadius: 10, background: "#059669", display: "inline-flex", alignItems: "center", gap: 6 }}><IconCheck size={13} />{vTag._verified ? "Verified" : "Verify"}</button>
+              <button onClick={() => setBigTagVid(null)} style={{ ...S.btn(false), fontSize: 12, padding: "9px 16px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 6 }}>✕ Close</button>
             </div>
-            <div style={{ padding: "16px 22px" }}>
-              {/* Playable video — watch to see what elements it includes before tagging */}
-              <div style={{ marginBottom: 16, borderRadius: 12, overflow: "hidden", background: "#000", maxWidth: 760, aspectRatio: "16/9" }}>
-                {v.source === "cloudinary" && v.videoUrl
-                  ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
-                  : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} title={v.title} />}
+            <div style={{ padding: "18px 22px" }}>
+              {/* Video beside a read-out of what is already tagged. The reference pairs them, and it
+                  earns the space: you watch the clip and check the summary without scrolling between
+                  them. Collapses to one column under 1100px. */}
+              <div className="vt-top" style={{ display: "grid", gridTemplateColumns: "minmax(0,700px) minmax(0,1fr)", gap: 18, alignItems: "start", marginBottom: 20 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ borderRadius: 14, overflow: "hidden", background: "#000", aspectRatio: "16/9" }}>
+                    {v.source === "cloudinary" && v.videoUrl
+                      ? <video src={v.videoUrl} poster={v.thumb} controls preload="none" style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
+                      : <LazyYT src={`https://www.youtube.com/embed/${bigTagVid}`} poster={v.thumb} title={v.title} />}
+                  </div>
+                  {/* The source URL, readable and selectable. Not a copy button — that would be a new
+                      control; the text is selectable so the link is still gettable. */}
+                  {v.source !== "cloudinary" && <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.03)" : "#fff", fontSize: 11, color: textS, overflow: "hidden" }}>
+                    <span style={{ flexShrink: 0, opacity: 0.7 }}>🔗</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", userSelect: "all" }}>{`https://www.youtube.com/watch?v=${bigTagVid}`}</span>
+                  </div>}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, minWidth: 0 }}>
+                  {sumTile(<IconFactory size={14} />, "Venue", vTag.venue)}
+                  {sumTile(<IconPalette size={14} />, "Palette", vTag.palette)}
+                  {sumTile(<IconCalendar size={14} />, "Event type", fnArr.join(", "))}
+                  {sumTile(<IconWall size={14} />, "In / Out", vTag.io ? venueTypeLabel(vTag.io) : "")}
+                  {sumTile(<IconCrown size={14} />, "Tier", vTag.tier)}
+                  {sumTile(<IconSparkle size={14} />, "Design style", (vTag.styles || []).join(", "))}
+                  {sumTile(<IconBulb size={14} />, "Time / Setting", vTag.timeSetting)}
+                  {sumTile(<IconRepeat size={14} />, "Last updated", lastTs ? new Date(lastTs).toLocaleDateString() : "")}
+                </div>
               </div>
+              {/* The tagging groups, as numbered cards in a masonry column flow. CSS columns rather
+                  than a grid because the groups are wildly different heights — Colors is thirty
+                  chips, In/Out is three — and a grid row would size every card to the tallest in it,
+                  leaving craters. column-fill:balance plus break-inside:avoid on the cards keeps
+                  each one whole. */}
+              <div className="vt-cols">
               {/* Venue (2-level chip picker — same pattern/shared toggle state as the inline grid
                   editor's own Venue row above); this full-screen editor previously had no way to
                   set it at all, unlike the image tagger's Venue picker. */}
-              <div style={{ marginBottom: 18 }}>
-                <div style={lbl}>Venue</div>
-                {(() => {
+              {tagCard(1, <IconFactory size={14} />, "Venue", (() => {
                   const curVenue = vTag.venue || "";
                   const isInhouse = curVenue && allInhouseVenueOrParentNames.includes(curVenue);
                   const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
@@ -2850,23 +2926,24 @@ export default function ManageLibrary({ ctx }) {
                       <div style={{ ...chipRow, marginTop: 4 }}>{outsideFiltered.map(o => chip(o.name + (o.empanelled ? " ★" : ""), curVenue === o.name, () => setVidVenue(curVenue === o.name ? "" : o.name)))}</div>
                     </>}
                   </>;
-                })()}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 14, marginBottom: 18 }}>
-                <div><div style={lbl}>Tier</div><div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div></div>
-                <div><div style={lbl}>Palette</div><select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%" }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
-                <div><div style={lbl}>Event type</div><div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div></div>
-                <div><div style={lbl}>In / Out</div><div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(venueTypeLabel(io), vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div></div>
-                <div><div style={lbl}>Colors</div><div style={chipRow}>
+                })())}
+              {tagCard(2, <IconCrown size={14} />, "Tier", <div style={chipRow}>{taxOr(taxonomy.tier, CATEGORIES).map(t => chip(t, vTag.tier === t, () => updTag({ tier: vTag.tier === t ? undefined : t })))}</div>)}
+              {tagCard(3, <IconPalette size={14} />, "Palette", <select value={vTag.palette || ""} onChange={e => updTag({ palette: e.target.value || undefined })} style={{ ...S.select, width: "100%", marginBottom: 0 }}><option value="">—</option>{palettes.map(p => <option key={p} value={p}>{p}</option>)}</select>)}
+              {tagCard(4, <IconCalendar size={14} />, "Event Type", <div style={chipRow}>{taxOr(taxonomy.eventType, FUNCTIONS).map(f => chip(f, fnArr.includes(f), () => toggleArr("fn", f)))}</div>)}
+              {tagCard(5, <IconWall size={14} />, "In / Out", <div style={chipRow}>{taxOr(taxonomy.venueType, ["Indoor", "Outdoor", "Semi-Outdoor"]).map(io => chip(venueTypeLabel(io), vTag.io === io, () => updTag({ io: vTag.io === io ? undefined : io })))}</div>)}
+              {tagCard(6, <IconSparkle size={14} />, "Design Style", <div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div>)}
+              {tagCard(7, <IconBulb size={14} />, "Time / Setting", <div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div>)}
+              {tagCard(8, <IconFlower size={14} />, "Colors", <div style={chipRow}>
                   {palettes.map(c => chip(c, (vTag.colors || []).includes(c), () => toggleArr("colors", c)))}
                   <PaletteQuickAdd accent={accent} border={border} textS={textS}
                     onAdd={(name) => {
                       const added = addPaletteInline(name, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData);
                       if (added && !(vTag.colors || []).includes(added)) toggleArr("colors", added);
                     }} />
-                </div></div>
-                <div><div style={lbl}>Design style</div><div style={chipRow}>{(taxonomy.designStyle || []).map(s => chip(s, (vTag.styles || []).includes(s), () => toggleArr("styles", s)))}</div></div>
-                <div><div style={lbl}>Time / Setting</div><div style={chipRow}>{taxOr(taxonomy.timeSetting, ["Day", "Night", "Twilight"]).map(t => chip(t, vTag.timeSetting === t, () => updTag({ timeSetting: vTag.timeSetting === t ? undefined : t })))}</div></div>
+                </div>,
+                // Count of what is picked, in the heading — Colors is the longest list here and the
+                // only group where the selection can scroll out of view behind the others.
+                (vTag.colors || []).length > 0 ? <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: `${accent}1A`, color: accent }}>{(vTag.colors || []).length}</span> : null)}
               </div>
             </div>
           </div>
