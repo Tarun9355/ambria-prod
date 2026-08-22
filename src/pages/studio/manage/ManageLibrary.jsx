@@ -521,6 +521,14 @@ export default function ManageLibrary({ ctx }) {
   // the single ytFilterVenue string, exactly as the dropdown left it. This is the same shape the
   // Images rail uses (libVenueGroup) so the two panels behave identically.
   const [vidVenueGroup, setVidVenueGroup] = useState("all");
+  // Videos paginate client-side, unlike Images. The whole list is already in memory (YouTube +
+  // manual, loaded in one go) and filtered with a plain predicate, so there is no cursor to keep —
+  // the page is a slice. Same 80 as the Images grid so the two views feel like one page.
+  const [vidPage, setVidPage] = useState(0);
+  // Back to page 1 whenever the set being paged through changes. Without this, narrowing a filter
+  // while on page 5 leaves you on a page that no longer exists — the render clamps it, but the state
+  // would stay stale and Prev would then walk back from the wrong place.
+  useEffect(() => { setVidPage(0); }, [ytSearch, ytFilterVenue, ytFilterFn, ytFilterTier, ytFilterLinked, ytFilterStyle, ytFilterColor, ytFilterIO, showHidden]);
   // The rail sticks below the header instead of scrolling away with the grid — with 1966 photos the
   // grid is thousands of pixels tall, and the filters were only reachable by scrolling all the way
   // back up. 70 is the sticky offset Build already uses for its own rails, so the two pages clear the
@@ -2413,9 +2421,10 @@ export default function ManageLibrary({ ctx }) {
           </div>}
           {ytLoading&&<div style={{textAlign:"center",padding:40,color:textS}}>⏳ Loading videos from YouTube...</div>}
           {!ytLoading&&allVideos.length===0&&<div style={{textAlign:"center",padding:40,color:textS}}>No videos found. Hit Refresh to load from YouTube, or Add Video from Storage.</div>}
-          {/* Video grid */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
-            {allVideos.filter(v=>{
+          {/* Video grid, paged. The filter + sort is unchanged and still decides the whole set; the
+              only new step is slicing one page out of it before rendering. */}
+          {(() => {
+            const vidFiltered = allVideos.filter(v=>{
               // The video open in an editor always stays on screen — tagging it would otherwise
               // push it out of the current folder (e.g. Untagged) and yank the card out from under you.
               if(v.id===editingVid) return true;
@@ -2447,7 +2456,16 @@ export default function ManageLibrary({ ctx }) {
               if(ytFilterLinked==="review"&&videoStatus(v)!=="review") return false;
               if(ytFilterLinked==="linked"&&!(tag?.linkedEvents?.length>0)) return false;
               return true;
-            }).sort((a,b)=>vidRank(a.id)-vidRank(b.id)).map(v=>{
+            }).sort((a,b)=>vidRank(a.id)-vidRank(b.id));
+            const vidPages = Math.max(1, Math.ceil(vidFiltered.length / LIBRARY_PAGE_SIZE));
+            // Clamped on read, not just reset in the effect: a filter can shrink the set between the
+            // state update and this render, and a page index past the end would render an empty grid
+            // with no way to tell it apart from "nothing matches".
+            const vp = Math.min(vidPage, vidPages - 1);
+            const vidShown = vidFiltered.slice(vp * LIBRARY_PAGE_SIZE, vp * LIBRARY_PAGE_SIZE + LIBRARY_PAGE_SIZE);
+            return <>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+            {vidShown.map(v=>{
               const savedTag=ytVideoTags[v.id]||{};
               const hasDraft=aiVideoDraft&&aiVideoDraft.videoId===v.id;
               const tag=hasDraft?aiVideoDraft.tags:savedTag;
@@ -2682,6 +2700,21 @@ export default function ManageLibrary({ ctx }) {
               </div>);
             })}
           </div>
+            {/* Same pager as the Images grid, and only when there is more than one page — on a
+                filtered-down set of twenty videos a disabled Prev/Next pair is just furniture.
+                Here the total IS known (the whole list is in memory), so it can say "of 8" without
+                the estimate the cursor-paged Images grid needs. */}
+            {vidPages > 1 && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 16 }}>
+                <button onClick={() => { setVidPage(p => Math.max(0, p - 1)); libScrollTop(); }} disabled={vp === 0}
+                  style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: vp === 0 ? 0.4 : 1, cursor: vp === 0 ? "default" : "pointer" }}>← Prev</button>
+                <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>Page {vp + 1} of {vidPages} · {vidFiltered.length} videos</span>
+                <button onClick={() => { setVidPage(p => Math.min(vidPages - 1, p + 1)); libScrollTop(); }} disabled={vp >= vidPages - 1}
+                  style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: vp >= vidPages - 1 ? 0.4 : 1, cursor: vp >= vidPages - 1 ? "default" : "pointer" }}>Next →</button>
+              </div>
+            )}
+            </>;
+          })()}
         </div>
         </div>
       )}
