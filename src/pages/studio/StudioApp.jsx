@@ -109,7 +109,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
-import { registerFlushBeforeReload, unregisterFlushBeforeReload } from "../../lib/pendingSaveRegistry.js";
+import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
 // ═══════════════════════════════════════════════════════════════
 // MODULE-SCOPE CONSTANTS / HELPERS — copied VERBATIM from the reference.
@@ -2133,7 +2133,14 @@ export default function StudioApp() {
     setDcFullPageOpen(false);
   }, []);
 
-  const doLogout = () => { logout(); };
+  // Same race as the Studio↔IMS switcher (AppSwitcher.jsx): logout() flips `user` to null, which
+  // unmounts this whole component on the next render — a bare call here gave a pending edit no
+  // chance to actually reach the server before that happened. Reuses the same registered flush
+  // (build session + Deal Check draft), capped so a slow/broken save can't hang the logout click.
+  const doLogout = async () => {
+    await Promise.race([flushBeforeReload(), new Promise((resolve) => setTimeout(resolve, 2500))]);
+    logout();
+  };
   // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
   // reference Studio used "admin". Also honor the seeded u_admin id.
   // Role check is case-insensitive: the shared users table uses "Admin" (capital), the
