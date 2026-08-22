@@ -496,13 +496,21 @@ export default function ManageLibrary({ ctx }) {
   const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
 
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
+  // alignItems:flex-start so neither column is stretched to the other's height. minHeight stays — it
+  // stops the page jumping when a filter narrows the grid to two rows — but it was also what made the
+  // rail draw a full-height pane behind eight collapsed sections.
   const LibraryBrowse = () => (
-    <div style={{ display: "flex", gap: 16, minHeight: "70vh" }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 18, minHeight: "70vh" }}>
       {/* Filter sidebar — its own pane rather than bare labels on the page, which is what the
           reference shows and what Browse and Build already do with their rails. */}
-      {/* 190 → 225. The pills grew, and at 190 the wider ones ("Indoor + Outdoor", "Garden Inspired")
-          were wrapping to their own line and making the column look ragged. */}
-      <div className="ml-glass ml-rail" style={{ width: 225, flexShrink: 0, overflowY: "auto", maxHeight: "78vh" }}>
+      {/* alignSelf:flex-start, and that is the fix for the tall empty panel. This is a child of a
+          display:flex row, and a flex item stretches to the row's height by default — so with the
+          sections collapsed the rail was drawing its full glass down past the last one, and 300px of
+          empty pane reads as something that failed to load. It now ends where its content ends.
+          maxHeight stays as the ceiling for when every section IS open, with its own scrollport.
+          225 → 264: the sections are two columns of pills now, and at 225 the longer labels
+          ("Indoor + Outdoor", "Garden Inspired") had nowhere to go but their own line. */}
+      <div className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", overflowY: "auto", maxHeight: "80vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
           {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
