@@ -559,6 +559,99 @@ export default function ManageLibrary({ ctx }) {
   const markImgBroken = useCallback((id) => setBrokenImgIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id))), []);
   const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
 
+  // ═══ VIDEOS: THE FILTER RAIL ═══
+  // Same shape as the Images rail below — .ml-glass .ml-rail, the shared FSection/FPill kit, sticky
+  // under the header — so the two views read as one page with one filter surface, not two designs.
+  //
+  // What did NOT change is the semantics. Each of these was a <select>: ONE value, "all" for no
+  // choice. They stay that way — a pill sets its section's value and clicking the chosen pill again
+  // returns it to "all". They are not turned into the multi-select the Images rail has, because the
+  // filter functions further down read a single string (ytFilterFn === "all" || tag.fn === ytFilterFn),
+  // and making them arrays would be a change to what the filters DO, not to how they look.
+  // Hence FPill is used directly rather than a toggle helper: single-choice is the honest mapping of
+  // a dropdown, and it keeps every video the filters return exactly what it returned before.
+  const vidRail = () => {
+    // One row of pills for a single-valued filter. `cur` is the live value, `set` its setter.
+    const oneOf = (cur, set, opts, label) => (
+      <FSection key={label} id={`vid-${label}`} label={label}
+        count={cur !== "all" ? 1 : 0}
+        open={!!libSecOpen[`vid-${label}`]}
+        onToggle={() => setLibSecOpen(p => ({ ...p, [`vid-${label}`]: !p[`vid-${label}`] }))}
+        cols={2}>
+        {opts.map(o => {
+          const val = typeof o === "string" ? o : o.value;
+          const text = typeof o === "string" ? o : o.label;
+          return <FPill key={val} on={cur === val} onClick={() => set(cur === val ? "all" : val)}>{text}</FPill>;
+        })}
+      </FSection>
+    );
+    const anyOn = ytFilterVenue !== "all" || ytFilterFn !== "all" || ytFilterTier !== "all"
+      || ytFilterLinked !== "all" || ytFilterStyle !== "all" || ytFilterColor !== "all" || ytFilterIO !== "all";
+    if (!libRailOpen) return (
+      <div className="ml-tile" onClick={() => setLibRailOpen(true)} title="Show filters"
+        style={{ width: 38, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: LIB_RAIL_TOP, cursor: "pointer",
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "12px 0 14px",
+          borderRadius: 10, border: `1px solid ${border}`, background: cardBg }}>
+        <span style={{ writingMode: "vertical-rl", textOrientation: "mixed", fontSize: 9.5, fontWeight: 700,
+          letterSpacing: 1, textTransform: "uppercase", color: textS, whiteSpace: "nowrap" }}>Filters</span>
+        {anyOn && <span style={{ width: 7, height: 7, borderRadius: 4, background: accent }} />}
+      </div>
+    );
+    // Shares libRailRef with the Images rail on purpose: libView is exclusive, so only one of the
+    // two is ever mounted, and this way both get the same MEASURED height from useRailMaxHeight
+    // instead of one of them carrying a hardcoded calc() that would drift from the other.
+    return (
+      <div ref={libRailRef} className="ml-glass ml-rail" style={{ width: 264, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: LIB_RAIL_TOP, overflowY: "auto", maxHeight: libRailMaxH }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            {anyOn && <div onClick={() => { setYtFilterVenue("all"); setYtFilterFn("all"); setYtFilterTier("all"); setYtFilterLinked("all"); setYtFilterStyle("all"); setYtFilterColor("all"); setYtFilterIO("all"); }}
+              style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
+            <button type="button" onClick={() => setLibRailOpen(false)} title="Hide the filters and widen the grid"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 8,
+                flexShrink: 0, cursor: "pointer", whiteSpace: "nowrap", border: `1px solid ${border}`,
+                background: "transparent", color: textS, fontSize: 10.5, fontWeight: 600 }}>Hide</button>
+          </div>
+        </div>
+        {/* Status. Kept at the top and always expanded: it is the one filter that answers "what still
+            needs work", which is why anyone opens this tab. The <select> had these exact seven
+            values — the emoji came with two of them and stay. */}
+        <div style={{ marginBottom: 12 }}>
+          <div className="ml-rail-h" style={{ color: textS }}>Status</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[["all","All"],["verified","✅ Verified"],["review","🤖 Needs review"],["tagged","Tagged"],["untagged","Untagged"],["linked","Linked to Event"],["hidden","Hidden"]].map(([v,l]) =>
+              <span key={v} onClick={() => setYtFilterLinked(v)} style={{ ...S.pill(ytFilterLinked === v), fontSize: 12, padding: "5px 11px" }}>{l}</span>)}
+          </div>
+        </div>
+        {/* Venue, two levels, mirroring the Images rail: the property groups first (a parent matches
+            any room in it — that is what the old "(any room)" options meant), then the individual
+            inhouse venues, then outside. */}
+        <div style={{ marginBottom: 12 }}>
+          <div className="ml-rail-h" style={{ color: textS }}>Venue</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <span onClick={() => setYtFilterVenue("all")} style={{ ...S.pill(ytFilterVenue === "all"), fontSize: 12, padding: "5px 11px" }}>All</span>
+            {inhouseParentNames.map(p => <span key={"p-" + p} onClick={() => setYtFilterVenue(ytFilterVenue === p ? "all" : p)} title={`${p} — any room`} style={{ ...S.pill(ytFilterVenue === p), fontSize: 12, padding: "5px 11px" }}>{p}</span>)}
+          </div>
+        </div>
+        {oneOf(ytFilterVenue, setYtFilterVenue, allInhouseVenues, "Inhouse venues")}
+        {oneOf(ytFilterVenue, setYtFilterVenue, customOutdoor.filter(o => o.empanelled).map(o => o.name), "Outside — empanelled")}
+        {oneOf(ytFilterVenue, setYtFilterVenue, customOutdoor.filter(o => !o.empanelled).map(o => o.name), "Outside — other")}
+        {oneOf(ytFilterFn, setYtFilterFn, taxOr(taxonomy.eventType, FUNCTIONS), "Event type")}
+        {oneOf(ytFilterTier, setYtFilterTier, taxOr(taxonomy.tier, CATEGORIES), "Tier")}
+        {oneOf(ytFilterIO, setYtFilterIO, taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v => ({ value: v, label: venueTypeLabel(v) })), "Venue type")}
+        {oneOf(ytFilterStyle, setYtFilterStyle, taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]), "Design style")}
+        {oneOf(ytFilterColor, setYtFilterColor, (imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])), "Palette")}
+        {/* Not a filter on the tags — a switch for whether hidden videos are in the set at all.
+            Stays a checkbox because that is what it is, and it sits apart from the pill sections so
+            it doesn't read as an eighth tag filter. */}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: textS, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${border}` }}>
+          <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} style={{ accentColor: accent }} />
+          Show hidden
+        </label>
+      </div>
+    );
+  };
+
   // ═══ LIBRARY: BROWSE (filtered grid + detail/editor panel) ═══
   // alignItems:flex-start so neither column is stretched to the other's height. minHeight stays — it
   // stops the page jumping when a filter narrows the grid to two rows — but it was also what made the
@@ -2184,7 +2277,9 @@ export default function ManageLibrary({ ctx }) {
       {libView === "corrections" && CorrectionsPanel()}
       {libView === "images" && LibraryBrowse()}
       {libView === "videos" && (
-        <div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 18, minHeight: "70vh" }}>
+        {vidRail()}
+        <div style={{ flex: 1, minWidth: 0 }}>
           {/* Search + Refresh + Add Video row */}
           <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
             <input value={ytSearch} onChange={e=>setYtSearch(e.target.value)} placeholder="Search videos by title..." style={{...S.input,flex:1,marginBottom:0,fontSize:12}}/>
@@ -2287,59 +2382,10 @@ export default function ManageLibrary({ ctx }) {
             {!cldVideoLoading&&cldVideoFolders.length===0&&cldVideoList.length===0&&cldVideoPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>No video files in this folder</div>}
             <div style={{fontSize:9,color:textS,marginTop:8}}>Upload videos to any Storage folder first, then browse them here. Supports mp4, mov, webm.</div>
           </div>}
-          {/* Filter pills row */}
+          {/* The seven <select>s that used to sit here are gone — they are now the same rail the
+              Images view has, mounted to the left of this column. See vidRail() above. All that is
+              left inline is the tally, which is a readout, not a filter. */}
           <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
-            <span style={{fontSize:10,color:textS,fontWeight:600}}>Filter:</span>
-            <select value={ytFilterVenue} onChange={e=>setYtFilterVenue(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">All Venues</option>
-              {inhouseParentNames.length>0&&<optgroup label="Inhouse — Properties">
-                {inhouseParentNames.map(p=><option key={"p-"+p} value={p}>🏢 {p} (any room)</option>)}
-              </optgroup>}
-              <optgroup label="Inhouse">
-                {allInhouseVenues.map(v=><option key={v} value={v}>{v}</option>)}
-              </optgroup>
-              {customOutdoor.filter(o=>o.empanelled).length>0&&<optgroup label="Outside — Empanelled">
-                {customOutdoor.filter(o=>o.empanelled).map(o=><option key={"em-"+o.name} value={o.name}>{o.name}</option>)}
-              </optgroup>}
-              {customOutdoor.filter(o=>!o.empanelled).length>0&&<optgroup label="Outside — Other">
-                {customOutdoor.filter(o=>!o.empanelled).map(o=><option key={"ot-"+o.name} value={o.name}>{o.name}</option>)}
-              </optgroup>}
-            </select>
-            <select value={ytFilterFn} onChange={e=>setYtFilterFn(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">All Events</option>
-              {taxOr(taxonomy.eventType, FUNCTIONS).map(f=><option key={f} value={f}>{f}</option>)}
-            </select>
-            <select value={ytFilterTier} onChange={e=>setYtFilterTier(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">All Tiers</option>
-              {taxOr(taxonomy.tier, CATEGORIES).map(c=><option key={c} value={c}>{c}</option>)}
-            </select>
-            <select value={ytFilterIO} onChange={e=>setYtFilterIO(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">In/Out</option>
-              {taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v=><option key={v} value={v}>{venueTypeLabel(v)}</option>)}
-            </select>
-            <select value={ytFilterStyle} onChange={e=>setYtFilterStyle(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">All Styles</option>
-              {taxOr(taxonomy.designStyle, ["Floral","Modern","Traditional","Royal","Minimal"]).map(s=><option key={s} value={s}>{s}</option>)}
-            </select>
-            <select value={ytFilterColor} onChange={e=>setYtFilterColor(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">All Colors</option>
-              {(imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p=>p.name) : taxOr(taxonomy.colorPalette, ["White & Gold","Red & Gold","Pastels","Teal"])).map(c=><option key={c} value={c}>{c}</option>)}
-            </select>
-            <select value={ytFilterLinked} onChange={e=>setYtFilterLinked(e.target.value)} style={{...S.select,fontSize:10,width:"auto",padding:"4px 8px",marginBottom:0}}>
-              <option value="all">All</option>
-              <option value="verified">✅ Verified</option>
-              <option value="review">🤖 Needs review</option>
-              <option value="tagged">Tagged</option>
-              <option value="untagged">Untagged</option>
-              <option value="linked">Linked to Event</option>
-              <option value="hidden">Hidden</option>
-            </select>
-            <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:10,color:textS}}>
-              <input type="checkbox" checked={showHidden} onChange={e=>setShowHidden(e.target.checked)} style={{accentColor:accent}}/>
-              Show hidden
-            </label>
-            {(ytFilterVenue!=="all"||ytFilterFn!=="all"||ytFilterTier!=="all"||ytFilterLinked!=="all"||ytFilterStyle!=="all"||ytFilterColor!=="all"||ytFilterIO!=="all")&&
-              <span onClick={()=>{setYtFilterVenue("all");setYtFilterFn("all");setYtFilterTier("all");setYtFilterLinked("all");setYtFilterStyle("all");setYtFilterColor("all");setYtFilterIO("all");}} style={{fontSize:10,color:"#E11D48",cursor:"pointer",fontWeight:600}}>✕ Clear</span>}
             <span style={{fontSize:10,color:textS,marginLeft:"auto"}}>{Object.keys(ytVideoTags).length} tagged · {Object.keys(hiddenVideos).length} hidden · {allVideos.length} total</span>
           </div>
           {/* Picker banner */}
@@ -2618,6 +2664,7 @@ export default function ManageLibrary({ ctx }) {
               </div>);
             })}
           </div>
+        </div>
         </div>
       )}
       {/* ═══ FULL-SCREEN VIDEO TAG EDITOR — all metadata + a left/right photo scroller per zone ═══ */}
