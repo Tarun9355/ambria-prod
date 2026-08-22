@@ -5958,9 +5958,14 @@ export default function StudioApp() {
     // Event Info fields are in here too — date, venue, function, shift, pax, the extra functions.
     // They were absent, so editing the deal's details never scheduled a save; only touching the
     // build did, and the details rode along by accident whenever that happened to fire.
+    // dcCustomItems (Build's "+ Add Production/Buying Item") was the same gap: adding one doesn't
+    // touch zoneConfig/zoneElements, so with it absent here nothing scheduled the 1.5s save AND
+    // unsavedEditRef never flipped true — no beforeunload warning either. The item only survived a
+    // refresh if the 15s periodic fallback happened to land first or some unrelated edit rode along;
+    // add-then-immediately-refresh lost it every time, in Build and in Deal Check (same session field).
   }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions,
       zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
-      customZones, customMode, activeFnIdx, fnBuilds, autoSaveBuild]);
+      customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.
   useEffect(() => {
     const id = setInterval(autoSaveBuild, 15000);
