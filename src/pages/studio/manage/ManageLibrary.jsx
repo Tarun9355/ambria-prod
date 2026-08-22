@@ -592,10 +592,9 @@ export default function ManageLibrary({ ctx }) {
       </div>}
       {/* Main content */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* The placeholder can name tags and venue now that the query actually looks there — see
-            SEARCH_TAG_KEYS in libraryQueries.js. It used to say name only, which was the honest
-            description of an ilike on a column full of storage hashes. */}
-        <input value={libSearch} onChange={e => setLibSearch(e.target.value)} placeholder="Search venue, event, style, element…" title="Searches the photo's tags as well as its name. Multiple words all have to match — “wedding gold” means both." style={{ ...S.input, marginBottom: 8, fontSize: 13 }} />
+        {/* The search box lives on the tab row above — same libSearch state, same query. Its
+            placeholder can name tags and venue because the query really does look there; see
+            SEARCH_TAG_KEYS in libraryQueries.js. */}
         {/* ── Status "folders" + bulk AI tag (Phase 1a) ── */}
         <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
           {[
@@ -1982,12 +1981,28 @@ export default function ManageLibrary({ ctx }) {
         </>}
         {!cldLoading&&cldFolders.length===0&&cldImages.length===0&&cldPath.length>0&&<div style={{fontSize:11,color:textS,textAlign:"center",padding:16}}>Empty folder</div>}
       </div>}
-      {/* Images / Videos toggle */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+      {/* Images / Videos toggle — with the search box on the same line, at the right end.
+          alignItems:center so the field sits level with the tab pills rather than on the row's
+          baseline, and flexWrap so a user whose permissions allow every tab doesn't get the field
+          squeezed to nothing — it drops to its own line instead. */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
         {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
         {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
         <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
+        {/* Images view only. libSearch drives the photo query and nothing else, so on Videos or
+            Palettes this box would take typing and change nothing — a field that silently does not
+            apply is worse than no field.
+            The spacer is what pushes it right; a max-width stops it running the full width of a wide
+            monitor, where a 900px search field reads as the page's main event. Same input style the
+            page already used, just relocated — nothing added to it. */}
+        {libView === "images" && <>
+          <div style={{ flex: 1, minWidth: 12 }} />
+          <input value={libSearch} onChange={e => setLibSearch(e.target.value)}
+            placeholder="Search venue, event, style, element…"
+            title="Searches the photo's tags as well as its name. Multiple words all have to match — “wedding gold” means both."
+            style={{ ...S.input, fontSize: 12.5, flex: "1 1 240px", maxWidth: 420, minWidth: 160 }} />
+        </>}
       </div>
       {libView === "palettes" && !paletteCatalogueLoaded && (
         <div style={{ maxWidth: 650, padding: "24px 18px", textAlign: "center", color: textS, fontSize: 12 }}>Loading palette catalogue…</div>
