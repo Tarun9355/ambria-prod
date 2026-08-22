@@ -649,7 +649,7 @@ export default function ManageLibrary({ ctx }) {
             // ml-tile drives the glass and the hover lift. Selected and being-edited keep their own
             // border colour — that is state, and it has to win over the glass edge.
             return (
-            <div key={img.id} className={(isSel || libEditImg?.id === img.id) ? undefined : "ml-tile"} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : "transparent"}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : libEditImg?.id === img.id ? cardBg : undefined, position: "relative" }}>
+            <div key={img.id} title={img.name || "Untitled"} className={(isSel || libEditImg?.id === img.id) ? undefined : "ml-tile"} onClick={() => libStatus === LIB_STATUS.UNTAGGED && libSelected.size > 0 ? setLibSelected(prev => { const n = new Set(prev); n.has(img.id) ? n.delete(img.id) : n.add(img.id); return n; }) : (logPhotoOpen(authUser, img), setLibEditImg(img))} style={{ borderRadius: 10, overflow: "hidden", border: `1.5px solid ${isSel ? "#7C3AED" : libEditImg?.id === img.id ? accent : "transparent"}`, cursor: "pointer", background: isSel ? "#7C3AED0A" : libEditImg?.id === img.id ? cardBg : undefined, position: "relative" }}>
               <img src={img.url} alt="" loading="lazy" style={{ width: "100%", height: 150, objectFit: "cover", display: "block" }} onError={() => markImgBroken(img.id)} />
               {(() => {
                 const st = photoStatus(img);
@@ -684,12 +684,17 @@ export default function ManageLibrary({ ctx }) {
                   {img._aiConfidence}%
                 </div>
               )}
-              {/* The filename was 10px and the tag chips 8px — chips that small stop being read and
-                  start being texture, which is what made the grid look like a wall of thumbnails with
-                  noise under each one. 12 / 10 keeps two chips on a line at this card width. */}
+              {/* NO FILENAME. These are storage names — "huvordh6mli01tbcadzp.jpg" — so the line under
+                  every thumbnail was a random hash, and twelve of them down a screen is noise that
+                  reads as information. The tags say what the photo IS, which is the thing anyone is
+                  actually scanning for; the name is still on the card's title attribute and in the
+                  editor for when it is genuinely needed.
+                  The same cleanup was already made elsewhere in the app ("Stop showing storage
+                  filenames under photos") — this grid was the copy that kept it.
+                  Chips went 8px → 10px in the same pass: chips that small stop being read and start
+                  being texture. */}
               <div style={{ padding: "8px 10px 10px" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: textP, letterSpacing: -0.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "Untitled"}</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                   {(img.tags?.categoryTier || []).map(t => <span key={t} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: t === "Enhanced" ? "#0EA5E922" : "#6B728022", color: t === "Enhanced" ? "#0EA5E9" : textS }}>{t}</span>)}
                   {(img.tags?.areasElements || []).slice(0, 2).map(t => <span key={t} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 999, background: `${accent}12`, color: accent }}>{t}</span>)}
                 </div>
