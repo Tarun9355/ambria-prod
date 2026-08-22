@@ -7590,6 +7590,22 @@ export default function StudioApp() {
     return val;
   }, []);
 
+  // Cache was never invalidated once a date's blocksForDate had been fetched — so once an item's
+  // reservations changed (another salesperson's block confirmed/released, or this same deal's own
+  // Deal Check generate writing a hold) the "⚠ short" badge kept pricing against the stale snapshot
+  // for the rest of the session, no matter how the element's own qty was edited afterward (qty
+  // dropping below the true free stock never cleared it, since "available" itself was frozen).
+  // Realtime on `blocks` clears the whole cache and bumps a version the two warm-up effects below
+  // depend on, so every date in play gets a fresh fetch as soon as a reservation actually changes.
+  const [blocksVersion, setBlocksVersion] = useState(0);
+  useEffect(() => {
+    const ch = subscribeTable("blocks", () => {
+      availCacheRef.current = {};
+      setBlocksVersion((v) => v + 1);
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+
   // Warms activeBlocksForDate whenever the active function's date changes, so Build view's
   // per-element pricing and the header ESTIMATE badge can read availability synchronously
   // (getElPrice/calcElsCost are called inline during render — no per-element async fetch).
@@ -7599,7 +7615,7 @@ export default function StudioApp() {
     let cancelled = false;
     loadAvailability(date).then(({ blocksForDate }) => { if (!cancelled) setActiveBlocksForDate(blocksForDate || {}); }).catch(() => { if (!cancelled) setActiveBlocksForDate({}); });
     return () => { cancelled = true; };
-  }, [activeFnMeta?.date, clientDate, loadAvailability]);
+  }, [activeFnMeta?.date, clientDate, loadAvailability, blocksVersion]);
 
   // Same warm-up, for every function's date — not just the active one. loadAvailability already
   // caches per date (availCacheRef), so re-fetching a date already warmed by the effect above (or by
@@ -7613,7 +7629,7 @@ export default function StudioApp() {
       .then((pairs) => { if (!cancelled) setBlocksByDate(Object.fromEntries(pairs)); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [clientDate, extraFunctions, loadAvailability]);
+  }, [clientDate, extraFunctions, loadAvailability, blocksVersion]);
 
   // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
   // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
