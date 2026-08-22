@@ -318,13 +318,18 @@ function lmsContractToLead(c, source = "venue") {
   };
 }
 
-// Three sources, because no two of them cover the same ground:
-//   lms_contracts dept=venue  — booked venue jobs
+// Two sources, because no two of them cover the same ground:
 //   lms_contracts dept=decor  — booked decor jobs
 //   lms_decor_leads           — decor enquiries that have not converted (and may never)
 // Decor contracts used to be left out on the reasoning that a decor guest is a "lead" long before
 // becoming a contract. True, but it hid the converted ones: 325 of 339 decor contracts share no
 // guest name with any row in the leads table, so those clients could not be found at all.
+// Venue (dept=venue) contracts are deliberately NOT queried here — this is Studio, the décor
+// quoting tool. A Venue-only booking (venue arm, no décor package) is a different business line's
+// contract, not a Studio lead, and showed up in this search with no way to load anything useful
+// from it (loadLmsLead has no venue-specific fields to pull). lms_contracts.dept=venue is still
+// synced and read elsewhere (e.g. the Calendar's venue-booking view) — only Studio's own search
+// stopped looking at it.
 export async function searchLmsLeads(query /*, signal */) {
   const q = (query || "").trim();
   if (q.length < 2) return { ok: true, leads: [], complete: true };
@@ -342,29 +347,23 @@ export async function searchLmsLeads(query /*, signal */) {
       }
       return b.limit(50);
     };
-    const [venueRes, decorContractRes, decorLeadRes] = await Promise.all([
-      match(supabase.from("lms_contracts").select("data").eq("dept", "venue")),
+    const [decorContractRes, decorLeadRes] = await Promise.all([
       match(supabase.from("lms_contracts").select("data").eq("dept", "decor")),
       match(supabase.from("lms_decor_leads").select("data")),
     ]);
-    if (venueRes.error) throw venueRes.error;
     if (decorContractRes.error) throw decorContractRes.error;
     if (decorLeadRes.error) throw decorLeadRes.error;
 
     // Contracts first: they are booked work, and when the same guest exists in both tables the
     // contract is the fuller record, so it is the one that survives the dedupe below.
-    const booked = [
-      ...(venueRes.data || []).map((r) => lmsContractToLead(r.data, "venue")),
-      ...(decorContractRes.data || []).map((r) => lmsContractToLead(r.data, "decor-contract")),
-    ].filter(Boolean);
+    const booked = (decorContractRes.data || []).map((r) => lmsContractToLead(r.data, "decor-contract")).filter(Boolean);
     const enquiries = (decorLeadRes.data || []).map((r) => lmsContractToLead(r.data, "decor-lead")).filter(Boolean);
 
-    // Dedupe a decor enquiry only against DECOR contracts -- that pair is the same job at two stages
-    // of one pipeline. Matching against venue contracts too would be wrong: the same person often
-    // has a venue booking AND a separate decor enquiry, and collapsing those hides a real job.
+    // Dedupe an enquiry against its own contract — that pair is the same job at two stages of one
+    // pipeline (decor-lead → decor-contract once it's booked).
     const digits = (v) => String(v || "").replace(/D/g, "");
     const key = (l) => `${(l.guestName || "").trim().toLowerCase()}|${digits(l.phone)}`;
-    const seen = new Set(booked.filter((l) => l.source === "decor-contract").map(key));
+    const seen = new Set(booked.map(key));
     const leads = [
       ...booked,
       ...enquiries.filter((l) => !seen.has(key(l))),
