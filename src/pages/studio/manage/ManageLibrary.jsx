@@ -517,7 +517,7 @@ export default function ManageLibrary({ ctx }) {
         </div>
         {/* Venue filter (2-level — mirrors Browse page) */}
         <div style={{ marginBottom: 12 }}>
-          <div className="ml-rail-h" style={{ color: textS }}>Venue</div>
+          <div className="ml-rail-h">Venue</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 4 }}>
             <span onClick={() => { setLibVenueGroup("all"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "all"), fontSize: 12, padding: "5px 11px" }}>All</span>
             <span onClick={() => { setLibVenueGroup("inhouse"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "inhouse"), fontSize: 12, padding: "5px 11px" }}>Inhouse</span>
@@ -526,14 +526,14 @@ export default function ManageLibrary({ ctx }) {
           {libVenueGroup === "inhouse" && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {allInhouseVenues.map(v => {
               const sel = libVenueNames.includes(v);
-              return <span key={v} onClick={() => toggleLibVenueName(v)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v}</span>;
+              return <span key={v} onClick={() => toggleLibVenueName(v)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : "#1A1A2E", border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v}</span>;
             })}
             {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
           </div>}
           {libVenueGroup === "outside" && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {allOutdoorDB.map(v => {
               const sel = libVenueNames.includes(v.name);
-              return <span key={v.name} onClick={() => toggleLibVenueName(v.name)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v.name}{v.empanelled ? " ★" : ""}</span>;
+              return <span key={v.name} onClick={() => toggleLibVenueName(v.name)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : "#1A1A2E", border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v.name}{v.empanelled ? " ★" : ""}</span>;
             })}
             {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
           </div>}
@@ -1687,9 +1687,26 @@ export default function ManageLibrary({ ctx }) {
    instead of as body text shrunk down, which is what most of this screen was doing. */
 .ml-cap{font-size:11px;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;line-height:1.25}
 /* Section headings in the filter rail. Same idea one step up. */
-.ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase;opacity:0.6;margin-bottom:7px}
+/* The Venue group is still hand-rolled (it is two-level — venue names nest under Inhouse/Outside), so
+   it keeps this heading. Matched to the kit's section labels above so it does not read as a different
+   kind of thing sitting on top of them. */
+.ml-rail-h{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#1A1A2E;margin-bottom:8px}
 /* Figures line up: the four status cards sit in a row and their counts are meant to be compared. */
 .ml-root{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"lnum" 1}
+/* ── THE RAIL'S TYPE, TURNED UP ──
+   The kit sets these sizes and colours INLINE (see pill() and Section in filterUI.jsx), so a plain
+   rule cannot reach them — hence !important. Scoped to .ml-rail so Browse and Build keep the kit's
+   own sizing; this is a local turn-up, not a change to the shared component.
+   Colour goes to the app's ink, #1A1A2E, rather than pure #000. It reads as black at this size while
+   staying in the same family as every other dark value in the app — the harsher black is what 253
+   values across Deal Check were moved OFF earlier today, for looking cheap next to it.
+   The section label is the SECOND span in the header: bullet, label, optional count badge, chevron.
+   nth-of-type(2) holds whether or not the badge is there, since the badge comes after it. */
+.ml-rail .sb-head > span:nth-of-type(2){font-size:12px !important;letter-spacing:1px !important;color:#1A1A2E !important}
+/* Unselected pills go to ink. Selected ones keep the kit's gold — that is state, and it has to stay
+   the loudest thing in the rail. */
+.ml-rail .sb-pill{font-size:12.5px !important;padding:7px 12px !important;min-height:30px !important}
+.ml-rail .sb-pill[data-on="0"]{color:#1A1A2E !important}
 /* The filter rail: same glass, and its pills lift on hover so the column reads as pressable rather
    than as a list of labels. */
 .ml-rail{border-radius:14px;padding:14px 14px 16px}
