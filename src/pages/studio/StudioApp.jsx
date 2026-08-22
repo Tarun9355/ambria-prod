@@ -1396,11 +1396,11 @@ export default function StudioApp() {
   // so without this the app rendered step 0 — Event Info — for the second or two until restore
   // fired, then jumped to Browse/Build. Gate the step body on it and that flash never happens.
   //
-  // Step 0 is excluded: a refresh ON Event Info deliberately starts a clean form, so there is
-  // nothing to wait for and no reason to show the gate.
+  // Step 0 (Event Info) now waits too, same as every other step — see the restore effect's own
+  // comment on why refreshing there restores an in-progress deal instead of abandoning it.
   const [restoring, setRestoring] = useState(() => {
     const r = restoreRef.current;
-    return !!(r?.id && r.step !== 0);
+    return !!r?.id;
   });
   useEffect(() => { try { if (activeClientId) sessionStorage.setItem("ambria-active-client", activeClientId); else sessionStorage.removeItem("ambria-active-client"); } catch { /* storage disabled */ } }, [activeClientId]);
   useEffect(() => { try { sessionStorage.setItem("ambria-studio-step", String(step)); } catch { /* */ } }, [step]);
@@ -6374,10 +6374,13 @@ export default function StudioApp() {
     if (!Array.isArray(clientLedger) || clientLedger.length === 0) return; // ledger not loaded yet
     const savedId = restoreRef.current?.id || null;   // snapshotted at first render — see restoreRef
     if (!savedId) { buildRestoredRef.current = true; setRestoring(false); return; }
-    // Refreshing ON Event Info starts over: that screen is where a deal is begun, so bringing the
-    // previous client's details back into the form is the opposite of what the reload was for.
-    // Browse, Build and Summary still restore — there you are mid-deal and want it back.
-    if (restoreRef.current?.step === 0) { buildRestoredRef.current = true; setRestoring(false); return; }
+    // Used to also bail out here whenever restoreRef.current?.step === 0 (Event Info), on the theory
+    // that Event Info is only ever visited to START a fresh deal. But savedId already answers that:
+    // it's only set once a deal is actually active (see the sessionStorage effect that clears
+    // "ambria-active-client" whenever activeClientId is null), so reaching this line with a savedId
+    // means an EXISTING, in-progress deal was open — glancing at Event Info mid-deal (to check/edit
+    // the date or venue) and refreshing there abandoned the whole deal for no reason, even though
+    // every bit of it was safely saved server-side. Restoring here now, same as Browse/Build/Summary.
     const client = clientLedger.find(c => c.id === savedId);
     const session = client && Array.isArray(client.sessions) ? client.sessions[0] : null;
     buildRestoredRef.current = true;
@@ -8472,7 +8475,11 @@ export default function StudioApp() {
   // land on after login. They come back at step 1, so the way to reach them is Continue. Held back
   // while `restoring`, because a refresh sits on step 0 for a beat before snapping to the real step
   // — hiding the bar then would read as a flash. Every other step keeps the full header.
-  const bareEventInfo = mode === "studio" && step === 0 && !restoring;
+  // Also held back once a deal is actually active (activeClientId set): refreshing on Event Info now
+  // restores an in-progress deal instead of abandoning it (see the mount-restore effect), and that
+  // deal's Deal Check / Studio↔IMS switch / sign-out are exactly as relevant here as on any other
+  // step — only a genuinely brand-new, not-yet-started deal gets the bare, chrome-free treatment.
+  const bareEventInfo = mode === "studio" && step === 0 && !restoring && !activeClientId;
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const textS = isDark ? "#6B7280" : "#8b8fa3";
