@@ -6,6 +6,10 @@ import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import { libPhotoIsTagged, carpetPricingFor, defaultCarpetMatId, CARPET_OFF, trussRateFor, maskingRateFor, maskingOptions, TRUSS_MATERIALS, venueTypeLabel } from "../../../lib/studio/taxonomy";
 import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
+// The same filter kit Browse and Build use — collapsible sections with the bullet, the caps label, the
+// count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
+// at all: three hand-rolled copies of one panel is how they drift apart.
+import { makeFilterUI } from "../../../components/studio/filterUI.jsx";
 
 // ══ THE PAGE'S GROUND ══
 // The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
@@ -479,6 +483,14 @@ export default function ManageLibrary({ ctx }) {
   // Some rows point at a Cloudinary asset that no longer resolves (e.g. a failed/partial import) —
   // rather than the <img> silently going blank and leaving a name-only card, drop the whole card
   // once its image 404s. brokenImgIds is session-local (not persisted) and reset per page load.
+  // ── THE SHARED FILTER KIT ──
+  // Same call Browse and Build make, so this rail is the same object they have rather than a lookalike.
+  // makeFilterUI caches per (isDark, accent, textP), so calling it on every render is one map lookup.
+  const { Section: FSection, Pill: FPill, css: filterCSS } = makeFilterUI({ isDark, accent, textP, S });
+  // Which sections are expanded. All closed to start: the rail carries eight groups and open-by-default
+  // was the reason it scrolled for a screen and a half — the point of an accordion is that the list of
+  // GROUPS is the thing you scan first.
+  const [libSecOpen, setLibSecOpen] = useState({});
   const [brokenImgIds, setBrokenImgIds] = useState(() => new Set());
   const markImgBroken = useCallback((id) => setBrokenImgIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id))), []);
   const libVisible = libPage.items.filter((img) => !brokenImgIds.has(img.id));
@@ -524,16 +536,15 @@ export default function ManageLibrary({ ctx }) {
           const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
             ? imsPaletteCatalogue.map(p => p.name)
             : taxonomy[k];
+          const secCount = (libFilters[k] || []).length;
           return (
-          <div key={k} style={{ marginBottom: 12 }}>
-            <div className="ml-rail-h" style={{ color: textS }}>{k === "colorPalette" ? "Palette" : getTaxLabel(k)}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <FSection key={k} id={k} label={k === "colorPalette" ? "Palette" : getTaxLabel(k)} count={secCount}
+            cols={2} open={!!libSecOpen[k]} onToggle={() => setLibSecOpen(p => ({ ...p, [k]: !p[k] }))}>
               {vals.map(v => {
                 const sel = (libFilters[k] || []).includes(v);
-                return <span key={v} onClick={() => toggleLibFilter(k, v)} style={{ padding: "5px 11px", fontSize: 12, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{k === "venueType" ? venueTypeLabel(v) : v}</span>;
+                return <FPill key={v} on={sel} onClick={() => toggleLibFilter(k, v)}>{v}</FPill>;
               })}
-            </div>
-          </div>);
+          </FSection>);
         })}
       </div>
       {/* Main content */}
@@ -1680,6 +1691,9 @@ export default function ManageLibrary({ ctx }) {
   .ml-tile:hover{transform:none}
 }
 `}</style>
+      {/* The kit's own CSS — the section-header hover fill (.sb-head) and its pill states live there,
+          not in the block above. Without this the sections render but the rows do not respond. */}
+      <style>{filterCSS}</style>
       {/* Under everything, above nothing. See .ml-wash. */}
       <div className="ml-wash" aria-hidden="true" style={ML_BG ? { backgroundImage: `url(${ML_BG})` } : undefined} />
       {/* Inline add bar */}
