@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/AuthContext";
 import { userApps } from "../lib/auth";
+import { flushBeforeReload } from "../lib/pendingSaveRegistry";
 import { IconPalette, IconBox } from "./icons";
 
 // Cross-app header toggle. Only renders for users granted BOTH apps; one click
@@ -40,7 +41,20 @@ export default function AppSwitcher({ current, tone = "light" }) {
         return (
           <button
             key={id}
-            onClick={() => navigate(to)}
+            onClick={async () => {
+              // A plain navigate(to) unmounts Studio immediately — React Router swaps the route
+              // synchronously, and Studio's own autosave becomes a fire-and-forget call from that
+              // unmount's cleanup: nothing here waited for its write to actually reach the server.
+              // A user who bounced straight back to Studio (or just refreshed) could beat that write,
+              // re-fetch the client from the DB before it landed, and see their own edit vanish — the
+              // exact "made changes, switched to IMS and back, changes gone" report this fixes.
+              // flushBeforeReload already exists for this precise problem (built for the "new version
+              // available" banner's reload) — reusing it here just makes it fire on an in-app route
+              // switch too, not only a hard reload. Best-effort, capped, so a slow/broken save can
+              // never turn a tab switch into a hang.
+              await Promise.race([flushBeforeReload(), new Promise((resolve) => setTimeout(resolve, 2500))]);
+              navigate(to);
+            }}
             className={chip(active)}
             title={active ? `You're in ${label}` : `Switch to ${label}`}
           >

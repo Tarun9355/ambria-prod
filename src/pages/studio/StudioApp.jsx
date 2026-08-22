@@ -5984,9 +5984,14 @@ export default function StudioApp() {
   // (via saveSession's savePromise) closes that race instead of hoping pagehide wins it.
   useEffect(() => {
     const flush = async () => {
-      if (switchingRef.current || fnSwitchingRef.current || !buildHasDataRef.current) return;
-      const result = saveSessionRef.current({ auto: true });
-      if (result?.savePromise) await result.savePromise;
+      if (!(switchingRef.current || fnSwitchingRef.current || !buildHasDataRef.current)) {
+        const result = saveSessionRef.current({ auto: true });
+        if (result?.savePromise) await result.savePromise;
+      }
+      // Deal Check's own pending draft (dcCards/dcDraft) is a separate autosave loop from the build
+      // session above — flushing one doesn't flush the other. Awaited here too so a route switch or
+      // reload while Deal Check is open can't drop whichever one just happened to be mid-debounce.
+      try { await flushDcAutosaveRef.current?.(); } catch { /* best-effort */ }
     };
     registerFlushBeforeReload(flush);
     return () => unregisterFlushBeforeReload(flush);
@@ -7955,17 +7960,21 @@ export default function StudioApp() {
           }
         } else {
           const nowStamp = Date.now();
-          saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
+          const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
             dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
             dcMpIncludeMinusOne, dcMpIncludeDismantle,
             dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c));
           dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
+          return result;
         }
       }
     };
     flushDcAutosaveRef.current = doSave;
     const t = setTimeout(doSave, 2500);
-    return () => { clearTimeout(t); flushDcAutosaveRef.current = null; };
+    // Unmount (Studio↔IMS route switch, or leaving this client) used to just clearTimeout the
+    // pending tick and drop it — unlike Build's own autosave, which flushes on unmount for exactly
+    // this reason. A Deal Check draft edited less than 2.5s before navigating away was silently lost.
+    return () => { clearTimeout(t); doSave(); flushDcAutosaveRef.current = null; };
   }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
