@@ -1129,11 +1129,18 @@ export default function StudioEventInfo({ ctx }) {
                     const nameMatch = qName.length >= 2 && c.name.toLowerCase().includes(qName);
                     const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
                     if (!(nameMatch || phoneMatch)) return false;
-                    // Already shown above as its own LMS lead card (same entry, already linked) — two
-                    // near-identical cards for the same deal is exactly the confusing redundancy this
-                    // was. Only suppress when that LMS card is actually on screen right now; if LMS
-                    // didn't return it (sync lag, filtered out), this Studio card is still the only way in.
-                    if (c.lmsLeadId && (lmsLeads || []).some(l => l.entryNo === c.lmsLeadId && l.dept === c.lmsDept)) return false;
+                    // A client already linked to an LMS entry (the "LMS #01234" tag on its card) has
+                    // an LMS counterpart, full stop — suppress it here regardless of whether that
+                    // specific lead happens to be sitting in today's decor-only search results.
+                    // This used to only suppress when the linked lead was ALSO visible in
+                    // visibleLmsLeads right now, which quietly broke the moment Studio's LMS search
+                    // stopped returning Venue leads (searchLmsLeads, lib/ims/lms.js): a client linked
+                    // to a Venue entry can never have its lead show up in a decor-only search again,
+                    // so the "is it visible right now" check could never suppress it — the Studio
+                    // card resurfaced as a permanent duplicate of a lead this screen simply doesn't
+                    // display any more. Only a client with NO lmsLeadId at all — never linked to
+                    // anything in LMS — belongs in this section.
+                    if (c.lmsLeadId) return false;
                     return true;
                   });
                   const matchesAfterRepFilter = showAllReps ? matchesBeforeRepFilter : matchesBeforeRepFilter.filter(c => mine(c.createdBy));
