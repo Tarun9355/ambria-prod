@@ -517,6 +517,10 @@ export default function ManageLibrary({ ctx }) {
   // inside LibraryBrowse, because that is re-created on every render of this component — state
   // declared in there would be a fresh hook each time.
   const [libRailOpen, setLibRailOpen] = useState(true);
+  // Which side of the Videos venue filter is showing its names. UI only — the filter itself is still
+  // the single ytFilterVenue string, exactly as the dropdown left it. This is the same shape the
+  // Images rail uses (libVenueGroup) so the two panels behave identically.
+  const [vidVenueGroup, setVidVenueGroup] = useState("all");
   // The rail sticks below the header instead of scrolling away with the grid — with 1966 photos the
   // grid is thousands of pixels tall, and the filters were only reachable by scrolling all the way
   // back up. 70 is the sticky offset Build already uses for its own rails, so the two pages clear the
@@ -585,8 +589,12 @@ export default function ManageLibrary({ ctx }) {
         })}
       </FSection>
     );
+    // ytFilterLinked is deliberately NOT counted here and NOT reset by Clear all below. The rail no
+    // longer shows status, so counting it would light up "Clear all" over a panel with nothing
+    // active on it, and clearing it would silently move the status card selection above the grid —
+    // a control this panel can no longer see.
     const anyOn = ytFilterVenue !== "all" || ytFilterFn !== "all" || ytFilterTier !== "all"
-      || ytFilterLinked !== "all" || ytFilterStyle !== "all" || ytFilterColor !== "all" || ytFilterIO !== "all";
+      || ytFilterStyle !== "all" || ytFilterColor !== "all" || ytFilterIO !== "all";
     if (!libRailOpen) return (
       <div className="ml-tile" onClick={() => setLibRailOpen(true)} title="Show filters"
         style={{ width: 38, flexShrink: 0, alignSelf: "flex-start", position: "sticky", top: LIB_RAIL_TOP, cursor: "pointer",
@@ -605,7 +613,7 @@ export default function ManageLibrary({ ctx }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            {anyOn && <div onClick={() => { setYtFilterVenue("all"); setYtFilterFn("all"); setYtFilterTier("all"); setYtFilterLinked("all"); setYtFilterStyle("all"); setYtFilterColor("all"); setYtFilterIO("all"); }}
+            {anyOn && <div onClick={() => { setYtFilterVenue("all"); setVidVenueGroup("all"); setYtFilterFn("all"); setYtFilterTier("all"); setYtFilterStyle("all"); setYtFilterColor("all"); setYtFilterIO("all"); }}
               style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
             <button type="button" onClick={() => setLibRailOpen(false)} title="Hide the filters and widen the grid"
               style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 9px", borderRadius: 8,
@@ -613,29 +621,39 @@ export default function ManageLibrary({ ctx }) {
                 background: "transparent", color: textS, fontSize: 10.5, fontWeight: 600 }}>Hide</button>
           </div>
         </div>
-        {/* Status. Kept at the top and always expanded: it is the one filter that answers "what still
-            needs work", which is why anyone opens this tab. The <select> had these exact seven
-            values — the emoji came with two of them and stay. */}
-        <div style={{ marginBottom: 12 }}>
-          <div className="ml-rail-h" style={{ color: textS }}>Status</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {[["all","All"],["verified","✅ Verified"],["review","🤖 Needs review"],["tagged","Tagged"],["untagged","Untagged"],["linked","Linked to Event"],["hidden","Hidden"]].map(([v,l]) =>
-              <span key={v} onClick={() => setYtFilterLinked(v)} style={{ ...S.pill(ytFilterLinked === v), fontSize: 12, padding: "5px 11px" }}>{l}</span>)}
-          </div>
-        </div>
-        {/* Venue, two levels, mirroring the Images rail: the property groups first (a parent matches
-            any room in it — that is what the old "(any room)" options meant), then the individual
-            inhouse venues, then outside. */}
+        {/* NO STATUS SECTION. The four status cards above the grid (All / Verified / Needs review /
+            Untagged) already set ytFilterLinked — this was the same control twice, and the copy in
+            here was the one competing with the pill sections for the top of the panel. */}
+        {/* Venue: ONE two-level group, laid out exactly as the Images rail does it — All / Inhouse /
+            Outside, then the names for whichever side is chosen. This replaced four separate venue
+            blocks (a parent-properties row plus three collapsed sections), which was the same
+            information spread over four headings and the reason this panel didn't look like the
+            other one.
+            The property names sit with the inhouse names because that is what they are: picking a
+            parent matches any room in it (subVenuesOfParent, in the filter below) — the old
+            dropdown said "(any room)". Marked with a · so the two kinds are still distinguishable. */}
         <div style={{ marginBottom: 12 }}>
           <div className="ml-rail-h" style={{ color: textS }}>Venue</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            <span onClick={() => setYtFilterVenue("all")} style={{ ...S.pill(ytFilterVenue === "all"), fontSize: 12, padding: "5px 11px" }}>All</span>
-            {inhouseParentNames.map(p => <span key={"p-" + p} onClick={() => setYtFilterVenue(ytFilterVenue === p ? "all" : p)} title={`${p} — any room`} style={{ ...S.pill(ytFilterVenue === p), fontSize: 12, padding: "5px 11px" }}>{p}</span>)}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 4 }}>
+            <span onClick={() => { setVidVenueGroup("all"); setYtFilterVenue("all"); }} style={{ ...S.pill(vidVenueGroup === "all"), fontSize: 12, padding: "5px 11px" }}>All</span>
+            <span onClick={() => { setVidVenueGroup("inhouse"); setYtFilterVenue("all"); }} style={{ ...S.pill(vidVenueGroup === "inhouse"), fontSize: 12, padding: "5px 11px" }}>Inhouse</span>
+            <span onClick={() => { setVidVenueGroup("outside"); setYtFilterVenue("all"); }} style={{ ...S.pill(vidVenueGroup === "outside"), fontSize: 12, padding: "5px 11px" }}>Outside</span>
           </div>
+          {vidVenueGroup === "inhouse" && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[...inhouseParentNames.map(p => ({ name: p, parent: true })), ...allInhouseVenues.map(v => ({ name: v, parent: false }))].map(v => {
+              const sel = ytFilterVenue === v.name;
+              return <span key={(v.parent ? "p-" : "v-") + v.name} onClick={() => setYtFilterVenue(sel ? "all" : v.name)} title={v.parent ? `${v.name} — any room` : undefined}
+                style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v.parent ? `· ${v.name}` : v.name}</span>;
+            })}
+          </div>}
+          {vidVenueGroup === "outside" && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {customOutdoor.map(o => {
+              const sel = ytFilterVenue === o.name;
+              return <span key={o.name} onClick={() => setYtFilterVenue(sel ? "all" : o.name)}
+                style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{o.name}{o.empanelled ? " ★" : ""}</span>;
+            })}
+          </div>}
         </div>
-        {oneOf(ytFilterVenue, setYtFilterVenue, allInhouseVenues, "Inhouse venues")}
-        {oneOf(ytFilterVenue, setYtFilterVenue, customOutdoor.filter(o => o.empanelled).map(o => o.name), "Outside — empanelled")}
-        {oneOf(ytFilterVenue, setYtFilterVenue, customOutdoor.filter(o => !o.empanelled).map(o => o.name), "Outside — other")}
         {oneOf(ytFilterFn, setYtFilterFn, taxOr(taxonomy.eventType, FUNCTIONS), "Event type")}
         {oneOf(ytFilterTier, setYtFilterTier, taxOr(taxonomy.tier, CATEGORIES), "Tier")}
         {oneOf(ytFilterIO, setYtFilterIO, taxOr(taxonomy.venueType, ["Indoor","Outdoor","Semi-Outdoor"]).map(v => ({ value: v, label: venueTypeLabel(v) })), "Venue type")}
