@@ -493,29 +493,29 @@ export default function ManageLibrary({ ctx }) {
       <div className="ml-glass ml-rail" style={{ width: 225, flexShrink: 0, overflowY: "auto", maxHeight: "78vh" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.1, color: accent }}>Filters</div>
-          {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>Clear all</div>}
+          {(Object.values(libFilters).some(a => a?.length) || libVenueGroup !== "all" || libVenueNames.length > 0) && <div onClick={clearLibFilters} style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear all</div>}
         </div>
         {/* Venue filter (2-level — mirrors Browse page) */}
         <div style={{ marginBottom: 12 }}>
           <div className="ml-rail-h" style={{ color: textS }}>Venue</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 4 }}>
-            <span onClick={() => { setLibVenueGroup("all"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "all"), fontSize: 10, padding: "3px 8px" }}>All</span>
-            <span onClick={() => { setLibVenueGroup("inhouse"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "inhouse"), fontSize: 10, padding: "3px 8px" }}>Inhouse</span>
-            <span onClick={() => { setLibVenueGroup("outside"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "outside"), fontSize: 10, padding: "3px 8px" }}>Outside</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 4 }}>
+            <span onClick={() => { setLibVenueGroup("all"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "all"), fontSize: 12, padding: "5px 11px" }}>All</span>
+            <span onClick={() => { setLibVenueGroup("inhouse"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "inhouse"), fontSize: 12, padding: "5px 11px" }}>Inhouse</span>
+            <span onClick={() => { setLibVenueGroup("outside"); setLibVenueNames([]); }} style={{ ...S.pill(libVenueGroup === "outside"), fontSize: 12, padding: "5px 11px" }}>Outside</span>
           </div>
-          {libVenueGroup === "inhouse" && <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+          {libVenueGroup === "inhouse" && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {allInhouseVenues.map(v => {
               const sel = libVenueNames.includes(v);
-              return <span key={v} onClick={() => toggleLibVenueName(v)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 9, padding: "2px 6px" }}>{v}</span>;
+              return <span key={v} onClick={() => toggleLibVenueName(v)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v}</span>;
             })}
-            {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "2px 6px", borderRadius: 10, fontSize: 9, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
+            {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
           </div>}
-          {libVenueGroup === "outside" && <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+          {libVenueGroup === "outside" && <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {allOutdoorDB.map(v => {
               const sel = libVenueNames.includes(v.name);
-              return <span key={v.name} onClick={() => toggleLibVenueName(v.name)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 9, padding: "2px 6px" }}>{v.name}{v.empanelled ? " ★" : ""}</span>;
+              return <span key={v.name} onClick={() => toggleLibVenueName(v.name)} style={{ ...S.pill(sel), background: sel ? `${accent}22` : "transparent", color: sel ? accentText : textS, border: sel ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 11.5, padding: "4px 10px" }}>{v.name}{v.empanelled ? " ★" : ""}</span>;
             })}
-            {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "2px 6px", borderRadius: 10, fontSize: 9, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
+            {libVenueNames.length > 0 && <span onClick={() => setLibVenueNames([])} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11.5, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕</span>}
           </div>}
         </div>
         {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
@@ -527,7 +527,7 @@ export default function ManageLibrary({ ctx }) {
           return (
           <div key={k} style={{ marginBottom: 12 }}>
             <div className="ml-rail-h" style={{ color: textS }}>{k === "colorPalette" ? "Palette" : getTaxLabel(k)}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {vals.map(v => {
                 const sel = (libFilters[k] || []).includes(v);
                 return <span key={v} onClick={() => toggleLibFilter(k, v)} style={{ padding: "5px 11px", fontSize: 12, borderRadius: 10, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{k === "venueType" ? venueTypeLabel(v) : v}</span>;
@@ -589,13 +589,13 @@ export default function ManageLibrary({ ctx }) {
           <span style={{ fontSize: 11, color: textS }}>Showing {libVisible.length} of {libPage.counts[libStatus] ?? libVisible.length}{libPage.loading ? "…" : ""}</span>
           {libStatus === LIB_STATUS.UNTAGGED && libVisible.length > 0 && (
             <>
-              <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>
+              <button onClick={() => setLibSelected(libSelected.size === libVisible.length ? new Set() : new Set(libVisible.map(i => i.id)))} style={{ ...S.btn(false), fontSize: 12, padding: "5px 11px" }}>
                 {libSelected.size === libVisible.length ? "Deselect all" : `Select all (${libVisible.length})`}
               </button>
               {libSelected.size > 0 && (
                 <>
                   <span style={{ fontSize: 10, color: "#7C3AED", fontWeight: 600 }}>{libSelected.size} selected</span>
-                  <button onClick={() => setLibSelected(new Set())} style={{ ...S.btn(false), fontSize: 10, padding: "3px 8px" }}>Clear</button>
+                  <button onClick={() => setLibSelected(new Set())} style={{ ...S.btn(false), fontSize: 12, padding: "5px 11px" }}>Clear</button>
                   <button
                     disabled={bulkTag?.running}
                     onClick={() => { runTagSelected?.([...libSelected]); setLibSelected(new Set()); }}
@@ -878,7 +878,7 @@ export default function ManageLibrary({ ctx }) {
                   return (
                   <div key={k} style={{ marginBottom: 6 }}>
                     <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>{k === "colorPalette" ? "Palette" : getTaxLabel(k)}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {vals.map(v => {
                         const sel = (libEditImg.tags?.[k] || []).includes(v);
                         return <span key={v} onClick={() => {
@@ -1909,7 +1909,7 @@ export default function ManageLibrary({ ctx }) {
                   <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "2px 8px" }}>🗑</span>
                 </div>
                 <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks primary colour(s) — you can star more than one — which drive Build photo order):</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {imsColourCatalogue.filter(c => !c.isNeutral).map(c => {
                     const isAnchor = (p.anchorColours || []).includes(c.name);
                     const primaries = Array.isArray(p.primaryColours) ? p.primaryColours : (p.primaryColour ? [p.primaryColour] : []);
