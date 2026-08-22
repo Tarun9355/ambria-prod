@@ -864,7 +864,7 @@ export default function StudioModals({ ctx }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#0EA5E9" }}>🖨️ Print</div>
                 <button onClick={() => {
-                  const entry = { id: "PR" + Date.now() + Math.floor(Math.random() * 1000), material: (imsPrintMaterials || [])[0]?.id || "", areaW: 0, areaD: 0, refImageUrl: "", invId: null };
+                  const entry = { id: "PR" + Date.now() + Math.floor(Math.random() * 1000), material: (imsPrintMaterials || [])[0]?.id || "", areaW: 0, areaD: 0, qty: 1, refImageUrl: "", invId: null };
                   setZoneUploadReview({ ...zoneUploadReview, prints: [...(zoneUploadReview.prints || []), entry] });
                 }} style={{ padding: "4px 10px", borderRadius: 8, border: "1px solid #0EA5E9", background: "rgba(14,165,233,0.14)", color: "#0EA5E9", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>+ Add Print Row</button>
               </div>
@@ -872,7 +872,7 @@ export default function StudioModals({ ctx }) {
                 // Opens with one ready-to-edit blank row instead of a "no prints" empty state — purely
                 // visual (not written to zoneUploadReview.prints) until the user actually edits it.
                 const rows = (zoneUploadReview.prints || []).length === 0
-                  ? [{ id: "__phantom__", material: (imsPrintMaterials || [])[0]?.id || "", areaW: 0, areaD: 0, refImageUrl: "", invId: null }]
+                  ? [{ id: "__phantom__", material: (imsPrintMaterials || [])[0]?.id || "", areaW: 0, areaD: 0, qty: 1, refImageUrl: "", invId: null }]
                   : zoneUploadReview.prints;
                 return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -883,7 +883,8 @@ export default function StudioModals({ ctx }) {
                     const mat = (imsPrintMaterials || []).find(m => m.id === p.material);
                     const sqft = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
                     const rate = mat?.ratePerSqft || 0;
-                    const cost = sqft * rate;
+                    const qty = Math.max(1, Math.round(Number(p.qty) || 1));
+                    const cost = sqft * rate * qty;
                     const setPrint = (patch) => {
                       if (isPhantom) { setZoneUploadReview({ ...zoneUploadReview, prints: [{ ...p, ...patch, id: "PR" + Date.now() + Math.floor(Math.random() * 1000) }] }); return; }
                       setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.map((x, i) => (i === pi ? { ...x, ...patch } : x)) });
@@ -900,6 +901,8 @@ export default function StudioModals({ ctx }) {
                           <span style={{ fontSize: 10, color: textS }}>×</span>
                           <input type="number" min="0" step="0.1" value={p.areaD || ""} onChange={e => setPrint({ areaD: parseFloat(e.target.value) || 0 })} placeholder="D ft" style={{ ...S.input, fontSize: 10, padding: "3px 6px", width: 56, marginBottom: 0, textAlign: "center" }} />
                           <span style={{ fontSize: 10, color: textS }}>ft = {sqft ? sqft.toFixed(1) : 0} sqft</span>
+                          <span style={{ fontSize: 10, color: textS }}>×</span>
+                          <input type="number" min="1" step="1" value={p.qty ?? 1} onChange={e => setPrint({ qty: Math.max(1, Math.round(parseFloat(e.target.value) || 1)) })} title="Qty — how many copies of this same print" style={{ ...S.input, fontSize: 10, padding: "3px 6px", width: 40, marginBottom: 0, textAlign: "center" }} />
                           <span style={{ fontSize: 11, fontWeight: 700, color: "#0EA5E9", marginLeft: "auto" }}>{rate > 0 ? fmt(cost) : "— pick material"}</span>
                           {!isPhantom && <span onClick={() => setZoneUploadReview({ ...zoneUploadReview, prints: zoneUploadReview.prints.filter((_, i) => i !== pi) })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700, fontSize: 12 }}>×</span>}
                         </div>
@@ -953,7 +956,7 @@ export default function StudioModals({ ctx }) {
                   })}
                   {(zoneUploadReview.prints || []).length > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700, paddingTop: 4 }}>
                     <span style={{ color: textP }}>Print Total</span>
-                    <span style={{ color: "#0EA5E9" }}>{fmt((zoneUploadReview.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); return sum + s * (m?.ratePerSqft || 0); }, 0))}</span>
+                    <span style={{ color: "#0EA5E9" }}>{fmt((zoneUploadReview.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); const q = Math.max(1, Math.round(Number(p.qty) || 1)); return sum + s * (m?.ratePerSqft || 0) * q; }, 0))}</span>
                   </div>}
                 </div>
                 );

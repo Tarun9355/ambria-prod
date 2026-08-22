@@ -724,7 +724,7 @@ export default function StudioBuild({ ctx }) {
     const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
-    return (zoneConfig[k]?.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); return sum + s * (m?.ratePerSqft || 0); }, 0);
+    return (zoneConfig[k]?.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); const q = Math.max(1, Math.round(Number(p.qty) || 1)); return sum + s * (m?.ratePerSqft || 0) * q; }, 0);
   };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
@@ -2408,17 +2408,25 @@ undefined
         return (selP?.isLibrary && selP.eventId) ? libItems.find(i => i.id === selP.eventId) : null;
       })();
       const masterVerified = !!masterForSel?._verified;
-      const openUpdateMaster = () => {
+      // masterForSel is a snapshot of THIS render's `libItems` — the lazy library cache can miss a
+      // photo that only ever surfaced through the zone-strip's own server-side match query
+      // (getLibPhotosForZone → zoneMatchCache), which never merges into libItems. Falling straight
+      // through to "not in the library yet" on that cache miss used to silently fork a brand-new
+      // duplicate master (the save path's isNewMaster branch) while the REAL master — still the one
+      // every other zone/deal references by this exact id — never received the correction at all.
+      // Fetching by id here first turns a cache miss into a bridge instead of a false "new photo".
+      const openUpdateMaster = async () => {
         const selP = elSelectedPhoto[k];
         if (!selP?.src) return;
-        if (!masterForSel) {
+        const m = selP.isLibrary && selP.eventId ? (masterForSel || (await ensureLibItems([selP.eventId]))[0]) : null;
+        if (!m) {
           setCorrVenueGrp("");
           setCorrectPhoto({ libId: null, zoneKey: k, name: selP.eventName || "", tags: {} });
           return;
         }
-        const mv = masterForSel.tags?.venue || "";
+        const mv = m.tags?.venue || "";
         setCorrVenueGrp(allInhouseVenues.includes(mv) ? "inhouse" : (mv ? "outside" : ""));
-        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: masterForSel.name || "", tags: JSON.parse(JSON.stringify(masterForSel.tags || {})) });
+        setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: JSON.parse(JSON.stringify(m.tags || {})) });
       };
       let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
         if (!zpHasFilters) return true;
@@ -3334,7 +3342,7 @@ undefined
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{fontSize:11.5,fontWeight:600,color:"#0369A1",display:"flex",alignItems:"center",gap:6}}><IconPrinter size={12}/>Print</div>
               <button onClick={()=>{
-                const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null};
+                const entry={id:"PR"+Date.now()+Math.floor(Math.random()*1000),material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,qty:1,refImageUrl:"",invId:null};
                 setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),prints:[...((p[k]||{}).prints||[]),entry]}}));
               }} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #0EA5E9",background:"rgba(14,165,233,0.14)",color:"#0EA5E9",fontSize:11.5,fontWeight:600,cursor:"pointer"}}>+ Add Print Row</button>
             </div>
@@ -3343,7 +3351,7 @@ undefined
               // visual (not written to zoneConfig) until the user actually edits it, so leaving it
               // untouched never persists an empty row.
               const rows=((zoneConfig[k]||{}).prints||[]).length===0
-                ? [{id:"__phantom__",material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,refImageUrl:"",invId:null}]
+                ? [{id:"__phantom__",material:(imsPrintMaterials||[])[0]?.id||"",areaW:0,areaD:0,qty:1,refImageUrl:"",invId:null}]
                 : (zoneConfig[k]||{}).prints;
               return (
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -3354,7 +3362,8 @@ undefined
                   const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
                   const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                   const rate=mat?.ratePerSqft||0;
-                  const cost=sqft*rate;
+                  const qty=Math.max(1,Math.round(Number(p.qty)||1));
+                  const cost=sqft*rate*qty;
                   const setPrint=(patch)=>{
                     if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
                     setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:(prev[k]?.prints||[]).map((x,i)=>i===pi?{...x,...patch}:x)}}));
@@ -3371,6 +3380,8 @@ undefined
                       <span style={{fontSize:11.5,color:textS}}>×</span>
                       <input type="number" min="0" step="0.1" value={p.areaD||""} onChange={e=>setPrint({areaD:parseFloat(e.target.value)||0})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
                       <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft</span>
+                      <span style={{fontSize:11.5,color:textS}}>×</span>
+                      <input type="number" min="1" step="1" value={p.qty??1} onChange={e=>setPrint({qty:Math.max(1,Math.round(parseFloat(e.target.value)||1))})} title="Qty — how many copies of this same print" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
                       {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(cost):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>

@@ -1280,8 +1280,13 @@ export default function StudioApp() {
   // they're cached first — a small targeted fetch instead of ever loading the whole table.
   const ensureLibItems = useCallback(async (ids) => {
     const missing = [...new Set((ids || []).filter(Boolean))].filter((id) => !libItemsRef.current.some((it) => it.id === id));
-    if (!missing.length) return;
-    try { mergeLibItems(await fetchLibraryItemsByIds(missing)); } catch { /* ignore */ }
+    if (missing.length) {
+      try { mergeLibItems(await fetchLibraryItemsByIds(missing)); } catch { /* ignore */ }
+    }
+    // Return the requested rows straight from the (now-current) ref — lets a caller that just
+    // awaited this use the freshly-merged item in the SAME call, instead of relying on its own
+    // next render to see the updated `libItems` it already had a stale closure over.
+    return (ids || []).map((id) => libItemsRef.current.find((it) => it.id === id)).filter(Boolean);
   }, [mergeLibItems]);
   const ensureLibItemsByUrl = useCallback(async (urls) => {
     const missing = [...new Set((urls || []).filter(Boolean))].filter((u) => !libItemsRef.current.some((it) => it.url === u));
