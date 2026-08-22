@@ -802,7 +802,17 @@ export default function ManageLibrary({ ctx }) {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 16 }}>
             <button onClick={() => { libPage.prevPage(); libScrollTop(); }} disabled={libPage.pageIdx === 0}
               style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: libPage.pageIdx === 0 ? 0.4 : 1, cursor: libPage.pageIdx === 0 ? "default" : "pointer" }}>← Prev</button>
-            <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>Page {libPage.pageIdx + 1}</span>
+            {/* "Page 3 of 25", not a bare "Page 3" — on its own the number says where you are but not
+                how much is left, which is the thing you actually want before clicking Next twenty
+                more times. The total comes from the same filter-scoped count the caption above uses,
+                so the two can't disagree. Falls back to just the number if the count isn't in yet. */}
+            {(() => {
+              const total = libPage.counts[libStatus] ?? 0;
+              const pages = total > 0 ? Math.ceil(total / libPage.pageSize) : 0;
+              return <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>
+                Page {libPage.pageIdx + 1}{pages > 0 ? ` of ${pages}` : ""}
+              </span>;
+            })()}
             <button onClick={() => { libPage.nextPage(); libScrollTop(); }} disabled={!libPage.hasMore}
               style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: libPage.hasMore ? 1 : 0.4, cursor: libPage.hasMore ? "pointer" : "default" }}>Next →</button>
           </div>
