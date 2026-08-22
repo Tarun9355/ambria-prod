@@ -10,6 +10,7 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 // count badge and the rotating chevron. Imported rather than rebuilt here for the reason the kit exists
 // at all: three hand-rolled copies of one panel is how they drift apart.
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
+import { IconCamera, IconPlay, IconClipboardCheck, IconPalette } from "../../../components/icons.jsx";
 import { IconSliders, IconChevron } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
@@ -528,6 +529,25 @@ export default function ManageLibrary({ ctx }) {
   // content starts 80 tiles above — you'd land looking at the end of what you just asked to see.
   // Scrolls the whole window rather than an inner container because the grid has no scrollport of
   // its own; the page is what scrolls. `smooth` so it reads as a move, not a jump cut.
+  // ── THE VIEW TABS ──
+  // These were S.btn(active), whose active state is the gold gradient (accent #C9A96E). Gold is the
+  // NAVBAR's accent — it reads on that dark navy bar — but on this light page it was the one loud
+  // thing on the screen, and it disagreed with every other "this one is selected" on the page: the
+  // Venue pills right below use S.pill, which is accentText (#6D28D9) on accentBg. So these now use
+  // the same violet, filled, which is the convention the rest of the app already follows.
+  // Written as one helper rather than four copies of a spread so the four tabs cannot drift apart.
+  const libTab = (active) => ({
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "8px 15px", borderRadius: 10, fontSize: 11.5, fontWeight: active ? 700 : 600,
+    cursor: "pointer", whiteSpace: "nowrap",
+    border: `1px solid ${active ? "transparent" : border}`,
+    background: active ? "linear-gradient(135deg,#6D28D9,#5B21B6)" : (isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.55)"),
+    color: active ? "#fff" : textS,
+    // Only the selected tab is lifted. Shadowing all four would make the row read as four cards
+    // rather than one control with one choice made.
+    boxShadow: active ? "0 2px 5px rgba(91,33,182,0.28)" : "none",
+    transition: "background .15s ease, color .15s ease",
+  });
   const libScrollTop = useCallback(() => {
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { window.scrollTo(0, 0); }
   }, []);
@@ -2070,10 +2090,10 @@ export default function ManageLibrary({ ctx }) {
           baseline, and flexWrap so a user whose permissions allow every tab doesn't get the field
           squeezed to nothing — it drops to its own line instead. */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        {libAllowed("images") && <button onClick={() => setLibView("images")} style={{ ...S.btn(libView === "images"), fontSize: 11 }}>📸 Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
-        {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={{ ...S.btn(libView === "videos"), fontSize: 11 }}>🎬 Videos ({allVideos.length})</button>}
-        {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={{ ...S.btn(libView === "corrections"), fontSize: 11 }}>📊 Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
-        <button onClick={() => setLibView("palettes")} style={{ ...S.btn(libView === "palettes"), fontSize: 11 }}>🎨 Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
+        {libAllowed("images") && <button onClick={() => setLibView("images")} style={libTab(libView === "images")}><IconCamera size={14} />Images ({libPage.counts.verified + libPage.counts.review + libPage.counts.untagged})</button>}
+        {libAllowed("videos") && <button onClick={() => { setLibView("videos"); if(!ytVideos.length) loadAllYT(); }} style={libTab(libView === "videos")}><IconPlay size={14} />Videos ({allVideos.length})</button>}
+        {libAllowed("corrections") && <button onClick={() => { setLibView("corrections"); refreshCorrLog?.(); }} style={libTab(libView === "corrections")}><IconClipboardCheck size={14} />Contributions ({new Set((corrLog || []).map(e => (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + (e.kind === "video" ? "video" : "photo"))).size})</button>}
+        <button onClick={() => setLibView("palettes")} style={libTab(libView === "palettes")}><IconPalette size={14} />Palettes {paletteCatalogueLoaded ? `(${imsPaletteCatalogue.length})` : "(loading…)"}</button>
         {/* Images view only. libSearch drives the photo query and nothing else, so on Videos or
             Palettes this box would take typing and change nothing — a field that silently does not
             apply is worse than no field.
