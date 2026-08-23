@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
 import { IconClipboard } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
@@ -127,7 +127,17 @@ export default function StudioEventInfo({ ctx }) {
   }, []);
   const eiSplitRef = useRef(null);
   const [eiHdrH, setEiHdrH] = useState(0);
-  useEffect(() => {
+  // Re-measured after EVERY render, not just on mount and on a body resize. The chrome above this
+  // view appears and disappears — resetting the form drops you into the bare state, which unmounts
+  // the app header entirely — and a stale offset leaves the split short, showing a band of the app's
+  // own background under it.
+  // A ResizeObserver on document.body cannot catch that: S.app carries minHeight:100vh, so body is
+  // pinned to the viewport whether the header is there or not. Its SIZE never changes, so the
+  // observer never fires. Watching the render instead is what makes this reliable.
+  // Safe against loops because the state is only set when the value actually differs, so the second
+  // pass is always a no-op. useLayoutEffect so the correction lands before paint rather than as a
+  // visible jump.
+  useLayoutEffect(() => {
     let raf = 0;
     const measure = () => {
       raf = 0;
@@ -144,13 +154,12 @@ export default function StudioEventInfo({ ctx }) {
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     measure();
-    // body, not the header: this catches the header wrapping, the function row appearing when a
-    // client loads, and anything else that changes what sits above this view.
-    const ro = new ResizeObserver(schedule);
-    ro.observe(document.body);
+    // The listeners stay for changes that happen WITHOUT a re-render of this component — a window
+    // resize, or the header re-flowing to two rows because the viewport narrowed. The per-render
+    // measure above covers the rest.
     window.addEventListener("resize", schedule);
-    return () => { if (raf) cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener("resize", schedule); };
-  }, []);
+    return () => { if (raf) cancelAnimationFrame(raf); window.removeEventListener("resize", schedule); };
+  });
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
   const [confirmRemove, setConfirmRemove] = useState(null);
