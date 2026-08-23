@@ -12,7 +12,7 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCamera, IconPlay, IconClipboardCheck, IconPalette, IconSliders, IconChevron,
   IconCheck, IconFactory, IconCalendar, IconWall, IconCrown, IconSparkle, IconBulb, IconRepeat,
-  IconFlower } from "../../../components/icons.jsx";
+  IconFlower, IconBox } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
 // The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
@@ -542,6 +542,28 @@ export default function ManageLibrary({ ctx }) {
   // content starts 80 tiles above — you'd land looking at the end of what you just asked to see.
   // Scrolls the whole window rather than an inner container because the grid has no scrollport of
   // its own; the page is what scrolls. `smooth` so it reads as a move, not a jump cut.
+  // ── SHARED TAG-EDITOR FURNITURE ──
+  // One definition used by BOTH full-screen editors — the video one (bigTagVid) and the photo one
+  // (libEditImg). They were separate before and the photo editor had drifted to 9px chips and bare
+  // labels while the video editor had cards; two editors doing the same job should not look like two
+  // different products, and the only way to keep that true is for there to be one implementation.
+  const mlTagChip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "6px 12px", borderRadius: 9, fontSize: 11.5, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : (isDark ? "rgba(255,255,255,0.04)" : "#fff"), color: on ? "#fff" : textS, border: `1px solid ${on ? accent : border}`, transition: "background .13s ease, border-color .13s ease", whiteSpace: "nowrap" }}>{label}</span>;
+  const mlTagRow = { display: "flex", flexWrap: "wrap", gap: 6 };
+  // n is the number in the heading; extra is an optional right-aligned slot (a count, say).
+  const mlTagCard = (n, icon, title, body, extra) => (
+    <div key={title} style={{ breakInside: "avoid", background: isDark ? "rgba(255,255,255,0.03)" : "#fff", border: `1px solid ${border}`, borderRadius: 14, padding: "14px 16px 16px", marginBottom: 14, boxShadow: isDark ? "none" : "0 1px 2px rgba(26,26,46,0.04)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ display: "inline-flex", color: accent }}>{icon}</span>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: textP }}>{n}. {title}</span>
+        {extra}
+      </div>
+      {body}
+    </div>
+  );
+  // Which icon a taxonomy group gets. Falls back to the palette glyph for a category added later —
+  // a missing icon should be a generic one, not a crash or a hole in the row.
+  const ML_TAX_ICON = { tier: <IconCrown size={14} />, eventType: <IconCalendar size={14} />, venueType: <IconWall size={14} />, designStyle: <IconSparkle size={14} />, timeSetting: <IconBulb size={14} />, categoryTier: <IconCrown size={14} />, colorPalette: <IconFlower size={14} />, areasElements: <IconBox size={14} /> };
+
   // ── THE VIEW TABS ──
   // These were S.btn(active), whose active state is the gold gradient (accent #C9A96E). Gold is the
   // NAVBAR's accent — it reads on that dark navy bar — but on this light page it was the loudest
@@ -1119,52 +1141,53 @@ export default function ManageLibrary({ ctx }) {
                     <pre style={{ marginTop: 4, fontSize: 9, color: textS, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflowY: "auto", padding: 8, borderRadius: 6, background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)", border: `1px solid ${border}`, fontFamily: "monospace" }}>{JSON.stringify(libEditImg._aiRawResponse, null, 2)}</pre>
                   </details>
                 )}
+                {/* The tag groups, in the same numbered cards and the same masonry columns as the
+                    video editor — one shared mlTagCard, so the two full-screen editors cannot drift
+                    apart again. .vt-cols is the same column flow, for the same reason: these groups
+                    are very unevenly tall and a grid row would size every card to its tallest. */}
+                <div className="vt-cols">
                 {/* Venue tag (2-level chip picker — mirrors Browse page) */}
-                <div style={{ marginBottom: 6 }}>
-                  <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>Venue</div>
-                  {(() => {
+                {mlTagCard(1, <IconFactory size={14} />, "Venue", (() => {
                     const curVenue = libEditImg.tags?.venue || "";
                     const isInhouse = curVenue && allInhouseVenues.includes(curVenue);
                     const activeGroup = tagVenueGroup || (isInhouse ? "inhouse" : (curVenue ? "outside" : ""));
                     const outsideFiltered = allOutdoorDB.filter(o => tagOutsideSub === "empanelled" ? o.empanelled : tagOutsideSub === "other" ? !o.empanelled : true);
                     const setPhVenue = (val) => setLibEditImg({ ...libEditImg, tags: { ...libEditImg.tags, venue: val || "" } });
                     return <>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        <div onClick={() => { setTagVenueGroup("inhouse"); setTagOutsideSub("all"); }} style={S.pill(activeGroup === "inhouse")}>Inhouse</div>
-                        <div onClick={() => { setTagVenueGroup("outside"); setTagOutsideSub("all"); }} style={S.pill(activeGroup === "outside")}>Outside</div>
-                        {curVenue && <div onClick={() => { setPhVenue(""); setTagVenueGroup(""); }} style={{ padding: "4px 8px", borderRadius: 12, fontSize: 9, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</div>}
+                      <div style={mlTagRow}>
+                        {mlTagChip("Inhouse", activeGroup === "inhouse", () => { setTagVenueGroup("inhouse"); setTagOutsideSub("all"); })}
+                        {mlTagChip("Outside", activeGroup === "outside", () => { setTagVenueGroup("outside"); setTagOutsideSub("all"); })}
+                        {curVenue && <span onClick={() => { setPhVenue(""); setTagVenueGroup(""); }} style={{ padding: "6px 12px", borderRadius: 9, fontSize: 11.5, cursor: "pointer", color: textS, border: `1px dashed ${border}` }}>✕ {curVenue}</span>}
                       </div>
-                      {activeGroup === "inhouse" && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                        {leafInhouseVenues.map(vn => { const on = curVenue === vn; return <div key={vn} onClick={() => setPhVenue(on ? "" : vn)} style={{ ...S.pill(on), background: on ? `${accent}22` : "transparent", color: on ? accentText : textS, border: on ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 9, padding: "3px 8px" }}>{vn}</div>; })}
+                      {activeGroup === "inhouse" && <div style={{ ...mlTagRow, marginTop: 6 }}>
+                        {leafInhouseVenues.map(vn => mlTagChip(vn, curVenue === vn, () => setPhVenue(curVenue === vn ? "" : vn)))}
                       </div>}
                       {activeGroup === "outside" && <>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                          <div onClick={() => setTagOutsideSub("all")} style={{ ...S.pill(tagOutsideSub === "all"), fontSize: 9, padding: "3px 8px" }}>All</div>
-                          <div onClick={() => setTagOutsideSub("empanelled")} style={{ ...S.pill(tagOutsideSub === "empanelled"), fontSize: 9, padding: "3px 8px" }}>Empanelled</div>
-                          <div onClick={() => setTagOutsideSub("other")} style={{ ...S.pill(tagOutsideSub === "other"), fontSize: 9, padding: "3px 8px" }}>Other</div>
+                        <div style={{ ...mlTagRow, marginTop: 6 }}>
+                          {mlTagChip("All", tagOutsideSub === "all", () => setTagOutsideSub("all"))}
+                          {mlTagChip("Empanelled", tagOutsideSub === "empanelled", () => setTagOutsideSub("empanelled"))}
+                          {mlTagChip("Other", tagOutsideSub === "other", () => setTagOutsideSub("other"))}
                         </div>
-                        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 3 }}>
-                          {outsideFiltered.map(o => { const on = curVenue === o.name; return <div key={o.name} onClick={() => setPhVenue(on ? "" : o.name)} style={{ ...S.pill(on), background: on ? `${accent}22` : "transparent", color: on ? accentText : textS, border: on ? `1px solid ${accent}55` : `1px solid ${border}`, fontSize: 9, padding: "3px 8px" }}>{o.name}{o.empanelled ? " ★" : ""}</div>; })}
+                        <div style={{ ...mlTagRow, marginTop: 4 }}>
+                          {outsideFiltered.map(o => mlTagChip(o.name + (o.empanelled ? " ★" : ""), curVenue === o.name, () => setPhVenue(curVenue === o.name ? "" : o.name)))}
                         </div>
                       </>}
                     </>;
-                  })()}
-                </div>
-                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map(k => {
+                  })())}
+                {Object.keys(taxonomy).filter(k => Array.isArray(taxonomy[k])).map((k, ki) => {
                   const vals = k === "colorPalette" && imsPaletteCatalogue.length > 0
                     ? imsPaletteCatalogue.map(p => p.name)
                     : taxonomy[k];
-                  return (
-                  <div key={k} style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: 10, color: textS, marginBottom: 2 }}>{k === "colorPalette" ? "Palette" : getTaxLabel(k)}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  const picked = (libEditImg.tags?.[k] || []).length;
+                  return mlTagCard(ki + 2, ML_TAX_ICON[k] || <IconPalette size={14} />, k === "colorPalette" ? "Palette" : getTaxLabel(k),
+                    <div style={mlTagRow}>
                       {vals.map(v => {
                         const sel = (libEditImg.tags?.[k] || []).includes(v);
-                        return <span key={v} onClick={() => {
+                        return mlTagChip(v, sel, () => {
                           const cur = libEditImg.tags?.[k] || [];
                           const next = sel ? cur.filter(x => x !== v) : [...cur, v];
                           setLibEditImg({ ...libEditImg, tags: { ...libEditImg.tags, [k]: next } });
-                        }} style={{ padding: "2px 7px", fontSize: 9, borderRadius: 8, cursor: "pointer", border: `1px solid ${sel ? accent : border}`, background: sel ? `${accent}18` : "transparent", color: sel ? accent : textS }}>{v}</span>;
+                        });
                       })}
                       {k === "colorPalette" && <PaletteQuickAdd dense accent={accent} border={border} textS={textS}
                         onAdd={(name) => {
@@ -1173,9 +1196,12 @@ export default function ManageLibrary({ ctx }) {
                           const cur = libEditImg.tags?.colorPalette || [];
                           if (!cur.includes(added)) setLibEditImg({ ...libEditImg, tags: { ...libEditImg.tags, colorPalette: [...cur, added] } });
                         }} />}
-                    </div>
-                  </div>);
+                    </div>,
+                    // Count on the long groups only — Palette and Areas & elements run to thirty-odd
+                    // chips, and there the selection scrolls out of sight behind the rest.
+                    picked > 0 ? <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: `${accent}1A`, color: accent }}>{picked}</span> : null);
                 })}
+                </div>
             {/* ── Zone Dimensions ── */}
             <div style={{ marginTop: 14, borderTop: `1px solid ${border}`, paddingTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "#C9A96E", marginBottom: 8 }}>{"📐"} Zone Dimensions</div>
@@ -1931,7 +1957,15 @@ export default function ManageLibrary({ ctx }) {
 .ml-wash::after{content:"";position:absolute;inset:0;
   background:radial-gradient(125% 95% at 50% 38%,
     rgba(26,26,46,0) 40%, rgba(26,26,46,0.07) 72%, rgba(26,26,46,0.17) 100%)}
-.ml-root > *:not(.ml-wash){position:relative;z-index:1}
+/* position:relative and DELIBERATELY no z-index. The job here is only to lift the page's content off
+   the wash, and being positioned is enough for that: the wash is a positioned z-index:0 element that
+   comes FIRST in the DOM, and positioned siblings with z-index:auto paint in tree order, so they
+   land on top of it. (Static siblings would not — that is the bug this rule was added for.)
+   The z-index:1 it used to carry made every one of these children a stacking context, which trapped
+   the modals nested inside them: a dialog at z-index 9999 was being composited inside a layer whose
+   own index is 1, so the app header at 50 painted over it. That is the navbar overlap. Removing the
+   index removes the trap without weakening the lift — do not put it back. */
+.ml-root > *:not(.ml-wash){position:relative}
 /* ── GLASS, PAINTED NOT SAMPLED ──
    No backdrop-filter anywhere here. It re-reads and re-blurs whatever is behind it every frame, and
    what reads as glass is the bright top edge, the diagonal sheen and the shadow — all of which are
@@ -2811,21 +2845,11 @@ export default function ManageLibrary({ ctx }) {
         const fnArr = Array.isArray(vTag.fn) ? vTag.fn : (vTag.fn ? [vTag.fn] : []);
         const palettes = imsPaletteCatalogue.length > 0 ? imsPaletteCatalogue.map(p => p.name) : taxOr(taxonomy.colorPalette, []);
         const lbl = { fontSize: 11, fontWeight: 700, color: textS, marginBottom: 5 };
-        const chipRow = { display: "flex", flexWrap: "wrap", gap: 6 };
-        // Chip: unchanged signature and behaviour, restyled to the reference — a filled amber pill
-        // when on, a light outline when off, both a touch larger than before.
-        const chip = (label, on, onClick) => <span key={label} onClick={onClick} style={{ padding: "6px 12px", borderRadius: 9, fontSize: 11.5, cursor: "pointer", fontWeight: on ? 700 : 500, background: on ? accent : (isDark ? "rgba(255,255,255,0.04)" : "#fff"), color: on ? "#fff" : textS, border: `1px solid ${on ? accent : border}`, transition: "background .13s ease, border-color .13s ease", whiteSpace: "nowrap" }}>{label}</span>;
-        // One tagging group = one card. n is the number shown in the reference's headings.
-        const tagCard = (n, icon, title, body, extra) => (
-          <div key={title} style={{ breakInside: "avoid", background: isDark ? "rgba(255,255,255,0.03)" : "#fff", border: `1px solid ${border}`, borderRadius: 14, padding: "14px 16px 16px", marginBottom: 14, boxShadow: isDark ? "none" : "0 1px 2px rgba(26,26,46,0.04)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <span style={{ display: "inline-flex", color: accent }}>{icon}</span>
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: textP }}>{n}. {title}</span>
-              {extra}
-            </div>
-            {body}
-          </div>
-        );
+        // The shared definitions — see mlTagChip / mlTagCard at component scope. Aliased rather than
+        // renamed throughout so this block reads as it did.
+        const chipRow = mlTagRow;
+        const chip = mlTagChip;
+        const tagCard = mlTagCard;
         // Read-only summary tile. Shows what is already set, so the state of the video is legible
         // without reading down every group below. Values come straight off vTag — nothing computed,
         // nothing stored.
