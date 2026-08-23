@@ -2168,7 +2168,7 @@ export default function ManageLibrary({ ctx }) {
 .cp-stat{transition:transform .14s ease, box-shadow .16s ease}
 .cp-stat:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(26,26,46,0.05), 0 14px 30px -14px rgba(26,26,46,0.30)}
 @media (prefers-reduced-motion: reduce){.cp-stat{transition:none}.cp-stat:hover{transform:none}}
-@media (max-width:900px){.pal-cols{grid-template-columns:minmax(0,1fr) !important}}
+/* auto-fit already collapses this to one column below its 420px floor, so no breakpoint is needed. */
 .cp-row{transition:background .13s ease}
 .cp-row:hover{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.04)"}}
 .vt-cols{column-count:3;column-gap:14px}
@@ -2469,8 +2469,11 @@ export default function ManageLibrary({ ctx }) {
       {libView === "palettes" && !paletteCatalogueLoaded && (
         <div style={{ maxWidth: 650, padding: "24px 18px", textAlign: "center", color: textS, fontSize: 12 }}>Loading palette catalogue…</div>
       )}
+      {/* The wrapper below has NO maxWidth. It was capped at 650 while the library tab runs to 1640,
+          which is where all that empty right-hand side came from — the two catalogues were sitting in
+          a third of the page. The colour chips wrap, so they fill whatever width they are given. */}
       {libView === "palettes" && paletteCatalogueLoaded && (
-        <div style={{ maxWidth: 650 }}>
+        <div>
           {/* 🎨 Colour Catalogue */}
           <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px", marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -2494,13 +2497,12 @@ export default function ManageLibrary({ ctx }) {
               <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🌈 Palette Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Named themes for salesperson to pick per function. Drives the Build screen colour picker + library filter.</div></div>
               <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
             </div>
-            {/* Two to a row. These were full-width blocks holding a name field and a wrapped strip of
-                colour chips, and neither needs the whole panel — the right half was empty on every
-                one of them, which on a long catalogue is a lot of scrolling for nothing.
-                A hard 2 rather than auto-fit: auto-fit would give four columns on a wide monitor,
-                and at that width the chip strip inside each card starts wrapping every two chips.
-                One column below 900px, where two would do the same thing. */}
-            <div className="pal-cols" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10, alignItems: "start" }}>
+            {/* Two to a row was the ask when this panel was capped at 650px wide. The cap is gone
+                now, so a hard 2 would put the sparseness back — two 780px cards each holding a name
+                field and a short chip strip. auto-fit with a 420px floor instead: three across on a
+                wide monitor, two at laptop width, one on a narrow window. Never fewer than the two
+                that were asked for, at any width where two would fit. */}
+            <div className="pal-cols" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 10, alignItems: "start" }}>
             {imsPaletteCatalogue.map((p, pi) => (
               <div key={pi} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
