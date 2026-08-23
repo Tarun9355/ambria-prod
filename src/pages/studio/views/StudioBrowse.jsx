@@ -1174,11 +1174,18 @@ export default function StudioBrowse({ ctx }) {
                   <span style={{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{text}</span>
                 </div>
               );
+              // BUG-8, the same bug as Build's sidebar and in the same shape: the line above already
+              // resolves venue and type through activeFnMeta, then the date beside it read raw
+              // clientDate — which only ever holds FUNCTION 1's date. So switching to Sangeet showed
+              // "Aura · Sangeet" against Wedding's 15 Aug.
+              // activeFnMeta.date falls back to clientDate for Function 1, so this is right for every
+              // function.
+              const fnDate = activeFnMeta?.date || clientDate;
               const where=[activeFnMeta?.venue||venue, activeFnMeta?.type].filter(Boolean).join(" · ");
-              if(!where && !clientDate) return null;
+              if(!where && !fnDate) return null;
               return <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",rowGap:9}}>
                 {where && row(<IconPalette size={14}/>, where)}
-                {clientDate && row(<IconCalendar size={14}/>, (()=>{ try { return new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch { return clientDate; } })())}
+                {fnDate && row(<IconCalendar size={14}/>, (()=>{ try { return new Date(fnDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch { return fnDate; } })())}
               </div>;
             })()}
           </div>
