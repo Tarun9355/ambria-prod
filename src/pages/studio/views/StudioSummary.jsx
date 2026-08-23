@@ -254,7 +254,10 @@ export default function StudioSummary({ ctx }) {
   // resynced whenever the active client changes; persisted to the ledger row on blur, not per
   // keystroke (a per-keystroke Supabase write for a 6-7 digit number is needless network chatter).
   const [negDraft, setNegDraft] = useState(activeClient?.negotiatedAmount ?? "");
-  useEffect(() => { setNegDraft(activeClient?.negotiatedAmount ?? ""); }, [activeClientId]);
+  // Resyncs on the persisted value itself, not just the client id switching — activeClient's data
+  // can still be arriving asynchronously (fetch/session-restore) the moment this component mounts,
+  // which would otherwise leave negDraft stuck at "" even though a value was already saved earlier.
+  useEffect(() => { setNegDraft(activeClient?.negotiatedAmount ?? ""); }, [activeClientId, activeClient?.negotiatedAmount]);
   const commitNegotiatedAmount = () => {
     const num = negDraft === "" ? null : Math.max(0, Number(negDraft) || 0);
     if (num === (activeClient?.negotiatedAmount ?? null)) return; // no-op — don't write an unchanged row
@@ -2467,19 +2470,29 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
             to whatever it is handed, so each intermediate figure got animated to in turn — which
             reads as the number being carefully calculated rather than as it being wrong.
             The tier pill goes with it; it is derived from the same figure. */}
+        {(() => {
+          const isBooked = activeClient?.status === "booked";
+          const hasNegotiated = Number(activeClient?.negotiatedAmount) > 0;
+          const displayTotal = hasNegotiated ? Number(activeClient.negotiatedAmount) : eventGrandTotal;
+          return <>
         {pricingReady ? <>
-          <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={eventGrandTotal} fmt={fmt}/></div>
-          <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(eventGrandTotal).bg,color:getCat(eventGrandTotal).color}}>{getCat(eventGrandTotal).label}</div>
+          <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={displayTotal} fmt={fmt}/></div>
+          <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(displayTotal).bg,color:getCat(displayTotal).color}}>{getCat(displayTotal).label}</div>
+          {/* Once a negotiated amount is set, it becomes the headline figure above (what Deal Check's
+              margin math also uses) — the system-generated estimate stays visible here, just demoted
+              to a secondary line, so nobody loses sight of what the design itself would cost at list price. */}
+          {hasNegotiated && <div style={{fontSize:11.5,color:"#a5b4fc",marginTop:9}}>System estimate: <strong style={{color:"#fff",fontWeight:700}}>{fmt(eventGrandTotal)}</strong></div>}
         </> : <>
           <div className="sh-te-amt" style={{fontSize:46,marginBottom:11,display:"flex",justifyContent:"center"}}>
             <span style={{display:"inline-block",width:260,height:44,borderRadius:10,background:"rgba(255,255,255,0.13)",animation:"shPulse 1.15s ease-in-out infinite"}}/>
           </div>
           <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:"rgba(255,255,255,0.10)",color:"#E8CF9A"}}>Loading rates…</div>
         </>}
-        {/* Negotiated deal amount — what the client is actually being booked at, captured before
-            (or at) sale when it differs from the system-generated estimate above. Deal Check's own
-            margin/profit math (dcCostRollup in DealCheckOverlay.jsx) reads this instead of the
-            system total whenever it's set, so cost/margin reflect the real deal, not the list price. */}
+        {/* Negotiated deal amount — what the client is actually being booked at, captured before sale
+            when it differs from the system-generated estimate above. Deal Check's own margin/profit
+            math (dcCostRollup in DealCheckOverlay.jsx) reads this instead of the system total whenever
+            it's set. Locked once the deal is booked — this is a pre-sale negotiation capture, not
+            something to keep revising against an already-confirmed booking. */}
         <div style={{marginTop:14,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
           <label style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>Negotiated deal amount</label>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -2488,15 +2501,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               type="number"
               min={0}
               value={negDraft}
+              disabled={isBooked}
               onChange={e => setNegDraft(e.target.value)}
               onBlur={commitNegotiatedAmount}
               onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
               placeholder={pricingReady ? String(Math.round(eventGrandTotal)) : "—"}
-              style={{width:150,padding:"6px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,fontWeight:600,textAlign:"center",outline:"none"}}
+              style={{width:150,padding:"6px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:isBooked?"rgba(255,255,255,0.04)":"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",opacity:isBooked?0.6:1,cursor:isBooked?"not-allowed":"text"}}
             />
           </div>
-          {activeClient?.negotiatedAmount > 0 && <span style={{fontSize:10.5,color:"#a5b4fc"}}>Deal Check's cost & margin use this instead of the system estimate</span>}
         </div>
+          </>;
+        })()}
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
             rather than a full-width bar above the panel. */}
         <div className="sh-te-cta" style={{marginTop:12}}>
