@@ -108,6 +108,23 @@ export default function StudioEventInfo({ ctx }) {
   // maintenance when the chrome above changes.
   // No feedback loop: this view's height does not affect where it starts, so the measurement is
   // stable the moment it is applied. The equality guard makes that explicit anyway.
+  // And then enforce it, rather than relying on the arithmetic above landing exactly.
+  // This view's whole design is "the page does not scroll — only the form column does" (see the
+  // .ei-split comment in the stylesheet). The height maths gets the layout right, but the shell
+  // around it carries minHeight:100vh (S.app), so any sub-pixel or late-loading overshoot shows up
+  // as a second, full-height document scrollbar beside the column's own. Locking the body while
+  // this view is mounted makes the stated intent true by construction instead of by luck.
+  // Nothing can be stranded by it: the form column scrolls internally, and the header above is
+  // pinned at the top anyway. Restored on unmount, so every other page scrolls normally.
+  // The `overflow` shorthand, NOT overflowY — matching DealCheckOverlay, StudioSummary and LazyYT,
+  // which all save/restore the shorthand. Mixing the two breaks nesting: if one of those opened over
+  // this view it would read the shorthand (which returns "" when only overflowY is set), then
+  // restore "" on close and silently clear this lock. Same property in, same property out.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
   const eiSplitRef = useRef(null);
   const [eiHdrH, setEiHdrH] = useState(0);
   useEffect(() => {
@@ -118,7 +135,11 @@ export default function StudioEventInfo({ ctx }) {
       if (!el) return;
       // + scrollY so this is the offset from the DOCUMENT top, correct even on the first pass while
       // the page is still (wrongly) scrolled.
-      const next = Math.max(0, Math.round(el.getBoundingClientRect().top + window.scrollY));
+      // CEIL, not round. The header's height is routinely fractional (95.4px), and rounding DOWN
+      // leaves the split a fraction too tall — which is all Chrome needs to show a full document
+      // scrollbar. Ceiling can only ever cost a sub-pixel of height, which is invisible; rounding
+      // short costs you the entire bug back.
+      const next = Math.max(0, Math.ceil(el.getBoundingClientRect().top + window.scrollY));
       setEiHdrH((prev) => (prev === next ? prev : next));
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
