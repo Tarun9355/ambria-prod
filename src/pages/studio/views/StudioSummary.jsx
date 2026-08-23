@@ -249,6 +249,18 @@ export default function StudioSummary({ ctx }) {
     setStep, setActiveClientId, startNewDeal, isFnSwitching,
   } = ctx;
 
+  // Negotiated deal amount — a plain, infrequently-edited number, not a field worth threading
+  // through the giant 1.5s-debounced autosave alongside every Build edit. Local draft state,
+  // resynced whenever the active client changes; persisted to the ledger row on blur, not per
+  // keystroke (a per-keystroke Supabase write for a 6-7 digit number is needless network chatter).
+  const [negDraft, setNegDraft] = useState(activeClient?.negotiatedAmount ?? "");
+  useEffect(() => { setNegDraft(activeClient?.negotiatedAmount ?? ""); }, [activeClientId]);
+  const commitNegotiatedAmount = () => {
+    const num = negDraft === "" ? null : Math.max(0, Number(negDraft) || 0);
+    if (num === (activeClient?.negotiatedAmount ?? null)) return; // no-op — don't write an unchanged row
+    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, negotiatedAmount: num } : c));
+  };
+
   // ═══ THE DECK THIS DEAL ALREADY HAS ═══
   // canvaEditUrl lived in component state alone, so the link died on a reload, on closing the
   // preview, or on switching deal and back — and the button dropped to "Canva", offering to build a
@@ -2464,6 +2476,27 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           </div>
           <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:"rgba(255,255,255,0.10)",color:"#E8CF9A"}}>Loading rates…</div>
         </>}
+        {/* Negotiated deal amount — what the client is actually being booked at, captured before
+            (or at) sale when it differs from the system-generated estimate above. Deal Check's own
+            margin/profit math (dcCostRollup in DealCheckOverlay.jsx) reads this instead of the
+            system total whenever it's set, so cost/margin reflect the real deal, not the list price. */}
+        <div style={{marginTop:14,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+          <label style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>Negotiated deal amount</label>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:15,color:"#E8CF9A",fontWeight:700}}>₹</span>
+            <input
+              type="number"
+              min={0}
+              value={negDraft}
+              onChange={e => setNegDraft(e.target.value)}
+              onBlur={commitNegotiatedAmount}
+              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              placeholder={pricingReady ? String(Math.round(eventGrandTotal)) : "—"}
+              style={{width:150,padding:"6px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,fontWeight:600,textAlign:"center",outline:"none"}}
+            />
+          </div>
+          {activeClient?.negotiatedAmount > 0 && <span style={{fontSize:10.5,color:"#a5b4fc"}}>Deal Check's cost & margin use this instead of the system estimate</span>}
+        </div>
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
             rather than a full-width bar above the panel. */}
         <div className="sh-te-cta" style={{marginTop:12}}>

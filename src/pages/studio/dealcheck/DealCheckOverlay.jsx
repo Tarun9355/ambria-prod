@@ -837,8 +837,16 @@ export default function DealCheckOverlay({ ctx }) {
           const bufferCost = Math.round((hasActuals ? baseActual : base) * 0.03);
           const grand = base + Math.round(base * 0.05) + Math.round(base * 0.03);
           const grandActual = baseActual + gyvFixed + bufferCost;
+          // The negotiated amount (captured on Summary before/at sale — see StudioSummary.jsx) is
+          // what the client is ACTUALLY being booked at. Cost/margin here mean nothing measured
+          // against the system's list-price estimate once a deal has been discounted or upsold in
+          // negotiation — every margin figure in Deal Check should reflect the real deal.
           let clientRevenue = 0;
-          try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
+          if (Number(cli?.negotiatedAmount) > 0) {
+            clientRevenue = Number(cli.negotiatedAmount);
+          } else {
+            try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
+          }
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
           return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
@@ -2583,8 +2591,15 @@ export default function DealCheckOverlay({ ctx }) {
 
                       {/* Net Profit / Margin */}
                       {(()=>{
+                        // Same negotiated-amount override as dcCostRollup above (this panel recomputes
+                        // clientRevenue locally rather than reusing the outer one, so it needs the same
+                        // override applied here too).
                         let clientRevenue = 0;
-                        try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
+                        if (Number(cli?.negotiatedAmount) > 0) {
+                          clientRevenue = Number(cli.negotiatedAmount);
+                        } else {
+                          try { fns.forEach(fn => { clientRevenue += calcFunctionCost(fn).grand; }); } catch {}
+                        }
                         const netProfit = clientRevenue - grandWithOverheads;
                         const profitPct = clientRevenue > 0 ? Math.round((netProfit / clientRevenue) * 100) : 0;
                         const maxDiscountPct = clientRevenue > 0 ? Math.round((netProfit / clientRevenue) * 100) : 0;
@@ -2598,7 +2613,7 @@ export default function DealCheckOverlay({ ctx }) {
                             </div>
                             <div style={{display:"flex",flexDirection:"column"}}>
                               <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}22`,fontSize:13.5}}>
-                                <span style={{color:"#1A1A2E"}}>Client Quote <span style={{fontSize:12,opacity:0.7}}>(from Build screen)</span></span>
+                                <span style={{color:"#1A1A2E"}}>Client Quote <span style={{fontSize:12,opacity:0.7}}>{Number(cli?.negotiatedAmount) > 0 ? "(negotiated)" : "(from Build screen)"}</span></span>
                                 <span style={{color:"#1A1A2E",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmt(clientRevenue)}</span>
                               </div>
                               <div style={{display:"flex",justifyContent:"space-between",padding:"10px 14px",borderTop:`1px solid ${border}22`,fontSize:13.5}}>
