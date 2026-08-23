@@ -665,11 +665,24 @@ export default function StudioBuild({ ctx }) {
   // Demand for the event date, derived once. The header chip and the date banner's tint both read
   // it, so they cannot drift apart. isLow is deliberately absent: a client should never be told the
   // date is quiet.
+  // BUG-8. THE ACTIVE FUNCTION'S date, not the deal's. `clientDate` only ever holds Function 1's
+  // date, so on a multi-function event everything below was describing Function 1 while you were
+  // looking at Function 2 — the sidebar's date line, and these demand warnings (Saya day,
+  // competition day, other bookings) which are date-specific and were therefore warning about the
+  // wrong day entirely.
+  // activeFnMeta.date is fully reactive and already falls back to clientDate for Function 1, so this
+  // is correct for every function. Same `activeFnMeta?.date || clientDate` form the shortfall lookup
+  // in this file already uses. Derived once here so the three places that need it cannot drift apart
+  // again — which is exactly how the sidebar ended up with the right venue and the wrong date on
+  // adjacent lines.
+  // Pricing was never affected: collectAllFunctionData resolves per-function dates independently,
+  // which is why the money was right while the panel lied about which day it was for.
+  const fnDate = activeFnMeta?.date || clientDate;
   const dateDemand = (() => {
-    if (!clientDate) return null;
-    const dt = dateTypes[clientDate];
-    const booked = clientLedger.filter(c => c.eventDate === clientDate && c.status === "booked").length;
-    const ongoing = clientLedger.filter(c => c.eventDate === clientDate && c.status === "ongoing" && c.id !== activeClientId).length;
+    if (!fnDate) return null;
+    const dt = dateTypes[fnDate];
+    const booked = clientLedger.filter(c => c.eventDate === fnDate && c.status === "booked").length;
+    const ongoing = clientLedger.filter(c => c.eventDate === fnDate && c.status === "ongoing" && c.id !== activeClientId).length;
     const isHigh = booked >= 2 || dt === "saya";
     return { dt, booked, ongoing, isHigh, isMod: !isHigh && booked === 1 };
   })();
@@ -1134,7 +1147,9 @@ export default function StudioBuild({ ctx }) {
     if (!it) return null;
     const fns = collectAllFunctionData ? collectAllFunctionData() : [];
     const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
-    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, activeFnMeta?.date || clientDate);
+    // fnDate — the same value, previously spelled out inline here. This call site already had it
+    // right; sharing the one derived constant is what stops the next one getting it wrong.
+    const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate);
     if (usedElsewhere <= 0) return null;
     const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);
@@ -2209,12 +2224,14 @@ undefined
                       work, so in the panel it was a number with nothing to do. */}
                   <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",rowGap:9}}>
                     {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}`)}
-                    {clientDate && row(<IconCalendar size={14}/>, new Date(clientDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
+                    {/* fnDate, matching the venue/type line directly above — that one already used
+                        activeFnMeta and this one didn't, which is the whole bug. */}
+                    {fnDate && row(<IconCalendar size={14}/>, new Date(fnDate+"T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}))}
                   </div>
                   {dd?.isHigh && row(<IconAlert size={14}/>, "High demand", "#F87171")}
                   {dd?.isMod && row(<IconAlert size={14}/>, "Moderate demand", "#FBBF24")}
                   {(()=>{
-                    if(!clientDate||!dd) return null;
+                    if(!fnDate||!dd) return null;
                     const {dt,booked,ongoing}=dd;
                     const dtLabel=dt==="saya"?"Saya Day":dt==="competition"?"Competition Day":"";
                     return <>
