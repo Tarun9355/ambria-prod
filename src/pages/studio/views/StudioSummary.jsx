@@ -13,7 +13,7 @@
 import { useState, useEffect, useRef, Fragment } from "react";
 import { IconSparkle, IconExcelMark, IconCanvaMark, IconEye, IconRepeat } from "../../../components/icons.jsx";
 import { LOGO_ASSET, logoCrop } from "../../../lib/studio/brand.js";
-import { getCat, carpetPricingFor } from "../../../lib/studio/taxonomy";
+import { getCat, carpetPricingFor, trussRateFor, trussBaseArea } from "../../../lib/studio/taxonomy";
 import { makeDeleteClient } from "../../../lib/studio/clientDelete";
 import { swatchHexFor, nearestColourName } from "../../../lib/studio/colours";
 import { paletteFromPhotos } from "../../../lib/studio/photoPalette";
@@ -236,7 +236,9 @@ export default function StudioSummary({ ctx }) {
     // pricing helpers
     getElPriceForFn, transportCalc,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — for the carpet label below
-    imsPrintMaterials, imsCarpetMaterials,
+    // imsTrussRates joins the other two IMS rate tables here so the truss caption below can quote
+    // the real configured rate instead of a hardcoded one — see BUG-9.
+    imsPrintMaterials, imsCarpetMaterials, imsTrussRates,
     // Inventory (per-item photos for the MOODBOARD/zone-visual slides' reference grid) + colour/
     // palette catalogues (moodboard swatches, resolved from each function's picked palette name)
     imsInventory, imsColourCatalogue, imsPaletteCatalogue,
@@ -2649,7 +2651,27 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                           </div>
                           {(eb.zl.total>0||eb.useElementCard) && (
                             <div style={{padding:"0 20px 8px 48px"}}>
-                              {eb.zl.truss>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🔩 Truss ({eb.zc?.trT==="box"?"Box ₹50":"U ₹30"}/sqft)</span><span style={{fontWeight:600}}>{fmt(eb.zl.truss)}</span></div>}
+                              {eb.zl.truss>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🔩 Truss{(()=>{
+                                /* BUG-9. This read `trT==="box"?"Box ₹50":"U ₹30"` — a hardcoded
+                                   literal, not a rate lookup. ₹50/₹30 are the factory
+                                   DEFAULT_TRUSS_RATES seeds, so the caption showed those whatever
+                                   IMS was actually configured to (₹35, in the reported case). The
+                                   money was always right — eb.zl.truss comes from the real pricing
+                                   engine — only this text lied about how it got there.
+                                   Two corrections, not one: the rate now comes from trussRateFor
+                                   against live imsTrussRates, AND the Box/U label comes from
+                                   trussBaseArea rather than the trT toggle. Build uses trussBaseArea
+                                   for exactly this reason — a "Box" with only two dimensions filled
+                                   is physically a Single U and is PRICED as one, so trusting the
+                                   toggle could mislabel the shape as well as the rate.
+                                   Renders bare "🔩 Truss" if the shape has no usable dimensions,
+                                   rather than inventing a number. */
+                                const zc=eb.zc; if(!zc) return null;
+                                const base=trussBaseArea(zc); if(!base?.area) return null;
+                                const r=trussRateFor(base.mode==="box"?"box":"singleU",zc.trussMaterial,zc.drapeDensity,imsTrussRates);
+                                if(!r?.rate) return null;
+                                return ` (${base.mode==="box"?"Box":"U"} ${fmt(r.rate)}/sqft)`;
+                              })()}</span><span style={{fontWeight:600}}>{fmt(eb.zl.truss)}</span></div>}
                               {eb.zl.masking>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🧱 {eb.zc?.mkT} masking ({eb.zc?.mkS} side{eb.zc?.mkS>1?"s":""})</span><span style={{fontWeight:600}}>{fmt(eb.zl.masking)}</span></div>}
                               {eb.zl.platform>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏗️ Platform ({eb.zc?.plH})</span><span style={{fontWeight:600}}>{fmt(eb.zl.platform)}</span></div>}
                               {eb.zl.carpet>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🟫 Carpet ({carpetPricingFor(eb.zc?.cpT, imsCarpetMaterials).label})</span><span style={{fontWeight:600}}>{fmt(eb.zl.carpet)}</span></div>}
