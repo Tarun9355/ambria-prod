@@ -2523,7 +2523,20 @@ export default function ManageLibrary({ ctx }) {
                   <input type="color" value={c.hex || "#ccc"} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], hex: e.target.value }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ width: 20, height: 20, border: "none", cursor: "pointer", borderRadius: 4, padding: 0 }} />
                   <input type="text" value={c.name || ""} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], name: e.target.value }; setImsColourCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ border: "none", background: "transparent", color: textP, fontSize: 12.5, fontWeight: 500, width: 104, outline: "none" }} />
                   <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-star" style={{ fontSize: 13, cursor: "pointer", borderRadius: 4, padding: "0 2px", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
-                  <span onClick={() => { const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-del" style={{ fontSize: 11.5, cursor: "pointer", color: "#E11D48", fontWeight: 700, borderRadius: 4, padding: "0 3px" }}>×</span>
+                  {/* Confirm first. This was a one-click permanent delete on a master record: the
+                      colour feeds the paint picker, the inventory base colour and the anchor list of
+                      every palette, and it saves immediately with no undo. The count of palettes
+                      using it is in the prompt, because that is the cost you cannot see from here. */}
+                  <span onClick={async () => {
+                    const used = imsPaletteCatalogue.filter(p => (p.anchorColours || []).includes(c.name)).length;
+                    if (!(await askConfirmAsync(`Delete the colour "${c.name || "Untitled"}"?`, {
+                      note: used > 0
+                        ? `It is an anchor colour in ${used} palette${used === 1 ? "" : "s"} and will be removed from ${used === 1 ? "it" : "them"}. It also feeds the paint picker and inventory base colour. This cannot be undone.`
+                        : "It feeds the paint picker and inventory base colour. This cannot be undone.",
+                      yesLabel: "Delete",
+                    }))) return;
+                    const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null);
+                  }} className="pal-del" style={{ fontSize: 11.5, cursor: "pointer", color: "#E11D48", fontWeight: 700, borderRadius: 4, padding: "0 3px" }}>×</span>
                 </div>
               ))}
             </div>
@@ -2552,7 +2565,15 @@ export default function ManageLibrary({ ctx }) {
               <div key={pi} className="pal-card" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 14.5, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
-                  <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} className="pal-del" style={{ fontSize: 13, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "3px 8px", borderRadius: 6 }}>🗑</span>
+                  {/* Same for a whole palette — salespeople pick these per function on Build, so
+                      deleting one takes away a choice from that screen and the library filter. */}
+                  <span onClick={async () => {
+                    if (!(await askConfirmAsync(`Delete the palette "${p.name || "Untitled"}"?`, {
+                      note: "Salespeople pick this per function on the Build screen, and it drives the library colour filter. This cannot be undone.",
+                      yesLabel: "Delete",
+                    }))) return;
+                    const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next);
+                  }} className="pal-del" style={{ fontSize: 13, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "3px 8px", borderRadius: 6 }}>🗑</span>
                 </div>
                 {/* A short label now — the instruction it used to carry is stated once in the panel
                     header. Small-and-wide so it reads as a label introducing the chips rather than
