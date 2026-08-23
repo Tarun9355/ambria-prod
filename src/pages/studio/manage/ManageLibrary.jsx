@@ -12,7 +12,7 @@ import { logFieldCorrections } from "../../../lib/studio/tagFeedback";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import { IconCamera, IconPlay, IconClipboardCheck, IconPalette, IconSliders, IconChevron,
   IconCheck, IconFactory, IconCalendar, IconWall, IconCrown, IconSparkle, IconBulb, IconRepeat,
-  IconFlower, IconBox } from "../../../components/icons.jsx";
+  IconFlower, IconBox, IconAlert, IconStar, IconNote } from "../../../components/icons.jsx";
 
 // ══ THE PAGE'S GROUND ══
 // The same artwork Deal Check uses, and the same glob-not-import reasoning as every other background
@@ -1866,62 +1866,122 @@ export default function ManageLibrary({ ctx }) {
     base.forEach(e => { const u = e.user || "—"; const b = byUser[u] || (byUser[u] = { total: 0, photo: 0, video: 0 }); b.total++; b[kindOf(e)]++; });
     const userRows = Object.entries(byUser).sort((a, b) => b[1].total - a[1].total);
     const fmtTs = (ts) => new Date(ts).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    // ── THE FOUR STAT CARDS ──
+    // The reference puts Verified / Needs review / Untagged / Build added here. Those are LIBRARY
+    // counts (libPage.counts), and two things are wrong with showing them on this tab: they are
+    // scoped to the Images tab's filters and search, so a filter left on over there would silently
+    // narrow them here where no filter UI is visible — and they say nothing about contributions,
+    // which is what this page is for. Same four-card treatment, numbers that mean something on the
+    // page they are on: they answer "how much work, by how many people, on what".
+    const stats = [
+      [<IconClipboardCheck size={16} />, "Contributions", base.length, "items in this period", "#7C3AED"],
+      [<IconStar size={16} />, "People", userRows.length, userRows.length === 1 ? "contributor" : "contributors", "#059669"],
+      [<IconCamera size={16} />, "Photos", base.filter(e => kindOf(e) === "photo").length, "photos corrected", "#0EA5E9"],
+      [<IconPlay size={16} />, "Videos", base.filter(e => kindOf(e) === "video").length, "videos verified", "#D97706"],
+    ];
+    const statCard = ([icon, label, value, sub, col]) => (
+      <div key={label} className="ml-tile" style={{ padding: "13px 15px", borderRadius: 13, border: "1px solid transparent", display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: `${col}18`, color: col }}>{icon}</span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS }}>{label}</div>
+          <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: textP, fontVariantNumeric: "tabular-nums", lineHeight: 1.15 }}>{value}</div>
+          <div style={{ fontSize: 10, color: textS }}>{sub}</div>
+        </div>
+      </div>
+    );
+    // A labelled group of pills. The filters were one undifferentiated row before — two unrelated
+    // choices separated by a hairline, which is not enough to say they are different questions.
+    const pillGroup = (label, opts, cur, set) => (
+      <div>
+        <div className="ml-rail-h" style={{ color: textS, marginBottom: 6 }}>{label}</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {opts.map(([k, l]) => <span key={k} onClick={() => set(k)} style={{ padding: "6px 14px", fontSize: 11.5, borderRadius: 999, cursor: "pointer", whiteSpace: "nowrap", fontWeight: cur === k ? 700 : 500, border: `1px solid ${cur === k ? accent : border}`, background: cur === k ? accent : (isDark ? "rgba(255,255,255,0.04)" : "#fff"), color: cur === k ? "#fff" : textS, transition: "background .13s ease" }}>{l}</span>)}
+        </div>
+      </div>
+    );
+    const panel = (icon, title, right, body) => (
+      <div className="ml-glass" style={{ borderRadius: 14, padding: "14px 16px 16px", alignSelf: "start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span style={{ display: "inline-flex", color: accent }}>{icon}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: textP }}>{title}</span>
+          {right}
+        </div>
+        {body}
+      </div>
+    );
     return (
       <div>
-        <div style={{ fontSize: 12, color: textS, marginBottom: 10 }}>Every photo correction ("Save correction to master" / "Save & Verify") and video tag verification is logged here — see who corrected how many photos and videos, and when. Click a person to see only their work; search by name; switch Photos/Videos.</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-          {[["today", "Today"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["all", "All time"]].map(([k, l]) => (
-            <span key={k} onClick={() => setCorrRange(k)} style={{ padding: "4px 12px", fontSize: 11, borderRadius: 14, cursor: "pointer", fontWeight: corrRange === k ? 700 : 500, border: `1px solid ${corrRange === k ? accent : border}`, background: corrRange === k ? `${accent}18` : "transparent", color: corrRange === k ? accent : textS }}>{l}</span>
-          ))}
-          <span style={{ width: 1, height: 18, background: border, margin: "0 2px" }} />
-          {[["all", "All"], ["photo", "📷 Photos"], ["video", "🎬 Videos"]].map(([k, l]) => (
-            <span key={k} onClick={() => setCorrKind(k)} style={{ padding: "4px 12px", fontSize: 11, borderRadius: 14, cursor: "pointer", fontWeight: corrKind === k ? 700 : 500, border: `1px solid ${corrKind === k ? accent : border}`, background: corrKind === k ? `${accent}18` : "transparent", color: corrKind === k ? accent : textS }}>{l}</span>
-          ))}
+        {/* The explainer as a banner rather than a grey paragraph. It is the only thing telling you
+            what counts as a "contribution", so it earns the tint. */}
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "11px 14px", borderRadius: 12, marginBottom: 16, background: `${accent}0F`, border: `1px solid ${accent}2E` }}>
+          <span style={{ display: "inline-flex", flexShrink: 0, color: accent, marginTop: 1 }}><IconAlert size={14} /></span>
+          <div style={{ fontSize: 11.5, color: textS, lineHeight: 1.5 }}>
+            Every photo correction (&quot;Save correction to master&quot; / &quot;Save &amp; Verify&quot;) and video tag verification is logged here — who corrected how many photos and videos, and when. Click a person to see only their work.
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-          <input value={corrSearch} onChange={e => setCorrSearch(e.target.value)} placeholder="🔍 Search by person or photo/video name…" style={{ ...S.input, fontSize: 12, marginBottom: 0, flex: 1, minWidth: 220 }} />
-          <span style={{ fontSize: 11, color: textS }}>{base.length} item{base.length === 1 ? "" : "s"}{corrUser ? ` · ${corrUser}` : ""}</span>
-          {(corrUser || corrSearch) && <span onClick={() => { setCorrUser(""); setCorrSearch(""); }} style={{ fontSize: 10, color: "#E11D48", cursor: "pointer" }}>✕ clear</span>}
+        <div style={{ display: "flex", gap: 22, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 16 }}>
+          {/* No Custom range: the reference shows one, but it needs a date picker and a second range
+              state, which is new functionality rather than a new look. The four presets are the ones
+              that exist. */}
+          {pillGroup("Time period", [["today", "Today"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["all", "All time"]], corrRange, setCorrRange)}
+          {pillGroup("Content type", [["all", "All"], ["photo", "Photos"], ["video", "Videos"]], corrKind, setCorrKind)}
+          <div style={{ flex: 1, minWidth: 200, display: "flex", alignItems: "center", gap: 8 }}>
+            <input value={corrSearch} onChange={e => setCorrSearch(e.target.value)} placeholder="Search by person or photo/video name…" style={{ ...S.input, fontSize: 12, marginBottom: 0, flex: 1, minWidth: 160 }} />
+            {(corrUser || corrSearch) && <span onClick={() => { setCorrUser(""); setCorrSearch(""); }} style={{ fontSize: 11, fontWeight: 600, color: "#E11D48", cursor: "pointer", whiteSpace: "nowrap" }}>Clear</span>}
+          </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 14 }}>
-          <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 14, alignSelf: "start" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>👥 By person</div>
-            {userRows.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>No contributions in this period yet.</div> :
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12, marginBottom: 16 }}>
+          {stats.map(statCard)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,340px) minmax(0,1fr)", gap: 14 }} className="cp-cols">
+          {/* No "View all" in this header, though the reference has one: clicking the highlighted
+              person already clears the selection, and the Clear beside the search clears both. A
+              third control for the same thing is a control to explain, not a shortcut. */}
+          {panel(<IconStar size={14} />, "By person",
+            <span style={{ marginLeft: "auto", fontSize: 10.5, color: textS, fontVariantNumeric: "tabular-nums" }}>{userRows.length}</span>,
+            <>
+            {userRows.length === 0 ? <div style={{ fontSize: 11.5, color: textS, padding: "10px 0" }}>No contributions in this period yet.</div> :
               userRows.map(([u, c], i) => (
-                <div key={u} onClick={() => setCorrUser(corrUser === u ? "" : u)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 8px", borderRadius: 8, cursor: "pointer", background: corrUser === u ? `${accent}14` : "transparent", borderBottom: `1px solid ${border}` }}>
-                  <span style={{ fontSize: 12, color: textP }}><span style={{ color: textS, marginRight: 6 }}>{i + 1}.</span>{u}</span>
-                  <span style={{ fontSize: 10, color: textS, display: "flex", gap: 6, alignItems: "baseline" }}>
-                    {c.photo > 0 && <span title="photos">📷 {c.photo}</span>}
-                    {c.video > 0 && <span title="videos">🎬 {c.video}</span>}
-                    <span style={{ fontSize: 14, fontWeight: 700, color: accent }}>{c.total}</span>
+                <div key={u} className="cp-row" onClick={() => setCorrUser(corrUser === u ? "" : u)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 9px", borderRadius: 9, cursor: "pointer", background: corrUser === u ? `${accent}14` : "transparent" }}>
+                  <span style={{ fontSize: 12.5, color: textP, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><span style={{ color: textS, marginRight: 7, fontVariantNumeric: "tabular-nums" }}>{i + 1}.</span>{u}</span>
+                  <span style={{ fontSize: 10.5, color: textS, display: "flex", gap: 8, alignItems: "baseline", flexShrink: 0 }}>
+                    {c.photo > 0 && <span title="photos" style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><IconCamera size={11} />{c.photo}</span>}
+                    {c.video > 0 && <span title="videos" style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><IconPlay size={11} />{c.video}</span>}
+                    <span style={{ fontSize: 15, fontWeight: 800, color: accent, fontVariantNumeric: "tabular-nums" }}>{c.total}</span>
                   </span>
                 </div>
               ))}
-          </div>
-          <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: accent, marginBottom: 8 }}>📝 Recent{corrUser ? ` — ${corrUser}` : ""}</div>
+            {/* Legend, as in the reference. The two glyphs in every row are otherwise unexplained. */}
+            {userRows.length > 0 && <div style={{ display: "flex", gap: 14, marginTop: 10, paddingTop: 10, borderTop: `1px solid ${border}`, fontSize: 10, color: textS }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconCamera size={11} />Photos</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconPlay size={11} />Videos</span>
+            </div>}
+            </>)}
+          {panel(<IconNote size={14} />, corrUser ? `Recent — ${corrUser}` : "Recent contributions",
+            <span style={{ marginLeft: "auto", fontSize: 10.5, color: textS, fontVariantNumeric: "tabular-nums" }}>{inRange.length}</span>,
             <div style={{ maxHeight: 460, overflowY: "auto" }}>
-              {inRange.length === 0 ? <div style={{ fontSize: 11, color: textS, padding: "10px 0" }}>Nothing matches.</div> :
+              {inRange.length === 0 ? <div style={{ fontSize: 11.5, color: textS, padding: "10px 0" }}>Nothing matches.</div> :
                 inRange.slice(0, 400).map(e => {
                   const isVid = kindOf(e) === "video";
                   const thumb = isVid ? (allVideos.find(v => v.id === e.photoId)?.thumb) : (libItems.find(i => i.id === e.photoId)?.url);
                   return (
-                  <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${border}` }}>
-                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                  <div key={e.id} className="cp-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "8px 9px", borderRadius: 9 }}>
+                    <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10 }}>
+                      {/* The kind glyph sits in a tinted tile when there is no thumbnail, so a row
+                          without one keeps the same left edge as a row with one. */}
                       {thumb
-                        ? <img src={thumb} alt="" loading="lazy" style={{ width: 40, height: 28, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} onError={ev => { ev.target.style.display = "none"; }} />
-                        : <span style={{ fontSize: 14, width: 40, textAlign: "center", flexShrink: 0 }}>{isVid ? "🎬" : "📷"}</span>}
+                        ? <img src={thumb} alt="" loading="lazy" style={{ width: 42, height: 30, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} onError={ev => { ev.target.style.display = "none"; }} />
+                        : <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 42, height: 30, borderRadius: 6, flexShrink: 0, background: `${accent}14`, color: accent }}>{isVid ? <IconPlay size={13} /> : <IconCamera size={13} />}</span>}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{isVid ? "🎬 " : ""}{e.photoName || e.photoId || "(item)"}</div>
-                        <div style={{ fontSize: 9, color: textS }}>{e.user} · {e.source === "build" ? "build screen" : e.source === "video" ? "video" : "library"}</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: textP, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.photoName || e.photoId || "(item)"}</div>
+                        <div style={{ fontSize: 10, color: textS }}>{e.user} · {e.source === "build" ? "build screen" : e.source === "video" ? "video" : "library"}</div>
                       </div>
                     </div>
-                    <span style={{ fontSize: 9, color: textS, whiteSpace: "nowrap" }}>{fmtTs(e.ts)}</span>
+                    <span style={{ fontSize: 10, color: textS, whiteSpace: "nowrap", flexShrink: 0 }}>{fmtTs(e.ts)}</span>
                   </div>
                   );
                 })}
-            </div>
-          </div>
+            </div>)}
         </div>
       </div>
     );
@@ -2017,6 +2077,12 @@ export default function ManageLibrary({ ctx }) {
    height; break-inside:avoid is what stops one being sliced across a column boundary.
    The video/summary pair above it goes one-column when there is no longer room for a 700px player
    beside a readable summary. */
+/* Contributions: the two panels go one-column when the person list can no longer sit beside a
+   readable feed. cp-row is the hover for both lists' rows — they are clickable in one and scannable
+   in the other, and a row you can point at should say so. */
+@media (max-width:980px){.cp-cols{grid-template-columns:minmax(0,1fr) !important}}
+.cp-row{transition:background .13s ease}
+.cp-row:hover{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.04)"}}
 .vt-cols{column-count:3;column-gap:14px}
 .vt-cols > div{break-inside:avoid}
 @media (max-width:1250px){.vt-cols{column-count:2}}
