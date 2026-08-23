@@ -1312,6 +1312,13 @@ export default function StudioApp() {
   // ═══ CUSTOM VENUE STATE (persisted) ═══
   const [customInhouse, setCustomInhouse] = useState([]);
   const [customOutdoor, setCustomOutdoor] = useState([]);
+  // In-house properties (id/name/manager/icon/commissionPct) — IMS-owned (VenuesEditor.jsx), Studio
+  // only reads this to resolve commission % in Deal Check. Kept in a ref (below) purely so saveVenues
+  // can round-trip it unchanged whenever Studio itself writes this row (auto-persisting a brand-new
+  // custom outdoor venue) — Studio never edits a property's own fields.
+  const [customProperties, setCustomProperties] = useState([]);
+  const customPropertiesRef = useRef([]);
+  useEffect(() => { customPropertiesRef.current = customProperties; }, [customProperties]);
 
   // ═══ STUDIO STATE ═══
   const [step, setStep] = useState(0);
@@ -2386,17 +2393,17 @@ export default function StudioApp() {
       // Venues
       try {
         const v = await kvGet(STORAGE_KEY + "-venues");
-        let inhouseArr = [], outdoorArr = [];
-        if (v != null) { const vd = parse(v); if (vd && Array.isArray(vd.inhouse)) inhouseArr = vd.inhouse; if (vd && Array.isArray(vd.outdoor)) outdoorArr = vd.outdoor; }
+        let inhouseArr = [], outdoorArr = [], propertiesArr = [];
+        if (v != null) { const vd = parse(v); if (vd && Array.isArray(vd.inhouse)) inhouseArr = vd.inhouse; if (vd && Array.isArray(vd.outdoor)) outdoorArr = vd.outdoor; if (vd && Array.isArray(vd.properties)) propertiesArr = vd.properties; }
         const migFlag = await kvGet(VENUE_MIG_SK);
         if (!migFlag) {
           LEGACY_VENUE_SEED.inhouse.forEach(s => { if (!inhouseArr.some(x => x.name === s.name)) inhouseArr.push(s); });
           LEGACY_VENUE_SEED.outdoor.forEach(s => { if (!outdoorArr.some(x => x.name === s.name)) outdoorArr.push(s); });
-          const payload = JSON.stringify({ inhouse: inhouseArr, outdoor: outdoorArr });
+          const payload = JSON.stringify({ inhouse: inhouseArr, outdoor: outdoorArr, properties: propertiesArr });
           reliableSave(STORAGE_KEY + "-venues", payload, "Venues").catch(() => {});
           kvSet(VENUE_MIG_SK, "1").catch(() => {});
         }
-        if (!cancelled) { setCustomInhouse(inhouseArr); setCustomOutdoor(outdoorArr); }
+        if (!cancelled) { setCustomInhouse(inhouseArr); setCustomOutdoor(outdoorArr); setCustomProperties(propertiesArr); }
       } catch {}
       // Rate Card — now row-per-item in the `rate_card` TABLE (off the settings blob; shared with IMS).
       let loadedRcItems = null;
@@ -2633,7 +2640,10 @@ export default function StudioApp() {
   // direct optimistic set + reliableSave under the kv shim, per the persistence transform.)
   // ═══════════════════════════════════════════════════════════════
   const save = useCallback(async (evs) => { setEvents(evs); await reliableSave(STORAGE_KEY, JSON.stringify(evs), "Events"); }, []);
-  const saveVenues = useCallback(async (ih, od) => { setCustomInhouse(ih); setCustomOutdoor(od); await reliableSave(STORAGE_KEY + "-venues", JSON.stringify({ inhouse: ih, outdoor: od }), "Venues"); }, []);
+  // properties[] (IMS-owned — id/name/manager/icon/commissionPct) is never touched here; it's
+  // round-tripped from customPropertiesRef so a Studio-side write (e.g. auto-persisting a brand-new
+  // custom outdoor venue) can't silently wipe out IMS's property catalogue in this same settings row.
+  const saveVenues = useCallback(async (ih, od) => { setCustomInhouse(ih); setCustomOutdoor(od); await reliableSave(STORAGE_KEY + "-venues", JSON.stringify({ inhouse: ih, outdoor: od, properties: customPropertiesRef.current || [] }), "Venues"); }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
   const venueParents = useMemo(() => ({
@@ -7961,8 +7971,18 @@ export default function StudioApp() {
       let tv = trussMain?.data;
       for (let i = 0; i < 2; i++) { if (typeof tv === "string") { try { tv = JSON.parse(tv); } catch {} } }
       if (tv && typeof tv === "object" && tv.pillars) trussInv = tv;
+      // Venue commission % (IMS → Admin → Master Data → Venues) — one row per in-house PROPERTY
+      // (covers all its sub-venues, keyed by parent name via venueParents) and one per outdoor
+      // venue, keyed by name directly. Same settings row Studio already reads for customInhouse/
+      // customOutdoor (STORAGE_KEY + "-venues"), already included in this unconditional `settings`
+      // fetch — no extra round trip.
+      let venuesRaw = s[STORAGE_KEY + "-venues"];
+      if (typeof venuesRaw === "string") { try { venuesRaw = JSON.parse(venuesRaw); } catch { venuesRaw = null; } }
+      const venueCommission = {};
+      (Array.isArray(venuesRaw?.properties) ? venuesRaw.properties : []).forEach(p => { if (p?.name && typeof p.commissionPct === "number") venueCommission[p.name] = p.commissionPct; });
+      (Array.isArray(venuesRaw?.outdoor) ? venuesRaw.outdoor : []).forEach(v => { if (v?.name && typeof v.commissionPct === "number") venueCommission[v.name] = v.commissionPct; });
 
-      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
+      setDealCheckData({ inventory, blocksByDate, fetchedDates: uniqueDates, flowerPatterns, mandiCatalogue, mandiPriceMultipliers, seasonMap, electricianProductivity, artificialMixRatePerKg, artificialFlowerRatePerKg, artificialFlowerBunchesPerKg, artificialGreenRatePerKg, artificialGreenBunchesPerKg, flowerRecipeSubcats, dihariSchemes, defaultWindowsByPhase, labourTiers, venueMinLabour, defaultMinLabour, eventTypeMultipliers, eventTimingMultipliers, sayaMultiplier, heavyElementRanges, fabricBangaliRanges, trussLabourRanges, fabricRftPerWorker, vendors, trussInv, colourCatalogue, paletteCatalogue, paintableCategories, defaultPaintCostPerItem, carpetFreshMarkup, defaultStudioMarkup: Number(s.defaultStudioMarkup ?? 3) || 3, fixedVenues: Array.isArray(s.fixedVenues) ? s.fixedVenues : [], fixedVenueSubcatDiscount: (s.fixedVenueSubcatDiscount && typeof s.fixedVenueSubcatDiscount === "object") ? s.fixedVenueSubcatDiscount : {}, venueParents, venueCommission, venueDumping: (s.venueDumping && typeof s.venueDumping === "object") ? s.venueDumping : {}, categoryDepartments: (catDeptMap && Object.keys(catDeptMap).length) ? catDeptMap : ((s.categoryDepartments && typeof s.categoryDepartments === "object") ? s.categoryDepartments : {}) });
       setDealCheckLoading(false);
       if (inventory.length === 0) {
         setDcAbortRef(null);

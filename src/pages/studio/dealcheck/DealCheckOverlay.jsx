@@ -55,6 +55,9 @@ export default function DealCheckOverlay({ ctx }) {
     return () => ro.disconnect();
   }, []);
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
+  // Commission tab — draft per venue key, committed on blur/Enter (same pattern as the
+  // negotiated-amount field on Summary), so an override doesn't write on every keystroke.
+  const [commDraft, setCommDraft] = useState({});
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
   const {
@@ -203,6 +206,7 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "power",     label: "Power",            icon: "⚡", live: true  },
           { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
+          { id: "commission",label: "Commission",       icon: "🤝", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
@@ -849,9 +853,41 @@ export default function DealCheckOverlay({ ctx }) {
           }
           const effGrand = hasActuals ? grandActual : grand;
           const profitPct = clientRevenue > 0 ? Math.round(((clientRevenue - effGrand) / clientRevenue) * 100) : 0;
+          // ═══ Commission — % of the deal amount set aside per venue (IMS → Admin → Master Data →
+          // Venues, one row per in-house property or outdoor venue). A booking spanning more than one
+          // venue splits clientRevenue across them by each venue's own share of the system cost
+          // (fns.length===1 just gets 100% of it, no proration needed). Salespeople can override the
+          // computed amount per venue (cli.commissionOverrides), same pattern as negotiatedAmount.
+          const venueCommissionRates = dealCheckData?.venueCommission || {};
+          const venueParentsForComm = dealCheckData?.venueParents || {};
+          const resolveCommVenue = (vn) => venueParentsForComm[vn] || vn;
+          let totalFnGrandForComm = 0;
+          const fnGrandByVenue = {};
+          fns.forEach(fn => {
+            const vKey = resolveCommVenue(fn.fnVenue || "");
+            if (!vKey) return;
+            let g = 0; try { g = calcFunctionCost(fn).grand; } catch {}
+            fnGrandByVenue[vKey] = (fnGrandByVenue[vKey] || 0) + g;
+            totalFnGrandForComm += g;
+          });
+          const commissionOverrides = cli?.commissionOverrides || {};
+          let commissionTotal = 0;
+          const venueKeys = Object.keys(fnGrandByVenue);
+          const commissionByVenue = venueKeys.map(vKey => {
+            const share = totalFnGrandForComm > 0 ? fnGrandByVenue[vKey] / totalFnGrandForComm : (venueKeys.length === 1 ? 1 : 0);
+            const revenueShare = clientRevenue * share;
+            const pct = Number(venueCommissionRates[vKey]) || 0;
+            const defaultAmt = Math.round(revenueShare * pct / 100);
+            const overrideVal = commissionOverrides[vKey];
+            const hasOverride = typeof overrideVal === "number" && isFinite(overrideVal);
+            const finalAmt = hasOverride ? overrideVal : defaultAmt;
+            commissionTotal += finalAmt;
+            return { venue: vKey, revenueShare, pct, defaultAmt, overrideVal: hasOverride ? overrideVal : null, finalAmt };
+          });
           return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
-            hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta };
+            hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
+            commissionByVenue, commissionTotal };
         })();
 
         // ── Build + auto-push the department snapshot to IMS whenever Deal Check is open (any tab),
@@ -2699,6 +2735,70 @@ export default function DealCheckOverlay({ ctx }) {
                           </div>
                         );
                       })()}
+                    </div>
+                  );
+                })() : dcActiveTab === "commission" ? (() => {
+                  // ═══ COMMISSION TAB — % of the deal amount set aside per venue, reads from shared
+                  // dcCostRollup. The % itself is IMS master data (Admin → Master Data → Venues);
+                  // the amount can be overridden per venue right here. ═══
+                  const { commissionByVenue, commissionTotal, clientRevenue } = dcCostRollup;
+                  const fmt2 = (n) => (n >= 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN"));
+                  const ovKey = (v) => `ov:${v}`;
+                  const commitOverride = (venue) => {
+                    const raw = commDraft[ovKey(venue)];
+                    if (raw === undefined) return;
+                    const n = raw.trim() === "" ? null : Number(raw);
+                    const cleared = raw.trim() === "" || !isFinite(n);
+                    const nextOverrides = { ...(cli?.commissionOverrides || {}) };
+                    if (cleared) delete nextOverrides[venue]; else nextOverrides[venue] = n;
+                    saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, commissionOverrides: nextOverrides } : c));
+                    setCommDraft(d => { const nd = { ...d }; delete nd[ovKey(venue)]; return nd; });
+                  };
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:16,padding:"0 4px"}}>
+                      <div style={{borderRadius:10,border:"1px solid rgba(99,102,241,0.25)",overflow:"hidden"}}>
+                        <div style={{padding:"10px 14px",background:"rgba(99,102,241,0.06)",fontSize:13,fontWeight:700,color:accent,letterSpacing:0.4,textTransform:"uppercase"}}>🤝 Venue Commission</div>
+                        {commissionByVenue.length === 0 ? (
+                          <div style={{padding:16,textAlign:"center",color:"#1A1A2E",fontSize:13}}>No venue set on any function yet — add one in Event Info / Build.</div>
+                        ) : (
+                          <div style={{display:"flex",flexDirection:"column"}}>
+                            {commissionByVenue.map((r, i) => {
+                              const draftVal = commDraft[ovKey(r.venue)];
+                              const displayVal = draftVal !== undefined ? draftVal : (r.overrideVal != null ? String(r.overrideVal) : "");
+                              return (
+                                <div key={i} style={{padding:"10px 14px",borderTop: i ? `1px solid ${border}22` : "none"}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13.5,marginBottom:6}}>
+                                    <span style={{color:"#1A1A2E",fontWeight:700}}>{r.venue}</span>
+                                    <span style={{fontSize:12,opacity:0.7,color:"#1A1A2E"}}>{r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " (venue's share)" : ""}</span>
+                                  </div>
+                                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                                    <span style={{fontSize:12,color:"#1A1A2E"}}>Commission amount {r.overrideVal != null && <span style={{color:"#F59E0B",fontWeight:600}}>(overridden — system default {fmt2(r.defaultAmt)})</span>}</span>
+                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                      <span style={{color:"#1A1A2E",opacity:0.6,fontSize:13}}>₹</span>
+                                      <input
+                                        type="number"
+                                        value={displayVal}
+                                        placeholder={String(Math.round(r.defaultAmt))}
+                                        onChange={(e) => setCommDraft(d => ({ ...d, [ovKey(r.venue)]: e.target.value }))}
+                                        onBlur={() => commitOverride(r.venue)}
+                                        onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+                                        style={{width:110,padding:"5px 8px",borderRadius:6,border:`1px solid ${border}`,fontSize:13,textAlign:"right",fontVariantNumeric:"tabular-nums"}}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            <div style={{display:"flex",justifyContent:"space-between",padding:"12px 14px",borderTop:`1px solid ${border}`,fontSize:15.5,fontWeight:800}}>
+                              <span style={{color:"#1A1A2E"}}>Total Commission</span>
+                              <span style={{color:"#7C3AED"}}>{fmt2(commissionTotal)}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{fontSize:12,color:"#1A1A2E",fontStyle:"italic",padding:"0 4px"}}>
+                        The % comes from IMS → Admin → Settings → Master Data → Venues, applied to {commissionByVenue.length > 1 ? "each venue's own share of" : ""} the deal amount ({fmt2(clientRevenue)}{Number(cli?.negotiatedAmount) > 0 ? ", negotiated" : ""}). Clear the box to go back to the system-computed amount.
+                      </div>
                     </div>
                   );
                 })() : dcActiveTab === "depts" ? (() => {

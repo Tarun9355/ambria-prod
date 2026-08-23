@@ -80,6 +80,10 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
   const [editing, setEditing] = useState(null); // { kind: "property"|"subvenue"|"outdoor", id, name }
   const [newOd, setNewOd] = useState({ name: "", empanelled: true });
   const [odSearch, setOdSearch] = useState("");
+  // Commission % — a draft per row (keyed "property:id" / "outdoor:name") so typing doesn't write
+  // on every keystroke; committed on blur/Enter, same pattern as every rename input on this screen.
+  const [commDraft, setCommDraft] = useState({});
+  const commKey = (kind, id) => `${kind}:${id}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -207,6 +211,32 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
     save({ ...venues, outdoor: venues.outdoor.filter((v) => v.name !== name) });
   };
 
+  // Commission % — one value per in-house PROPERTY (covers all its sub-venues) or per outdoor
+  // venue. Deal Check reads this to set aside that % of the deal amount as commission for
+  // whichever venue the booking is at; salespeople can still override the computed amount there.
+  const commitCommission = (kind, id) => {
+    const raw = commDraft[commKey(kind, id)];
+    if (raw === undefined) return;
+    const n = raw.trim() === "" ? undefined : Math.max(0, Math.min(100, Number(raw) || 0));
+    if (kind === "property") save({ ...venues, properties: venues.properties.map((p) => (p.id === id ? { ...p, commissionPct: n } : p)) });
+    else save({ ...venues, outdoor: venues.outdoor.map((v) => (v.name === id ? { ...v, commissionPct: n } : v)) });
+    setCommDraft((d) => { const nd = { ...d }; delete nd[commKey(kind, id)]; return nd; });
+  };
+  const CommissionInput = ({ kind, id, value }) => (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }} title="Commission % of deal amount set aside for this venue">
+      <input
+        type="number" min={0} max={100} step={0.5}
+        value={commDraft[commKey(kind, id)] ?? (value ?? "")}
+        onChange={(e) => setCommDraft((d) => ({ ...d, [commKey(kind, id)]: e.target.value }))}
+        onBlur={() => commitCommission(kind, id)}
+        onKeyDown={(e) => e.key === "Enter" && commitCommission(kind, id)}
+        placeholder="0"
+        className="border rounded px-1.5 py-0.5 text-[11px] w-12"
+      />
+      <span className="text-[10px] text-gray-400">% comm.</span>
+    </span>
+  );
+
   if (!venues) return <p className="text-sm text-gray-400 italic py-6">Loading venues…</p>;
 
   return (
@@ -215,7 +245,9 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
       <p className="text-xs text-gray-500 mb-4">
         Properties + their sub-venues (rooms/halls). This is the only place these — and outdoor venues, below —
         are added, renamed, or deleted; Studio's old "Venue Management" screen is gone. Renaming updates Fixed
-        Venues immediately, plus video tags, the transport tier, and library photo tags.
+        Venues immediately, plus video tags, the transport tier, and library photo tags. Each property/venue also
+        carries a commission % — Deal Check uses it to set aside that share of the deal amount as commission for
+        wherever the booking is held.
       </p>
 
       <div className="space-y-4 mb-5">
@@ -239,6 +271,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
                     <span className="font-semibold text-gray-900">{p.name}</span>
                     <span className="text-[10px] text-gray-400">{subs.length} sub-venue{subs.length === 1 ? "" : "s"}</span>
                     <button onClick={() => setEditing({ kind: "property", id: p.id, name: p.name })} className="text-xs text-indigo-600 ml-1" title="Rename">✏️</button>
+                    <CommissionInput kind="property" id={p.id} value={p.commissionPct} />
                     <button onClick={() => deleteProperty(p.id)} className="text-xs text-red-400 ml-auto" title="Delete">🗑️</button>
                   </>
                 )}
@@ -314,6 +347,7 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
               <span key={v.name} className="inline-flex items-center gap-1.5 bg-white border rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
                 {v.name}
                 <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-indigo-500" title="Rename">✏️</button>
+                <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} />
                 <button onClick={() => deleteOutdoorVenue(v.name)} className="text-red-400" title="Delete">✕</button>
               </span>
             );
@@ -343,7 +377,8 @@ export default function VenuesEditor({ settings, setSettings, showMsg }) {
             return (
               <div key={v.name} className="flex items-center justify-between px-3 py-2 border-b last:border-b-0">
                 <span className="text-xs text-gray-800">{v.name}</span>
-                <div className="flex gap-3">
+                <div className="flex items-center gap-3">
+                  <CommissionInput kind="outdoor" id={v.name} value={v.commissionPct} />
                   <button onClick={() => setEditing({ kind: "outdoor", id: v.name, name: v.name, empanelled: v.empanelled })} className="text-[11px] text-indigo-600">✏️ Edit</button>
                   <button onClick={() => deleteOutdoorVenue(v.name)} className="text-[11px] text-red-400">✕ Remove</button>
                 </div>
