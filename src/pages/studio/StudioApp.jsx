@@ -8108,6 +8108,43 @@ export default function StudioApp() {
     Object.values(requiredByFn).forEach((m) => Object.keys(m).forEach((id) => allItemIds.add(id)));
     Object.values(prevByFn).forEach((m) => Object.keys(m).forEach((id) => allItemIds.add(id)));
     if (allItemIds.size === 0) return;
+    const ids = [...allItemIds];
+
+    // Always resync functions.items, regardless of whether anything changed vs. our OWN diff cache
+    // (dcReservedInventory) below. That cache only tracks what THIS incremental path itself last
+    // wrote — it says nothing about whether functions.items (a completely separate table, synced
+    // only once at markSold by createProjectFromEO) actually matches reality. Gating this on
+    // `changed` meant a rerun with no new edits — e.g. just reopening Deal Check to retest — skipped
+    // this sync entirely, silently, even when functions.items had never been correct in the first
+    // place. Self-heals every run instead; the redundant no-op writes on an already-correct state
+    // cost nothing that matters.
+    try {
+      const { data: fnRows, error: fnErr } = await supabase.from("functions").select("*").contains("data", { eventOrderId: eo.id });
+      if (fnErr) throw fnErr;
+      fnsToProcess.forEach((fn, i) => {
+        const fnIdx = fn.fnIdx ?? i;
+        const req = requiredByFn[fnIdx] || {};
+        const date = fn.fnDate || "";
+        if (!date) return;
+        const row = (fnRows || []).find((r) => (r.date || r.data?.date) === date);
+        if (!row) { console.warn("[reconcile] no functions row for event", eo.id, "date", date, "— this deal may never have gone through the real markSold confirm (createProjectFromEO), so IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); return; }
+        const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
+        const kept = existingItems.filter((it) => !ids.includes(it.invId));
+        const nextItems = [...kept];
+        ids.forEach((id) => {
+          const qty = req[id] || 0;
+          if (qty <= 0) return;
+          const prevItem = existingItems.find((it) => it.invId === id);
+          const item = (inventoryList || []).find((x) => x.id === id);
+          nextItems.push(prevItem ? { ...prevItem, qty } : { invId: id, qty, remark: "", dept: item?.cat || item?.category || "", sizeClass: "M" });
+        });
+        supabase.from("functions").update({ data: { ...row.data, items: nextItems } }).eq("id", row.id)
+          .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
+      });
+    } catch (e) {
+      // Best-effort — the real reservation (`blocks`, below) isn't affected by this failing.
+      console.error("[reconcile] functions fetch failed, items view will stay stale:", e?.message || e);
+    }
 
     // Diff vs the last reconcile — only proceed (and only fetch/write blocks) if something actually
     // changed. changesByDept feeds the department-head log below; skipped on the very first run
@@ -8134,7 +8171,6 @@ export default function StudioApp() {
     if (!changed) return;
 
     // Fetch current blocks rows for every affected item, reconcile only THIS event's own entries.
-    const ids = [...allItemIds];
     let blockRows = [];
     try {
       const { data, error } = await supabase.from("blocks").select("*").in("item_id", ids);
@@ -8173,39 +8209,6 @@ export default function StudioApp() {
 
     console.info("[reconcile] wrote blocks for", ids.length, "item(s), event", eo.id);
 
-    // Also patch the linked `functions` row(s) `items` array. IMS's Inventory tab date-filter
-    // (the "Availability on date" Blkd/Avail columns) reads ONLY functions.items — it never
-    // looks at `blocks` at all. functions.items is populated once, at markSold, by
-    // createProjectFromEO(eventAutoConfirm.js) and never touched again after that — so without
-    // this, the `blocks` write above is real (Build's own shortfall math reads `blocks` and
-    // is correct) but IMS's per-date inventory view keeps showing stale/zero numbers forever.
-    try {
-      const { data: fnRows, error: fnErr } = await supabase.from("functions").select("*").contains("data", { eventOrderId: eo.id });
-      if (fnErr) throw fnErr;
-      fnsToProcess.forEach((fn, i) => {
-        const fnIdx = fn.fnIdx ?? i;
-        const req = requiredByFn[fnIdx] || {};
-        const date = fn.fnDate || "";
-        if (!date) return;
-        const row = (fnRows || []).find((r) => (r.date || r.data?.date) === date);
-        if (!row) { console.warn("[reconcile] no functions row for event", eo.id, "date", date, "— this deal may never have gone through the real markSold confirm (createProjectFromEO), so IMS's date-filtered Inventory view has nothing to show regardless of the blocks write above."); return; }
-        const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
-        const kept = existingItems.filter((it) => !ids.includes(it.invId));
-        const nextItems = [...kept];
-        ids.forEach((id) => {
-          const qty = req[id] || 0;
-          if (qty <= 0) return;
-          const prevItem = existingItems.find((it) => it.invId === id);
-          const item = (inventoryList || []).find((x) => x.id === id);
-          nextItems.push(prevItem ? { ...prevItem, qty } : { invId: id, qty, remark: "", dept: item?.cat || item?.category || "", sizeClass: "M" });
-        });
-        supabase.from("functions").update({ data: { ...row.data, items: nextItems } }).eq("id", row.id)
-          .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); });
-      });
-    } catch (e) {
-      // Best-effort — the real reservation (`blocks`, above) already succeeded regardless.
-      console.error("[reconcile] functions fetch failed, items view will stay stale:", e?.message || e);
-    }
     // Persist what we just reserved so the NEXT run diffs against this, not the initial markSold state.
     const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn } : c));
     saveClientLedger(nextLedger);
