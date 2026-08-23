@@ -247,7 +247,7 @@ const FLORAL_HARDPROP_DEFAULT = {
 // show each floor card its own cost, and two copies of a pricing formula is how a card ends up
 // disagreeing with the bill.
 function calcStructCost(zk, zc, rates) {
-  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, total: 0 };
+  if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, total: 0 };
   const d = zc.dims || {}, fd = zc.floorDims || d, r = { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0 };
   // Material, drape density, and the ceiling-via-print toggle are all per-row — separate truss
   // structures in the same zone can be a different material, density, or handle their ceiling
@@ -262,7 +262,18 @@ function calcStructCost(zk, zc, rates) {
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
   if (zc.glassOn && zc.glassT) { const gq = zc.glassQty || 0, gw = zc.glassW || 0, gh = zc.glassH || 0; r.glass = gq * gw * gh * (BASE_RATES.glass[zc.glassT] || 120); }
-  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass; return r;
+  // Print jobs (zc.prints — Flex/Vinyl/Sunboard etc., StudioBuild.jsx's Print tile) were priced for
+  // that tile's own header but never folded into the zone's actual cost anywhere else — Build's own
+  // Live Estimate/Zones subtotal, Summary's per-zone accordion, and Deal Check all read calcStructCost's
+  // .total, so a print row silently added zero to every one of them. rates.printMaterials is the
+  // same imsPrintMaterials list structRates already carries for this exact purpose.
+  r.print = (zc.prints || []).reduce((sum, p) => {
+    const m = (rates?.printMaterials || []).find(x => x.id === p.material);
+    const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
+    const q = Math.max(1, Math.round(Number(p.qty) || 1));
+    return sum + s * (m?.ratePerSqft || 0) * q;
+  }, 0);
+  r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print; return r;
 }
 // Resolves a deal's actual genset units + cost from the matched venue's own counts (resolveVenueGensets
 // — handles un-migrated legacy venues too) unless the deal explicitly overrides either size. null/undefined

@@ -724,7 +724,7 @@ export default function StudioBuild({ ctx }) {
     const sc = zoneConfig[k] ? calcStructCost(k, zoneConfig[k], structRates) : null;
     if (id === "truss") return sc ? sc.truss + sc.masking + sc.arches + sc.pillars + sc.glass : 0;
     if (id === "platform") return sc ? sc.platform + sc.carpet : 0;
-    return (zoneConfig[k]?.prints || []).reduce((sum, p) => { const m = (imsPrintMaterials || []).find(x => x.id === p.material); const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0); const q = Math.max(1, Math.round(Number(p.qty) || 1)); return sum + s * (m?.ratePerSqft || 0) * q; }, 0);
+    return sc ? sc.print : 0; // calcStructCost's own print total — same figure zoneTotal() now folds in below
   };
   const sectionTile = (k, sec) => {
     const on = zoneSection[k] === sec.id;
@@ -3458,10 +3458,6 @@ undefined
                     </div>{/* /optional-fields grid */}
                   </div>;
                 })}
-                {showCosts&&((zoneConfig[k]||{}).prints||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontWeight:700,paddingTop:4}}>
-                  <span style={{color:textP}}>Print Total</span>
-                  <span style={{color:"#0EA5E9"}}>{fmt(((zoneConfig[k]||{}).prints||[]).reduce((sum,p)=>{const m=(imsPrintMaterials||[]).find(x=>x.id===p.material);const s=(Number(p.areaW)||0)*(Number(p.areaD)||0);return sum+s*(m?.ratePerSqft||0);},0))}</span>
-                </div>}
               </div>
               );
             })()}
