@@ -3058,6 +3058,8 @@ export default function StudioApp() {
   // slice(0,500) cap in the Client Tracker can't drop rows). Mirrors the library approach.
   const clientLedgerRef = useRef([]);
   useEffect(() => { clientLedgerRef.current = clientLedger; }, [clientLedger]);
+  const activeClientIdRef = useRef(null);
+  useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
   // the previous client OBJECTS and compare them to the incoming ones — but callers build their new
   // ledger with `[...clientLedger]`, a shallow copy, then mutate the client in place
@@ -5966,6 +5968,9 @@ export default function StudioApp() {
   // closure without re-subscribing (and never overwrite good data with an empty snapshot).
   const saveSessionRef = useRef(saveSession);
   useEffect(() => { saveSessionRef.current = saveSession; });
+  // Populated once runDealCheckGenerate is declared further down (ref-sync effect right after its
+  // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
+  const runDealCheckGenerateRef = useRef(null);
   const buildHasDataRef = useRef(false);
   useEffect(() => {
     // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
@@ -6007,6 +6012,16 @@ export default function StudioApp() {
       try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ }
       unsavedEditRef.current = false;
     }
+    // Editing an inventory element's qty directly in Build (not through Deal Check) never touched
+    // the real reservation before — the "short" badge here is a live LOCAL price/availability
+    // estimate, but the actual `blocks`/`functions` rows only updated the next time Deal Check
+    // itself regenerated. On a SOLD deal, piggyback a silent, free (skipAi — no vision calls, no
+    // run-limit cost) regenerate on the same debounce so the real IMS reservation follows Build's
+    // qty edits within the same ~1.5s window instead of staying stale until Deal Check reopens.
+    try {
+      const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
+      if (cli?.status === "booked") runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
+    } catch { /* ignore */ }
   }, []);
   // Production/Buying items (dcCustomItems) get an instant save on top of the normal 1.5s debounce —
   // owner decision, after "add one, refresh shortly after, it's gone" kept resurfacing even with the
@@ -8271,7 +8286,7 @@ export default function StudioApp() {
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
   // That mode is free and repeatable, so it neither consumes the run allowance nor needs a limit
   // check; only a real AI run does.
-  const runDealCheckGenerate = useCallback(async (fnIdxFilter = null, { skipAi = false } = {}) => {
+  const runDealCheckGenerate = useCallback(async (fnIdxFilter = null, { skipAi = false, silent = false } = {}) => {
     const cli = clientLedger.find(c => c.id === activeClientId);
     if (!cli) { if (!skipAi) showMsg("No active client", "red"); return { ok: false, error: "no-client" }; }
     const isSold = cli.status === "booked";
@@ -8292,7 +8307,7 @@ export default function StudioApp() {
     const ims = await fetchIMSData(firstDate);
     if (!ims || !Array.isArray(ims.inventory)) {
       setDcGenerating(false); setDcGenStatus("");
-      showMsg("IMS unreachable — try again", "red");
+      if (!silent) showMsg("IMS unreachable — try again", "red");
       return { ok: false, error: "ims-unreachable" };
     }
     const inventory = ims.inventory;
@@ -8533,9 +8548,10 @@ export default function StudioApp() {
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);
-    showMsg(`Deal Check generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match (no AI cost) · ${cardsAi} AI calls`, "green");
+    if (!silent) showMsg(`Deal Check generated · ${cardsResolved} matched · ${cardsUnmatched} unmatched · ${cardsNameMatch} name-match (no AI cost) · ${cardsAi} AI calls`, "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
   }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, floralHardPropMap, softHolds, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, writeStudioTrussSoftHolds, reconcileSoldInventoryBlocks]);
+  useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
   // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
   // used to do this is gone, and matching is free in this mode (knowledge + name-match, no vision
