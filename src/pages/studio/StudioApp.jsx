@@ -3573,7 +3573,19 @@ export default function StudioApp() {
       // blocksForDate lets a caller price a NON-active function's shortfall against ITS OWN date
       // (see getElPriceForFn) — falls back to the single active-function cache for every existing
       // Build-view caller, which never passes it and keeps working exactly as before.
-      const available = getStudioAvailable(item, opts?.blocksForDate ?? activeBlocksForDate);
+      const rawBlocksForDate = opts?.blocksForDate ?? activeBlocksForDate;
+      // rawBlocksForDate's total for this item includes THIS SAME sold deal's own current real
+      // reservation (reconcileSoldInventoryBlocks writes it into the same `blocks` table every
+      // other event's hold lives in) — without netting that back out, a sold deal fights itself:
+      // typing a LOWER qty still shows short, because "available" was computed as if some other
+      // deal already took the very units this deal itself is holding. dcReservedInventory (kept in
+      // sync by reconcileSoldInventoryBlocks after every real write) is this deal's own last-synced
+      // reservation per function — subtract it so only OTHER deals' usage counts against "available".
+      const cli = clientLedger.find((c) => c.id === activeClientId);
+      const fnIdx = opts?.fnIdx ?? activeFnIdx;
+      const ownReserved = cli?.dcReservedInventory?.[fnIdx]?.[item.id] || 0;
+      const blocksForDate = ownReserved > 0 ? { ...rawBlocksForDate, [item.id]: Math.max(0, (rawBlocksForDate[item.id] || 0) - ownReserved) } : rawBlocksForDate;
+      const available = getStudioAvailable(item, blocksForDate);
       const ownedQty = Math.min(qty, available);
       const shortQty = Math.max(0, qty - available);
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
@@ -3588,7 +3600,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
