@@ -2177,6 +2177,17 @@ export default function ManageLibrary({ ctx }) {
    there are two.
    Background only on the anchors: they already carry state in their border and fill, and a transform
    would make a wrapped grid of them jitter as the cursor crosses. */
+/* + Add Colour / + Add Palette. They were the gold accent, which on this light page is the loudest
+   thing on screen and — more to the point — disagreed with every other primary control in the app:
+   the active view tab, Summary's totals and the pagers are all this navy. One colour for "press
+   this", everywhere. Dark mode takes a light fill; navy on near-navy is invisible.
+   No !important needed here, unlike the pagers: these two carry no inline background any more. */
+.pal-add{color:#fff;box-shadow:0 1px 3px rgba(26,26,46,0.22);
+  background:${isDark ? "rgba(255,255,255,0.14)" : "linear-gradient(135deg,#1a1a2e,#2d1b69)"};
+  transition:background .14s ease, transform .14s ease, box-shadow .16s ease}
+.pal-add:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(26,26,46,0.30);
+  background:${isDark ? "rgba(255,255,255,0.22)" : "linear-gradient(135deg,#2d1b69,#3d2589)"}}
+.pal-add:active{transform:translateY(0)}
 .pal-anchor{transition:background .12s ease}
 .pal-anchor:hover{background:${isDark ? "rgba(255,255,255,0.10)" : "rgba(26,26,46,0.07)"}}
 .pal-star{transition:background .12s ease, color .12s ease}
@@ -2188,7 +2199,7 @@ export default function ManageLibrary({ ctx }) {
    reads as a thing you work inside rather than a printed block. */
 .pal-card{transition:border-color .16s ease, box-shadow .18s ease}
 .pal-card:hover{border-color:${accent}66 !important;box-shadow:0 2px 6px rgba(26,26,46,0.05), 0 14px 30px -18px rgba(26,26,46,0.22)}
-@media (prefers-reduced-motion: reduce){.pal-anchor,.pal-star,.pal-del,.pal-card{transition:none}}
+@media (prefers-reduced-motion: reduce){.pal-anchor,.pal-star,.pal-del,.pal-card,.pal-add{transition:none}.pal-add:hover{transform:none}}
 .cp-row{transition:background .13s ease}
 .cp-row:hover{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.04)"}}
 .vt-cols{column-count:3;column-gap:14px}
@@ -2504,7 +2515,7 @@ export default function ManageLibrary({ ctx }) {
                 <div style={{ fontSize: 16, fontWeight: 700, color: textP, letterSpacing: -0.2 }}>🎨 Colour Catalogue</div>
                 <div style={{ fontSize: 11.5, color: textS, marginTop: 3, lineHeight: 1.5 }}>Master colours for the paint picker and inventory base colour. <strong style={{ color: accent, fontWeight: 700 }}>★</strong> marks a neutral, which shows in every palette.</div>
               </div>
-              <button onClick={() => { const next = [...imsColourCatalogue, { name: "New Colour", hex: "#CCCCCC", isNeutral: false }]; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>+ Add Colour</button>
+              <button onClick={() => { const next = [...imsColourCatalogue, { name: "New Colour", hex: "#CCCCCC", isNeutral: false }]; setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-add" style={{ padding: "8px 16px", borderRadius: 9, border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add Colour</button>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
               {imsColourCatalogue.map((c, i) => (
@@ -2529,7 +2540,7 @@ export default function ManageLibrary({ ctx }) {
                 <div style={{ fontSize: 16, fontWeight: 700, color: textP, letterSpacing: -0.2 }}>🌈 Palette Catalogue</div>
                 <div style={{ fontSize: 11.5, color: textS, marginTop: 3, lineHeight: 1.5 }}>Named themes for salespeople to pick per function. Drives the Build screen colour picker and the library filter. Tap a colour to add it to a palette; <strong style={{ color: accent, fontWeight: 700 }}>★</strong> marks the primary colour — you can star more than one — which drives Build photo order.</div>
               </div>
-              <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
+              <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} className="pal-add" style={{ padding: "8px 16px", borderRadius: 9, border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>+ Add Palette</button>
             </div>
             {/* Two to a row was the ask when this panel was capped at 650px wide. The cap is gone
                 now, so a hard 2 would put the sparseness back — two 780px cards each holding a name
