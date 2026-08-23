@@ -2497,16 +2497,22 @@ export default function ManageLibrary({ ctx }) {
           {/* 🎨 Colour Catalogue */}
           <div className="pal-card" style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px", marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🎨 Colour Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Master colours for paint picker + inventory base colour. ★ = Neutral (shows in every palette).</div></div>
-              <button onClick={() => { const next = [...imsColourCatalogue, { name: "New Colour", hex: "#CCCCCC", isNeutral: false }]; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Colour</button>
+              {/* Same heading treatment as the Palette Catalogue below, so the two panels read as a
+                  pair. maxWidth keeps the subline to a readable measure instead of letting it run
+                  the full 1600px now that the page is no longer capped. */}
+              <div style={{ maxWidth: 640 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: textP, letterSpacing: -0.2 }}>🎨 Colour Catalogue</div>
+                <div style={{ fontSize: 11.5, color: textS, marginTop: 3, lineHeight: 1.5 }}>Master colours for the paint picker and inventory base colour. <strong style={{ color: accent, fontWeight: 700 }}>★</strong> marks a neutral, which shows in every palette.</div>
+              </div>
+              <button onClick={() => { const next = [...imsColourCatalogue, { name: "New Colour", hex: "#CCCCCC", isNeutral: false }]; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>+ Add Colour</button>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
               {imsColourCatalogue.map((c, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 8, border: `1px solid ${c.isNeutral ? accent : border}`, background: c.isNeutral ? `${accent}08` : "transparent" }}>
                   <input type="color" value={c.hex || "#ccc"} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], hex: e.target.value }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ width: 20, height: 20, border: "none", cursor: "pointer", borderRadius: 4, padding: 0 }} />
-                  <input type="text" value={c.name || ""} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], name: e.target.value }; setImsColourCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ border: "none", background: "transparent", color: textP, fontSize: 11, fontWeight: 500, width: 80, outline: "none" }} />
-                  <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-star" style={{ fontSize: 12, cursor: "pointer", borderRadius: 4, padding: "0 2px", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
-                  <span onClick={() => { const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-del" style={{ fontSize: 10, cursor: "pointer", color: "#E11D48", fontWeight: 700, borderRadius: 4, padding: "0 3px" }}>×</span>
+                  <input type="text" value={c.name || ""} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], name: e.target.value }; setImsColourCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ border: "none", background: "transparent", color: textP, fontSize: 12.5, fontWeight: 500, width: 104, outline: "none" }} />
+                  <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-star" style={{ fontSize: 13, cursor: "pointer", borderRadius: 4, padding: "0 2px", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
+                  <span onClick={() => { const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-del" style={{ fontSize: 11.5, cursor: "pointer", color: "#E11D48", fontWeight: 700, borderRadius: 4, padding: "0 3px" }}>×</span>
                 </div>
               ))}
             </div>
@@ -2514,8 +2520,16 @@ export default function ManageLibrary({ ctx }) {
           {/* 🌈 Palette Catalogue */}
           <div className="pal-card" style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🌈 Palette Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Named themes for salesperson to pick per function. Drives the Build screen colour picker + library filter.</div></div>
-              <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
+              {/* The per-card instruction moved up here. It was repeated verbatim inside every
+                  palette — a 130-character sentence printed as many times as you have palettes, and
+                  three times per row at this width. Said once under the heading it is the same
+                  information taking a fraction of the page, and each card is left showing only what
+                  differs between them, which is the whole point of a list of cards. */}
+              <div style={{ maxWidth: 640 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: textP, letterSpacing: -0.2 }}>🌈 Palette Catalogue</div>
+                <div style={{ fontSize: 11.5, color: textS, marginTop: 3, lineHeight: 1.5 }}>Named themes for salespeople to pick per function. Drives the Build screen colour picker and the library filter. Tap a colour to add it to a palette; <strong style={{ color: accent, fontWeight: 700 }}>★</strong> marks the primary colour — you can star more than one — which drives Build photo order.</div>
+              </div>
+              <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
             </div>
             {/* Two to a row was the ask when this panel was capped at 650px wide. The cap is gone
                 now, so a hard 2 would put the sparseness back — two 780px cards each holding a name
@@ -2526,10 +2540,13 @@ export default function ManageLibrary({ ctx }) {
             {imsPaletteCatalogue.map((p, pi) => (
               <div key={pi} className="pal-card" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 13, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
-                  <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} className="pal-del" style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "3px 8px", borderRadius: 6 }}>🗑</span>
+                  <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 14.5, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
+                  <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} className="pal-del" style={{ fontSize: 13, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "3px 8px", borderRadius: 6 }}>🗑</span>
                 </div>
-                <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks primary colour(s) — you can star more than one — which drive Build photo order):</div>
+                {/* A short label now — the instruction it used to carry is stated once in the panel
+                    header. Small-and-wide so it reads as a label introducing the chips rather than
+                    as a line of prose competing with them. */}
+                <div className="ml-cap" style={{ color: textS, marginBottom: 7, fontSize: 9.5, letterSpacing: 1.1 }}>Anchor colours</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {imsColourCatalogue.filter(c => !c.isNeutral).map(c => {
                     const isAnchor = (p.anchorColours || []).includes(c.name);
@@ -2552,12 +2569,12 @@ export default function ManageLibrary({ ctx }) {
                       if (!isPrimary && !isAnchor) next[pi].anchorColours = [...(p.anchorColours || []), c.name];
                       setImsPaletteCatalogue(next); savePaletteData(null, next);
                     };
-                    return <span key={c.name} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: `1px solid ${isPrimary ? "#C9A96E" : isAnchor ? accent : border}`, background: isPrimary ? "rgba(201,169,110,0.18)" : isAnchor ? `${accent}18` : "transparent", color: isPrimary ? "#C9A96E" : isAnchor ? accent : textS }}>
+                    return <span key={c.name} style={{ padding: "3px 8px", fontSize: 11.5, borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: `1px solid ${isPrimary ? "#C9A96E" : isAnchor ? accent : border}`, background: isPrimary ? "rgba(201,169,110,0.18)" : isAnchor ? `${accent}18` : "transparent", color: isPrimary ? "#C9A96E" : isAnchor ? accent : textS }}>
                       <span className="pal-anchor" onClick={toggleAnchor} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", borderRadius: 4 }}>
                         <span style={{ width: 10, height: 10, borderRadius: 3, background: c.hex || "#ccc", display: "inline-block", border: "1px solid rgba(0,0,0,0.1)" }} />
                         {c.name}
                       </span>
-                      {isAnchor && <span onClick={setPrimary} title={isPrimary ? "Primary colour (tap to unset)" : "Mark as primary"} style={{ cursor: "pointer", fontSize: 11, color: isPrimary ? "#C9A96E" : textS }}>{isPrimary ? "★" : "☆"}</span>}
+                      {isAnchor && <span onClick={setPrimary} title={isPrimary ? "Primary colour (tap to unset)" : "Mark as primary"} style={{ cursor: "pointer", fontSize: 12.5, color: isPrimary ? "#C9A96E" : textS }}>{isPrimary ? "★" : "☆"}</span>}
                     </span>;
                   })}
                 </div>
