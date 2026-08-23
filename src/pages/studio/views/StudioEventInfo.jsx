@@ -376,6 +376,12 @@ export default function StudioEventInfo({ ctx }) {
     !phoneOk && "Phone",
     !fn && "Event type",
     !clientDate && "Event date",
+    // Venue and Shift join the gate. Both are load-bearing downstream, which is why asking for them
+    // here is worth a blocked button: venue sets the trip rate and genset count that transport is
+    // priced on, and shift feeds the manpower plan. Leaving either blank produced a deal that
+    // costed as if the venue were "new" and the day had no shift.
+    !venue && "Venue",
+    !clientShift && "Shift",
   ].filter(Boolean);
   const canContinue = missing.length === 0;
 
@@ -1334,7 +1340,11 @@ export default function StudioEventInfo({ ctx }) {
                 <span style={{width:5,height:5,borderRadius:"50%",background:accent,flexShrink:0}}/>
                 <div className="ei-display" style={{fontSize:15.5,fontWeight:600,color:headText,letterSpacing:0.1}}>Functions</div>
                 <div style={{padding:"1px 7px",borderRadius:5,fontSize:9.5,fontWeight:700,color:accent,background:"rgba(201,169,110,0.16)",border:`1px solid ${accent}55`}}>{1 + extraFunctions.length}</div>
-                <div style={{marginLeft:"auto",...eyebrow,fontSize:9,color:headMeta}}>Event type required</div>
+                {/* Was "Event type required", which is now only part of the truth — Venue and Shift
+                    are gated too. Naming the scope (Function 1) instead of listing four fields: the
+                    asterisks say which, and the Continue button already names what is still missing.
+                    The list would only go stale again the next time the gate changes. */}
+                <div style={{marginLeft:"auto",...eyebrow,fontSize:9,color:headMeta}}>Function 1 required</div>
               </div>
               <div style={{padding:"20px 24px 24px"}}>
 
@@ -1409,7 +1419,11 @@ export default function StudioEventInfo({ ctx }) {
                   <div><div style={label}>Event Date <span style={{color:C.red}}>*</span></div><input type="date" value={f.date || ""} onChange={e => updateDate(e.target.value)} style={S.input}/></div>
                 </div>
                 <div className="ei-two" style={{gap:14,marginBottom:f.venue === "Others" && idx === 0 ? 0 : 12}}>
-                  <div><div style={label}>Venue</div>
+                  {/* Required now. Asterisked on every function but gated only on Function 1 — the
+                      same rule Event Type and Event Date above already follow, for the same reason:
+                      blocking on Functions 2+ would trap anyone who adds the next function before
+                      its venue is settled. */}
+                  <div><div style={label}>Venue <span style={{color:C.red}}>*</span></div>
                     <select value={venueVal} onChange={e => {
                       const v = e.target.value;
                       if (v === "Others") {
@@ -1428,7 +1442,7 @@ export default function StudioEventInfo({ ctx }) {
                       {idx === 0 && <option value="Others">Others (type custom)</option>}
                     </select>
                   </div>
-                  <div><div style={label}>Shift</div><select value={f.shift || ""} onChange={e => updateShift(e.target.value)} style={{...S.select,width:"100%"}}><option value="">Select shift</option>{CLIENT_SHIFTS_DD.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                  <div><div style={label}>Shift <span style={{color:C.red}}>*</span></div><select value={f.shift || ""} onChange={e => updateShift(e.target.value)} style={{...S.select,width:"100%"}}><option value="">Select shift</option>{CLIENT_SHIFTS_DD.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                 </div>
                 {venueVal === "Others" && idx === 0 && (() => {
                   // Duplicate check: does the typed custom name match any known venue (case-insensitive, trimmed)?

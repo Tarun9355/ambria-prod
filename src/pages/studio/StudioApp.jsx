@@ -9292,8 +9292,12 @@ export default function StudioApp() {
             </>}
           </div>
         </div>
-        {/* ROW 2: FUNCTION PILLS — hidden on Build page (step===2) per SOP */}
-        {mode === "studio" && authUser && step !== 2 && (() => {
+        {/* ROW 2: FUNCTION PILLS — Browse and Summary only.
+            Hidden on Build (step 2) per SOP, and now on Event Info (step 0) too: that page IS where
+            the functions are created and edited, in cards that already show each one's type, date and
+            venue. The pill row above it was a second, less complete copy of the same list — and a
+            switcher for something you are looking at the full editor for. */}
+        {mode === "studio" && authUser && (step === 1 || step === 3) && (() => {
           const fns = [{ type: fn, date: clientDate, venue, shift: clientShift, pax: clientPax }, ...extraFunctions];
           if (extraFunctions.length === 0) return null;
           const fmtDate = (d) => { if (!d) return "—"; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
