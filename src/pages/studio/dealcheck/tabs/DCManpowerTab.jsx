@@ -373,7 +373,16 @@ export default function DCManpowerTab({ ctx }) {
                       // silently missed every sub-category-linked recipe (the normal case).
                       let pattern = el.patternId ? flowerPatternsMP.find(p => p.id === el.patternId) : null;
                       if (!pattern) pattern = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatternsMP);
-                      if (!pattern) { const k = `${targetName}||nopattern`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no pattern" }; agg[k].qty += qty; return; }
+                      if (!pattern) {
+                        // el.invId-backed with no recipe = a plain inventory prop/holder, not a flower
+                        // arrangement — it was never going to need a flowerist (calcPeopleFlowerists
+                        // already excludes it from the real count above), and it's already counted in
+                        // the sub-category labour planning below. Not worth a "no pattern" row here; a
+                        // recipe-only element (el.patternId set but unresolved — e.g. a deleted recipe)
+                        // has no invId and still surfaces, since that IS a real problem to flag.
+                        if (el.invId) return;
+                        const k = `${targetName}||nopattern`; if (!agg[k]) agg[k] = { name: rc.name, size: null, qty: 0, productivity: null, missing: "no pattern" }; agg[k].qty += qty; return;
+                      }
                       const sizeKey = sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
                       const sizes = pattern.sizes || {};
                       let comp = sizes[sizeKey] || sizes.medium;

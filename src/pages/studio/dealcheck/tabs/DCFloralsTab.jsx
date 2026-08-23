@@ -342,7 +342,13 @@ export default function DCFloralsTab({ ctx }) {
                       artLines.push(...invItemLines);
                       totalReal += realCost;
                       totalArtificial += artCost;
-                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate });
+                      // A plain IMS inventory item with no flower recipe (invItem backs it, but no
+                      // pattern matched) is a physical prop/holder, not a flower arrangement — its
+                      // rental is already listed on the Inventory tab. Tagged so the per-element
+                      // breakdown below can skip showing it a second time here (with a "no pattern"
+                      // warning that's really just "this was never supposed to have one").
+                      const isInvOnlyNoPattern = !!invItem && !pattern;
+                      elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost, hasPattern: !!pattern, realLines, size: sizeKey, artLines, artBunchesFlower, artBunchesGreen, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern });
                     });
                   });
                   if (elementBreakdown.length === 0) {
@@ -746,6 +752,10 @@ export default function DCFloralsTab({ ctx }) {
                         const merged = [];
                         const byName = {};
                         elementBreakdown.forEach((eb, ebi) => {
+                          // Plain inventory props with no recipe live on the Inventory tab already —
+                          // their cost is still folded into totalReal/totalArtificial above, just not
+                          // shown again here as a "no pattern" row (there was never a pattern to have).
+                          if (eb.isInvOnlyNoPattern) return;
                           if (!byName[eb.name]) { byName[eb.name] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[eb.name]); }
                           const g = byName[eb.name];
                           g.zones.push(eb.zoneKey);
