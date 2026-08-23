@@ -2168,6 +2168,7 @@ export default function ManageLibrary({ ctx }) {
 .cp-stat{transition:transform .14s ease, box-shadow .16s ease}
 .cp-stat:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(26,26,46,0.05), 0 14px 30px -14px rgba(26,26,46,0.30)}
 @media (prefers-reduced-motion: reduce){.cp-stat{transition:none}.cp-stat:hover{transform:none}}
+@media (max-width:900px){.pal-cols{grid-template-columns:minmax(0,1fr) !important}}
 .cp-row{transition:background .13s ease}
 .cp-row:hover{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.04)"}}
 .vt-cols{column-count:3;column-gap:14px}
@@ -2493,8 +2494,15 @@ export default function ManageLibrary({ ctx }) {
               <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🌈 Palette Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Named themes for salesperson to pick per function. Drives the Build screen colour picker + library filter.</div></div>
               <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
             </div>
+            {/* Two to a row. These were full-width blocks holding a name field and a wrapped strip of
+                colour chips, and neither needs the whole panel — the right half was empty on every
+                one of them, which on a long catalogue is a lot of scrolling for nothing.
+                A hard 2 rather than auto-fit: auto-fit would give four columns on a wide monitor,
+                and at that width the chip strip inside each card starts wrapping every two chips.
+                One column below 900px, where two would do the same thing. */}
+            <div className="pal-cols" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10, alignItems: "start" }}>
             {imsPaletteCatalogue.map((p, pi) => (
-              <div key={pi} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, marginBottom: 8, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
+              <div key={pi} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 13, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
                   <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "2px 8px" }}>🗑</span>
@@ -2533,6 +2541,7 @@ export default function ManageLibrary({ ctx }) {
                 </div>
               </div>
             ))}
+            </div>
           </div>
         </div>
       )}
