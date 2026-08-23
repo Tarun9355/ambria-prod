@@ -98,6 +98,20 @@ export function RemoveFunctionDialog({ snap, onCancel, onConfirm, S, sheet, hair
 }
 
 export default function StudioEventInfo({ ctx }) {
+  // The app header's height, fed to --ei-hdr on the root (see the return below for why).
+  // ResizeObserver rather than a one-time read: the header wraps to a second row when the window
+  // narrows, and this view is locked to a viewport-derived height that has to follow it.
+  const [eiHdrH, setEiHdrH] = useState(0);
+  useEffect(() => {
+    const el = document.querySelector(".sa-header");
+    if (!el) { setEiHdrH(0); return; }   // bare Event Info renders no header at all
+    const read = () => setEiHdrH(el.getBoundingClientRect().height || 0);
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    window.addEventListener("resize", read);
+    return () => { ro.disconnect(); window.removeEventListener("resize", read); };
+  }, []);
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
   const [confirmRemove, setConfirmRemove] = useState(null);
@@ -362,9 +376,13 @@ export default function StudioEventInfo({ ctx }) {
    screen. Without this the entire page scrolled as one, dragging the panel and the background up
    with it. Nothing here may use min-height: the moment the content can push the frame taller than
    100vh, the document scrolls again and we're back to the same behaviour. */
-.ei-split{position:relative;height:100vh;height:100dvh;overflow:hidden}
+/* Both heights subtract the app header (--ei-hdr, measured in JS — see the root element). This view
+   sits BELOW that sticky header in normal flow, so a plain 100dvh made the document exactly
+   header-height too tall and put a second scrollbar next to the form column's own. The fallback of
+   0px is the bare Event Info case, which renders no header. */
+.ei-split{position:relative;height:calc(100vh - var(--ei-hdr, 0px));height:calc(100dvh - var(--ei-hdr, 0px));overflow:hidden}
 .ei-formside{margin-left:var(--ei-pw);min-width:0;position:relative;z-index:1;
-  height:100vh;height:100dvh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+  height:calc(100vh - var(--ei-hdr, 0px));height:calc(100dvh - var(--ei-hdr, 0px));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
 /* Bottom padding is breathing room at the end of the column's own scroll, not clearance for a
    page scrollbar any more — 110px of it just read as dead space. */
 .ei-shell{max-width:720px;margin:0 auto;padding:22px 26px 44px;position:relative;z-index:1}
@@ -957,7 +975,16 @@ export default function StudioEventInfo({ ctx }) {
   );
 
   return (
-    <div className="ei-view">
+    // --ei-hdr is the app header's measured height. The layout below locks itself to exactly one
+    // viewport so only the form column scrolls — but this view renders as a SIBLING BELOW the
+    // sticky header, and a sticky element still occupies its space in normal flow. So the document
+    // came out header-height taller than the viewport and grew a second scrollbar of its own,
+    // beside the form column's. Subtracting the measured height is what removes it.
+    // Measured rather than assumed: the header wraps to a second row on narrow widths and has its
+    // own padding overrides on mobile, so any hardcoded number would be wrong on some screen.
+    // 0 when there is no header at all — that is the bare Event Info state (step 0 with no client
+    // loaded), where the full viewport height is already correct.
+    <div className="ei-view" style={{ "--ei-hdr": `${eiHdrH}px` }}>
       <style>{hoverCSS}</style>
       <div className="ei-brand-shadow" aria-hidden="true">
         <svg viewBox="0 0 1 1" preserveAspectRatio="none" focusable="false">
