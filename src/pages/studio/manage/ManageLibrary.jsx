@@ -2169,6 +2169,26 @@ export default function ManageLibrary({ ctx }) {
 .cp-stat:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(26,26,46,0.05), 0 14px 30px -14px rgba(26,26,46,0.30)}
 @media (prefers-reduced-motion: reduce){.cp-stat{transition:none}.cp-stat:hover{transform:none}}
 /* auto-fit already collapses this to one column below its 420px floor, so no breakpoint is needed. */
+/* ── PALETTES PAGE ──
+   Nothing on this screen reacted to the cursor, and it is the densest screen in the app: a hundred
+   and eighty-odd anchor chips, each one a toggle, laid out identically whether or not you can click
+   them. The chip's LABEL half is the toggle and its star is a separate action, so they highlight
+   separately — hovering the row and having the whole thing light up would promise one target where
+   there are two.
+   Background only on the anchors: they already carry state in their border and fill, and a transform
+   would make a wrapped grid of them jitter as the cursor crosses. */
+.pal-anchor{transition:background .12s ease}
+.pal-anchor:hover{background:${isDark ? "rgba(255,255,255,0.10)" : "rgba(26,26,46,0.07)"}}
+.pal-star{transition:background .12s ease, color .12s ease}
+.pal-star:hover{background:${accent}22;color:${accent}}
+/* Destructive, so it says so on approach rather than only in the colour of the glyph. */
+.pal-del{transition:background .12s ease}
+.pal-del:hover{background:rgba(225,29,72,0.14)}
+/* The two catalogue cards and each palette card: a resting border that warms on hover, so a card
+   reads as a thing you work inside rather than a printed block. */
+.pal-card{transition:border-color .16s ease, box-shadow .18s ease}
+.pal-card:hover{border-color:${accent}66 !important;box-shadow:0 2px 6px rgba(26,26,46,0.05), 0 14px 30px -18px rgba(26,26,46,0.22)}
+@media (prefers-reduced-motion: reduce){.pal-anchor,.pal-star,.pal-del,.pal-card{transition:none}}
 .cp-row{transition:background .13s ease}
 .cp-row:hover{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.04)"}}
 .vt-cols{column-count:3;column-gap:14px}
@@ -2475,7 +2495,7 @@ export default function ManageLibrary({ ctx }) {
       {libView === "palettes" && paletteCatalogueLoaded && (
         <div>
           {/* 🎨 Colour Catalogue */}
-          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px", marginBottom: 12 }}>
+          <div className="pal-card" style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px", marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🎨 Colour Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Master colours for paint picker + inventory base colour. ★ = Neutral (shows in every palette).</div></div>
               <button onClick={() => { const next = [...imsColourCatalogue, { name: "New Colour", hex: "#CCCCCC", isNeutral: false }]; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Colour</button>
@@ -2485,14 +2505,14 @@ export default function ManageLibrary({ ctx }) {
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 8, border: `1px solid ${c.isNeutral ? accent : border}`, background: c.isNeutral ? `${accent}08` : "transparent" }}>
                   <input type="color" value={c.hex || "#ccc"} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], hex: e.target.value }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ width: 20, height: 20, border: "none", cursor: "pointer", borderRadius: 4, padding: 0 }} />
                   <input type="text" value={c.name || ""} onChange={e => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], name: e.target.value }; setImsColourCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ border: "none", background: "transparent", color: textP, fontSize: 11, fontWeight: 500, width: 80, outline: "none" }} />
-                  <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ fontSize: 12, cursor: "pointer", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
-                  <span onClick={() => { const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null); }} style={{ fontSize: 10, cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+                  <span onClick={() => { const next = [...imsColourCatalogue]; next[i] = { ...next[i], isNeutral: !next[i].isNeutral }; setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-star" style={{ fontSize: 12, cursor: "pointer", borderRadius: 4, padding: "0 2px", color: c.isNeutral ? accent : textS }} title="Toggle neutral">{c.isNeutral ? "★" : "☆"}</span>
+                  <span onClick={() => { const next = imsColourCatalogue.filter((_, j) => j !== i); setImsColourCatalogue(next); savePaletteData(next, null); }} className="pal-del" style={{ fontSize: 10, cursor: "pointer", color: "#E11D48", fontWeight: 700, borderRadius: 4, padding: "0 3px" }}>×</span>
                 </div>
               ))}
             </div>
           </div>
           {/* 🌈 Palette Catalogue */}
-          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px" }}>
+          <div className="pal-card" style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, padding: "14px 18px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div><div style={{ fontSize: 14, fontWeight: 700, color: textP }}>🌈 Palette Catalogue</div><div style={{ fontSize: 10, color: textS, marginTop: 2 }}>Named themes for salesperson to pick per function. Drives the Build screen colour picker + library filter.</div></div>
               <button onClick={() => { const next = [...imsPaletteCatalogue, { name: "New Palette", anchorColours: [] }]; setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ padding: "5px 14px", borderRadius: 8, border: "none", background: accent, color: isDark ? "#1a1a2e" : "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>+ Add Palette</button>
@@ -2504,10 +2524,10 @@ export default function ManageLibrary({ ctx }) {
                 that were asked for, at any width where two would fit. */}
             <div className="pal-cols" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 10, alignItems: "start" }}>
             {imsPaletteCatalogue.map((p, pi) => (
-              <div key={pi} style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
+              <div key={pi} className="pal-card" style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${border}`, background: isDark ? "rgba(255,255,255,0.02)" : "#FAFAF7" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <input type="text" value={p.name || ""} onChange={e => { const next = [...imsPaletteCatalogue]; next[pi] = { ...next[pi], name: e.target.value }; setImsPaletteCatalogue(next); }} onBlur={() => savePaletteData(null, null)} style={{ ...S.input, fontSize: 13, fontWeight: 600, padding: "5px 10px", flex: 1, marginBottom: 0 }} />
-                  <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "2px 8px" }}>🗑</span>
+                  <span onClick={() => { const next = imsPaletteCatalogue.filter((_, j) => j !== pi); setImsPaletteCatalogue(next); savePaletteData(null, next); }} className="pal-del" style={{ fontSize: 12, cursor: "pointer", color: "#E11D48", fontWeight: 700, padding: "3px 8px", borderRadius: 6 }}>🗑</span>
                 </div>
                 <div style={{ fontSize: 10, color: textS, marginBottom: 4 }}>Anchor colours (tap to toggle · ★ marks primary colour(s) — you can star more than one — which drive Build photo order):</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -2533,7 +2553,7 @@ export default function ManageLibrary({ ctx }) {
                       setImsPaletteCatalogue(next); savePaletteData(null, next);
                     };
                     return <span key={c.name} style={{ padding: "3px 8px", fontSize: 10, borderRadius: 6, display: "flex", alignItems: "center", gap: 4, border: `1px solid ${isPrimary ? "#C9A96E" : isAnchor ? accent : border}`, background: isPrimary ? "rgba(201,169,110,0.18)" : isAnchor ? `${accent}18` : "transparent", color: isPrimary ? "#C9A96E" : isAnchor ? accent : textS }}>
-                      <span onClick={toggleAnchor} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                      <span className="pal-anchor" onClick={toggleAnchor} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", borderRadius: 4 }}>
                         <span style={{ width: 10, height: 10, borderRadius: 3, background: c.hex || "#ccc", display: "inline-block", border: "1px solid rgba(0,0,0,0.1)" }} />
                         {c.name}
                       </span>
