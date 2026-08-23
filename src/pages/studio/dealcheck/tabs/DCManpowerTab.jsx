@@ -767,7 +767,17 @@ export default function DCManpowerTab({ ctx }) {
                   // in the header, are. This used to always render every function's day no matter
                   // which one was selected in the sidebar.
                   const selectedFn = fns[activeFnIdx || 0];
-                  const scopedDayList = dayList.filter(d => d.phase === "event" && d.fns.includes(selectedFn));
+                  // Selecting a function means "this function's own manpower", not "this exact
+                  // calendar date" — its dismantle day (the day right after its own event day, if the
+                  // booking-wide dayList classified it as one) and, if this function is the FIRST one
+                  // in the booking, the shared early-setup (-1) day both belong to it and must show
+                  // here too, not just under "All functions".
+                  const scopedDayList = dayList.filter(d => {
+                    if (d.phase === "event") return d.fns.includes(selectedFn);
+                    if (d.phase === "dismantle") return selectedFn && d.date === addDays(selectedFn.fnDate, 1);
+                    if (d.phase === "minusOne") return selectedFn && selectedFn.fnDate === earliest;
+                    return false;
+                  });
                   const visibleDayList = dcShowAllFns ? dayList : (scopedDayList.length ? scopedDayList : dayList); // fallback avoids a blank screen
                   const visibleTotalCost = dcShowAllFns ? bookingTotalCost : visibleDayList.reduce((s, d) => s + (dayCosts[d.date]?.total || 0), 0);
                   const visibleTotalDihari = dcShowAllFns ? bookingTotalDihari : visibleDayList.reduce((s, d) => s + (dayCosts[d.date]?.slots || 0), 0);
