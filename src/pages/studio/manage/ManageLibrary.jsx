@@ -526,6 +526,16 @@ export default function ManageLibrary({ ctx }) {
   // manual, loaded in one go) and filtered with a plain predicate, so there is no cursor to keep —
   // the page is a slice. Same 80 as the Images grid so the two views feel like one page.
   const [vidPage, setVidPage] = useState(0);
+  // Recent contributions, paged. 30 a page rather than the 80 the media grids use: these are text
+  // rows being read, not thumbnails being scanned, and the whole point of paging them is that you
+  // stop scrolling a 997-row list.
+  // Declared here, not inside CorrectionsPanel — that is called conditionally
+  // (libView === "corrections"), so a hook in there would change the hook order on every tab switch.
+  const CORR_PAGE_SIZE = 30;
+  const [corrPage, setCorrPage] = useState(0);
+  // Back to page 1 whenever the set changes — including corrUser, so clicking a person in the list
+  // beside it drops you at the top of THEIR work rather than on page 12 of it.
+  useEffect(() => { setCorrPage(0); }, [corrRange, corrKind, corrSearch, corrUser]);
   // Back to page 1 whenever the set being paged through changes. Without this, narrowing a filter
   // while on page 5 leaves you on a page that no longer exists — the render clamps it, but the state
   // would stay stale and Prev would then walk back from the wrong place.
@@ -1874,6 +1884,11 @@ export default function ManageLibrary({ ctx }) {
     base.forEach(e => { const u = e.user || "—"; const b = byUser[u] || (byUser[u] = { total: 0, photo: 0, video: 0 }); b.total++; b[kindOf(e)]++; });
     const userRows = Object.entries(byUser).sort((a, b) => b[1].total - a[1].total);
     const fmtTs = (ts) => new Date(ts).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    // Clamped on read as well as reset by the effect: narrowing a filter can shrink the list between
+    // the state update and this render, and a page index past the end renders an empty panel that
+    // looks exactly like "nothing matches".
+    const corrPages = Math.max(1, Math.ceil(inRange.length / CORR_PAGE_SIZE));
+    const cp = Math.min(corrPage, corrPages - 1);
     // ── THE FOUR STAT CARDS ──
     // The reference puts Verified / Needs review / Untagged / Build added here. Those are LIBRARY
     // counts (libPage.counts), and two things are wrong with showing them on this tab: they are
@@ -1964,8 +1979,13 @@ export default function ManageLibrary({ ctx }) {
             <span style={{ marginLeft: "auto", fontSize: 10.5, color: textS, fontVariantNumeric: "tabular-nums" }}>{userRows.length}</span>,
             <>
             {userRows.length === 0 ? <div style={{ fontSize: 11.5, color: textS, padding: "10px 0" }}>No contributions in this period yet.</div> :
+              // The selected person gets a solid left rule as well as the tint. The tint alone is
+              // faint against the glass, and this row is what the whole right-hand panel is showing —
+              // it has to be obvious which one is picked, and clickable again to clear.
               userRows.map(([u, c], i) => (
-                <div key={u} className="cp-row" onClick={() => setCorrUser(corrUser === u ? "" : u)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 9px", borderRadius: 9, cursor: "pointer", background: corrUser === u ? `${accent}14` : "transparent" }}>
+                <div key={u} className="cp-row" onClick={() => setCorrUser(corrUser === u ? "" : u)}
+                  title={corrUser === u ? `Showing ${u} only — click to clear` : `Show only ${u}`}
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 9px", borderRadius: 9, cursor: "pointer", background: corrUser === u ? `${accent}18` : "transparent", boxShadow: corrUser === u ? `inset 3px 0 0 ${accent}` : "none" }}>
                   <span style={{ fontSize: 12.5, color: textP, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><span style={{ color: textS, marginRight: 7, fontVariantNumeric: "tabular-nums" }}>{i + 1}.</span>{u}</span>
                   <span style={{ fontSize: 10.5, color: textS, display: "flex", gap: 8, alignItems: "baseline", flexShrink: 0 }}>
                     {c.photo > 0 && <span title="photos" style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><IconCamera size={11} />{c.photo}</span>}
@@ -1982,9 +2002,12 @@ export default function ManageLibrary({ ctx }) {
             </>)}
           {panel(<IconNote size={14} />, corrUser ? `Recent — ${corrUser}` : "Recent contributions",
             <span style={{ marginLeft: "auto", fontSize: 10.5, color: textS, fontVariantNumeric: "tabular-nums" }}>{inRange.length}</span>,
-            <div style={{ maxHeight: 460, overflowY: "auto" }}>
+            // No inner scrollport any more. It was a 460px window onto a 400-row slice — you scrolled
+            // inside a panel that was itself on a scrolling page, and the rows below the fold were
+            // invisible to the browser's own find. A page of 30 is short enough to just render.
+            <div>
               {inRange.length === 0 ? <div style={{ fontSize: 11.5, color: textS, padding: "10px 0" }}>Nothing matches.</div> :
-                inRange.slice(0, 400).map(e => {
+                inRange.slice(cp * CORR_PAGE_SIZE, cp * CORR_PAGE_SIZE + CORR_PAGE_SIZE).map(e => {
                   const isVid = kindOf(e) === "video";
                   const thumb = isVid ? (allVideos.find(v => v.id === e.photoId)?.thumb) : (libItems.find(i => i.id === e.photoId)?.url);
                   return (
@@ -2004,6 +2027,21 @@ export default function ManageLibrary({ ctx }) {
                   </div>
                   );
                 })}
+              {/* Only when there is more than one page — a disabled Prev/Next pair under a list of
+                  nine rows is furniture. The range is spelled out because "Page 3 of 34" alone does
+                  not tell you where in 997 items you are. */}
+              {corrPages > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${border}` }}>
+                  <button className="ml-page-btn" onClick={() => setCorrPage(p => Math.max(0, p - 1))} disabled={cp === 0}
+                    style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: cp === 0 ? 0.4 : 1, cursor: cp === 0 ? "default" : "pointer" }}>← Prev</button>
+                  <span style={{ fontSize: 11, color: textS, fontVariantNumeric: "tabular-nums" }}>
+                    {cp * CORR_PAGE_SIZE + 1}–{Math.min(inRange.length, cp * CORR_PAGE_SIZE + CORR_PAGE_SIZE)} of {inRange.length}
+                    <span style={{ opacity: 0.6 }}> · page {cp + 1}/{corrPages}</span>
+                  </span>
+                  <button className="ml-page-btn" onClick={() => setCorrPage(p => Math.min(corrPages - 1, p + 1))} disabled={cp >= corrPages - 1}
+                    style={{ ...S.btn(false), fontSize: 11, padding: "6px 16px", opacity: cp >= corrPages - 1 ? 0.4 : 1, cursor: cp >= corrPages - 1 ? "default" : "pointer" }}>Next →</button>
+                </div>
+              )}
             </div>)}
         </div>
       </div>
