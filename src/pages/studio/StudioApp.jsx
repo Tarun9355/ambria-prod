@@ -6174,8 +6174,18 @@ export default function StudioApp() {
       if (dt === "saya") warns.push("🔴 This is a Saya day");
       if (dt === "competition") warns.push("⚫ This is a Competition day");
       if (bookedCount >= 2) warns.push(`🔥 ${bookedCount} bookings already on this date`);
+      // BUG-3. A booking with nothing built used to go through in silence: this check never looked at
+      // the total at all, so a ₹0 deal could be confirmed as Sold — which then writes event orders,
+      // reserves inventory and hands ops a booking with no decor in it.
+      // A WARNING rather than a hard block: the enable gate (name/date/venue) is about data that is
+      // structurally required, whereas a zero total is a judgement call — a deal can legitimately be
+      // committed before the build is priced. What it must not be is invisible.
+      if (!(eventGrandTotal > 0)) warns.push("💸 ₹0 — nothing has been built for this event yet");
       const warnStr = warns.length ? "\n\n⚠️ " + warns.join("\n⚠️ ") : "";
-      if (!confirm(`Confirm booking for ${clientName.trim()} — ${clientDate} at ${venue}?${warnStr}`)) return;
+      // The amount is in the question now. Confirming a booking without being shown what you are
+      // committing to was the other half of how a ₹0 slipped through unnoticed.
+      const amountStr = eventGrandTotal > 0 ? ` for ₹${Math.round(eventGrandTotal).toLocaleString("en-IN")}` : "";
+      if (!confirm(`Confirm booking for ${clientName.trim()}${amountStr} — ${clientDate} at ${venue}?${warnStr}`)) return;
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
@@ -6278,7 +6288,11 @@ export default function StudioApp() {
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs]);
+  }, [saveSession, authUser, saveClientLedger, logActivity, clientName, clientDate, venue, fn, clientPhone, clientShift, clientBrideGroom, clientPax, dateTypes, clientLedger, zoneConfig, zoneElements, enabledEls, elTiers, grandTotal, totalCost, transportCalc, floralRatio, eventOrders, saveEventOrders, collectAllFunctionData, calcFunctionBreakdown, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcManualItems, dcDedupOverrides, dcCustomItems, dcFloralColorPrefs,
+    // Listed because the ₹0 check above reads it. Without this the callback holds whatever
+    // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
+    // deal that has since been priced, or worse, stay silent on one that has been emptied.
+    eventGrandTotal]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {

@@ -2508,7 +2508,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           return <>
         {pricingReady ? <>
           <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={displayTotal} fmt={fmt}/></div>
-          <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(displayTotal).bg,color:getCat(displayTotal).color}}>{getCat(displayTotal).label}</div>
+          {/* BUG-3. A ₹0 total used to render the tier pill anyway, and getCat has no floor — anything
+              under ₹3,50,000 lands in the catch-all "Silver" bucket, zero included. So a deal with
+              nothing built announced itself as a Silver ₹0, which reads as a real (cheap) quote
+              rather than as an empty one.
+              Nothing has been built is not a tier, so it does not get a tier badge: it gets said in
+              words. The threshold is the DISPLAYED figure, so a negotiated amount of 0 is treated the
+              same as an estimate of 0 — both mean there is no number to stand behind yet. */}
+          {displayTotal > 0
+            ? <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:getCat(displayTotal).bg,color:getCat(displayTotal).color}}>{getCat(displayTotal).label}</div>
+            : <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",background:"rgba(255,255,255,0.10)",color:"#E8CF9A",border:"1px solid rgba(232,207,154,0.28)"}}>Nothing built yet</div>}
+          {displayTotal <= 0 && <div style={{fontSize:11.5,color:"#a5b4fc",marginTop:9,lineHeight:1.5}}>Add zones and elements in <strong style={{color:"#fff",fontWeight:700}}>Build</strong> to price this event.</div>}
           {/* Once a negotiated amount is set, it becomes the headline figure above (what Deal Check's
               margin math also uses) — the system-generated estimate stays visible here, just demoted
               to a secondary line, so nobody loses sight of what the design itself would cost at list price. */}
