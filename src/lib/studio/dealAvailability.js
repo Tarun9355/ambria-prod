@@ -37,6 +37,52 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
   return used;
 }
 
+// Build: full scarce-stock allocation for ONE item across the WHOLE booking (same date) — every
+// row that draws on invId (its own qty, or via a kit's component) competes for the same
+// otherEventsAvail units. Smallest-qty rows are granted stock FIRST, so one zone's bulk increase
+// concentrates the shortfall on ITSELF instead of retroactively flagging every other zone's
+// untouched, already-fine row as short too — subtracting each sibling's raw (possibly itself-
+// short) qty double-counted the deficit (a zone with qty 2 against 1 available unit elsewhere
+// looked short there AND made a completely separate 1-unit zone look short again, when only one
+// unit total was ever actually missing). Returns the allocation for the ONE row identified by
+// target = { fnIdx, zoneKey, elIdx } (a specific row, not a whole-zone exclusion — this is only
+// ever called from getElPriceFromInventory's own per-row shortfall pricing).
+export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail) {
+  if (!invId) return { ownedQty: 0, shortQty: 0 };
+  const rows = [];
+  (fns || []).forEach((fn, fnIdx) => {
+    if (targetDate && (fn?.fnDate || "") !== targetDate) return;
+    Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
+      (elems || []).forEach((el, elIdx) => {
+        if (!el?.invId) return;
+        let qty = 0;
+        if (el.invId === invId) {
+          qty = Number(el.qty) || 0;
+        } else {
+          const kitItem = (imsInventory || []).find((i) => i.id === el.invId);
+          const comps = Array.isArray(el.kitOverrides) ? el.kitOverrides : (kitItem?.subItems || []);
+          const compQtyEach = (comps || []).reduce((s, c) => s + (c.itemId === invId ? (Number(c.qty) || 0) : 0), 0);
+          qty = compQtyEach * (Number(el.qty) || 0);
+        }
+        if (qty > 0) rows.push({ fnIdx, zk, elIdx, qty });
+      });
+    });
+  });
+  // Array.prototype.sort is stable (spec-guaranteed) — ties keep their original relative order, so
+  // the result doesn't reshuffle between renders just because two rows happen to match on qty.
+  rows.sort((a, b) => a.qty - b.qty);
+  let remaining = Math.max(0, Number(otherEventsAvail) || 0);
+  let result = { ownedQty: 0, shortQty: 0 };
+  for (const r of rows) {
+    const owned = Math.min(r.qty, remaining);
+    remaining -= owned;
+    if (r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx) {
+      result = { ownedQty: owned, shortQty: r.qty - owned };
+    }
+  }
+  return result;
+}
+
 // Deal Check: same idea over dcCards[fnIdx][cardKey] (+ card.split[] variants) and dcManualItems,
 // plus kit expansion via dcKitEdits overrides.
 // exclude = { fnIdx, zoneKey?, cardKey?, manualId? } — zoneKey alone excludes the whole zone

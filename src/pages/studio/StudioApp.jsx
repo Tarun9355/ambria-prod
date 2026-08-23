@@ -74,7 +74,7 @@ import {
   calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
 } from "../../lib/studio/pricing";
-import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
+import { allocateRowAvailability } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
@@ -3617,16 +3617,26 @@ export default function StudioApp() {
       // SIBLING zone/function in this SAME unsaved build already drawing on the same item — e.g.
       // 3 used in zone A, then adding 1 more in zone B. dcReservedInventory only reflects the last
       // successful reconcile (Deal Check regenerate), so a fresh cross-zone add isn't in there yet,
-      // and each card's own check must not pretend it alone owns the full reserved amount. Reuses
-      // the exact same helper that already powers the "fully used" search-picker badge
-      // (remainingForItem in StudioBuild.jsx) — opts.zoneKey is only passed by that live per-element
-      // render loop, so every other caller (Deal Check rollups, calcElsCost, etc.) is unaffected.
-      const usedElsewhere = (opts?.zoneKey != null)
-        ? qtyUsedElsewhereInBuild(item.id, collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [], imsInventory, { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx }, activeFnMeta?.date || clientDate)
-        : 0;
-      const available = Math.max(0, otherEventsAvail - usedElsewhere);
-      const ownedQty = Math.min(qty, available);
-      const shortQty = Math.max(0, qty - available);
+      // and each card's own check must not pretend it alone owns the full reserved amount.
+      // opts.zoneKey/elIdx are only passed by Build's live per-element render loop — every other
+      // caller (Deal Check rollups, calcElsCost, etc.) falls through to the plain otherEventsAvail
+      // check below, unaffected.
+      //
+      // allocateRowAvailability (not a plain subtract) — every row across the WHOLE booking that
+      // draws on this item competes for otherEventsAvail as ONE pool, smallest qty first, so a
+      // single zone's bulk increase concentrates the shortfall on itself instead of also flagging
+      // every other, untouched row as short: subtracting siblings' raw (possibly itself-short) qty
+      // one-for-one double-counted the same deficit across multiple rows (a zone asking for 2 with
+      // only 1 spare unit elsewhere read as short THERE, and a completely separate 1-unit zone read
+      // as short again too, when only one unit total was ever actually missing).
+      let ownedQty, shortQty;
+      if (opts?.zoneKey != null && opts?.elIdx != null) {
+        const alloc = allocateRowAvailability(item.id, collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [], imsInventory, { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx }, activeFnMeta?.date || clientDate, otherEventsAvail);
+        ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
+      } else {
+        ownedQty = Math.min(qty, otherEventsAvail);
+        shortQty = Math.max(0, qty - otherEventsAvail);
+      }
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
       const shortRate = (Number(item.cost) || 0) * (rcCostPctForSub(item.subCat || item.subcategory) / 100);
       // Repeat discount applies to the owned/available portion only — same ordering Deal Check's
@@ -3635,7 +3645,10 @@ export default function StudioApp() {
       const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName) + shortQty * shortRate;
       const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
       const warning = shortQty > 0 ? `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%` : null;
-      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available };
+      // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
+      // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
+      // exactly: 0 iff nothing was left for this row's turn in the allocation above.
+      return { rc: null, unitPrice, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null };
