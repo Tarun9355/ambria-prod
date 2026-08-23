@@ -75,6 +75,17 @@ function fnIdentity(f: any) {
     f?.internalVenueName || f?.venueName || f?.externalVenue].map((v) => String(v ?? "").trim().toLowerCase()).join("|");
 }
 
+// TEMPORARY diagnostic (remove once the real "Location Detail" field name is confirmed and wired
+// into fnDetail properly) — every raw key that even loosely smells like a venue/address/location
+// field, so a synced sample can be inspected via SQL without guessing the field name a third time.
+function debugAddrKeys(raw: any) {
+  const out: Record<string, any> = {};
+  for (const k of Object.keys(raw || {})) {
+    if (/venue|addr|location|hall|room/i.test(k)) out[k] = raw[k];
+  }
+  return out;
+}
+
 function normalizeRow(raw: any, dept: string) {
   const isVenue = dept === "venue";
   const entryNo = isVenue ? (raw.fisc_entryno || "") : (raw.dhc_entry_no || "");
@@ -96,6 +107,7 @@ function normalizeRow(raw: any, dept: string) {
     externalVenue: isVenue ? (raw.fiscd_venue_name || "") : (raw.dhcd_venue2 || ""),
     locationName: raw.address1 || "",
     decorLumpsum: isVenue ? parseFloat(raw.fiscd_decoration_lumpsum || "0") : parseFloat(raw.dhcd_lumpsum || "0"),
+    _debugAddr: debugAddrKeys(raw),
   };
   const header = {
     dept, entryNo,
@@ -139,6 +151,7 @@ function normalizeLeadRow(raw: any) {
     externalVenue: raw.dhd_venue2 || "",
     locationName: raw.address1 || "",
     decorLumpsum: parseFloat(raw.dhd_lumpsum || "0"),
+    _debugAddr: debugAddrKeys(raw),
   };
   const header = {
     dept: "decor", entryNo,
