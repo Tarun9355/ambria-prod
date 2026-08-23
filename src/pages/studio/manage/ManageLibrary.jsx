@@ -2128,9 +2128,30 @@ export default function ManageLibrary({ ctx }) {
    The pager responds only when NOT disabled, for the same reason: an end-stop that highlights reads
    as a button that will do something. */
 .ml-tab:not([data-on]):hover{background:rgba(26,26,46,0.055) !important;color:#1a1a2e !important}
-.ml-page-btn:not(:disabled){transition:background .14s ease, color .14s ease, transform .14s ease}
-.ml-page-btn:not(:disabled):hover{background:rgba(26,26,46,0.075) !important;color:#1a1a2e !important;transform:translateY(-1px)}
-@media (prefers-reduced-motion: reduce){.ml-page-btn:not(:disabled):hover{transform:none}}
+/* Filled navy, not the faint grey S.btn(false) they inherited — Prev/Next are the only way off a
+   page and they were the quietest thing on it, reading as disabled captions rather than buttons.
+   The same #1a1a2e/#2d1b69 the active view tab and Summary's totals use, so "this is a control you
+   press" is one colour across the app.
+   !important because each button spreads S.btn(false) inline, and an inline declaration beats a
+   plain rule. Dark mode gets a light fill for the same reason in reverse — navy on near-navy is the
+   invisibility this change exists to fix. */
+.ml-page-btn:not(:disabled){transition:background .14s ease, transform .14s ease, box-shadow .16s ease;
+  background:${isDark ? "rgba(255,255,255,0.14)" : "linear-gradient(135deg,#1a1a2e,#2d1b69)"} !important;
+  color:${isDark ? "#fff" : "#fff"} !important;
+  border:1px solid ${isDark ? "rgba(255,255,255,0.18)" : "transparent"} !important;
+  font-weight:600 !important;
+  box-shadow:0 1px 3px rgba(26,26,46,0.22)}
+.ml-page-btn:not(:disabled):hover{background:${isDark ? "rgba(255,255,255,0.22)" : "linear-gradient(135deg,#2d1b69,#3d2589)"} !important;
+  transform:translateY(-1px);box-shadow:0 3px 10px rgba(26,26,46,0.30)}
+/* Disabled stays flat and grey so an end-stop never looks pressable. The inline opacity:0.4 alone
+   would have left a dimmed navy button, which still reads as a button. */
+.ml-page-btn:disabled{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.06)"} !important;
+  color:${textS} !important;border:1px solid transparent !important;box-shadow:none;
+  /* Cancels the inline opacity:0.4 each call site sets. That was there to dim a light-grey button;
+     against this grey fill it would double up and leave the end-stop all but invisible, and a
+     disabled control still has to be readable enough to say which end you are at. */
+  opacity:1 !important}
+@media (prefers-reduced-motion: reduce){.ml-page-btn:not(:disabled){transition:none}.ml-page-btn:not(:disabled):hover{transform:none}}
 /* ── THE VIDEO TAG EDITOR ──
    The tagging groups flow down CSS columns rather than sitting in a grid. Their heights are wildly
    uneven — Colors is thirty chips, In/Out is three — and in a grid every card in a row is sized to
