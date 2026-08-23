@@ -1,7 +1,9 @@
 // A tiny bridge so App.jsx's update banner — rendered OUTSIDE any route's component tree, since
 // it has to survive whichever page you're on — can ask whichever app is currently mounted
-// (Studio, today; IMS has no in-progress client state to lose) to flush its unsaved work before
-// reloading to the new build. Without this, clicking "Update now" called window.location.reload()
+// (Studio or IMS — IMS registers too, since its own setX writers turned out to have exactly the
+// same fire-and-forget race: a real sold deal's auto-confirm engine lost its `functions` row this
+// way) to flush its unsaved work before reloading to the new build. Without this, clicking "Update
+// now" called window.location.reload()
 // immediately: Studio's own autosave IS wired to pagehide, but a reload can cancel an in-flight
 // network write before it lands, so a build mid-edit was routinely lost the moment someone hit
 // Update instead of just leaving the tab alone. Threading a real prop/ctx here isn't possible —

@@ -24,6 +24,7 @@ import { allocateForDate, buildEventAllocation, eoToFnList, expireStaleSoftHolds
 import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
+import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 // BLOCKS_SK / RC_SK removed 30 Jul 2026: both were unused here (declaration + comments only) and
@@ -219,6 +220,47 @@ export default function IMS() {
   const trussPromotedRef = useRef(new Set());
   const trussBackfilledRef = useRef(false);
   const settingsRef = useRef(SETTINGS_DEFAULTS);
+  // Every setX below updates React state synchronously, then persists to Supabase via a
+  // fire-and-forget async IIFE that nothing awaits — a real bug, confirmed by direct DB
+  // inspection: a sold deal's auto-confirm engine (executeConfirmBlocks → createProjectFromEO)
+  // called setProjects(...) then setFunctions(...) back to back; the projects row landed but the
+  // functions row never did, because whoever's IMS tab ran that auto-confirm navigated away
+  // (Studio switcher, tab close, refresh) while the functions upsert loop was still mid-flight —
+  // there was nothing tracking it, so nothing could wait for it. trackWrite lets every one of
+  // these writers register its in-flight promise here; registerFlushBeforeReload (below) awaits
+  // the lot before the shared Studio/IMS switcher — or IMS's own beforeunload/pagehide — lets a
+  // navigation proceed. Doesn't guarantee a hard tab-close (browsers don't allow blocking that),
+  // but closes the far more common gap: clicking "Studio" or reloading right after a write kicks
+  // off, which is exactly what a background auto-confirm engine racing a human clicking around
+  // looks like.
+  const pendingWritesRef = useRef(new Set());
+  const trackWrite = useCallback((p) => {
+    pendingWritesRef.current.add(p);
+    p.finally(() => pendingWritesRef.current.delete(p));
+    return p;
+  }, []);
+  // Registers with the SAME registry Studio's build autosave already uses — so the shared
+  // AppSwitcher (Studio ⇄ IMS) now awaits IMS's own pending writes too, not just Studio's, before
+  // it navigates. Best-effort only, same as Studio's: can't guarantee a hard tab close, but covers
+  // the actual trigger that produced the missing-functions-row bug — clicking "Studio" or
+  // reloading right after the auto-confirm engine (or any setX above) kicks off its writes.
+  useEffect(() => {
+    const flush = async () => { await Promise.allSettled([...pendingWritesRef.current]); };
+    registerFlushBeforeReload(flush);
+    const onBeforeUnload = (e) => {
+      if (pendingWritesRef.current.size === 0) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    const onPageHide = () => { flush(); };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      unregisterFlushBeforeReload(flush);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, []);
   const studioRcItemsRef = useRef([]);
   useEffect(() => { studioRcItemsRef.current = studioRcItems; }, [studioRcItems]);
   const rateCardCategoriesRef = useRef([]);
@@ -245,15 +287,15 @@ export default function IMS() {
     const next = typeof updater === "function" ? updater(prev) : updater;
     settingsRef.current = next;
     setSettingsState(next);
-    (async () => {
+    trackWrite((async () => {
       for (const k of Object.keys(next)) {
         if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) {
           const { error: e } = await supabase.from("settings").upsert({ key: k, value: next[k] }, { onConflict: "key" });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   // Apply settings-table rows → blocks blob, Studio rate-card mirror (RC_SK), settings object.
   // Shared by the initial load and the settings Realtime subscription so config syncs live.
@@ -896,8 +938,8 @@ export default function IMS() {
     const next = typeof updater === "function" ? updater(prev) : updater;
     itemsRef.current = next;
     setItems(next);
-    persistInventory(prev, next, deletedIds);
-  }, [persistInventory]);
+    trackWrite(persistInventory(prev, next, deletedIds));
+  }, [persistInventory, trackWrite]);
 
   // functions writes (block reservations). Persist changed function rows to Supabase.
   const setFunctions = useCallback((updater) => {
@@ -906,7 +948,7 @@ export default function IMS() {
     fnsRef.current = next;
     setFns(next);
     const prevMap = new Map(prev.map((f) => [f.id, f]));
-    (async () => {
+    trackWrite((async () => {
       for (const fn of next) {
         const before = prevMap.get(fn.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(fn)) {
@@ -914,8 +956,8 @@ export default function IMS() {
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   const setVendors = useCallback((updater) => {
     const prev = vendorsRef.current;
@@ -923,7 +965,7 @@ export default function IMS() {
     vendorsRef.current = next;
     setVendorsState(next);
     const prevMap = new Map(prev.map((v) => [v.id, v]));
-    (async () => {
+    trackWrite((async () => {
       for (const v of next) {
         const before = prevMap.get(v.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(v)) {
@@ -931,8 +973,8 @@ export default function IMS() {
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   const setPurchase = useCallback((updater) => {
     const prev = purchaseRef.current;
@@ -940,7 +982,7 @@ export default function IMS() {
     purchaseRef.current = next;
     setPurchaseState(next);
     const prevMap = new Map(prev.map((p) => [p.id, p]));
-    (async () => {
+    trackWrite((async () => {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
@@ -948,8 +990,8 @@ export default function IMS() {
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   const setOverheads = useCallback((updater) => {
     const prev = overheadsRef.current;
@@ -957,7 +999,7 @@ export default function IMS() {
     overheadsRef.current = next;
     setOverheadsState(next);
     const prevMap = new Map(prev.map((o) => [o.id, o]));
-    (async () => {
+    trackWrite((async () => {
       for (const o of next) {
         const before = prevMap.get(o.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(o)) {
@@ -965,8 +1007,8 @@ export default function IMS() {
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   const setSupervisors = useCallback((updater) => {
     const prev = supervisorsRef.current;
@@ -975,7 +1017,7 @@ export default function IMS() {
     setSupervisorsState(next);
     const prevMap = new Map(prev.map((s) => [s.id, s]));
     const nextIds = new Set(next.map((s) => s.id));
-    (async () => {
+    trackWrite((async () => {
       for (const s of next) {
         const before = prevMap.get(s.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(s)) {
@@ -986,8 +1028,8 @@ export default function IMS() {
       for (const id of prevMap.keys()) {
         if (!nextIds.has(id)) await supabase.from("supervisors").delete().eq("id", id);
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   // Users — row-level diff persistence to the users table (incl. per-user apps + role/perms).
   const setUsers = useCallback((updater) => {
@@ -1008,7 +1050,7 @@ export default function IMS() {
     usersRef.current = next;
     setUsersState(next);
     const nextIds = new Set(next.map((u) => u.id));
-    (async () => {
+    trackWrite((async () => {
       for (const u of next) {
         const before = prevMap.get(u.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(u)) {
@@ -1019,8 +1061,8 @@ export default function IMS() {
       for (const id of prevMap.keys()) {
         if (!nextIds.has(id)) await supabase.from("users").delete().eq("id", id);
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   // Pure INSERT for a brand-new user — never diffs/updates/deletes existing rows. Used by the
   // "Add User" flow so adding one user can't touch any other row in the table.
@@ -1043,7 +1085,7 @@ export default function IMS() {
     setProdRequestsState(next);
     const prevMap = new Map(prev.map((p) => [p.id, p]));
     const nextIds = new Set(next.map((p) => p.id));
-    (async () => {
+    trackWrite((async () => {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
@@ -1054,8 +1096,8 @@ export default function IMS() {
       for (const id of prevMap.keys()) {
         if (!nextIds.has(id)) await supabase.from("production_requests").delete().eq("id", id);
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   // event_orders — array of EO objects (.id). Row-level diff persistence; second arg is
   // deleted ids (faithful to the reference setEventOrders(v, del) contract).
@@ -1066,7 +1108,7 @@ export default function IMS() {
     setEventOrdersState(next);
     const prevMap = new Map(prev.map((e) => [e.id, e]));
     const nextIds = new Set(next.map((e) => e.id));
-    (async () => {
+    trackWrite((async () => {
       for (const eo of next) {
         const before = prevMap.get(eo.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
@@ -1077,8 +1119,8 @@ export default function IMS() {
       for (const id of [...deletedIds, ...[...prevMap.keys()].filter((id) => !nextIds.has(id))]) {
         await supabase.from("event_orders").delete().eq("id", id);
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
   // saveEventOrders — the reference passed an explicit save callback; here it routes to
   // the same row-level persistence (setEventOrders already writes through).
   const saveEventOrders = useCallback((val, del = []) => { setEventOrders(val, del); }, [setEventOrders]);
@@ -1106,15 +1148,15 @@ export default function IMS() {
     const next = typeof updater === "function" ? updater(prev) : updater;
     blocksRef.current = next;
     setBlocksState(next);
-    persistBlocks(next, prev);
-  }, []);
+    trackWrite(persistBlocks(next, prev));
+  }, [trackWrite]);
   const saveBlocks = useCallback((val) => {
     const prev = blocksRef.current;
     const next = typeof val === "function" ? val(prev) : val;
     blocksRef.current = next;
     setBlocksState(next);
-    persistBlocks(next, prev);
-  }, []);
+    trackWrite(persistBlocks(next, prev));
+  }, [trackWrite]);
   // Last-minute amendment requests — migrated off the AMEND_SK blob to the `amend_requests` TABLE.
   const amendReqRef = useRef([]);
   useEffect(() => { amendReqRef.current = amendRequests; }, [amendRequests]);
@@ -1131,22 +1173,24 @@ export default function IMS() {
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
   // Row-level: upsert only changed requests + delete removed ones (never on-absence beyond removal).
-  const saveAmendRequests = useCallback(async (next) => {
+  const saveAmendRequests = useCallback((next) => {
     const prev = amendReqRef.current || [];
     amendReqRef.current = next; setAmendRequests(next);
     const prevMap = new Map(prev.map((r) => [r.id, r]));
     const nextIds = new Set((next || []).map((r) => r.id));
-    try {
-      for (const req of (next || [])) {
-        const before = prevMap.get(req.id);
-        if (!before || JSON.stringify(before) !== JSON.stringify(req)) {
-          const { error } = await supabase.from("amend_requests").upsert({ id: req.id, status: req.status ?? null, data: req }, { onConflict: "id" });
-          if (error) throw error;
+    return trackWrite((async () => {
+      try {
+        for (const req of (next || [])) {
+          const before = prevMap.get(req.id);
+          if (!before || JSON.stringify(before) !== JSON.stringify(req)) {
+            const { error } = await supabase.from("amend_requests").upsert({ id: req.id, status: req.status ?? null, data: req }, { onConflict: "id" });
+            if (error) throw error;
+          }
         }
-      }
-      for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await supabase.from("amend_requests").delete().eq("id", id);
-    } catch (e) { setError(`Save failed: ${e?.message || e}`); }
-  }, []);
+        for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await supabase.from("amend_requests").delete().eq("id", id);
+      } catch (e) { setError(`Save failed: ${e?.message || e}`); }
+    })());
+  }, [trackWrite]);
 
   // projects — row-level diff persistence to the projects table.
   const setProjects = useCallback((updater) => {
@@ -1155,7 +1199,7 @@ export default function IMS() {
     projectsRef.current = next;
     setProjectsState(next);
     const prevMap = new Map(prev.map((p) => [p.id, p]));
-    (async () => {
+    trackWrite((async () => {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
@@ -1163,8 +1207,8 @@ export default function IMS() {
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   // Truss allocations — object keyed by date. allocateForDate returns the whole map;
   // we persist only the dates whose entry actually changed (CLAUDE.md rule #1).
@@ -1173,24 +1217,24 @@ export default function IMS() {
     const next = typeof updater === "function" ? updater(prev) : updater;
     trussAllocRef.current = next;
     setTrussAllocState(next);
-    (async () => {
+    trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
           const { error: e } = await supabase.from("truss_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
-    })();
-  }, []);
+    })());
+  }, [trackWrite]);
 
   // Truss inventory is a single-row key-value (key='main', data JSONB).
   const setTrussInv = useCallback((updater) => {
     setTrussInvState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      supabase.from("truss_inventory").upsert({ key: "main", data: next }, { onConflict: "key" }).then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); });
+      trackWrite(supabase.from("truss_inventory").upsert({ key: "main", data: next }, { onConflict: "key" }).then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
       return next;
     });
-  }, []);
+  }, [trackWrite]);
 
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
@@ -1207,7 +1251,14 @@ export default function IMS() {
     settings, studio, trussInv, setTrussInv,
   });
 
-  const handleLogout = () => { logout(); navigate("/login", { replace: true }); };
+  const handleLogout = async () => {
+    // Same race Studio's own doLogout used to have: navigating away immediately can outrun any of
+    // the setX writes above that are still mid-flight. Race against a timeout so a hung/slow write
+    // never traps someone on the logout screen.
+    await Promise.race([flushBeforeReload(), new Promise((r) => setTimeout(r, 2500))]);
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   // Role-based tab filtering (faithful to reference).
   const roleConfig = (settings?.roleTabs || {})[user?.role] || { tabs: TABS.map((t) => t.id) };
