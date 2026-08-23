@@ -8121,26 +8121,68 @@ export default function StudioApp() {
     try {
       const { data: fnRows, error: fnErr } = await supabase.from("functions").select("*").contains("data", { eventOrderId: eo.id });
       if (fnErr) throw fnErr;
-      fnsToProcess.forEach((fn, i) => {
+      // Confirmed by direct DB inspection (2026-08-23): a real sold deal can have its `projects`
+      // row created by createProjectFromEO but end up with ZERO linked `functions` rows — that
+      // call's setFunctions(...) upsert silently failed while setProjects(...) succeeded. When
+      // that happens there is nothing here to patch; the missing row has to be created, using the
+      // existing project as the parent, or IMS's date-filtered Inventory view stays blank forever
+      // no matter how correct the `blocks` table is.
+      let proj = null;
+      let projFetchTried = false;
+      const ensureProject = async () => {
+        if (projFetchTried) return proj;
+        projFetchTried = true;
+        try {
+          const { data, error } = await supabase.from("projects").select("*").contains("data", { eventOrderId: eo.id });
+          if (error) throw error;
+          proj = (data || [])[0] || null;
+        } catch (e) {
+          console.error("[reconcile] projects fetch failed:", e?.message || e);
+        }
+        return proj;
+      };
+      for (let i = 0; i < fnsToProcess.length; i++) {
+        const fn = fnsToProcess[i];
         const fnIdx = fn.fnIdx ?? i;
         const req = requiredByFn[fnIdx] || {};
         const date = fn.fnDate || "";
-        if (!date) return;
+        if (!date) continue;
         const row = (fnRows || []).find((r) => (r.date || r.data?.date) === date);
-        if (!row) { console.warn("[reconcile] no functions row for event", eo.id, "date", date, "— this deal may never have gone through the real markSold confirm (createProjectFromEO), so IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); return; }
-        const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
-        const kept = existingItems.filter((it) => !ids.includes(it.invId));
-        const nextItems = [...kept];
-        ids.forEach((id) => {
+        const nextItems = ids.reduce((acc, id) => {
           const qty = req[id] || 0;
-          if (qty <= 0) return;
+          if (qty <= 0) return acc;
+          const existingItems = row ? (Array.isArray(row.data?.items) ? row.data.items : []) : [];
           const prevItem = existingItems.find((it) => it.invId === id);
           const item = (inventoryList || []).find((x) => x.id === id);
-          nextItems.push(prevItem ? { ...prevItem, qty } : { invId: id, qty, remark: "", dept: item?.cat || item?.category || "", sizeClass: "M" });
-        });
-        supabase.from("functions").update({ data: { ...row.data, items: nextItems } }).eq("id", row.id)
-          .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
-      });
+          acc.push(prevItem ? { ...prevItem, qty } : { invId: id, qty, remark: "", dept: item?.cat || item?.category || "", sizeClass: "M" });
+          return acc;
+        }, []);
+        if (row) {
+          const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
+          const kept = existingItems.filter((it) => !ids.includes(it.invId));
+          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+            .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
+          continue;
+        }
+        const p = await ensureProject();
+        if (!p) { console.warn("[reconcile] no functions row AND no projects row for event", eo.id, "date", date, "— this deal never went through the real markSold confirm at all. IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); continue; }
+        const fnId = "fn_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6) + "_bck";
+        const fnData = {
+          id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
+          budget: 0, venue: { type: "outdoor", name: "", fullAddress: "" }, items: nextItems, flowerOrders: [],
+          floralRatio: 70, manpower: [], manpowerPhases: [{ phase: "event", date, crew: [], status: "planned" }],
+          expenses: [], transport: { planned: [], actual: [] }, breakage: { provision: [], actual: [] },
+          status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: "", pax: "",
+          brideGroom: eo.brideGroom || "", salesperson: eo.salesperson || "",
+        };
+        supabase.from("functions").insert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData })
+          .then(({ error }) => {
+            if (error) { console.error("[reconcile] functions backfill insert failed for event", eo.id, "date", date, ":", error.message); return; }
+            console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
+            supabase.from("projects").update({ data: { ...p.data, functions: [...(p.data?.functions || []), fnId] } }).eq("id", p.id)
+              .then(({ error: pe }) => { if (pe) console.error("[reconcile] project.functions backfill link failed:", pe.message); });
+          });
+      }
     } catch (e) {
       // Best-effort — the real reservation (`blocks`, below) isn't affected by this failing.
       console.error("[reconcile] functions fetch failed, items view will stay stale:", e?.message || e);
