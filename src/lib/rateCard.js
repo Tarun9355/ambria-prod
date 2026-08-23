@@ -44,6 +44,19 @@ export function getFloralMode(rc, subFloralModeByKey) {
   return dp >= 50 ? "real" : "artificial";
 }
 
+// "Priced at cost%" (unavailable-shortfall pricing, Production/Buying reference pricing) — an
+// item-level override (IMS Inventory's "Out of Stock Cost %" field, item.oosCostPct) wins whenever
+// it's been set for that specific item; otherwise falls back to whatever the caller's own
+// sub-category-only lookup returns (rate_card_categories.cost_percent, IMS → Admin → Settings →
+// Sub-Categories — several independent copies of that exact lookup exist across the app, this just
+// adds the per-item override on top of whichever one the caller already has in scope).
+export function oosCostPctFor(item, subCatCostPctFn) {
+  const raw = item?.oosCostPct;
+  const v = Number(raw);
+  if (raw !== null && raw !== undefined && raw !== "" && isFinite(v) && v >= 0) return v;
+  return subCatCostPctFn(item?.subCat || item?.subcategory);
+}
+
 // Is this inventory item's sub-category flagged tag_hidden (rate_card_categories.tag_hidden, set in
 // IMS Admin → Settings → Sub-Categories)? Mirrors the exact matching convention already used by
 // StudioApp.jsx's AI-tagging vocabulary filter (rcSubcatFactors rows keyed by lowercased sub-cat

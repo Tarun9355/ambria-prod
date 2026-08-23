@@ -32,7 +32,7 @@ import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingRed
 import { calcZoneFabric, autoFillFabricAllocation, resolveTrussConfig } from "../../../lib/studio/pricing";
 import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
-import { isHiddenSubcat } from "../../../lib/rateCard";
+import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
 
 export default function DealCheckOverlay({ ctx }) {
   // ── THE APP'S NAVBAR STAYS ON SCREEN ──
@@ -302,7 +302,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const ownedQty = Math.min(qty, available);
                 const shortQty = Math.max(0, qty - available);
                 const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
-                const shortCost = shortQty * (Number(item.cost) || 0) * (costPctFor(imsField.subcategory(item)) / 100);
+                const shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctFor) / 100);
                 lineRental = ownedRental + shortCost;
               }
               rental += lineRental;
@@ -1284,7 +1284,7 @@ export default function DealCheckOverlay({ ctx }) {
                         const ownedQty = Math.min(qty, available);
                         const shortQty = Math.max(0, qty - available);
                         const ownedRental = repeatAdjustedRental(_rep, fn.fnVenue, item, ownedQty, baseR);
-                        const shortCost = shortQty * (Number(item.cost) || 0) * (costPctForFn(imsField.subcategory(item)) / 100);
+                        const shortCost = shortQty * (Number(item.cost) || 0) * (oosCostPctFor(item, costPctForFn) / 100);
                         fnDecor += ownedRental + shortCost;
                       });
                       (dcManualItems || []).filter(mi => mi.fnIdx === fi).forEach(mi => {
@@ -1543,7 +1543,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const ownedQty = Math.min(qty, available);
                           const shortQty = Math.max(0, qty - available);
                           const ownedRental = repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR);
-                          const shortCost = shortQty * (Number(it.cost) || 0) * (_costPctFor(imsField.subcategory(it)) / 100);
+                          const shortCost = shortQty * (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor) / 100);
                           zoneRentalTotal += ownedRental + shortCost;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? !!(fns[fnIdx]?.zoneConfig?.[mi.zoneKey]?.repeat) : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR); });

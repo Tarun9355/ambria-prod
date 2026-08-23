@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { fetchAll } from "../../lib/supabase";
 import { uploadToStorage, STORAGE_FOLDERS } from "../../lib/storage";
+import { oosCostPctFor } from "../../lib/rateCard";
 
 // ═══ superset-schema field accessors (copied VERBATIM from reference module scope) ═══
 // IMS items post-02-May migration carry BOTH legacy (cat/qty/price/img/size) and new
@@ -114,7 +115,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
       // price whenever `cost` was blank, which silently priced a made-to-order item at what it
       // would cost to RENT one instead — no fallback now: a missing cost shows ₹0 and pushes the
       // salesperson to "Adjust price manually" rather than quietly substituting the wrong number.
-      const costPct = rcCostPctForSub ? rcCostPctForSub(imsField.subcategory(it)) : 100;
+      const costPct = rcCostPctForSub ? oosCostPctFor(it, rcCostPctForSub) : 100;
       return { ...it, _relevance: relevance, _dimScore: dimScore, _photo: imsField.photos(it)[0] || "", _cost: (Number(it.cost) || 0) * (costPct / 100), _dims: imsField.sizeText(it) };
     }).filter(Boolean);
     scored.sort((a, b) => b._relevance - a._relevance || a._dimScore - b._dimScore);
@@ -135,7 +136,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
     // matcher above: look the full row up in imsInventory for its real production cost + sub-
     // category, and price the reference at cost × cost%, not at `picked.price` (rental).
     const fullItem = (imsInventory || []).find(i => i.id === picked.id);
-    const costPct = rcCostPctForSub ? rcCostPctForSub(imsField.subcategory(fullItem || {})) : 100;
+    const costPct = rcCostPctForSub ? oosCostPctFor(fullItem || {}, rcCostPctForSub) : 100;
     const synthetic = { id: picked.id, name: picked.name, _photo: picked.photo || "", _dims: picked.dims || "", _cost: (Number(fullItem?.cost) || 0) * (costPct / 100) };
     setCRefResults(prev => [synthetic, ...prev.filter(x => x.id !== picked.id)]);
     setCSelectedRef(picked.id);

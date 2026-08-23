@@ -79,7 +79,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
-import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode } from "../../lib/rateCard";
+import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -3638,7 +3638,7 @@ export default function StudioApp() {
         shortQty = Math.max(0, qty - otherEventsAvail);
       }
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
-      const shortRate = (Number(item.cost) || 0) * (rcCostPctForSub(item.subCat || item.subcategory) / 100);
+      const shortRate = (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub) / 100);
       // Repeat discount applies to the owned/available portion only — same ordering Deal Check's
       // own rollup already uses (DealCheckOverlay.jsx): the shortfall (not actually free in stock)
       // bills at cost% regardless, never discounted further on top of that.
@@ -7610,6 +7610,10 @@ export default function StudioApp() {
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
       if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
       if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });
+      if (zl.print > 0) {
+        const printCount = (zc.prints || []).length;
+        structItems.push({ name: "🖨 Print (" + printCount + " job" + (printCount === 1 ? "" : "s") + ")", total: zl.print });
+      }
       dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k).forEach(ci => {
         const isP = ci.type === "production";
         const unitCost = ci.manualPrice || ci.refPrice || 0;

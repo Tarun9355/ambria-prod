@@ -344,6 +344,9 @@ Rules:
     const priceNum = parseFloat(form.price) || 0;
     const costNum = parseFloat(form.cost) || 0;
     const breakNum = parseFloat(form.breakagePct) || 0;
+    // Blank = no override, use the sub-category's own cost% (see saveEdit's matching comment).
+    const oosRaw = form.oosCostPct;
+    const oosNum = (oosRaw === "" || oosRaw === null || oosRaw === undefined) ? undefined : Math.max(0, Number(oosRaw) || 0);
     const paintNum = form.paintCost ? (parseFloat(form.paintCost) || 0) : 0;
     const paintableFlag = form.paintable !== undefined ? !!form.paintable
       : (!!(form.baseColour || form.paintCost) || PAINT_TOKENS.some((tok) => String(form.cat || "").toLowerCase().includes(tok) || String(form.subCat || "").toLowerCase().includes(tok)));
@@ -376,6 +379,7 @@ Rules:
         price: priceNum, rentalCost: priceNum,
         cost: costNum,
         breakagePct: breakNum,
+        oosCostPct: oosNum,
         baseColour: form.baseColour || "",
         paintCost: paintNum,
         paintable: paintableFlag,
@@ -386,7 +390,7 @@ Rules:
         photoUrls: img ? [img] : [],
       }];
     });
-    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
+    setForm({ name: "", cat: "Florals", subCat: "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, oosCostPct: "", dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" });
     setAddModal(false);
     // Reveal the new row: the item is appended at the END, so with active filters or while on
     // page 1 of 20+ it would be off-screen — making a successful save look like "added but not
@@ -425,6 +429,7 @@ Rules:
       price: String(it.price ?? it.rentalCost ?? ""),
       cost: String(it.cost ?? ""),
       breakagePct: it.breakagePct ?? 0,
+      oosCostPct: it.oosCostPct ?? "",
       notes: it.notes || "",
       img: it.img || (Array.isArray(it.photoUrls) && it.photoUrls[0]) || "",
       dimL: it.dims_LxWxH?.l ?? "",
@@ -506,6 +511,10 @@ Rules:
     const priceNum = isKit ? kitPriceFrom(cleanSubItems, kitBaseNum) : (parseFloat(f.price) || 0);
     const costNum = parseFloat(f.cost) || 0;
     const breakNum = parseFloat(f.breakagePct) || 0;
+    // Blank = "no override, use the sub-category's own cost%" — not 0, which would mean "free when
+    // short". Only a number the admin actually typed gets stored.
+    const oosRaw = f.oosCostPct;
+    const oosNum = (oosRaw === "" || oosRaw === null || oosRaw === undefined) ? undefined : Math.max(0, Number(oosRaw) || 0);
     setInventory((prev) => prev.map((i) => {
       if (i.id !== f.id) return i;
       const next = {
@@ -521,6 +530,7 @@ Rules:
         price: priceNum, rentalCost: priceNum,
         cost: costNum,
         breakagePct: breakNum,
+        oosCostPct: oosNum,
         notes: f.notes,
         img: f.img,
         photoUrls: f.img ? [f.img] : [],
@@ -1183,10 +1193,10 @@ Rules:
             </div>
 
             {/* Number / text fields */}
-            {[["Quantity *", "qty", "number"], ["Rental Price ₹", "price", "number"], ["Cost Price ₹", "cost", "number"], ["Breakage %", "breakagePct", "number"]].map(([l, k, t]) => (
+            {[["Quantity *", "qty", "number"], ["Rental Price ₹", "price", "number"], ["Cost Price ₹", "cost", "number"], ["Breakage %", "breakagePct", "number"], ["Out of Stock Cost %", "oosCostPct", "number"]].map(([l, k, t]) => (
               <div key={k}>
-                <label className="text-xs text-gray-500">{l}</label>
-                <input type={t} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                <label className="text-xs text-gray-500">{l}{k === "oosCostPct" && <span className="text-gray-400"> (blank = sub-category default)</span>}</label>
+                <input type={t} value={form[k] ?? ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })}
                   className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
             ))}
@@ -1298,7 +1308,7 @@ Rules:
               : <div className="w-28 h-28 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300 flex-shrink-0"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
             }
             <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm flex-1">
-              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"], ["Dimensions", dimsText], ["Printable Area", printText]].map(([l, v]) => (
+              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"], ["Out of Stock Cost %", typeof selItem.oosCostPct === "number" ? selItem.oosCostPct + "%" : "— (sub-category default)"], ["Dimensions", dimsText], ["Printable Area", printText]].map(([l, v]) => (
                 <div key={l}><span className="text-gray-400">{l}: </span><span className="font-medium text-gray-800">{v}</span></div>
               ))}
             </div>
@@ -1514,6 +1524,12 @@ Rules:
                   <label className="text-xs text-gray-500">Breakage %</label>
                   <input type="number" min="0" max="100" value={editForm.breakagePct || 0} onChange={(e) => setEditForm((f) => ({ ...f, breakagePct: e.target.value }))}
                     className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Out of Stock Cost %</label>
+                  <input type="number" min="0" max="100" value={editForm.oosCostPct ?? ""} onChange={(e) => setEditForm((f) => ({ ...f, oosCostPct: e.target.value }))}
+                    placeholder={"Sub-category default"} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+                  <div className="text-[10px] text-gray-400 mt-0.5">When this item is short for a booking, Studio bills the shortfall at Cost × this % — leave blank to use the sub-category's own default (Admin → Settings → Sub-Categories).</div>
                 </div>
               </div>
 
