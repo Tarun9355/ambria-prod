@@ -636,7 +636,24 @@ export default function DCManpowerTab({ ctx }) {
                     else dayList.push({ date: cur, phase: "gap", fns: [] });
                     cur = addDays(cur, 1);
                   }
-                  if (dcMpIncludeDismantle) dayList.push({ date: addDays(latest, 1), phase: "dismantle", fns: [] });
+                  if (dcMpIncludeDismantle) {
+                    // Every function whose immediate next calendar day ISN'T itself another function's
+                    // day gets a real dismantle day right after it (dismantlingPct applied), not a flat
+                    // carried-forward "gap" day — a 24/26/28 booking dismantles after EACH of 24 and 26,
+                    // not just once at the very end. Back-to-back functions (next day IS an event, e.g.
+                    // 24/25/26) never get one in between: the crew flows straight into the next setup.
+                    // The last function's dismantle day (latest+1) falls outside the earliest..latest
+                    // loop above, so it needs inserting rather than converting an existing gap entry.
+                    const eventDates = new Set(dayList.filter(d => d.phase === "event").map(d => d.date));
+                    dayList.filter(d => d.phase === "event").forEach(d => {
+                      const nextDate = addDays(d.date, 1);
+                      if (eventDates.has(nextDate)) return; // back-to-back — no dismantle day in between
+                      const existing = dayList.find(x => x.date === nextDate);
+                      if (existing) existing.phase = "dismantle";
+                      else dayList.push({ date: nextDate, phase: "dismantle", fns: [] });
+                    });
+                    dayList.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+                  }
 
                   // ── People count per fn × labour type ─────────────────────
                   // For each labour type present in dihariSchemes, compute people count for each fn.
@@ -809,7 +826,7 @@ export default function DCManpowerTab({ ctx }) {
                           </label>
                           <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:isAdmin?"#000":"#6B7280",cursor:isAdmin?"pointer":"default"}}>
                             <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!isAdmin} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} />
-                            🧹 Include dismantle day
+                            🧹 Include dismantle days
                           </label>
                           {!isAdmin && <span style={{fontSize:12,color:"#6B7280",fontStyle:"italic",alignSelf:"center"}}>Manpower planning now lives in IMS → Dept Ops</span>}
                           {/* ═══ RESET TO DERIVED ═══
