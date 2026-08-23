@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
 import { IconClipboard } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
@@ -98,19 +98,37 @@ export function RemoveFunctionDialog({ snap, onCancel, onConfirm, S, sheet, hair
 }
 
 export default function StudioEventInfo({ ctx }) {
-  // The app header's height, fed to --ei-hdr on the root (see the return below for why).
-  // ResizeObserver rather than a one-time read: the header wraps to a second row when the window
-  // narrows, and this view is locked to a viewport-derived height that has to follow it.
+  // How far down the page this view starts, fed to --ei-hdr on the root (see the return below).
+  //
+  // Measures the SPLIT'S OWN OFFSET rather than the height of the header above it. The first attempt
+  // subtracted document.querySelector(".sa-header").height and still left a second scrollbar,
+  // because that only works if you correctly enumerate everything stacked above — and the answer
+  // changes (the function-pills row, a banner, whatever gets added next). The element's own distance
+  // from the top of the document is that sum, whatever it happens to be made of, and it needs no
+  // maintenance when the chrome above changes.
+  // No feedback loop: this view's height does not affect where it starts, so the measurement is
+  // stable the moment it is applied. The equality guard makes that explicit anyway.
+  const eiSplitRef = useRef(null);
   const [eiHdrH, setEiHdrH] = useState(0);
   useEffect(() => {
-    const el = document.querySelector(".sa-header");
-    if (!el) { setEiHdrH(0); return; }   // bare Event Info renders no header at all
-    const read = () => setEiHdrH(el.getBoundingClientRect().height || 0);
-    read();
-    const ro = new ResizeObserver(read);
-    ro.observe(el);
-    window.addEventListener("resize", read);
-    return () => { ro.disconnect(); window.removeEventListener("resize", read); };
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const el = eiSplitRef.current;
+      if (!el) return;
+      // + scrollY so this is the offset from the DOCUMENT top, correct even on the first pass while
+      // the page is still (wrongly) scrolled.
+      const next = Math.max(0, Math.round(el.getBoundingClientRect().top + window.scrollY));
+      setEiHdrH((prev) => (prev === next ? prev : next));
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    measure();
+    // body, not the header: this catches the header wrapping, the function row appearing when a
+    // client loads, and anything else that changes what sits above this view.
+    const ro = new ResizeObserver(schedule);
+    ro.observe(document.body);
+    window.addEventListener("resize", schedule);
+    return () => { if (raf) cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener("resize", schedule); };
   }, []);
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
@@ -994,7 +1012,7 @@ export default function StudioEventInfo({ ctx }) {
       {BRAND_PANEL}
       {/* After the panel, so it paints on top of the ink rather than under it. */}
       {APP_SWITCH}
-      <div className="ei-split">
+      <div className="ei-split" ref={eiSplitRef}>
         {/* Ambient wash — full width of the split, running UNDER the fixed panel as well as the
             brief, so the cream the curve gives back is washed like everything else. No clicks. */}
         <div className="ei-wash" aria-hidden="true">
