@@ -939,59 +939,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         return row;
       };
 
-      combined.functions.forEach((fnObj, i) => {
-        const ws = workbook.addWorksheet(sheetNameFor(fnObj, i));
-        ws.columns = COLS;
-        addSectionRow(ws, `AMBRIA DECORATIONS — ${(combined.clientName || "Client").toUpperCase()}`, { fill: dark, color: gold, size: 13, height: 24 });
-        addSectionRow(ws, fnLine(fnObj).toUpperCase(), { fill: "FF2A2A42", color: white });
-        ws.addRow([]);
-
-        if (fnObj.isEmpty) {
-          ws.mergeCells(ws.rowCount + 1, 1, ws.rowCount + 1, COLS.length);
-          const row = ws.getRow(ws.rowCount);
-          row.getCell(1).value = "Design pending — zones for this function have not been built yet.";
-          row.getCell(1).font = { italic: true, color: { argb: "FF808080" } };
-          return;
-        }
-
-        fnObj.zones.forEach(z => {
-          addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
-          addTableHeaderRow(ws);
-          z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
-          z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
-          addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
-          if (z.note) {
-            const row = ws.addRow([`📝 ${z.note}`]);
-            ws.mergeCells(row.number, 1, row.number, COLS.length);
-            row.getCell(1).font = { italic: true, color: { argb: tan } };
-          }
-          ws.addRow([]);
-        });
-
-        if (fnObj.transport) {
-          addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
-          const row = ws.addRow(["Item", "Details", "", "", "", "Amount"]);
-          row.eachCell((c, idx) => { if ([1, 2, 6].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 6 ? "right" : "left" }; } });
-          // One row for the whole truck count, not one per sub-category — the per-sub-category
-          // breakdown (fnObj.transport.breakdown) is a fractional-truck WORKING figure (e.g. a
-          // sub-category using 0.00005 of a truck), never individually billed; only the CEILED
-          // total (trucks) × trip rate is actually charged (see transportCalc/truckTotal).
-          // Listing every sub-category here read as line-item billing for numbers nobody pays.
-          const trucks = fnObj.transport.trucks || 0;
-          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2`, "", "", "", fnObj.transport.truckTotal || 0]);
-          truckRow.getCell(6).numFmt = money.numFmt; truckRow.getCell(6).alignment = { horizontal: "right" };
-          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
-          gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
-          const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
-          tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
-          tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
-          ws.addRow([]);
-        }
-
-        addSectionRow(ws, `FUNCTION TOTAL   —   ${f(fnObj.grand)}`, { fill: dark, color: gold, size: 12, height: 22 });
-      });
-
-      // ═══ EVENT SUMMARY tab ═══
+      // ═══ EVENT SUMMARY tab — created first so it lands as the first sheet tab, ahead of the
+      // per-function tabs below. A guest opening the file should see the headline numbers before
+      // wading into per-zone line items. ═══
       const sw = workbook.addWorksheet("Event Summary");
       sw.columns = [
         { header: "Function", key: "fn", width: 20 },
@@ -1048,6 +998,59 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         negRow.getCell(5).numFmt = money.numFmt;
         negRow.getCell(5).alignment = { horizontal: "right" };
       }
+
+      // ═══ Per-function tabs — one worksheet per function, after the Event Summary tab above. ═══
+      combined.functions.forEach((fnObj, i) => {
+        const ws = workbook.addWorksheet(sheetNameFor(fnObj, i));
+        ws.columns = COLS;
+        addSectionRow(ws, `AMBRIA DECORATIONS — ${(combined.clientName || "Client").toUpperCase()}`, { fill: dark, color: gold, size: 13, height: 24 });
+        addSectionRow(ws, fnLine(fnObj).toUpperCase(), { fill: "FF2A2A42", color: white });
+        ws.addRow([]);
+
+        if (fnObj.isEmpty) {
+          ws.mergeCells(ws.rowCount + 1, 1, ws.rowCount + 1, COLS.length);
+          const row = ws.getRow(ws.rowCount);
+          row.getCell(1).value = "Design pending — zones for this function have not been built yet.";
+          row.getCell(1).font = { italic: true, color: { argb: "FF808080" } };
+          return;
+        }
+
+        fnObj.zones.forEach(z => {
+          addSectionRow(ws, `${z.label}${z.dimLabel ? "  (" + z.dimLabel + ")" : ""}   —   ${f(z.zoneTotal)}`, { fill: "FFEFE9DD", color: "FF1A1A2E" });
+          addTableHeaderRow(ws);
+          z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", si.unit || "—", si.total], { italic: true }));
+          z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.unit, it.total]));
+          addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", z.zoneTotal], { bold: true, fill: subtle });
+          if (z.note) {
+            const row = ws.addRow([`📝 ${z.note}`]);
+            ws.mergeCells(row.number, 1, row.number, COLS.length);
+            row.getCell(1).font = { italic: true, color: { argb: tan } };
+          }
+          ws.addRow([]);
+        });
+
+        if (fnObj.transport) {
+          addSectionRow(ws, "TRANSPORT & POWER", { fill: "FF312E81", color: "FFA5B4FC" });
+          const row = ws.addRow(["Item", "Details", "", "", "", "Amount"]);
+          row.eachCell((c, idx) => { if ([1, 2, 6].includes(idx)) { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F46E5" } }; c.alignment = { horizontal: idx === 6 ? "right" : "left" }; } });
+          // One row for the whole truck count, not one per sub-category — the per-sub-category
+          // breakdown (fnObj.transport.breakdown) is a fractional-truck WORKING figure (e.g. a
+          // sub-category using 0.00005 of a truck), never individually billed; only the CEILED
+          // total (trucks) × trip rate is actually charged (see transportCalc/truckTotal).
+          // Listing every sub-category here read as line-item billing for numbers nobody pays.
+          const trucks = fnObj.transport.trucks || 0;
+          const truckRow = ws.addRow(["Trucks", `${trucks} truck${trucks !== 1 ? "s" : ""} × ${f(fnObj.transport.tripRate)} × 2`, "", "", "", fnObj.transport.truckTotal || 0]);
+          truckRow.getCell(6).numFmt = money.numFmt; truckRow.getCell(6).alignment = { horizontal: "right" };
+          const gRow = ws.addRow(["Genset", `${fnObj.transport.gensets || 0} units × ${f(fnObj.transport.gensetRate || 0)}`, "", "", "", fnObj.transport.gensetCost || 0]);
+          gRow.getCell(6).numFmt = money.numFmt; gRow.getCell(6).alignment = { horizontal: "right" };
+          const tRow = ws.addRow(["Transport Total", "", "", "", "", fnObj.transport.total || 0]);
+          tRow.eachCell(c => { c.font = { bold: true, color: { argb: "FF4F46E5" } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF2FF" } }; });
+          tRow.getCell(6).numFmt = money.numFmt; tRow.getCell(6).alignment = { horizontal: "right" };
+          ws.addRow([]);
+        }
+
+        addSectionRow(ws, `FUNCTION TOTAL   —   ${f(fnObj.grand)}`, { fill: dark, color: gold, size: 12, height: 22 });
+      });
 
       // File name: guest name + the earliest function's date + venue — functions are already
       // date-sorted by buildCombinedCostSheetData, so [0] is the earliest.
