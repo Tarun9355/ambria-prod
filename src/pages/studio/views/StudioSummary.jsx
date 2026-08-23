@@ -1023,6 +1023,32 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
       gtRow.getCell(5).numFmt = money.numFmt;
       gtRow.getCell(5).alignment = { horizontal: "right" };
 
+      // Negotiated deal amount (Summary screen) — when the salesperson has recorded one, the guest
+      // sees the paper trail: the system's list-price total, the discount that got them to the
+      // negotiated figure, and that final number — never just the negotiated total on its own with
+      // no explanation of where it came from.
+      const negotiatedAmount = Number(activeClient?.negotiatedAmount) || 0;
+      if (negotiatedAmount > 0) {
+        const systemTotal = combined.eventGrandTotal || 0;
+        const discount = systemTotal - negotiatedAmount;
+        const discRow = sw.addRow(["DISCOUNT", "", "", "", discount]);
+        sw.mergeCells(discRow.number, 1, discRow.number, 4);
+        discRow.getCell(1).font = { bold: true, size: 11, color: { argb: "FFB91C1C" } };
+        discRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+        discRow.getCell(5).font = { bold: true, size: 12, color: { argb: "FFB91C1C" } };
+        discRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+        discRow.getCell(5).numFmt = money.numFmt;
+        discRow.getCell(5).alignment = { horizontal: "right" };
+        const negRow = sw.addRow(["FINAL NEGOTIATED AMOUNT", "", "", "", negotiatedAmount]);
+        sw.mergeCells(negRow.number, 1, negRow.number, 4);
+        negRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
+        negRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        negRow.getCell(5).font = { bold: true, size: 13, color: { argb: gold } };
+        negRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        negRow.getCell(5).numFmt = money.numFmt;
+        negRow.getCell(5).alignment = { horizontal: "right" };
+      }
+
       // File name: guest name + the earliest function's date + venue — functions are already
       // date-sorted by buildCombinedCostSheetData, so [0] is the earliest.
       const first = combined.functions[0] || {};
@@ -2491,9 +2517,9 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
         {/* Negotiated deal amount — what the client is actually being booked at, captured before sale
             when it differs from the system-generated estimate above. Deal Check's own margin/profit
             math (dcCostRollup in DealCheckOverlay.jsx) reads this instead of the system total whenever
-            it's set. Locked once the deal is booked — this is a pre-sale negotiation capture, not
-            something to keep revising against an already-confirmed booking. */}
-        <div style={{marginTop:14,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+            it's set. Hidden entirely once the deal is booked — it's already locked in (used above as
+            the headline figure), so the input box offers nothing once there's nothing left to capture. */}
+        {!isBooked && <div style={{marginTop:14,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
           <label style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>Negotiated deal amount</label>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <span style={{fontSize:15,color:"#E8CF9A",fontWeight:700}}>₹</span>
@@ -2501,15 +2527,14 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
               type="number"
               min={0}
               value={negDraft}
-              disabled={isBooked}
               onChange={e => setNegDraft(e.target.value)}
               onBlur={commitNegotiatedAmount}
               onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
               placeholder={pricingReady ? String(Math.round(eventGrandTotal)) : "—"}
-              style={{width:150,padding:"6px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:isBooked?"rgba(255,255,255,0.04)":"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,fontWeight:600,textAlign:"center",outline:"none",opacity:isBooked?0.6:1,cursor:isBooked?"not-allowed":"text"}}
+              style={{width:150,padding:"6px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,fontWeight:600,textAlign:"center",outline:"none"}}
             />
           </div>
-        </div>
+        </div>}
           </>;
         })()}
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
