@@ -1852,15 +1852,23 @@ export default function ManageLibrary({ ctx }) {
     const since = { today: startOfToday, "7d": now - 7 * 86400000, "30d": now - 30 * 86400000, all: 0 }[corrRange] ?? 0;
     const q = corrSearch.trim().toLowerCase();
     const kindOf = (e) => e.kind === "video" ? "video" : "photo";
-    // Range + kind + text-search (search matches person OR photo/video name). User filter applied only to the detail list.
-    const baseRaw = (corrLog || []).filter(e => (e.ts || 0) >= since
-      && (corrKind === "all" || kindOf(e) === corrKind)
-      && (!q || (e.user || "").toLowerCase().includes(q) || (e.photoName || "").toLowerCase().includes(q)));
     // Dedupe to ONE row per person + item (keep the latest save), so repeated saves of the same photo
     // don't show as duplicates or inflate counts — a contribution = a unique photo/video a person fixed.
-    const dedup = new Map();
-    baseRaw.forEach(e => { const k = (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + kindOf(e); const p = dedup.get(k); if (!p || (e.ts || 0) > (p.ts || 0)) dedup.set(k, e); });
-    const base = Array.from(dedup.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const dedupeRows = (rows) => {
+      const m = new Map();
+      rows.forEach(e => { const k = (e.user || "—") + "|" + (e.photoId || e.photoName || "") + "|" + kindOf(e); const p = m.get(k); if (!p || (e.ts || 0) > (p.ts || 0)) m.set(k, e); });
+      return Array.from(m.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    };
+    // Range + text-search, WITHOUT the kind filter (search matches person OR photo/video name).
+    const rangeAndText = (corrLog || []).filter(e => (e.ts || 0) >= since
+      && (!q || (e.user || "").toLowerCase().includes(q) || (e.photoName || "").toLowerCase().includes(q)));
+    // The stat cards read off this one — the period's full picture, kind filter NOT applied. That is
+    // deliberate: the cards double as the Photos/Videos picker, and if they were kind-filtered like
+    // the lists, choosing Photos would drop the Videos card to 0 and leave you clicking a zero to get
+    // back. The cards describe the period; the highlight says which one is selected.
+    const baseAllKinds = dedupeRows(rangeAndText);
+    // What the lists show: the same set with the kind filter applied. Identical to before.
+    const base = dedupeRows(rangeAndText.filter(e => corrKind === "all" || kindOf(e) === corrKind));
     const inRange = base.filter(e => !corrUser || e.user === corrUser);
     const byUser = {};
     base.forEach(e => { const u = e.user || "—"; const b = byUser[u] || (byUser[u] = { total: 0, photo: 0, video: 0 }); b.total++; b[kindOf(e)]++; });
@@ -1873,22 +1881,37 @@ export default function ManageLibrary({ ctx }) {
     // narrow them here where no filter UI is visible — and they say nothing about contributions,
     // which is what this page is for. Same four-card treatment, numbers that mean something on the
     // page they are on: they answer "how much work, by how many people, on what".
+    // `pick` is the corrKind value a card selects — the SAME state the Content type pills set, so
+    // this is a second surface onto one filter, not a second filter. A card with no pick (People)
+    // is a readout and says so by not reacting to the cursor.
+    const nPhoto = baseAllKinds.filter(e => kindOf(e) === "photo").length;
+    const nVideo = baseAllKinds.filter(e => kindOf(e) === "video").length;
     const stats = [
-      [<IconClipboardCheck size={16} />, "Contributions", base.length, "items in this period", "#7C3AED"],
-      [<IconStar size={16} />, "People", userRows.length, userRows.length === 1 ? "contributor" : "contributors", "#059669"],
-      [<IconCamera size={16} />, "Photos", base.filter(e => kindOf(e) === "photo").length, "photos corrected", "#0EA5E9"],
-      [<IconPlay size={16} />, "Videos", base.filter(e => kindOf(e) === "video").length, "videos verified", "#D97706"],
+      [<IconClipboardCheck size={16} />, "Contributions", baseAllKinds.length, "items in this period", "#7C3AED", "all"],
+      [<IconStar size={16} />, "People", new Set(baseAllKinds.map(e => e.user || "—")).size, "contributors", "#059669", null],
+      [<IconCamera size={16} />, "Photos", nPhoto, "photos corrected", "#0EA5E9", "photo"],
+      [<IconPlay size={16} />, "Videos", nVideo, "videos verified", "#D97706", "video"],
     ];
-    const statCard = ([icon, label, value, sub, col]) => (
-      <div key={label} className="ml-tile" style={{ padding: "13px 15px", borderRadius: 13, border: "1px solid transparent", display: "flex", alignItems: "center", gap: 12 }}>
+    const statCard = ([icon, label, value, sub, col, pick]) => {
+      const on = pick && corrKind === pick;
+      return (
+      <div key={label} className={pick ? "cp-stat" : undefined} onClick={pick ? () => setCorrKind(corrKind === pick ? "all" : pick) : undefined}
+        title={pick ? (on ? `Showing ${label.toLowerCase()} only — click to clear` : `Show only ${label.toLowerCase()}`) : undefined}
+        style={{ padding: "13px 15px", borderRadius: 13, display: "flex", alignItems: "center", gap: 12,
+          cursor: pick ? "pointer" : "default",
+          // The selected card carries its own colour, so which one is active is legible without
+          // reading back up to the pills.
+          border: `1px solid ${on ? col : (isDark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.85)")}`,
+          background: on ? `${col}12` : (isDark ? "rgba(255,255,255,0.03)" : "linear-gradient(148deg,rgba(255,255,255,0.62) 0%,rgba(250,249,255,0.40) 100%)") }}>
         <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: `${col}18`, color: col }}>{icon}</span>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: textS }}>{label}</div>
+          <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: on ? col : textS }}>{label}</div>
           <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: textP, fontVariantNumeric: "tabular-nums", lineHeight: 1.15 }}>{value}</div>
           <div style={{ fontSize: 10, color: textS }}>{sub}</div>
         </div>
       </div>
-    );
+      );
+    };
     // A labelled group of pills. The filters were one undifferentiated row before — two unrelated
     // choices separated by a hairline, which is not enough to say they are different questions.
     const pillGroup = (label, opts, cur, set) => (
@@ -2081,6 +2104,11 @@ export default function ManageLibrary({ ctx }) {
    readable feed. cp-row is the hover for both lists' rows — they are clickable in one and scannable
    in the other, and a row you can point at should say so. */
 @media (max-width:980px){.cp-cols{grid-template-columns:minmax(0,1fr) !important}}
+/* Only the cards that DO something lift. The People card is a readout and stays put, which is the
+   difference a cursor alone would not carry. */
+.cp-stat{transition:transform .14s ease, box-shadow .16s ease}
+.cp-stat:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(26,26,46,0.05), 0 14px 30px -14px rgba(26,26,46,0.30)}
+@media (prefers-reduced-motion: reduce){.cp-stat{transition:none}.cp-stat:hover{transform:none}}
 .cp-row{transition:background .13s ease}
 .cp-row:hover{background:${isDark ? "rgba(255,255,255,0.05)" : "rgba(26,26,46,0.04)"}}
 .vt-cols{column-count:3;column-gap:14px}
