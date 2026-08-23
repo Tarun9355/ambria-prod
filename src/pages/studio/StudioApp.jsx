@@ -6530,18 +6530,34 @@ export default function StudioApp() {
       ...allInhouseVenues,
       ...allOutdoorDB.map(v => v.name).filter(Boolean),
     ];
-    const resolveVenue = (candidate) => {
+    const resolveVenue = (candidate, locationLabel) => {
       const trimmed = (candidate || "").trim();
       if (!trimmed) return { venue: "", custom: "" };
       const matched = allKnownVenues.find(v => v.toLowerCase().trim() === trimmed.toLowerCase());
       if (matched) return { venue: matched, custom: "" };
+      // LMS's own venue field for an in-house lead names the PROPERTY ("Ambria Exotica"), never the
+      // specific sub-venue (Aura/Valencia/Poolside/...) — those only ever show up in the lead's
+      // separate "Location Detail" text (e.g. "AURA LAWN + PANDAL AE"). Strip a leading "Ambria "
+      // and match the property, then scan both texts for one of ITS OWN sub-venues by name — scoped
+      // to this property so an unrelated property's identically-named sub-venue can't false-match.
+      const strippedName = trimmed.toLowerCase().replace(/^ambria\s+/, "").trim();
+      const property = (customProperties || []).find(p => (p.name || "").toLowerCase().trim() === strippedName);
+      if (property) {
+        const subs = customInhouse.filter(v => v.propertyId === property.id);
+        const haystack = `${trimmed} ${locationLabel || ""}`.toLowerCase();
+        const subMatch = subs.find(v => v.name && haystack.includes(v.name.toLowerCase()));
+        if (subMatch) return { venue: subMatch.name, custom: "" };
+        // No sub-venue named in the location text (e.g. a "Full Venue" booking) — at least keep
+        // the readable property name instead of the raw "Ambria Exotica" LMS free-text.
+        return { venue: "Others", custom: property.name };
+      }
       return { venue: "Others", custom: trimmed };
     };
     const fns = Array.isArray(lead.functions) && lead.functions.length > 0
       ? lead.functions
-      : [{ fnDate: lead.fnDate, fnLabel: lead.fnLabel, fnType: lead.fnType, venueLabel: lead.venueLabel, shift: lead.shift }];
+      : [{ fnDate: lead.fnDate, fnLabel: lead.fnLabel, fnType: lead.fnType, venueLabel: lead.venueLabel, locationLabel: lead.locationLabel, shift: lead.shift }];
     const f1 = fns[0] || {};
-    const f1Venue = resolveVenue(f1.venueLabel || lead.address);
+    const f1Venue = resolveVenue(f1.venueLabel || lead.address, f1.locationLabel);
     setClientDate(f1.fnDate || "");
     setFn(f1.fnLabel || "");
     setVenue(f1Venue.venue);
@@ -6552,7 +6568,7 @@ export default function StudioApp() {
     setClientBrideGroom([lead.brideName, lead.groomName].filter(Boolean).join(" & "));
     setClientPax(Number(f1.pax) > 0 ? String(f1.pax) : "");
     const extras = fns.slice(1).map(f => {
-      const v = resolveVenue(f.venueLabel || lead.address);
+      const v = resolveVenue(f.venueLabel || lead.address, f.locationLabel);
       return {
         type: f.fnLabel || "",
         date: f.fnDate || "",
@@ -6645,7 +6661,7 @@ export default function StudioApp() {
     } else {
       showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
     }
-  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession]);
+  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession, customProperties, customInhouse]);
 
   // ── Resume saved session (per-pill) — VERBATIM ──
   // `targetFnIdx` says WHICH pill to restore into. Without it the caller could only ever resume

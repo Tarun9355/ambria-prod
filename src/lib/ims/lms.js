@@ -310,6 +310,12 @@ function lmsContractToLead(c, source = "venue") {
         fnLabel: f.functionType || "",
         fnType: f.functionTypeId || "",
         venueLabel: f.internalVenueName || f.venueName || f.externalVenue || "",
+        // LMS's own venue field names the PROPERTY for an in-house lead ("Ambria Exotica"), never
+        // the specific sub-venue (Aura/Valencia/Poolside/...) — that only ever shows up in the
+        // lead's separate "Location Detail" field. Carried through so Studio's own venue resolver
+        // (loadLmsLead, StudioApp.jsx) can scan it for a sub-venue match instead of dropping the
+        // property down to "Others" whenever it isn't an exact venue-name match.
+        locationLabel: f.locationName || "",
         shift: f.session || "",
         // Was dropped here entirely, so the guest count LMS already holds never reached the form.
         pax: f.pax || 0,
