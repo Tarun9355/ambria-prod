@@ -74,6 +74,7 @@ import {
   calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, PLATFORM_FATTA_CODE, PLATFORM_STAND_CODE, trussRowCost,
 } from "../../lib/studio/pricing";
+import { qtyUsedElsewhereInBuild } from "../../lib/studio/dealAvailability";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
@@ -3058,6 +3059,11 @@ export default function StudioApp() {
   // slice(0,500) cap in the Client Tracker can't drop rows). Mirrors the library approach.
   const clientLedgerRef = useRef([]);
   useEffect(() => { clientLedgerRef.current = clientLedger; }, [clientLedger]);
+  // Populated once collectAllFunctionData is declared further down (ref-sync effect right after
+  // its own declaration) — getElPriceFromInventory needs it for cross-zone availability, but is
+  // declared long before collectAllFunctionData exists, so a direct reference would be a TDZ
+  // ReferenceError on first render.
+  const collectAllFunctionDataRef = useRef(null);
   const activeClientIdRef = useRef(null);
   useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
@@ -3585,7 +3591,19 @@ export default function StudioApp() {
       const fnIdx = opts?.fnIdx ?? activeFnIdx;
       const ownReserved = cli?.dcReservedInventory?.[fnIdx]?.[item.id] || 0;
       const blocksForDate = ownReserved > 0 ? { ...rawBlocksForDate, [item.id]: Math.max(0, (rawBlocksForDate[item.id] || 0) - ownReserved) } : rawBlocksForDate;
-      const available = getStudioAvailable(item, blocksForDate);
+      const otherEventsAvail = getStudioAvailable(item, blocksForDate);
+      // otherEventsAvail alone still isn't "available for THIS card": it says nothing about a
+      // SIBLING zone/function in this SAME unsaved build already drawing on the same item — e.g.
+      // 3 used in zone A, then adding 1 more in zone B. dcReservedInventory only reflects the last
+      // successful reconcile (Deal Check regenerate), so a fresh cross-zone add isn't in there yet,
+      // and each card's own check must not pretend it alone owns the full reserved amount. Reuses
+      // the exact same helper that already powers the "fully used" search-picker badge
+      // (remainingForItem in StudioBuild.jsx) — opts.zoneKey is only passed by that live per-element
+      // render loop, so every other caller (Deal Check rollups, calcElsCost, etc.) is unaffected.
+      const usedElsewhere = (opts?.zoneKey != null)
+        ? qtyUsedElsewhereInBuild(item.id, collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [], imsInventory, { fnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx }, activeFnMeta?.date || clientDate)
+        : 0;
+      const available = Math.max(0, otherEventsAvail - usedElsewhere);
       const ownedQty = Math.min(qty, available);
       const shortQty = Math.max(0, qty - available);
       const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
@@ -3600,7 +3618,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx]);
+  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, clientLedger, activeClientId, activeFnIdx, activeFnMeta, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -4097,6 +4115,7 @@ export default function StudioApp() {
     }
     return all;
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
+  useEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };

@@ -3152,7 +3152,7 @@ undefined
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
               <div className="el-grid" style={{"--el-cols":elCols}}>
                 {groupedEls(k).map(({ el, idx, isKit, firstKit }) => {
-                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true });
+                  const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx });
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
                   const isTrussSqft = rc && rc.unit === "truss_sqft";
