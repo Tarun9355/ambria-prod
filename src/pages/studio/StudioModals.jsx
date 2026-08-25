@@ -22,7 +22,7 @@ import { itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
 export default function StudioModals({ ctx }) {
   const {
     // dcCustomModal
-    dcCustomModal, setDcCustomModal, dcCustomItems, setDcCustomItems, rcCostPctForSub,
+    dcCustomModal, setDcCustomModal, dcCustomItems, setDcCustomItems,
     dealCheckData, studioFloralData, rcItems, isDark, border, textP, textS,
     elSelectedPhoto,
     // videoModal
@@ -111,7 +111,6 @@ export default function StudioModals({ ctx }) {
         customItems={dcCustomItems}
         setCustomItems={setDcCustomItems}
         imsInventory={imsInventory || []}
-        rcCostPctForSub={rcCostPctForSub}
         isDark={isDark}
         border={border}
         textP={textP}

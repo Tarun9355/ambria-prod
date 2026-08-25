@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { fetchAll } from "../../lib/supabase";
 import { uploadToStorage, STORAGE_FOLDERS } from "../../lib/storage";
-import { oosCostPctFor } from "../../lib/rateCard";
 
 // ═══ superset-schema field accessors (copied VERBATIM from reference module scope) ═══
 // IMS items post-02-May migration carry BOTH legacy (cat/qty/price/img/size) and new
@@ -18,7 +17,7 @@ const imsField = {
 };
 
 // §26.13 — Production/Buying Custom Item Modal (proper component for hooks)
-export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, rcCostPctForSub, isDark, border, textP, textS, onClose, zonePhoto, openAvailModal }) {
+export default function CustomItemModal({ config, customItems, setCustomItems, imsInventory: initialInv, isDark, border, textP, textS, onClose, zonePhoto, openAvailModal }) {
   const { fnIdx, zoneKey, type, editId } = config;
   const isProduction = type === "production";
   const icon = isProduction ? "🏭" : "🛒";
@@ -109,14 +108,14 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
       const hasDims = dimL > 0 || dimW > 0 || dimH > 0;
       const dimScore = hasDims ? Math.abs(il - dimL) + Math.abs(iw - dimW) + Math.abs(ih - dimH) : 0;
       // Reference price for a Production/Buying item is what it actually costs to make/buy, not
-      // what it rents for: production cost × this sub-category's cost% (rate_card_categories,
-      // IMS → Admin → Settings → Sub-Categories — the same figure getElPriceFromInventory's
-      // shortfall pricing already uses in StudioApp.jsx). Previously fell back to the item's rental
-      // price whenever `cost` was blank, which silently priced a made-to-order item at what it
-      // would cost to RENT one instead — no fallback now: a missing cost shows ₹0 and pushes the
-      // salesperson to "Adjust price manually" rather than quietly substituting the wrong number.
-      const costPct = rcCostPctForSub ? oosCostPctFor(it, rcCostPctForSub) : 100;
-      return { ...it, _relevance: relevance, _dimScore: dimScore, _photo: imsField.photos(it)[0] || "", _cost: (Number(it.cost) || 0) * (costPct / 100), _dims: imsField.sizeText(it) };
+      // what it rents for: the item's full production cost, no sub-category cost% shortfall
+      // discount applied (that % is for pricing a RENTAL that's short on stock — a Production/Buying
+      // item is never rented, it's made/bought outright, so the full cost is the real number).
+      // Previously fell back to the item's rental price whenever `cost` was blank, which silently
+      // priced a made-to-order item at what it would cost to RENT one instead — no fallback now: a
+      // missing cost shows ₹0 and pushes the salesperson to "Adjust price manually" rather than
+      // quietly substituting the wrong number.
+      return { ...it, _relevance: relevance, _dimScore: dimScore, _photo: imsField.photos(it)[0] || "", _cost: Number(it.cost) || 0, _dims: imsField.sizeText(it) };
     }).filter(Boolean);
     scored.sort((a, b) => b._relevance - a._relevance || a._dimScore - b._dimScore);
     const top = scored.slice(0, 3);
@@ -133,11 +132,10 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
     if (!picked) return;
     // openAvailModal's own list prices every item at RENTAL (priceForInvItem — see openAvailModal in
     // StudioApp.jsx), since that picker is built for booking real stock. Same fix as the fuzzy
-    // matcher above: look the full row up in imsInventory for its real production cost + sub-
-    // category, and price the reference at cost × cost%, not at `picked.price` (rental).
+    // matcher above: look the full row up in imsInventory for its real production cost, and price
+    // the reference at the full cost (not at `picked.price`, which is rental).
     const fullItem = (imsInventory || []).find(i => i.id === picked.id);
-    const costPct = rcCostPctForSub ? oosCostPctFor(fullItem || {}, rcCostPctForSub) : 100;
-    const synthetic = { id: picked.id, name: picked.name, _photo: picked.photo || "", _dims: picked.dims || "", _cost: (Number(fullItem?.cost) || 0) * (costPct / 100) };
+    const synthetic = { id: picked.id, name: picked.name, _photo: picked.photo || "", _dims: picked.dims || "", _cost: Number(fullItem?.cost) || 0 };
     setCRefResults(prev => [synthetic, ...prev.filter(x => x.id !== picked.id)]);
     setCSelectedRef(picked.id);
     setCShowManual(false); setCManualPrice("");
