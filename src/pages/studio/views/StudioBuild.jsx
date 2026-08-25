@@ -289,7 +289,17 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   <div style={{display:"flex",alignItems:"center",gap:8}} title="Masking panels attach to this truss">
                     <span style={rowCap}>Masking</span>
                     <span style={{display:"inline-flex",alignItems:"center",color:textS}}><IconWall size={12}/></span>
-                    <div onClick={()=>sZ({mkOn:!zc.mkOn,mkWalls:zc.mkOn?{}:(zc.mkWalls||{})})} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer",flexShrink:0}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
+                    <div onClick={()=>{
+                      const turningOn=!zc.mkOn;
+                      sZ({
+                        mkOn:turningOn,
+                        mkWalls:zc.mkOn?{}:(zc.mkWalls||{}),
+                        // Default the masking material to the first pick (Fabric) when switching on
+                        // with nothing already chosen — otherwise the toggle reads "on" but prices
+                        // ₹0 until the salesperson also picks a material, which read as a bug.
+                        ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
+                      });
+                    }} style={{width:30,height:16,borderRadius:8,background:zc.mkOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer",flexShrink:0}}><div style={{width:12,height:12,borderRadius:6,background:"#fff",position:"absolute",top:2,left:zc.mkOn?16:2,transition:"left 0.2s"}}/></div>
                     {showCosts&&zc.mkOn&&<span style={{fontWeight:600,color:textP,fontSize:11}}>{fmt(rowCost.masking)}</span>}
                   </div>
               </div>
