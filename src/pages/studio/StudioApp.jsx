@@ -7672,10 +7672,22 @@ export default function StudioApp() {
       if (zl.arches > 0) structItems.push({ name: "Arches (" + (zc.archT || "").toUpperCase() + " ×" + (zc.archQty || 0) + ")", total: zl.arches });
       if (zl.pillars > 0) structItems.push({ name: "Pillars (×" + (zc.pillarQty || 0) + ")", total: zl.pillars });
       if (zl.glass > 0) structItems.push({ name: "Glass (" + (zc.glassT || "").toUpperCase() + " ×" + (zc.glassQty || 0) + ")", total: zl.glass });
-      if (zl.print > 0) {
-        const printCount = (zc.prints || []).length;
-        structItems.push({ name: "🖨 Print (" + printCount + " job" + (printCount === 1 ? "" : "s") + ")", total: zl.print });
-      }
+      // One row PER print job (not one lumped "Print (N jobs)" row) — each job can be a different
+      // material/size/qty, so a single combined row had nothing sensible to put in Size/Qty/Rate
+      // and left them blank in the cost sheet even though the money (zl.print) was already correct.
+      (zc.prints || []).forEach((p) => {
+        const m = (structRates.printMaterials || []).find((x) => x.id === p.material);
+        const pw = Number(p.areaW) || 0, pd = Number(p.areaD) || 0;
+        const pq = Math.max(1, Math.round(Number(p.qty) || 1));
+        const pRate = m?.ratePerSqft || 0;
+        const pTotal = pw * pd * pRate * pq;
+        if (pTotal <= 0) return;
+        structItems.push({
+          name: "🖨 Print — " + (m?.name || "material") + " ₹" + pRate + "/sqft" + (pq > 1 ? " ×" + pq : ""),
+          size: `${pw}×${pd}ft`, qty: Math.round(pw * pd * pq * 100) / 100, rate: pRate, unit: "sqft",
+          total: pTotal,
+        });
+      });
       dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k).forEach(ci => {
         const isP = ci.type === "production";
         const unitCost = ci.manualPrice || ci.refPrice || 0;
