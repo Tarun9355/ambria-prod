@@ -34,6 +34,42 @@ import { carpetPricingFor, CARPET_OFF } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor } from "../../../lib/rateCard";
 
+// Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
+// a slice of DealCheckOverlay's. That component recomputes dcCostRollup (florals, manpower
+// schedules, department splits — genuinely heavy) fresh on every render, so a draft keyed into
+// its state re-ran all of that on every keystroke, which is what read as the field "glitching"
+// while typing. Isolating the draft here means a keystroke only re-renders this one input; the
+// parent only re-renders (and only then recomputes the rollup) once, on blur/Enter commit.
+function CommissionOverrideInput({ defaultAmt, overrideVal, border, onCommit }) {
+  const [draft, setDraft] = useState(overrideVal != null ? String(overrideVal) : "");
+  // Follow an external change (switching venues shows the same input slot with different props,
+  // or another tab/device committed a new override) — but never while this box has an in-progress
+  // edit of its own, or a value arriving mid-type would stomp on what's being typed.
+  const editingRef = useRef(false);
+  useEffect(() => {
+    if (!editingRef.current) setDraft(overrideVal != null ? String(overrideVal) : "");
+  }, [overrideVal]);
+  const commit = () => {
+    editingRef.current = false;
+    const raw = draft.trim();
+    if (raw === "") { onCommit(null); return; }
+    const n = Number(raw);
+    onCommit(isFinite(n) ? n : null);
+  };
+  return (
+    <input
+      type="number"
+      value={draft}
+      placeholder={String(Math.round(defaultAmt))}
+      onFocus={() => { editingRef.current = true; }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+      style={{ width: 110, padding: "5px 8px", borderRadius: 6, border: `1px solid ${border}`, fontSize: 13, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+    />
+  );
+}
+
 export default function DealCheckOverlay({ ctx }) {
   // ── THE APP'S NAVBAR STAYS ON SCREEN ──
   // This overlay was inset:0 at z-index 9000, so it covered the header — and with it the step nav, the
@@ -55,9 +91,6 @@ export default function DealCheckOverlay({ ctx }) {
     return () => ro.disconnect();
   }, []);
   const [dcDept, setDcDept] = useState("Furniture"); // active Department-Income sub-tab
-  // Commission tab — draft per venue key, committed on blur/Enter (same pattern as the
-  // negotiated-amount field on Summary), so an override doesn't write on every keystroke.
-  const [commDraft, setCommDraft] = useState({});
   const deptSyncRef = useRef(""); // dedupe auto-push of the dept snapshot to IMS
   const [dcKitAddSearch, setDcKitAddSearch] = useState({}); // per-kit-card "add component" search text, keyed by editKey
   const {
@@ -2743,16 +2776,10 @@ export default function DealCheckOverlay({ ctx }) {
                   // the amount can be overridden per venue right here. ═══
                   const { commissionByVenue, commissionTotal, clientRevenue } = dcCostRollup;
                   const fmt2 = (n) => (n >= 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN"));
-                  const ovKey = (v) => `ov:${v}`;
-                  const commitOverride = (venue) => {
-                    const raw = commDraft[ovKey(venue)];
-                    if (raw === undefined) return;
-                    const n = raw.trim() === "" ? null : Number(raw);
-                    const cleared = raw.trim() === "" || !isFinite(n);
+                  const commitOverride = (venue, value) => {
                     const nextOverrides = { ...(cli?.commissionOverrides || {}) };
-                    if (cleared) delete nextOverrides[venue]; else nextOverrides[venue] = n;
+                    if (value == null) delete nextOverrides[venue]; else nextOverrides[venue] = value;
                     saveClientLedger(clientLedger.map(c => c.id === activeClientId ? { ...c, commissionOverrides: nextOverrides } : c));
-                    setCommDraft(d => { const nd = { ...d }; delete nd[ovKey(venue)]; return nd; });
                   };
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:16,padding:"0 4px"}}>
@@ -2762,33 +2789,26 @@ export default function DealCheckOverlay({ ctx }) {
                           <div style={{padding:16,textAlign:"center",color:"#1A1A2E",fontSize:13}}>No venue set on any function yet — add one in Event Info / Build.</div>
                         ) : (
                           <div style={{display:"flex",flexDirection:"column"}}>
-                            {commissionByVenue.map((r, i) => {
-                              const draftVal = commDraft[ovKey(r.venue)];
-                              const displayVal = draftVal !== undefined ? draftVal : (r.overrideVal != null ? String(r.overrideVal) : "");
-                              return (
-                                <div key={i} style={{padding:"10px 14px",borderTop: i ? `1px solid ${border}22` : "none"}}>
-                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13.5,marginBottom:6}}>
-                                    <span style={{color:"#1A1A2E",fontWeight:700}}>{r.venue}</span>
-                                    <span style={{fontSize:12,opacity:0.7,color:"#1A1A2E"}}>{r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " (venue's share)" : ""}</span>
-                                  </div>
-                                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                                    <span style={{fontSize:12,color:"#1A1A2E"}}>Commission amount {r.overrideVal != null && <span style={{color:"#F59E0B",fontWeight:600}}>(overridden — system default {fmt2(r.defaultAmt)})</span>}</span>
-                                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                      <span style={{color:"#1A1A2E",opacity:0.6,fontSize:13}}>₹</span>
-                                      <input
-                                        type="number"
-                                        value={displayVal}
-                                        placeholder={String(Math.round(r.defaultAmt))}
-                                        onChange={(e) => setCommDraft(d => ({ ...d, [ovKey(r.venue)]: e.target.value }))}
-                                        onBlur={() => commitOverride(r.venue)}
-                                        onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
-                                        style={{width:110,padding:"5px 8px",borderRadius:6,border:`1px solid ${border}`,fontSize:13,textAlign:"right",fontVariantNumeric:"tabular-nums"}}
-                                      />
-                                    </div>
+                            {commissionByVenue.map((r, i) => (
+                              <div key={r.venue} style={{padding:"10px 14px",borderTop: i ? `1px solid ${border}22` : "none"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:13.5,marginBottom:6}}>
+                                  <span style={{color:"#1A1A2E",fontWeight:700}}>{r.venue}</span>
+                                  <span style={{fontSize:12,opacity:0.7,color:"#1A1A2E"}}>{r.pct}% of {fmt2(r.revenueShare)}{commissionByVenue.length > 1 ? " (venue's share)" : ""}</span>
+                                </div>
+                                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                                  <span style={{fontSize:12,color:"#1A1A2E"}}>Commission amount {r.overrideVal != null && <span style={{color:"#F59E0B",fontWeight:600}}>(overridden — system default {fmt2(r.defaultAmt)})</span>}</span>
+                                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                    <span style={{color:"#1A1A2E",opacity:0.6,fontSize:13}}>₹</span>
+                                    <CommissionOverrideInput
+                                      defaultAmt={r.defaultAmt}
+                                      overrideVal={r.overrideVal}
+                                      border={border}
+                                      onCommit={(value) => commitOverride(r.venue, value)}
+                                    />
                                   </div>
                                 </div>
-                              );
-                            })}
+                              </div>
+                            ))}
                             <div style={{display:"flex",justifyContent:"space-between",padding:"12px 14px",borderTop:`1px solid ${border}`,fontSize:15.5,fontWeight:800}}>
                               <span style={{color:"#1A1A2E"}}>Total Commission</span>
                               <span style={{color:"#7C3AED"}}>{fmt2(commissionTotal)}</span>

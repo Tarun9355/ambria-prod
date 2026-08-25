@@ -892,10 +892,13 @@ export default function StudioEventInfo({ ctx }) {
   // the real header (with its own Manage chip) is back on screen by then and this would double it.
   const MANAGE_SWITCH = (canManageAny && !activeClientId) ? (
     <div style={{position:"fixed",top:16,right:22,zIndex:6}}>
-      <div style={{display:"flex",alignItems:"center",gap:3,background:"rgba(0,0,0,0.32)",borderRadius:11,padding:3,border:"1px solid rgba(255,255,255,0.07)",boxShadow:"inset 0 1px 3px rgba(0,0,0,0.45)"}}>
+      {/* Same translucent wrap/chip recipe as AppSwitcher's dark tone (components/AppSwitcher.jsx)
+          — this sits right next to that Studio/IMS pill, so it reads as one family of controls
+          instead of a heavier, more opaque button pasted on beside them. */}
+      <div className="flex gap-1 rounded-[10px] p-[3px] bg-white/[0.06]">
         <button onClick={()=>setMode("manage")} title="Manage — library & settings"
-          style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",borderRadius:8,border:"none",background:"transparent",fontSize:12,fontWeight:600,lineHeight:1,whiteSpace:"nowrap",cursor:"pointer",color:"rgba(255,255,255,0.74)"}}>
-          <IconSliders size={15}/>Manage
+          className="inline-flex items-center gap-1.5 rounded-lg font-semibold transition-all px-3 py-[6px] text-xs text-gray-400 hover:text-white">
+          <IconSliders size={14}/>Manage
         </button>
       </div>
     </div>
