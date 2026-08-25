@@ -256,6 +256,11 @@ export default function StudioSummary({ ctx }) {
   // resynced whenever the active client changes; persisted to the ledger row on blur, not per
   // keystroke (a per-keystroke Supabase write for a 6-7 digit number is needless network chatter).
   const [negDraft, setNegDraft] = useState(activeClient?.negotiatedAmount ?? "");
+  // Whether the hero TOTAL ESTIMATE figure is mid-edit — it IS the negotiated-amount field (no
+  // separate box below it any more), so it needs to switch between "showing a formatted amount"
+  // and "showing raw digits to type over" depending on focus, the same draft/commit split every
+  // other click-to-edit field in this app uses.
+  const [heroFocused, setHeroFocused] = useState(false);
   // Resyncs on the persisted value itself, not just the client id switching — activeClient's data
   // can still be arriving asynchronously (fetch/session-restore) the moment this component mounts,
   // which would otherwise leave negDraft stuck at "" even though a value was already saved earlier.
@@ -2507,7 +2512,29 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           const displayTotal = hasNegotiated ? Number(activeClient.negotiatedAmount) : eventGrandTotal;
           return <>
         {pricingReady ? <>
-          <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={displayTotal} fmt={fmt}/></div>
+          {/* The hero figure IS the negotiated-amount field once the deal isn't booked — no separate
+              box underneath any more. Blurred, it shows the formatted amount (negotiated if one's
+              set, else the system estimate); focus it and it switches to raw digits so typing over
+              it is simple, then blur commits via the same commitNegotiatedAmount the old standalone
+              field used. A booked deal is already locked in — back to a plain read-only figure,
+              same as before, since there's nothing left to negotiate. */}
+          {!isBooked ? (
+            <input
+              type="text"
+              inputMode="numeric"
+              className="sh-te-amt"
+              value={heroFocused ? negDraft : fmt(displayTotal)}
+              onFocus={() => { setHeroFocused(true); setNegDraft(hasNegotiated ? String(Math.round(displayTotal)) : ""); }}
+              onChange={e => setNegDraft(e.target.value.replace(/[^\d]/g, ""))}
+              onBlur={() => { setHeroFocused(false); commitNegotiatedAmount(); }}
+              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              placeholder={String(Math.round(eventGrandTotal))}
+              title="Click to override the deal amount"
+              style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11,display:"block",width:"100%",maxWidth:360,margin:"0 auto 11px",background:"transparent",border:"none",borderBottom:"1px dashed rgba(255,255,255,0.3)",outline:"none",color:"#fff",textAlign:"center",fontFamily:"inherit",padding:"0 0 2px"}}
+            />
+          ) : (
+            <div className="sh-te-amt" style={{fontSize:46,fontWeight:700,letterSpacing:-1,marginBottom:11}}><AnimatedTotal value={displayTotal} fmt={fmt}/></div>
+          )}
           {/* BUG-3. A ₹0 total used to render the tier pill anyway, and getCat has no floor — anything
               under ₹3,50,000 lands in the catch-all "Silver" bucket, zero included. So a deal with
               nothing built announced itself as a Silver ₹0, which reads as a real (cheap) quote
@@ -2529,27 +2556,6 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
           </div>
           <div className="sh-te-pill" style={{display:"inline-block",padding:"5px 17px",borderRadius:999,fontSize:10.5,fontWeight:700,letterSpacing:1.6,textTransform:"uppercase",background:"rgba(255,255,255,0.10)",color:"#E8CF9A"}}>Loading rates…</div>
         </>}
-        {/* Negotiated deal amount — what the client is actually being booked at, captured before sale
-            when it differs from the system-generated estimate above. Deal Check's own margin/profit
-            math (dcCostRollup in DealCheckOverlay.jsx) reads this instead of the system total whenever
-            it's set. Hidden entirely once the deal is booked — it's already locked in (used above as
-            the headline figure), so the input box offers nothing once there's nothing left to capture. */}
-        {!isBooked && <div style={{marginTop:14,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
-          <label style={{fontSize:10,color:"#a5b4fc",textTransform:"uppercase",letterSpacing:1.5,fontWeight:700}}>Negotiated deal amount</label>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:15,color:"#E8CF9A",fontWeight:700}}>₹</span>
-            <input
-              type="number"
-              min={0}
-              value={negDraft}
-              onChange={e => setNegDraft(e.target.value)}
-              onBlur={commitNegotiatedAmount}
-              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-              placeholder={pricingReady ? String(Math.round(eventGrandTotal)) : "—"}
-              style={{width:150,padding:"6px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.25)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,fontWeight:600,textAlign:"center",outline:"none"}}
-            />
-          </div>
-        </div>}
           </>;
         })()}
         {/* SOLD lives with the number it confirms. Same handler, same gate — a small button here
