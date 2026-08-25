@@ -148,7 +148,14 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     if (!inv) return;
     const v = fixedVenues.find((x) => x.id === vid);
     if (v.items.some((it) => it.invId === inv.id)) return; // already added
-    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1, discountPct: subcatDiscFor(inv.id) }] });
+    // No discountPct written here — leaving it unset is what makes the item's "% off" LIVE-FOLLOW
+    // the sub-category table above (standingDiscountPct / the display formula below both fall back
+    // to subcatDiscFor whenever discountPct isn't a number). Snapshotting a concrete value at add
+    // time was why editing the sub-category table above did nothing for items already added: every
+    // item got permanently pinned to whatever the table said the moment it was added, then never
+    // looked at the table again. An explicit per-item override is still possible — it's just typed
+    // in below, not defaulted on add.
+    updVenue(vid, { items: [...v.items, { invId: inv.id, name: inv.name, qty: 1 }] });
   };
   const updItem = (vid, invId, patch) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.map((it) => (it.invId === invId ? { ...it, ...patch } : it)) }); };
   const delItem = (vid, invId) => { const v = fixedVenues.find((x) => x.id === vid); updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
@@ -357,6 +364,15 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     }}
                     className="w-14 border rounded px-2 py-1 text-sm text-center" />
                   <span className="text-xs text-gray-400">% off</span>
+                  {/* Only items added before this fix (or explicitly overridden) carry a stored
+                      discountPct — items added after it stay unset and already track the table
+                      above live. This is the one-click way to un-pin an older item back onto that
+                      live default, instead of retyping today's table value by hand. */}
+                  {it.discountPct != null && (
+                    <button onClick={() => updItem(v.id, it.invId, { discountPct: null })}
+                      title={`Follow the ${String(inv?.subCat || inv?.subcategory || "sub-category")} default (${subcatDiscFor(it.invId)}%) instead of this item's own fixed %`}
+                      className="text-[10px] text-indigo-400 hover:text-indigo-600">↺ default</button>
+                  )}
                   <button onClick={() => delItem(v.id, it.invId)} className="text-red-400 hover:text-red-600 text-xs ml-auto">×</button>
                   {/* basis-full so it drops to its own line inside the wrapping row. Amber while you
                       are typing past the cap; muted once you are simply sitting at it. */}
