@@ -459,6 +459,35 @@ export default function DealCheckOverlay({ ctx }) {
               });
             });
           } catch {}
+          // Print jobs (zc[zk].prints — Flex/Vinyl/Sunboard etc, StudioBuild.jsx's Print tile). Own
+          // try block, no tInv gating (unlike the truss block above) since print pricing doesn't
+          // depend on truss inventory. Build's Live Estimate, Summary, and every export all read
+          // calcStructCost's own .print (via structRates.printMaterials) — but dcCostRollup computes
+          // its own cost engine from scratch rather than calling calcStructCost, so it never priced
+          // print at all: clientRevenue (quote, via calcFunctionCost → calcStructCost) charged for
+          // it, while `base`/`grand` (cost, margin) silently treated it as free. Folded into the same
+          // `truss` bucket the masking/fabric cost above already shares, for the same reason.
+          try {
+            const printMats = imsPrintMaterials || [];
+            fns.forEach((fn) => {
+              const zc = fn.zoneConfig || {};
+              const en = fn.enabledEls || {};
+              Object.keys(zc).forEach(zk => {
+                if (!en[zk] || !zc[zk]) return;
+                const pc = (zc[zk].prints || []).reduce((sum, p) => {
+                  const m = printMats.find(x => x.id === p.material);
+                  const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
+                  const q = Math.max(1, Math.round(Number(p.qty) || 1));
+                  return sum + s * (m?.ratePerSqft || 0) * q;
+                }, 0);
+                if (pc > 0) {
+                  truss += pc;
+                  addD("Structure", "truss", pc);
+                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print" });
+                }
+              });
+            });
+          } catch {}
           // Merge duplicate inventory lines (same item across zones) into ONE line with summed qty +
           // total — Dept Ops shows combined totals, not zone-wise rows.
           DEPTS.forEach(dn => {
