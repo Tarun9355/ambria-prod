@@ -361,7 +361,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   {/* The toggle and its cost moved up to the Material / Drape row. */}
                   {zc.mkOn&&<div style={{paddingLeft:0}}>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
-                      {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:o.id})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
+                      {/* A truss's masking is either a flat per-sqft material OR one specific custom
+                          item — never both (trussRowCost prices whichever one is set, the other is
+                          just inert leftover on screen otherwise). Picking a material here clears any
+                          custom item; clicking the ALREADY-selected material turns masking material
+                          off rather than re-picking the same thing. */}
+                      {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:zc.mkT===o.id?"":o.id,customMaskingItemId:null})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                       {customMaskingField(k, zc, false, rowIdx)}
                     </div>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
@@ -2148,7 +2153,14 @@ undefined
         categoryMatch="fabric"
         subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
         rcFactorByKey={rcFactorByKey}
-        onSelect={(item) => { patchTrussRow(customPicker.k, customPicker.rowIdx, { [customPicker.kind === "ceiling" ? "customCeilingItemId" : "customMaskingItemId"]: item.id }); setCustomPicker(null); }}
+        onSelect={(item) => {
+          // Masking is either the flat per-sqft material OR this one custom item, never both —
+          // picking a custom masking item clears mkT so the two can't silently disagree about
+          // which one is actually billing (trussRowCost only ever charges one of them).
+          const patch = customPicker.kind === "ceiling" ? { customCeilingItemId: item.id } : { customMaskingItemId: item.id, mkT: "" };
+          patchTrussRow(customPicker.k, customPicker.rowIdx, patch);
+          setCustomPicker(null);
+        }}
         onClose={() => setCustomPicker(null)}
         isDark={isDark} border={border} textP={textP} textS={textS} cardBg={cardBg}
       />
