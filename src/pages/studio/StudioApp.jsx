@@ -2880,7 +2880,12 @@ export default function StudioApp() {
           // The newest savedAt across a client's sessions only ever moves forward, so it says which
           // copy is later. An older one is dropped, and an identical one returns the SAME array so
           // React re-renders nothing at all — most echoes are our own write coming home.
-          const ledgerStamp = (x) => { let m = 0; for (const s of (x?.sessions || [])) { const t = s?.savedAt || 0; if (t > m) m = t; } return m; };
+          // lastSavedAt (stamped by saveClientLedger on every real edit, whatever field it touches) is
+          // checked alongside the sessions-only max: two writers racing on fields OUTSIDE sessions
+          // (e.g. a Commission override vs. Deal Check's own draft autosave) used to tie here every
+          // time, since neither touched sessions at all — whichever echo arrived second then won,
+          // silently reverting the other's field moments after it was saved.
+          const ledgerStamp = (x) => { let m = Number(x?.lastSavedAt) || 0; for (const s of (x?.sessions || [])) { const t = s?.savedAt || 0; if (t > m) m = t; } return m; };
           setClientLedger((prev) => {
             const i = prev.findIndex((x) => x.id === c.id);
             if (i < 0) return [...prev, c];
@@ -3124,13 +3129,23 @@ export default function StudioApp() {
     const prevJson = clientJsonRef.current || {};
     const nextJson = {};
     const changed = [];
-    for (const c of list) {
+    // A real edit gets a fresh top-level lastSavedAt stamp — the one thing every save has that the
+    // realtime echo reconciler (client_ledger subscription below) can compare, even when the edit
+    // touches neither `sessions` (its own staleness check only looks there) nor any other field a
+    // SECOND concurrent writer to the same row might also be touching. Without this, two same-tick
+    // writers that don't touch sessions (e.g. Deal Check's own draft autosave racing a Commission-tab
+    // override edit) tied on the old check, and whichever echo happened to arrive second silently
+    // overwrote the other's field a moment after it was saved.
+    const list2 = list.map((c) => {
       const j = JSON.stringify(c);
-      nextJson[c.id] = j;
-      if (prevJson[c.id] !== j) changed.push(c);
-    }
+      if (prevJson[c.id] === j) { nextJson[c.id] = j; return c; }
+      const stamped = { ...c, lastSavedAt: Date.now() };
+      nextJson[c.id] = JSON.stringify(stamped);
+      changed.push(stamped);
+      return stamped;
+    });
     clientJsonRef.current = nextJson;
-    clientLedgerRef.current = list; setClientLedger(list);
+    clientLedgerRef.current = list2; setClientLedger(list2);
     try {
       // Delete BEFORE upserting. Both run in one call when the tracker deletes a client, and an
       // upsert landing after its own delete would put the row straight back.
