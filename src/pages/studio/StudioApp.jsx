@@ -6359,15 +6359,14 @@ export default function StudioApp() {
       // Deal Check custom items into another's snapshot, and the very next auto-save after a Load
       // would disagree with the session it just resumed on this field alone, forking a duplicate.
       setDcCustomItems(Array.isArray(session.customItems) ? session.customItems : []);
-      if (session.sourceEventId) {
-        const ev = events.find(e => e.id === session.sourceEventId);
-        if (ev) setSourceEvent(ev);
-      }
-      if (session.sourceVideoId) {
-        const vid = allVideos.find(v => v.id === session.sourceVideoId);
-        const vTag = ytVideoTags[session.sourceVideoId] || {};
-        setSourceVideo({ id: session.sourceVideoId, title: session.sourceVideoTitle || vid?.title || "Video", tags: vTag });
-      }
+      // No flat session.sourceVideoId/sourceEventId re-stamp here (there used to be one) — restoreBuildState
+      // above already set sourceVideo/sourceEvent correctly from THIS SAME snapshot (fn0Snap or
+      // restoredBuilds[landingFnIdx]), which is guaranteed self-consistent with the zoneElements it
+      // just restored. The flat fields describe whichever function happened to be active at the
+      // LAST SAVE (see saveSession's savedActiveFnIdx) — frequently a different function than
+      // landingFnIdx — so re-applying them here pointed the reference video at one function's build
+      // while the live zoneElements were actually a different (possibly empty) function's, which is
+      // exactly what let Browse's "Continue build" card land on an empty Build page.
       setStep(landingStep);
       // NO TOAST FOR A LOAD THAT ALREADY SHOWS ITSELF. Resuming a session moves the whole screen —
       // the step changes, the reference video appears, the build fills in — so a banner saying it

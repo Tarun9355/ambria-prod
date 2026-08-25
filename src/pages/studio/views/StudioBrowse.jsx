@@ -1323,7 +1323,15 @@ export default function StudioBrowse({ ctx }) {
                     {(()=>{ const notReady = ctx.isFnSwitching;
                     return (
                     <button disabled={notReady}
-                      onClick={(e)=>{e.stopPropagation();if(notReady)return;if(isCurrent){setStep(2);}else{resumeSavedSession(s,s._fnIdx);}}}
+                      // Always resumeSavedSession, even when isCurrent (the live sourceVideo already
+                      // matches this card's video) — isCurrent is only a video-id match, not proof
+                      // the live zoneElements for this function are actually populated. Those two can
+                      // disagree (loadClientSession's sourceVideo can come from a DIFFERENT function
+                      // than the one it lands zoneElements on), which is what let "Continue build"
+                      // drop onto a genuinely empty Build page. resumeSavedSession restores both from
+                      // the SAME snapshot object, so it's a safe no-op when the build really was
+                      // already loaded, and a real fix when it wasn't.
+                      onClick={(e)=>{e.stopPropagation();if(notReady)return;resumeSavedSession(s,s._fnIdx);}}
                       title={ctx.isFnSwitching?"Still loading this function…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
                       className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flex:1,
                         cursor:notReady?"progress":"pointer",opacity:notReady?0.5:1}}>
