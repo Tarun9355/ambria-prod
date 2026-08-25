@@ -485,13 +485,11 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   of its own above. The options come from imsCarpetMaterials, NOT imsPrintMaterials —
                   carpet has its own master list in IMS and platformRowCost prices against
                   `carpetMaterials`.
-                  Shows "— None —" only for a floor nobody has measured yet — sFD (Floor Width/Depth's
-                  onChange, above) defaults cpT to Carpet Old the moment a real dimension is typed, so
-                  a floor that's plainly being sized for carpet doesn't sit silently unpriced just
-                  because the team moved straight past the dropdown. Still fully overridable: pick a
-                  different material, or "— None —" (writes the explicit CARPET_OFF sentinel), and
-                  sFD never touches cpT again once it's set. carpetPricingFor prices an unset cpT the
-                  same as CARPET_OFF (₹0) — see taxonomy.js. */}
+                  Defaults to Carpet Old — both the dropdown's own displayed value below and
+                  carpetPricingFor's actual pricing (taxonomy.js) treat an unset cpT that way, on the
+                  theory a floor almost always gets one and the team reliably never touches this
+                  control. Still fully overridable: pick a different material, or "— None —" (writes
+                  the explicit CARPET_OFF sentinel) to bill this one floor at ₹0. */}
               <div style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-end",flexWrap:"wrap"}}>
                 <div style={{flex:1,minWidth:96}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Floor Width (ft)</div>
                   <input type="number" value={fd.W||""} onChange={e=>sFD("W",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.W||"—"}/></div>
@@ -499,7 +497,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                   <input type="number" value={fd.L||""} onChange={e=>sFD("L",e.target.value)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}} placeholder={zc.dims?.L||"—"}/></div>
                 <div style={{flex:1.5,minWidth:150}}>
                   <div style={{fontSize:11.5,color:textS,marginBottom:3,display:"inline-flex",alignItems:"center",gap:5}}><IconCarpet size={12}/>Carpet</div>
-                  <select value={zc.cpT||""} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
+                  <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
                     style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value="" style={{color:"#111827",background:"#fff"}}>— None —</option>
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}

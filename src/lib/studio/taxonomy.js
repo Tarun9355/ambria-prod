@@ -204,11 +204,9 @@ export function maskingOptions(maskingRates) {
 
 // Sentinel `cpT` value meaning "salesperson explicitly turned carpet off". Any OTHER falsy value
 // (null/undefined/"", from every zone-creation path that doesn't set cpT at all, or a floor
-// nobody has touched yet) means "not decided" — and prices the same as CARPET_OFF, ₹0, exactly
-// like an untouched platform height (`plH` falsy) already does. Carpet used to price as Carpet
-// Old whenever left untouched, on the theory that a floor almost always gets one, but that meant
-// every truss/platform silently billed (and counted toward labour/logistics) for a carpet nobody
-// had actually asked for. A carpet only prices once someone explicitly picks a material.
+// nobody has touched yet) means "not decided yet" — and now prices as Carpet Old by default (see
+// carpetPricingFor), on the theory that a floor almost always gets one and the team reliably never
+// touches this dropdown. Pick "— None —" explicitly to opt a specific floor out.
 export const CARPET_OFF = "__off__";
 
 /**
@@ -240,11 +238,13 @@ export function platformRowCost(row, rates) {
 // code change. `{rate, label}` together so pricing and display (StudioApp's structItems line,
 // StudioSummary's breakdown) read off the same lookup.
 export function carpetPricingFor(cpT, carpetMaterials) {
-  // Unset (nobody has picked a material yet) prices exactly like the explicit CARPET_OFF sentinel
-  // — see the comment on CARPET_OFF above. No more falling back to defaultCarpetMatId() here.
-  if (!cpT || cpT === CARPET_OFF) return { rate: 0, label: "" };
+  if (cpT === CARPET_OFF) return { rate: 0, label: "" };
   const list = carpetMaterials || [];
-  let mat = list.find((m) => m.id === cpT);
+  // Unset (nobody has picked a material yet) defaults to Carpet Old — see the comment on
+  // CARPET_OFF above. Only the explicit sentinel above still prices at ₹0.
+  const effectiveId = cpT || defaultCarpetMatId(list);
+  if (!effectiveId) return { rate: 0, label: "" };
+  let mat = list.find((m) => m.id === effectiveId);
   if (!mat && (cpT === "old" || cpT === "new")) {
     // Zones saved before this switch stored cpT as the literal "old"/"new" enum — map by name once.
     const want = cpT === "old" ? "carpet old" : "carpet new";
@@ -254,13 +254,13 @@ export function carpetPricingFor(cpT, carpetMaterials) {
   const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
   return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
 }
-// Whatever a floor's carpet should default to the MOMENT someone types an actual floor dimension
-// for it — "Carpet Old" by name if that material exists, else any material with "carpet" in its
-// name, else none (no default available). Not applied by carpetPricingFor itself (an untouched
-// zone still prices no carpet at all) — the caller writes this into cpT only once real floor
-// dimensions are entered, and only if cpT is still unset, so a deliberate "— None —" pick is never
-// overwritten. Exists because salespeople reliably enter floor dims and then move on without ever
-// touching the Carpet dropdown, which used to mean the floor quietly priced with no carpet at all.
+// Whatever a floor's carpet should default to — "Carpet Old" by name if that material exists, else
+// any material with "carpet" in its name, else none (no default available). Two consumers: (1)
+// carpetPricingFor itself, for a floor whose cpT was never explicitly set; (2) sFD/setFd
+// (StudioBuild.jsx) writes this into cpT the moment real floor dimensions are typed, so the
+// dropdown itself shows the chosen material rather than sitting on an untouched "— None —" that
+// happens to price the same. Either way, "— None —" stays fully explicit and overridable — it
+// writes CARPET_OFF, which is the one value this never overrides.
 export function defaultCarpetMatId(carpetMaterials) {
   const list = carpetMaterials || [];
   const exact = list.find((m) => String(m.name || "").trim().toLowerCase() === "carpet old");
