@@ -8805,7 +8805,7 @@ export default function StudioApp() {
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
     // app mode + steps
-    mode, setMode, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, askConfirmAsync, loaded, setLoaded, saveError, setSaveError,
+    mode, setMode, canManageAny, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, askConfirmAsync, loaded, setLoaded, saveError, setSaveError,
     // events
     events, setEvents, editEv, setEditEv, save, filteredEvents,
     // admin / library state

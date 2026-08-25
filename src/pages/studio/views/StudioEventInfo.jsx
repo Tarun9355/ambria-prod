@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
-import { IconClipboard } from "../../../components/icons.jsx";
+import { IconClipboard, IconSliders } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
 
@@ -189,6 +189,7 @@ export default function StudioEventInfo({ ctx }) {
     setFilterFn, setBrowseVenues, setVenueGroup,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, autoPersistCustomVenue,
     trVenues,
+    mode, setMode, canManageAny,
   } = ctx;
 
   // ═══ PHONE — 10 DIGITS ═══
@@ -881,6 +882,24 @@ export default function StudioEventInfo({ ctx }) {
       <AppSwitcher current="studio" tone="dark" />
     </div>
   );
+  // ═══ MANAGE SHORTCUT ═══
+  // Same reasoning as the app switcher above: this step's navbar is gone, and Manage — library &
+  // settings — is a control that has nothing to do with the flow either, so a brand-new deal
+  // shouldn't require typing something in first just to reach it. Same dark pill/chip recipe the
+  // real header's mode switch uses (NAV_GROUP/navChip in StudioApp.jsx — not exported, so mirrored
+  // here rather than threading those constants through ctx for one button). Hidden entirely for a
+  // role with no manage area, same as the header's own chip — AND once a client is loaded, since
+  // the real header (with its own Manage chip) is back on screen by then and this would double it.
+  const MANAGE_SWITCH = (canManageAny && !activeClientId) ? (
+    <div style={{position:"fixed",top:16,right:22,zIndex:6}}>
+      <div style={{display:"flex",alignItems:"center",gap:3,background:"rgba(0,0,0,0.32)",borderRadius:11,padding:3,border:"1px solid rgba(255,255,255,0.07)",boxShadow:"inset 0 1px 3px rgba(0,0,0,0.45)"}}>
+        <button onClick={()=>setMode("manage")} title="Manage — library & settings"
+          style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",borderRadius:8,border:"none",background:"transparent",fontSize:12,fontWeight:600,lineHeight:1,whiteSpace:"nowrap",cursor:"pointer",color:"rgba(255,255,255,0.74)"}}>
+          <IconSliders size={15}/>Manage
+        </button>
+      </div>
+    </div>
+  ) : null;
   const BRAND_PANEL = (
     <aside className={`ei-brand${PANEL_BG ? " ei-brand-photo" : ""}`}>
       {/* The photograph, when there is one. Sits at the very back; the gradient stays underneath it
@@ -1048,6 +1067,7 @@ export default function StudioEventInfo({ ctx }) {
       {BRAND_PANEL}
       {/* After the panel, so it paints on top of the ink rather than under it. */}
       {APP_SWITCH}
+      {MANAGE_SWITCH}
       <div className="ei-split" ref={eiSplitRef}>
         {/* Ambient wash — full width of the split, running UNDER the fixed panel as well as the
             brief, so the cream the curve gives back is washed like everything else. No clicks. */}
