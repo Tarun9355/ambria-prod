@@ -54,6 +54,34 @@ export const deleteRow = async (table, id) => {
   if (error) throw error;
 };
 
+// Last-ditch save for the exact moment the page is unloading (pagehide/beforeunload) — a normal
+// supabase-js request is a plain fetch under the hood, and browsers are free to kill an in-flight
+// request the instant the page starts tearing down, before it reaches the server. `keepalive: true`
+// is the browser's own guarantee that a small POST like this is still delivered even after the page
+// is gone — the purpose-built fix for this, vs. hoping a regular request survives.
+// Same REST semantics `.upsert(rows, {onConflict:"id"})` uses under the hood (the on_conflict query
+// param + Prefer: resolution=merge-duplicates), and the same auth every other call in this app uses
+// (the anon key — this app never establishes a per-user Supabase Auth session, so there is no JWT to
+// swap in here). Subject to the browser's keepalive payload cap (~64KB across all in-flight keepalive
+// requests) — best-effort on top of the normal save attempt that already fires alongside it, not a
+// replacement for it.
+export const keepaliveUpsert = async (table, rows) => {
+  if (!rows || !rows.length) return;
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/${table}?on_conflict=id`, {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json",
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify(rows),
+    });
+  } catch { /* best-effort — the page is already unloading */ }
+};
+
 /** Subscribe to real-time changes on a table */
 // One channel PER CALLER, not per table. supabase.channel(name) returns the EXISTING channel when
 // the name matches, and postgres_changes callbacks cannot be added to a channel that has already

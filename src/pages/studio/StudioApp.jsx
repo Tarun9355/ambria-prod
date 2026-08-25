@@ -80,7 +80,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../../lib/ims/constants";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText } from "../../lib/ims/helpers";
 import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor } from "../../lib/rateCard";
-import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable } from "../../lib/supabase";
+import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert } from "../../lib/supabase";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
   fetchZoneLibraryPhotos, fetchCustomZoneLibraryPhotos, fetchUntaggedLibraryTargets,
@@ -3116,7 +3116,7 @@ export default function StudioApp() {
   // deleted ones for the life of the page is enough: a tombstoned id is dropped from the upsert,
   // from the baseline and from state, whoever sends it and however stale their copy is.
   const deletedClientIdsRef = useRef(new Set());
-  const saveClientLedger = useCallback(async (nl, deletedIds) => {
+  const saveClientLedger = useCallback(async (nl, deletedIds, opts = {}) => {
     const dels = Array.isArray(deletedIds) ? deletedIds.filter(Boolean) : [];
     dels.forEach((id) => deletedClientIdsRef.current.add(id));
     const gone = deletedClientIdsRef.current;
@@ -3158,8 +3158,14 @@ export default function StudioApp() {
       }
       if (changed.length) {
         const rows = changed.map((c) => ({ ...clientToRow(c), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
+        // Only ever set true from the pagehide/beforeunload handlers below — the page is actually
+        // unloading right now, so this write has to survive teardown instead of just being correct.
+        if (opts.keepalive) {
+          keepaliveUpsert("client_ledger", rows);
+        } else {
+          const { error } = await supabase.from("client_ledger").upsert(rows, { onConflict: "id" });
+          if (error) throw error;
+        }
       }
     } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
   }, [showMsg]);
@@ -6025,7 +6031,7 @@ export default function StudioApp() {
     // promise costs them nothing (they just don't read it) and lets a caller that DOES need to
     // know the write actually landed — the update banner flushing before it reloads — await it
     // instead of racing a reload against an in-flight network request.
-    const savePromise = saveClientLedger(finalLedger);
+    const savePromise = saveClientLedger(finalLedger, undefined, { keepalive: !!opts.keepalive });
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
     return { client, ledger: finalLedger, savePromise };
   }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, customZones, customGensets, customTripRate, dcCustomItems,
@@ -6077,7 +6083,7 @@ export default function StudioApp() {
   // fire-and-forget save and win (confirmed gap: pagehide fires the save, but nothing guarantees its
   // network write lands before the browser tears the page down). Backs the beforeunload prompt below.
   const unsavedEditRef = useRef(false);
-  const autoSaveBuild = useCallback(() => {
+  const autoSaveBuild = useCallback((opts = {}) => {
     // Both flags: switchingRef covers the click-to-commit half, fnSwitchingRef the render-and-settle
     // half. Either one alone leaves a window where a save can capture a half-loaded function.
     if (switchingRef.current || fnSwitchingRef.current) return;
@@ -6089,7 +6095,10 @@ export default function StudioApp() {
     // transportTotal) can be — those still carry forward the previous save's values while pricing
     // isn't ready (see the snapshot construction in saveSession) instead of holding up everything.
     if (buildHasDataRef.current) {
-      try { saveSessionRef.current({ auto: true }); } catch { /* ignore */ }
+      // opts.keepalive: only ever passed true from the pagehide/visibility-hidden/beforeunload
+      // handlers below — the page is actually going away, so this save has to survive teardown
+      // (fetch keepalive) rather than trust a normal request to finish in time.
+      try { saveSessionRef.current({ auto: true, keepalive: !!opts.keepalive }); } catch { /* ignore */ }
       unsavedEditRef.current = false;
     }
     // Editing an inventory element's qty directly in Build (not through Deal Check) never touched
@@ -6135,12 +6144,17 @@ export default function StudioApp() {
       zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
       customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.
+  // pagehide and visibility→hidden both mean "the page may never get another tick" (tab close, real
+  // navigation, backgrounding on mobile) — keepalive:true on both, so this save is a fetch the browser
+  // itself promises to finish delivering even after JS stops running, not a normal request racing
+  // teardown. The 15s periodic/unmount saves stay plain — the page isn't disappearing for either.
   useEffect(() => {
-    const id = setInterval(autoSaveBuild, 15000);
-    const onVis = () => { if (document.visibilityState === "hidden") autoSaveBuild(); };
+    const onHideOrUnload = () => autoSaveBuild({ keepalive: true });
+    const id = setInterval(() => autoSaveBuild(), 15000);
+    const onVis = () => { if (document.visibilityState === "hidden") onHideOrUnload(); };
     document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("pagehide", autoSaveBuild);
-    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", autoSaveBuild); autoSaveBuild(); /* save on unmount → covers Studio↔IMS route switch (no pagehide fires) */ };
+    window.addEventListener("pagehide", onHideOrUnload);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", onHideOrUnload); autoSaveBuild(); /* save on unmount → covers Studio↔IMS route switch (no pagehide fires) */ };
   }, [autoSaveBuild]);
   // No beforeunload handler existed anywhere in Studio — a real F5/close/address-bar navigation had
   // no warning at all, only the best-effort pagehide save above. This can't GUARANTEE the pending
@@ -6150,6 +6164,10 @@ export default function StudioApp() {
   // every single one would just train people to click through it without reading it.
   useEffect(() => {
     const onBeforeUnload = (e) => {
+      // Fires alongside pagehide's own keepalive save, not instead of it — the two events don't fire
+      // identically across every browser (Safari/bfcache quirks in particular), so both attempt the
+      // same keepalive write rather than betting on just one of them showing up.
+      autoSaveBuild({ keepalive: true });
       if (!unsavedEditRef.current) return;
       e.preventDefault();
       e.returnValue = "";
@@ -8142,7 +8160,7 @@ export default function StudioApp() {
     // then would overwrite the good saved draft with empty and permanently corrupt it — every reload
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
-    const doSave = () => {
+    const doSave = (saveOpts = {}) => {
       const snapshot = {
         resolved: dcResolved,
         cards: dcCards,
@@ -8189,7 +8207,7 @@ export default function StudioApp() {
           const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
             dcCards, dcZoneState, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount,
             dcMpIncludeMinusOne, dcMpIncludeDismantle,
-            dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c));
+            dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c), undefined, { keepalive: !!saveOpts.keepalive });
           dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
           return result;
         }
@@ -8197,10 +8215,24 @@ export default function StudioApp() {
     };
     flushDcAutosaveRef.current = doSave;
     const t = setTimeout(doSave, 2500);
+    // Same reasoning as Build's own autosave (see its pagehide/beforeunload handlers): a real tab
+    // close/refresh can tear the page down before a normal request finishes, so the draft this
+    // Deal Check tab is mid-editing needs the same keepalive escape hatch, not just this effect's
+    // unmount cleanup below (which only covers navigating away WITHIN the app).
+    const onHideOrUnload = () => doSave({ keepalive: true });
+    const onVisChange = () => { if (document.visibilityState === "hidden") onHideOrUnload(); };
+    document.addEventListener("visibilitychange", onVisChange);
+    window.addEventListener("pagehide", onHideOrUnload);
+    window.addEventListener("beforeunload", onHideOrUnload);
     // Unmount (Studio↔IMS route switch, or leaving this client) used to just clearTimeout the
     // pending tick and drop it — unlike Build's own autosave, which flushes on unmount for exactly
     // this reason. A Deal Check draft edited less than 2.5s before navigating away was silently lost.
-    return () => { clearTimeout(t); doSave(); flushDcAutosaveRef.current = null; };
+    return () => {
+      clearTimeout(t); doSave(); flushDcAutosaveRef.current = null;
+      document.removeEventListener("visibilitychange", onVisChange);
+      window.removeEventListener("pagehide", onHideOrUnload);
+      window.removeEventListener("beforeunload", onHideOrUnload);
+    };
   }, [activeClientId, dcFullPageOpen, dcGenerating, dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems, dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcFloralColorPrefs, dcCustomItems, dcKitEdits, dcCarpetPick, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle, authUser, saveClientLedger]);
 
   // ═══ SOLD-DEAL INCREMENTAL INVENTORY RESERVATION ═══
