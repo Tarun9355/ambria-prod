@@ -317,8 +317,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
               </div>
                 {/* ═══ MASKING ═══ Nested inside Truss: masking panels attach to the truss, which is why
                     the original code grouped them. Sits after the truss's own controls so the card reads
-                    "configure the truss → then what's masked onto it". */}
-                {zc.mkOn && <div style={{marginTop:10,marginLeft:"auto",width:"fit-content",maxWidth:"100%",paddingLeft:11,paddingBottom:2,borderLeft:`3px solid ${accent}33`}}>
+                    "configure the truss → then what's masked onto it". Full width of the row beneath it
+                    once masking is on — with a per-wall material picker under each wall now, the old
+                    fit-content/marginLeft:auto right-hand column squeezed three wall blocks into a
+                    narrow strip while the rest of the card sat empty. */}
+                {zc.mkOn && <div style={{marginTop:10,width:"100%",paddingLeft:11,paddingBottom:2,borderLeft:`3px solid ${accent}33`}}>
                   <div style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,marginBottom:5}}>Masking <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· on the truss</span></div>
                 {(()=>{
                   const dL=zc.dims?.L||zc.dims?.S||0,dW=zc.dims?.W||zc.dims?.S||0,dH=zc.dims?.H||0;
@@ -392,21 +395,24 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:zc.mkT===o.id?"":o.id,customMaskingItemId:null})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                       {customMaskingField(k, zc, false, rowIdx)}
                     </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                      {/* Each wall gets its own row: the Back/Left/Right toggle, and — only once that
-                          wall is on — a compact material picker scoped to JUST that wall. "Default"
-                          means "no override, use the truss-wide picker above" (trussRowCost falls back
-                          to zc.mkT/customMaskingItemId whenever a wall has no entry in mkWallMat), so
-                          leaving every wall on Default behaves exactly like before this existed — this
-                          is additive, not a replacement for the shared picker. */}
+                    <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                      {/* Each wall gets its own card, laid out side by side so the full row is used
+                          instead of three narrow stacked lines: the Back/Left/Right toggle, and —
+                          only once that wall is on — a compact material picker scoped to JUST that
+                          wall. "Default" means "no override, use the truss-wide picker above"
+                          (trussRowCost falls back to zc.mkT/customMaskingItemId whenever a wall has
+                          no entry in mkWallMat), so leaving every wall on Default behaves exactly
+                          like before this existed — this is additive, not a replacement for the
+                          shared picker. flex:"1 1 200px" lets 1-3 walls share the row evenly and
+                          still wrap cleanly on a narrow card. */}
                       {walls.map(w=>{
                         const on=mw[w.id];
                         const ov = zc.mkWallMat?.[w.id] || null;
                         const setWallMat = (patch) => sZ({mkWallMat:{...(zc.mkWallMat||{}),[w.id]:patch}});
                         const clearWallMat = () => { const next={...(zc.mkWallMat||{})}; delete next[w.id]; sZ({mkWallMat:next}); };
-                        return <div key={w.id}>
-                          <button onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:11.5,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>
-                          {on && <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center",marginTop:3,marginLeft:12}}>
+                        return <div key={w.id} style={{flex:"1 1 200px",minWidth:170}}>
+                          <button onClick={()=>toggleWall(w.id)} style={{width:"100%",padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:11.5,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>
+                          {on && <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center",marginTop:5}}>
                             <span style={tinyPill(!ov)} onClick={clearWallMat}>{!ov&&<IconCheck size={8}/>}Default</span>
                             {maskOpts.map(o=><span key={o.id} style={tinyPill(ov?.matKey===o.id)} onClick={()=>ov?.matKey===o.id?clearWallMat():setWallMat({matKey:o.id})}>{ov?.matKey===o.id&&<IconCheck size={8}/>}{o.l}</span>)}
                             {customMaskingField(k, zc, true, rowIdx, w.id)}
