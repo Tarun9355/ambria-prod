@@ -501,14 +501,31 @@ export default function StudioBrowse({ ctx }) {
       for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) return i; }
       return null;
     };
+    // BUG-2. This fired two writes and awaited neither, then announced success unconditionally.
+    // Both stores have to lose the session or it comes back: studio_sessions is what the next load
+    // reads, and client_ledger.data.sessions is the blob the load FALLS BACK to when a client has no
+    // rows left — which is exactly the case after deleting a client's last session. Racing them
+    // meant either could lose, and the green toast said "deleted" either way.
+    // Now: delete the rows FIRST and check the result, then write the blob and await it, and only
+    // then say so. Ordered deliberately — if the row delete fails there is no point rewriting the
+    // blob, because the next load would repopulate from the rows anyway.
     const deleteSession = (sessionId) => {
       if (!activeClient) return;
-      askConfirm("Delete this saved session?", () => {
+      askConfirm("Delete this saved session?", async () => {
+        const res = await (ctx.deleteSessionRows?.(sessionId) ?? Promise.resolve({ ok: true }));
+        if (!res?.ok) return;   // deleteSessionRows has already said why
         const nextSessions = (activeClient.sessions || []).filter(sess => sess.id !== sessionId);
-        saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
-        // The rows too. studio_sessions is what the next load reads, so removing this from the
-        // client's array alone would delete it for this tab and bring it straight back on refresh.
-        ctx.deleteSessionRows?.(sessionId);
+        // Checks the RETURN value, not a throw: saveClientLedger catches its own errors and reports
+        // them with its own toast, so awaiting it in a try/catch would have been dead code. It now
+        // returns false on failure for exactly this caller.
+        const blobOk = await saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
+        if (!blobOk) {
+          // The rows are gone but the blob mirror still lists it, and the blob is what the next load
+          // falls back to for a client with no rows left. Say so — a silent failure here is precisely
+          // how a deleted session reappears with no explanation.
+          showMsg("Session removed, but its history entry didn't clear — refresh and try again", "orange");
+          return;
+        }
         showMsg("Session deleted", "green");
       }, { yesLabel: "Delete", note: "This can't be undone." });
     };

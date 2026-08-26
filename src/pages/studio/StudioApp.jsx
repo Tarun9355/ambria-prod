@@ -3186,16 +3186,44 @@ export default function StudioApp() {
           if (error) throw error;
         }
       }
-    } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
+      // Returns whether the write actually landed. Added for the session delete in Browse, which has
+      // to know: it reports "Session deleted" to the user, and this function catches its own errors
+      // rather than throwing — so a caller awaiting it could not previously tell success from a
+      // silently-failed save. Every existing caller ignores the return value and is unaffected.
+      return true;
+    } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); return false; }
   }, [showMsg]);
   // Deleting ONE saved session. Browse removes it from the client's array and saves the ledger; that
   // takes it out of the blob mirror, and this takes out the rows it became in studio_sessions. Both
   // are needed — the table is the source of truth on the next load, so a session deleted from the
   // array alone would come back.
+  // BUG-2 (part of it). This swallowed every failure. supabase-js RETURNS its errors in the result
+  // object — it does not throw — so the try/catch here caught nothing, and a delete that failed or
+  // matched zero rows looked exactly like a delete that worked. Browse then said "Session deleted"
+  // and the row came straight back on the next load.
+  // Now it reads { error, count } the way deleteRow in lib/supabase.js does, and RETURNS whether it
+  // actually removed anything, so the caller can tell the truth. count needs { count: "exact" };
+  // without it Supabase returns null and there is no way to distinguish "deleted" from "matched
+  // nothing".
   const deleteSessionRows = useCallback(async (sessionId) => {
-    if (!sessionId) return;
-    try { await supabase.from("studio_sessions").delete().eq("session_id", sessionId); }
-    catch (e) { showMsg?.("Session delete failed: " + (e?.message || e), "red"); }
+    if (!sessionId) return { ok: false, reason: "no session id" };
+    try {
+      const { error, count } = await supabase
+        .from("studio_sessions")
+        .delete({ count: "exact" })
+        .eq("session_id", sessionId);
+      if (error) {
+        showMsg?.("Session delete failed: " + (error.message || error), "red");
+        return { ok: false, reason: error.message || String(error) };
+      }
+      // Zero rows is not necessarily an error — a session saved before studio_sessions existed only
+      // lives in the client_ledger blob, and removing it from there is the caller's other write. So
+      // report it rather than treating it as failure.
+      return { ok: true, count: typeof count === "number" ? count : null };
+    } catch (e) {
+      showMsg?.("Session delete failed: " + (e?.message || e), "red");
+      return { ok: false, reason: e?.message || String(e) };
+    }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
   // Submit a last-minute amendment request to the department head. Re-reads the
