@@ -209,11 +209,50 @@ export default function StudioEventInfo({ ctx }) {
   // Typed/pasted input is normalised then hard-capped at 10.
   const onPhoneChange = (e) => setClientPhone(digits10(e.target.value).slice(0, 10));
 
+  // ── THE SAME DEAL IS NOT A SECOND DEAL ──
+  // Six clients for one guest were created inside six minutes on 26 Aug 2026 (same number, same
+  // venue, same 13 Nov date), each then carrying its own session history. The cause is right below:
+  // Continue mints a fresh CLI_ whenever no existing client is loaded, and nothing compared what was
+  // being typed against the ledger first. The suggestion block further down DOES find the match by
+  // name/phone — but it only offers "Load →", so pressing Continue past it created the duplicate
+  // anyway.
+  // Phone AND venue AND date together is the test: any one alone is far too broad (a repeat guest,
+  // a busy venue, a popular muhurat), while all three matching means this is the deal being
+  // re-entered, not a new one.
+  // Functions are searched, not just the top-level mirror — a wedding's Sangeet lives in
+  // `functions`, so a client whose Fn2 is this venue on this date is still this client.
+  const findDuplicateClient = () => {
+    const phone = digits10(phoneDigits);
+    if (phone.length !== 10) return null;   // nothing dependable to match on — let it through
+    const dateKey  = String(clientDate || "").trim();
+    const venueKey = String(venue || "").trim().toLowerCase();
+    if (!dateKey || !venueKey) return null;
+    return clientLedger.find((c) => {
+      if (!c || c.id === activeClientId) return false;   // the open deal is never its own duplicate
+      if (digits10(c.phone) !== phone) return false;
+      // Legacy clients predate `functions`; their single function is the top-level mirror.
+      const slots = (Array.isArray(c.functions) && c.functions.length)
+        ? c.functions
+        : [{ date: c.eventDate, venue: c.venue }];
+      return slots.some((f) => String(f?.date || "").trim() === dateKey
+        && String(f?.venue || "").trim().toLowerCase() === venueKey);
+    }) || null;
+  };
+
+  // Returns whether the client was saved, so the caller can hold the user on this step instead of
+  // advancing to Browse against a deal that was never written.
   const doSaveClient = () => {
-    if (!clientName.trim()) return;
+    if (!clientName.trim()) return false;
     let updated = [...clientLedger];
     let client = updated.find(c => c.id === activeClientId);
     if (!client) {
+      // Only on CREATE. Editing a loaded client into a collision is a judgement call a salesperson
+      // is entitled to make; minting a second copy of a deal that already exists is not.
+      const dupe = findDuplicateClient();
+      if (dupe) {
+        showMsg(`⚠ Duplicate — ${dupe.name || "this deal"} already has this venue on this date. Use Load →`, "red");
+        return false;
+      }
       client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: phoneDigits, sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
       updated.push(client);
       setActiveClientId(client.id);
@@ -235,6 +274,7 @@ export default function StudioEventInfo({ ctx }) {
     client.createdBy = client.createdBy || authUser?.name || "—";
     client.lastContactAt = Date.now();
     saveClientLedger(updated.slice(0, 500));
+    return true;
   };
 
   // ═══ TEXT COLOURS ═══ (declared first — the presentation tokens below consume them)
@@ -1011,7 +1051,9 @@ export default function StudioEventInfo({ ctx }) {
     title={canContinue ? undefined : `Missing — ${missing.join(" · ")}`}
     onClick={()=>{
     if (!canContinue) return; // defensive — `disabled` already blocks this
-    doSaveClient();
+    // Stay put when the save was refused as a duplicate. Advancing anyway would drop the user into
+    // Browse with no client behind the build — the exact silent-skip this gate was added to stop.
+    if (!doSaveClient()) return;
     // Commit 3 hotfix — pre-seed Browse from Function 1 (the default active pill) only.
     // Previous Commit 2 polish pre-seeded ALL functions; that contradicts the new pill-is-write-target policy.
     // The sync useEffect handles subsequent pill switches.
