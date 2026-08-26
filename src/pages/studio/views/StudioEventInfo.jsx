@@ -127,16 +127,18 @@ export default function StudioEventInfo({ ctx }) {
   }, []);
   const eiSplitRef = useRef(null);
   const [eiHdrH, setEiHdrH] = useState(0);
-  // Re-measured after EVERY render, not just on mount and on a body resize. The chrome above this
-  // view appears and disappears — resetting the form drops you into the bare state, which unmounts
-  // the app header entirely — and a stale offset leaves the split short, showing a band of the app's
-  // own background under it.
-  // A ResizeObserver on document.body cannot catch that: S.app carries minHeight:100vh, so body is
-  // pinned to the viewport whether the header is there or not. Its SIZE never changes, so the
-  // observer never fires. Watching the render instead is what makes this reliable.
-  // Safe against loops because the state is only set when the value actually differs, so the second
-  // pass is always a no-op. useLayoutEffect so the correction lands before paint rather than as a
-  // visible jump.
+  // ── MEASURED ONCE PER MOUNT, PLUS ON RESIZE. NOT PER RENDER. ──
+  // An earlier version of this ran on every render (no dep array) to catch the app header mounting
+  // and unmounting above this view. That shipped React error #185 — "maximum update depth exceeded",
+  // a white screen on the live site. My reasoning for why it was safe was wrong: I argued the split's
+  // height cannot affect its own top, so the equality guard would settle after one pass. But the
+  // guard only holds if the measurement is STABLE, and a measurement taken from a layout that this
+  // component's own output feeds can land in a two-value oscillation — and then every render
+  // re-measures, re-sets and re-renders, forever.
+  // The per-render measure is also no longer needed. It existed because the header used to appear
+  // and disappear on this screen (bareEventInfo keyed off activeClientId); Event Info is now always
+  // chrome-free at step 0, so the only thing above this view is its own AppSwitcher, whose height
+  // does not change while mounted. Mount + resize is sufficient and cannot feed back.
   useLayoutEffect(() => {
     let raf = 0;
     const measure = () => {
@@ -145,21 +147,20 @@ export default function StudioEventInfo({ ctx }) {
       if (!el) return;
       // + scrollY so this is the offset from the DOCUMENT top, correct even on the first pass while
       // the page is still (wrongly) scrolled.
-      // CEIL, not round. The header's height is routinely fractional (95.4px), and rounding DOWN
+      // CEIL, not round. The chrome's height is routinely fractional (95.4px), and rounding DOWN
       // leaves the split a fraction too tall — which is all Chrome needs to show a full document
       // scrollbar. Ceiling can only ever cost a sub-pixel of height, which is invisible; rounding
       // short costs you the entire bug back.
       const next = Math.max(0, Math.ceil(el.getBoundingClientRect().top + window.scrollY));
-      setEiHdrH((prev) => (prev === next ? prev : next));
+      // Tolerance as well as an equality check. Belt and braces after #185: a sub-pixel wobble in the
+      // measurement can never turn into a state update, so it can never turn into a render.
+      setEiHdrH((prev) => (Math.abs(prev - next) < 2 ? prev : next));
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     measure();
-    // The listeners stay for changes that happen WITHOUT a re-render of this component — a window
-    // resize, or the header re-flowing to two rows because the viewport narrowed. The per-render
-    // measure above covers the rest.
     window.addEventListener("resize", schedule);
     return () => { if (raf) cancelAnimationFrame(raf); window.removeEventListener("resize", schedule); };
-  });
+  }, []);
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
   const [confirmRemove, setConfirmRemove] = useState(null);
