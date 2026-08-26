@@ -511,6 +511,17 @@ export default function StudioBrowse({ ctx }) {
     // blob, because the next load would repopulate from the rows anyway.
     const deleteSession = (sessionId) => {
       if (!activeClient) return;
+      // BUG-2, the other half. Deleting the session you are CURRENTLY working in does not discard the
+      // build that is still loaded — and it shouldn't, because that is unsaved work sitting on screen.
+      // The autosave then writes it again a few seconds later under a fresh id, which reads as the
+      // deleted session coming back. It isn't the same session, but nothing on screen said so, which
+      // is why this looked like the delete had silently failed.
+      // Rather than destroy loaded work to make the list tidy, say what will happen. Same test
+      // bannerCurrentInSaved uses — does this session hold a row for THIS function built from THIS
+      // video — so "the one I'm working in" means the same thing in both places.
+      const target = (activeClient.sessions || []).find(sess => sess.id === sessionId);
+      const isLoadedBuild = !!bannerCurrentId && !!target && Array.isArray(target._fnRows)
+        && target._fnRows.some(r => r && r.fn_idx === activeFnIdx && r.source_video_id === bannerCurrentId);
       askConfirm("Delete this saved session?", async () => {
         const res = await (ctx.deleteSessionRows?.(sessionId) ?? Promise.resolve({ ok: true }));
         if (!res?.ok) return;   // deleteSessionRows has already said why
@@ -526,8 +537,15 @@ export default function StudioBrowse({ ctx }) {
           showMsg("Session removed, but its history entry didn't clear — refresh and try again", "orange");
           return;
         }
-        showMsg("Session deleted", "green");
-      }, { yesLabel: "Delete", note: "This can't be undone." });
+        showMsg(isLoadedBuild
+          ? "Saved session deleted — your open build is still here and will save as a new entry"
+          : "Session deleted", "green");
+      }, {
+        yesLabel: "Delete",
+        note: isLoadedBuild
+          ? "This is the build you have open. Deleting the saved copy won't discard your open work — it stays on screen and will be saved again as a new entry. To throw the build away, switch off its zones first."
+          : "This can't be undone.",
+      });
     };
 
     // ═══ FILTER PANEL PRESENTATION ═══
