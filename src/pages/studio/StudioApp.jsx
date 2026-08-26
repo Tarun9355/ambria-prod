@@ -253,7 +253,7 @@ function calcStructCost(zk, zc, rates) {
   // structures in the same zone can be a different material, density, or handle their ceiling
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
-    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId },
+    { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customMaskingItemId: zc.customMaskingItemId },
     ...(zc.extraTrussRows || []),
   ];
   trussRows.forEach((row) => { const { truss, masking } = trussRowCost(row, rates); r.truss += truss; r.masking += masking; });
@@ -7650,8 +7650,26 @@ export default function StudioApp() {
         });
       }
       if (zl.masking > 0) {
-        const _mCustomItem = zc.customMaskingItemId ? (imsInventory || []).find((i) => i.id === zc.customMaskingItemId) : null;
-        structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
+        // Back/Left/Right can each carry their OWN material now (zc.mkWallMat) instead of sharing
+        // one truss-wide pick — the single "Wall Masking — {material}" line can no longer describe
+        // the true breakdown once any masked wall has an override, so it lists each wall's material
+        // by name instead of pretending it's still one uniform choice.
+        const _maskedWalls = ["back", "left", "right"].filter((wId) => zc.mkWalls?.[wId]);
+        const _hasWallOverride = _maskedWalls.some((wId) => zc.mkWallMat?.[wId]?.matKey || zc.mkWallMat?.[wId]?.customItemId);
+        if (_hasWallOverride) {
+          const _wallLabel = (wId) => {
+            const ov = zc.mkWallMat?.[wId];
+            const customId = ov?.customItemId || (!ov?.matKey ? zc.customMaskingItemId : null);
+            const matKey = ov?.matKey || (!ov?.customItemId ? zc.mkT : null);
+            if (customId) { const it = (imsInventory || []).find((i) => i.id === customId); return it?.name || "custom item"; }
+            return matKey || "fabric";
+          };
+          const _wallName = { back: "Back", left: "Left", right: "Right" };
+          structItems.push({ name: "Wall Masking — " + _maskedWalls.map((wId) => `${_wallName[wId]}: ${_wallLabel(wId)}`).join(", "), total: zl.masking });
+        } else {
+          const _mCustomItem = zc.customMaskingItemId ? (imsInventory || []).find((i) => i.id === zc.customMaskingItemId) : null;
+          structItems.push({ name: _mCustomItem ? `Wall Masking — custom: ${_mCustomItem.name}` : "Wall Masking — " + (zc.mkT || "fabric") + " ₹" + maskingRateFor(zc.mkT || "fabric", imsMaskingRates) + "/sqft (" + (zc.mkS || 1) + " side" + ((zc.mkS || 1) > 1 ? "s" : "") + ")", total: zl.masking });
+        }
       }
       if (zl.platform > 0) {
         const _pRate = platformRateFor(zc.plH, structRates.platformRates);

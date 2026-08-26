@@ -2688,7 +2688,17 @@ ${combined.functions.map(fnObj => `<tr><td style="font-weight:600">${fnObj.fnTyp
                                 if(!r?.rate) return null;
                                 return ` (${base.mode==="box"?"Box":"U"} ${fmt(r.rate)}/sqft)`;
                               })()}</span><span style={{fontWeight:600}}>{fmt(eb.zl.truss)}</span></div>}
-                              {eb.zl.masking>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🧱 {eb.zc?.mkT} masking ({eb.zc?.mkS} side{eb.zc?.mkS>1?"s":""})</span><span style={{fontWeight:600}}>{fmt(eb.zl.masking)}</span></div>}
+                              {eb.zl.masking>0&&(()=>{
+                                // Back/Left/Right can each carry their own material now (zc.mkWallMat)
+                                // instead of sharing one truss-wide pick — say so once any masked wall
+                                // has an override, rather than naming just the truss-wide default and
+                                // silently describing only part of what's actually being charged.
+                                const zc=eb.zc||{};
+                                const maskedWalls=["back","left","right"].filter(wId=>zc.mkWalls?.[wId]);
+                                const hasOv=maskedWalls.some(wId=>zc.mkWallMat?.[wId]?.matKey||zc.mkWallMat?.[wId]?.customItemId);
+                                const label=hasOv?"mixed materials":`${zc.mkT} masking (${zc.mkS} side${zc.mkS>1?"s":""})`;
+                                return <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🧱 {label}</span><span style={{fontWeight:600}}>{fmt(eb.zl.masking)}</span></div>;
+                              })()}
                               {eb.zl.platform>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏗️ Platform ({eb.zc?.plH})</span><span style={{fontWeight:600}}>{fmt(eb.zl.platform)}</span></div>}
                               {eb.zl.carpet>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🟫 Carpet ({carpetPricingFor(eb.zc?.cpT, imsCarpetMaterials).label})</span><span style={{fontWeight:600}}>{fmt(eb.zl.carpet)}</span></div>}
                               {eb.zl.arches>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏛️ Arches ({eb.zc?.archT?.toUpperCase()} ×{eb.zc?.archQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.arches)}</span></div>}

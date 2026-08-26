@@ -99,6 +99,7 @@ const cloneTrussRow = (src = {}) => ({
   mkT: src.mkT || "",
   mkS: src.mkS,
   mkWalls: { ...(src.mkWalls || {}) },
+  mkWallMat: src.mkWallMat ? { ...src.mkWallMat } : undefined,
   customCeilingItemId: src.customCeilingItemId || null,
   customMaskingItemId: src.customMaskingItemId || null,
 });
@@ -125,6 +126,17 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   });
   // Uppercase micro-caption, replacing "Truss Material:" sentence case with a colon.
   const rowCap = { fontSize: 9.5, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: textP, flexShrink: 0, marginRight: 2 };
+  // Compact variant of optPill for the per-wall material override row — one of these sits under
+  // EVERY masked wall, so it has to read as a secondary, in-line control rather than another row
+  // of the same full-size chips the truss-wide default above already uses.
+  const tinyPill = (sel) => ({
+    display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 999,
+    fontSize: 9.5, fontWeight: sel ? 700 : 500, cursor: "pointer", whiteSpace: "nowrap",
+    lineHeight: 1.3, transition: "all 0.15s",
+    background: sel ? (isDark ? "rgba(201,169,110,0.2)" : "#F6E7C8") : "transparent",
+    color: sel ? (isDark ? "#D9BE86" : "#8A6A2F") : textS,
+    border: `1px solid ${sel ? accent : border}`,
+  });
   return (
               /* Every truss is drawn the same — same border, same fill — so a second structure reads
                  as an equal of the first rather than a lesser sub-item. They stay visually separate
@@ -371,16 +383,36 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   {/* The toggle and its cost moved up to the Material / Drape row. */}
                   {zc.mkOn&&<div style={{paddingLeft:0}}>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:4,alignItems:"center"}}>
-                      {/* A truss's masking is either a flat per-sqft material OR one specific custom
-                          item — never both (trussRowCost prices whichever one is set, the other is
-                          just inert leftover on screen otherwise). Picking a material here clears any
-                          custom item; clicking the ALREADY-selected material turns masking material
-                          off rather than re-picking the same thing. */}
+                      {/* This row is the truss's DEFAULT masking material — what any wall uses unless
+                          THAT wall picks its own below. Still either a flat per-sqft material OR one
+                          custom item, never both (trussRowCost prices whichever one is set). Picking a
+                          material here clears any custom item; clicking the ALREADY-selected material
+                          turns it off rather than re-picking the same thing. */}
+                      <span style={{fontSize:9,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.5,marginRight:2}}>Default:</span>
                       {maskOpts.map(o=><button key={o.id} onClick={()=>sZ({mkT:zc.mkT===o.id?"":o.id,customMaskingItemId:null})} style={optPill(zc.mkT===o.id)}>{zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}</button>)}
                       {customMaskingField(k, zc, false, rowIdx)}
                     </div>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      {walls.map(w=>{const on=mw[w.id];return <button key={w.id} onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:11.5,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>;})}
+                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      {/* Each wall gets its own row: the Back/Left/Right toggle, and — only once that
+                          wall is on — a compact material picker scoped to JUST that wall. "Default"
+                          means "no override, use the truss-wide picker above" (trussRowCost falls back
+                          to zc.mkT/customMaskingItemId whenever a wall has no entry in mkWallMat), so
+                          leaving every wall on Default behaves exactly like before this existed — this
+                          is additive, not a replacement for the shared picker. */}
+                      {walls.map(w=>{
+                        const on=mw[w.id];
+                        const ov = zc.mkWallMat?.[w.id] || null;
+                        const setWallMat = (patch) => sZ({mkWallMat:{...(zc.mkWallMat||{}),[w.id]:patch}});
+                        const clearWallMat = () => { const next={...(zc.mkWallMat||{})}; delete next[w.id]; sZ({mkWallMat:next}); };
+                        return <div key={w.id}>
+                          <button onClick={()=>toggleWall(w.id)} style={{padding:"3px 10px",borderRadius:6,border:`1px solid ${on?textP:border}`,fontSize:11.5,cursor:"pointer",fontWeight:on?600:400,background:on?"rgba(0,0,0,0.06)":"transparent",color:on?textP:textS}}>{on?"✓":""} {w.label} ({w.dim}){showCosts&&w.sqft>0?` = ${w.sqft} sqft`:""}</button>
+                          {on && <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center",marginTop:3,marginLeft:12}}>
+                            <span style={tinyPill(!ov)} onClick={clearWallMat}>{!ov&&<IconCheck size={8}/>}Default</span>
+                            {maskOpts.map(o=><span key={o.id} style={tinyPill(ov?.matKey===o.id)} onClick={()=>ov?.matKey===o.id?clearWallMat():setWallMat({matKey:o.id})}>{ov?.matKey===o.id&&<IconCheck size={8}/>}{o.l}</span>)}
+                            {customMaskingField(k, zc, true, rowIdx, w.id)}
+                          </div>}
+                        </div>;
+                      })}
                     </div>
                   </div>}
                 </div>;})()}
@@ -1129,14 +1161,21 @@ export default function StudioBuild({ ctx }) {
     </span>;
     return <button onClick={() => setCustomPicker({ k, kind: "ceiling", rowIdx })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}><IconPlay size={11}/> Custom Ceiling</button>;
   };
-  const customMaskingField = (k, zc, dense, rowIdx) => {
-    const item = zc.customMaskingItemId ? (imsInventory || []).find(i => i.id === zc.customMaskingItemId) : null;
+  // wallId (optional): scopes this to ONE wall's own masking material (zc.mkWallMat[wallId])
+  // instead of the truss-wide default (zc.customMaskingItemId) — same picker modal, addressed at a
+  // different field once an item is chosen.
+  const customMaskingField = (k, zc, dense, rowIdx, wallId) => {
+    const itemId = wallId ? zc.mkWallMat?.[wallId]?.customItemId : zc.customMaskingItemId;
+    const item = itemId ? (imsInventory || []).find(i => i.id === itemId) : null;
     const fs = dense ? 9 : 10;
+    const clearPatch = wallId
+      ? { mkWallMat: { ...(zc.mkWallMat || {}), [wallId]: { ...(zc.mkWallMat?.[wallId] || {}), customItemId: null } } }
+      : { customMaskingItemId: null };
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 5, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600 }}>
       <IconCamera size={12}/> {item.name}
-      <span onClick={() => patchTrussRow(k, rowIdx, { customMaskingItemId: null })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
+      <span onClick={() => patchTrussRow(k, rowIdx, clearPatch)} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
-    return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
+    return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx, wallId, wallMatSnapshot: zc.mkWallMat })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
   };
   // Fixed-venue "Repeat setup" — when the current function's venue is a fixed venue, each zone can be
   // marked ♻️ Repeat (reuse the standing setup → discounted rental, no build labour; venue's fixed crew
@@ -2166,8 +2205,15 @@ undefined
         onSelect={(item) => {
           // Masking is either the flat per-sqft material OR this one custom item, never both —
           // picking a custom masking item clears mkT so the two can't silently disagree about
-          // which one is actually billing (trussRowCost only ever charges one of them).
-          const patch = customPicker.kind === "ceiling" ? { customCeilingItemId: item.id } : { customMaskingItemId: item.id, mkT: "" };
+          // which one is actually billing (trussRowCost only ever charges one of them). Same rule
+          // per-wall: customPicker.wallId means this is scoped to just that wall's own entry in
+          // mkWallMat, addressed off the mkWallMat snapshot taken when the picker was opened (it
+          // can't have changed underneath a modal the user is blocked on).
+          const patch = customPicker.kind === "ceiling"
+            ? { customCeilingItemId: item.id }
+            : customPicker.wallId
+              ? { mkWallMat: { ...(customPicker.wallMatSnapshot || {}), [customPicker.wallId]: { customItemId: item.id } } }
+              : { customMaskingItemId: item.id, mkT: "" };
           patchTrussRow(customPicker.k, customPicker.rowIdx, patch);
           setCustomPicker(null);
         }}

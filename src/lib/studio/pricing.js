@@ -752,34 +752,67 @@ export function trussRowCost(row, rates) {
   }
   // Custom masking — same idea as custom ceiling: a specific IMS inventory item (e.g. a printed
   // wall panel) replaces the flat sqft × material-rate masking cost for this row's masked walls.
-  if (row.customMaskingItemId) {
+  // Per-wall override: row.mkWallMat = {back:{matKey}|{customItemId}, left:..., right:...} lets
+  // Back/Left/Right each pick their OWN material instead of sharing one for the whole truss. Only
+  // engaged once at least one wall actually carries an override — with none set, this prices
+  // IDENTICALLY to before (same two branches, untouched), so every truss saved before this existed
+  // keeps its exact number. Once engaged, each wall prices independently: a flat-rate material by
+  // its own sqft × rate, a custom item as one flat instance (matching how a whole-truss custom item
+  // has always priced — a discrete panel, not something that scales with area).
+  const wallMat = row.mkWallMat || {};
+  const hasWallOverride = ["back", "left", "right"].some((w) => wallMat[w] && (wallMat[w].matKey || wallMat[w].customItemId));
+  if (row.customMaskingItemId && !hasWallOverride) {
     const maskItem = (rates?.imsInventory || []).find((i) => i.id === row.customMaskingItemId);
     masking = maskItem ? priceForInvItem(maskItem, rates?.rcFactorByKey, rates?.imsInventory) * Math.max(1, row.trussQty || 1) : 0;
-  } else if (row.mkOn && row.mkT) {
-    const h = d.H || 0, rate = maskingRateFor(row.mkT, rates?.maskingRates); let w = 0;
+  } else if (row.mkOn && (row.mkT || hasWallOverride)) {
+    const h = d.H || 0;
     const dL = d.L || d.S || 0, dW = d.W || d.S || 0;
     if (row.mkWalls) {
       const _trCfg = resolveTrussConfig({ dims: row.dims, trussType: row.trussType });
       const _cfg = _trCfg?.config || (row.trT === "box" ? "full_box" : "half_box");
       const _spanL = _trCfg?.spanFt || dL || dW;
       const _backDepth = row.trussBackDepth || 4;
+      const wallSqft = {}; // wallId → sqft, for whichever walls are actually masked
       if (_cfg === "full_box") {
-        if (row.mkWalls.back) w += dW * h;   // back wall spans the WIDTH
-        if (row.mkWalls.left) w += dL * h;   // side walls span the DEPTH
-        if (row.mkWalls.right) w += dL * h;
+        if (row.mkWalls.back) wallSqft.back = dW * h;   // back wall spans the WIDTH
+        if (row.mkWalls.left) wallSqft.left = dL * h;   // side walls span the DEPTH
+        if (row.mkWalls.right) wallSqft.right = dL * h;
       } else if (_cfg === "half_box") {
-        if (row.mkWalls.back) w += _spanL * h;
-        if (row.mkWalls.left) w += _backDepth * h;
-        if (row.mkWalls.right) w += _backDepth * h;
+        if (row.mkWalls.back) wallSqft.back = _spanL * h;
+        if (row.mkWalls.left) wallSqft.left = _backDepth * h;
+        if (row.mkWalls.right) wallSqft.right = _backDepth * h;
       } else if (_cfg === "u_only") {
-        if (row.mkWalls.back) w += _spanL * h;
+        if (row.mkWalls.back) wallSqft.back = _spanL * h;
+      }
+      if (hasWallOverride) {
+        // Each wall prices with ITS OWN material — its own override if set, else the truss's
+        // shared mkT/customMaskingItemId (so a partially-customised truss, e.g. only Left
+        // overridden, still prices Back/Right the normal shared way). A custom item is one flat
+        // instance per wall (matches how a whole-truss custom item has always priced — a discrete
+        // panel, not something that scales with area); a flat-rate material is its own sqft × rate.
+        Object.entries(wallSqft).forEach(([wallId, sqft]) => {
+          const ov = wallMat[wallId];
+          const customId = ov?.customItemId || (!ov?.matKey ? row.customMaskingItemId : null);
+          const matKey = ov?.matKey || (!ov?.customItemId ? row.mkT : null);
+          if (customId) {
+            const maskItem = (rates?.imsInventory || []).find((i) => i.id === customId);
+            masking += maskItem ? priceForInvItem(maskItem, rates?.rcFactorByKey, rates?.imsInventory) : 0;
+          } else if (matKey) {
+            masking += sqft * maskingRateFor(matKey, rates?.maskingRates);
+          }
+        });
+      } else {
+        const w = Object.values(wallSqft).reduce((s, v) => s + v, 0);
+        masking = w * maskingRateFor(row.mkT, rates?.maskingRates);
       }
     } else {
       const s = row.mkS || 1;
+      let w = 0;
       if (row.trT === "box") { const dd = [dL, dW].sort((a, b) => b - a); if (s >= 1) w += dd[0] * h; if (s >= 2) w += dd[1] * h; if (s >= 3) w += dd[0] * h; }
       else { w = dW * h * s; }
+      masking = w * maskingRateFor(row.mkT, rates?.maskingRates);
     }
-    masking = w * rate * Math.max(1, row.trussQty || 1);
+    masking *= Math.max(1, row.trussQty || 1);
   }
   return { truss, masking };
 }
