@@ -5850,8 +5850,22 @@ export default function StudioApp() {
         // figure and, worse, the TIER derived from it, which is what the Browse card shows. The
         // carry-forward above still runs, so an existing good price is kept rather than replaced;
         // this only declines to write a NEW one until the inputs are real.
-        if (pricingReady && grandTotal > 0 && fnSnapHasBuild(fnSnapshots[liveIdx])) {
-          next[liveIdx] = { total: grandTotal, tier: getCat(grandTotal).label };
+        //
+        // BUG-6. `grandTotal > 0` used to be part of this condition, to stop a transient zero wiping
+        // a good price. The cost was that a DELIBERATE zero could never be recorded: switch every
+        // zone off and the carry-forward above kept re-writing the old price on every save, so Browse
+        // showed "₹1,00,780 Silver" for a build that was now empty — permanently, until enough zones
+        // came back on to push the total above zero again.
+        // pricingReady is what makes the two distinguishable, and it did not exist when that guard
+        // was written. A zero with the rate tables loaded is a real zero, so it is written: the live
+        // function's figure is authoritative and replaces whatever was carried forward for it.
+        // The chain downstream already handles it — sessionToRows nulls a zero total, and Browse's
+        // shownTotal requires > 0 at every step — so an emptied build shows no price rather than a
+        // stale one.
+        if (pricingReady && fnSnapHasBuild(fnSnapshots[liveIdx])) {
+          // No tier on a zero. getCat has no floor, so it would label ₹0 "Silver" and store that on
+          // the session — the same mislabel BUG-3 fixed on screen, except persisted.
+          next[liveIdx] = { total: grandTotal, tier: grandTotal > 0 ? getCat(grandTotal).label : "" };
         }
         return next;
       })(),
