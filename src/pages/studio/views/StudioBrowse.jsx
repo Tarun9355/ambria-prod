@@ -136,14 +136,32 @@ export default function StudioBrowse({ ctx }) {
   // the panel's first control (Hide) came out on top of the navbar. Measured instead, and observed,
   // so it re-reads when the bar wraps, unwraps, or gains the function row.
   const [hdrH, setHdrH] = useState(railTop);
+  // How far down the BRAND ROW ends — measured off .sa-nav-left, the header's left block that holds
+  // the wordmark and the app switcher.
+  // The panel's own top padding uses this rather than hdrH. hdrH is the whole bar, which on a deal
+  // with extra functions includes the function-pill row that wraps onto a second line — and that row
+  // sits to the RIGHT of this column, not over it, so clearing it pushed the panel down for nothing.
+  // Measuring the brand row instead brings the panel up to just under the wordmark, which is the only
+  // thing actually above it in these 392px.
+  const [brandH, setBrandH] = useState(56);
   useEffect(() => {
     const el = document.querySelector(".sa-header");
     if (!el) return undefined;
-    const read = () => setHdrH(el.getBoundingClientRect().height || railTop);
+    const brand = el.querySelector(".sa-nav-left");
+    const read = () => {
+      setHdrH(el.getBoundingClientRect().height || railTop);
+      // bottom relative to the header's own top, so it is an offset from the top of the viewport —
+      // the header is pinned there.
+      if (brand) {
+        const b = brand.getBoundingClientRect().bottom - el.getBoundingClientRect().top;
+        setBrandH((prev) => (Math.abs(prev - b) < 0.5 ? prev : Math.ceil(b)));
+      }
+    };
     read();
     if (typeof ResizeObserver === "undefined") return undefined;
     const ro = new ResizeObserver(read);
     ro.observe(el);
+    if (brand) ro.observe(brand);
     return () => ro.disconnect();
   }, [railTop]);
   // Browse had no way to fold its filters, unlike Build. Same behaviour here: a Hide in the
@@ -1124,7 +1142,10 @@ export default function StudioBrowse({ ctx }) {
           // gap 14, not 10. The rail stacks four unrelated things — a control, a saved deal, its
           // history, and the filter card — and at 10 they read as one run of blocks with no idea
           // where one ends and the next begins. The extra 4px is what separates them into items.
-          top:0, height:"100svh", paddingTop:hdrH + 14,
+          // brandH, not hdrH: clear the wordmark, which is the only thing above this column, rather
+          // than the whole bar. The function-pill row lives to the right of these 392px, so clearing
+          // its height as well pushed the panel down past nothing at all.
+          top:0, height:"100svh", paddingTop:brandH + 12,
           maxHeight:"none",display:"flex",flexDirection:"column",gap:14}}>
           {/* The curve and the photograph, exactly as Event Info draws them, so moving between the
               two steps doesn't feel like moving between two products. */}
