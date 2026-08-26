@@ -8799,7 +8799,17 @@ export default function StudioApp() {
   // moment you leave (Continue to Browse, or any other step), same as every step keeps the full
   // header except this one. Held back while `restoring`, because a refresh sits on step 0 for a
   // beat before snapping to the real step — hiding the bar then would read as a flash.
-  const bareEventInfo = mode === "studio" && step === 0 && !restoring;
+  // Also held back while Deal Check is open (dcFullPageOpen): it's an overlay, not gated by `step`,
+  // so it can still be mounted after navigating the page underneath it back to step 0 without
+  // closing it first. DealCheckOverlay measures `.sa-header` once on mount (its own `navH` effect)
+  // and never re-queries it — letting the header unmount out from under an already-open Deal Check
+  // put that effect's assumptions and Event Info's own per-render header-height remeasurement (see
+  // eiHdrH in StudioEventInfo.jsx) at odds with each other, and one of that pair went into a render
+  // loop (React error #185, "Maximum update depth exceeded") the moment that combination became
+  // reachable. Before this Deal Check (which requires activeClientId) and bareEventInfo used to be
+  // mutually exclusive, so this state never actually occurred until Event Info stopped requiring
+  // `!activeClientId` — restoring the mutual exclusion here is the fix, not reverting that behavior.
+  const bareEventInfo = mode === "studio" && step === 0 && !restoring && !dcFullPageOpen;
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const textS = isDark ? "#6B7280" : "#8b8fa3";
