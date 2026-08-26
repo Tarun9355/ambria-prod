@@ -8776,17 +8776,16 @@ export default function StudioApp() {
 
   const isDark = false;
   const S = makeS(isDark);
-  // Event Info (step 0) runs chrome-free: it's where a deal is STARTED, so the bar above it offers
-  // nothing you can act on — three of its four step chips are inert until this form is filled.
-  // NOTE: this also takes sign-out, the Studio↔IMS switch, Manage and Deal Check off the screen you
-  // land on after login. They come back at step 1, so the way to reach them is Continue. Held back
-  // while `restoring`, because a refresh sits on step 0 for a beat before snapping to the real step
-  // — hiding the bar then would read as a flash. Every other step keeps the full header.
-  // Also held back once a deal is actually active (activeClientId set): refreshing on Event Info now
-  // restores an in-progress deal instead of abandoning it (see the mount-restore effect), and that
-  // deal's Deal Check / Studio↔IMS switch / sign-out are exactly as relevant here as on any other
-  // step — only a genuinely brand-new, not-yet-started deal gets the bare, chrome-free treatment.
-  const bareEventInfo = mode === "studio" && step === 0 && !restoring && !activeClientId;
+  // Event Info (step 0) runs chrome-free: it's where a deal is started or revisited to edit client
+  // details, so the bar above it offers nothing you can act on directly — three of its four step
+  // chips are inert until this form is filled, and jumping back here from Build/Browse/Summary to
+  // fix a name or date doesn't need that bar re-appearing either. NOTE: this also takes sign-out,
+  // the Studio↔IMS switch, Manage and Deal Check off THIS one screen — StudioEventInfo.jsx's own
+  // APP_SWITCH/MANAGE_SWITCH cover the switch and Manage; sign-out and Deal Check come back the
+  // moment you leave (Continue to Browse, or any other step), same as every step keeps the full
+  // header except this one. Held back while `restoring`, because a refresh sits on step 0 for a
+  // beat before snapping to the real step — hiding the bar then would read as a flash.
+  const bareEventInfo = mode === "studio" && step === 0 && !restoring;
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const textS = isDark ? "#6B7280" : "#8b8fa3";

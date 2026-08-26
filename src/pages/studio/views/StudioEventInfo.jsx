@@ -868,8 +868,9 @@ export default function StudioEventInfo({ ctx }) {
   // gold "A" tile with the AMBRIA wordmark and "Decorations & Events" under it, so that's what
   // this is, scaled up. Decorative layers are aria-hidden; the wordmark itself is not.
   // ═══ THE APP SWITCHER ═══
-  // This step has no navbar — it was taken off deliberately, since the page is where a deal starts
-  // and a step nav on it has nothing to navigate yet. That also took the Studio/IMS toggle with it,
+  // This step has no navbar — every visit to Event Info runs chrome-free, not just a brand-new
+  // deal, since a step nav here has nothing to navigate yet regardless of whether a client is
+  // loaded. That also took the Studio/IMS toggle with it,
   // which is the one control on the bar that has nothing to do with the flow: it answers "which app
   // am I in", and that question is just as live here as anywhere else.
   // Put back at the viewport's top-left, the same corner it occupies in the bar. FIXED and outside
@@ -883,14 +884,13 @@ export default function StudioEventInfo({ ctx }) {
     </div>
   );
   // ═══ MANAGE SHORTCUT ═══
-  // Same reasoning as the app switcher above: this step's navbar is gone, and Manage — library &
-  // settings — is a control that has nothing to do with the flow either, so a brand-new deal
-  // shouldn't require typing something in first just to reach it. Same dark pill/chip recipe the
-  // real header's mode switch uses (NAV_GROUP/navChip in StudioApp.jsx — not exported, so mirrored
-  // here rather than threading those constants through ctx for one button). Hidden entirely for a
-  // role with no manage area, same as the header's own chip — AND once a client is loaded, since
-  // the real header (with its own Manage chip) is back on screen by then and this would double it.
-  const MANAGE_SWITCH = (canManageAny && !activeClientId) ? (
+  // Same reasoning as the app switcher above: this step's navbar is gone (now on every visit to
+  // Event Info, not just a brand-new deal — see StudioApp.jsx's bareEventInfo), so Manage needs its
+  // own way in here regardless of whether a client is loaded. Same dark pill/chip recipe the real
+  // header's mode switch uses (NAV_GROUP/navChip in StudioApp.jsx — not exported, so mirrored here
+  // rather than threading those constants through ctx for one button). Hidden entirely for a role
+  // with no manage area, same as the header's own chip.
+  const MANAGE_SWITCH = canManageAny ? (
     <div style={{position:"fixed",top:16,right:22,zIndex:6}}>
       {/* Same translucent wrap/chip recipe as AppSwitcher's dark tone (components/AppSwitcher.jsx)
           — this sits right next to that Studio/IMS pill, so it reads as one family of controls
