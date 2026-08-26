@@ -2863,7 +2863,6 @@ export default function StudioApp() {
           // Our own stale upsert, echoed back before the delete landed, would otherwise re-add the
           // row to the list this tab is showing.
           if (deletedClientIdsRef.current.has(c.id)) return;
-          if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(c);
           // ── AN ECHO MUST NOT WIND THIS CLIENT BACK ──
           // Every save upserts the row and Supabase sends it straight back. Applying that blindly
           // means the newest local state can be replaced by an OLDER copy: the 15s autosave, the
@@ -2883,13 +2882,31 @@ export default function StudioApp() {
           // time, since neither touched sessions at all — whichever echo arrived second then won,
           // silently reverting the other's field moments after it was saved.
           const ledgerStamp = (x) => { let m = Number(x?.lastSavedAt) || 0; for (const s of (x?.sessions || [])) { const t = s?.savedAt || 0; if (t > m) m = t; } return m; };
+          // ── THE ROW CARRIES NO SESSIONS, SO THE ECHO MUST NOT CLEAR THEM ──
+          // Sessions moved out of the blob into studio_sessions, so rowToClient hands back
+          // `sessions: []` for every client — correct for the row, wrong as a replacement for one this
+          // tab has already filled in from the table. Swapping the whole object in therefore emptied
+          // the saved-session list on every client_ledger echo: the history showed, then vanished a
+          // moment later, and only a refresh (which re-reads studio_sessions) brought it back.
+          // Merging keeps the sessions this tab loaded and takes everything else from the row, which
+          // is exactly the split of ownership the migration created.
+          // It also makes the staleness check say what it should: both sides now hold the SAME
+          // sessions array, so that term cancels and the comparison comes down to lastSavedAt — the
+          // only thing this row still governs.
+          const keepSessions = (mine, incoming) => ({ ...incoming, sessions: mine.sessions || [] });
           setClientLedger((prev) => {
             const i = prev.findIndex((x) => x.id === c.id);
-            if (i < 0) return [...prev, c];
+            // Baseline tracks whatever ends up in state. Seeded from `c` for a client this tab has
+            // never seen, and from the winner below otherwise — a baseline that disagreed with state
+            // would read as a local edit on the next save and re-upsert the client every time.
+            const seed = (x) => { if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(x); };
+            if (i < 0) { seed(c); return [...prev, c]; }
             const mine = prev[i];
-            if (ledgerStamp(c) < ledgerStamp(mine)) return prev;
-            if (JSON.stringify(mine) === JSON.stringify(c)) return prev;
-            return prev.map((x) => (x.id === c.id ? c : x));
+            const merged = keepSessions(mine, c);
+            const winner = ledgerStamp(merged) < ledgerStamp(mine) ? mine : merged;
+            seed(winner);
+            if (JSON.stringify(mine) === JSON.stringify(winner)) return prev;
+            return prev.map((x) => (x.id === c.id ? winner : x));
           });
         }
       } catch { /* ignore */ }
