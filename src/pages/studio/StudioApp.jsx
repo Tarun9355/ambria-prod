@@ -109,7 +109,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
@@ -1068,51 +1068,8 @@ const SESSION_KEEP = 10;
 // prices, blank cards and "no longer in library" flips all came from.
 
 /** The rows one saved session becomes — one per function that has a snapshot. */
-function sessionToRows(clientId, s) {
-  if (!s || !s.id || !clientId) return [];
-  const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};
-  const keys = Object.keys(snaps).filter((k) => /^\d+$/.test(k));
-  // A session written before fnSnapshots existed carries its build in flat fields, and those belong
-  // to Fn1 — the same reading Browse has always given them.
-  const idxs = keys.length ? keys.map(Number).sort((a, b) => a - b) : [0];
-  return idxs.map((i) => {
-    const build = snaps[i] || snaps[String(i)] || null;
-    const b = build || s;
-    const isActive = keys.length ? s.savedActiveFnIdx === i : true;
-    // BUILT on, not merely referenced from. A picked video rides along to every function, so the
-    // looser test marked all of them as holding a build and one build showed up on every pill.
-    const built = fnSnapHasBuild(b);
-    const own = s.fnTotals && (s.fnTotals[i] || s.fnTotals[String(i)]);
-    // A price only belongs to a function that HAS a build. Carried forward onto an empty one it was
-    // a figure for something that is not there — which is how a ₹0 Wedding showed ₹6,90,091.
-    const ownTotal = built && own && Number(own.total) > 0 ? Number(own.total) : null;
-    return {
-      id: `${s.id}:${i}`,
-      session_id: s.id,
-      client_id: clientId,
-      fn_idx: i,
-      saved_at: Number(s.savedAt) || 0,
-      saved_by: s.savedBy || null,
-      auto: !!s.auto,
-      is_active_fn: !!isActive,
-      has_data: built,
-      fn_label: s.fn || null,
-      event_date: s.eventDate || null,
-      venue: s.venue || null,
-      source_video_id: b?.sourceVideo?.id || b?.sourceVideoId || null,
-      source_video_title: b?.sourceVideo?.title || b?.sourceVideoTitle || null,
-      source_event_id: b?.sourceEvent?.id || b?.sourceEventId || null,
-      source_event_name: b?.sourceEvent?.name || b?.sourceEventName || null,
-      // The figure for THIS function: its own, else the session-level one but ONLY when the session
-      // says that is where the number came from. Another function's price is not a fallback.
-      total: ownTotal != null ? ownTotal : (built && isActive && Number(s.total) > 0 ? Number(s.total) : null),
-      tier: ownTotal != null ? (own.tier || null) : (built && isActive ? (s.tier || null) : null),
-      decor_total: isActive && s.decorTotal != null ? Number(s.decorTotal) : null,
-      transport_total: isActive && s.transportTotal != null ? Number(s.transportTotal) : null,
-      build: build || null,
-    };
-  });
-}
+// sessionToRows now lives in lib/studio/sessionData.js (imported below) so the one-off
+// client_ledger→studio_sessions backfill can build rows with the SAME function the app writes with.
 
 /** Rows back into sessions, newest first — what client.sessions holds. */
 function rowsToSessions(rows) {
