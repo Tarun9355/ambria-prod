@@ -281,7 +281,17 @@ export default function StudioBrowse({ ctx }) {
             </div>}
           </div>
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
-            <div className="sb-title" style={{fontSize:15.5,fontWeight:600,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
+            {/* BUG-4: a skeleton while the YouTube titles are still in flight, rather than the
+                "Untitled video" placeholder that used to sit under a perfectly good thumbnail. Two
+                bars at the real line height, so the card does not resize when the title lands. */}
+            <div className="sb-title" style={{fontSize:15.5,fontWeight:600,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+              {v.titlePending
+                ? <span style={{display:"block"}} aria-label="Loading title">
+                    <span style={{display:"block",height:11,width:"92%",borderRadius:5,background:"rgba(26,26,46,0.10)",animation:"sbTitlePulse 1.15s ease-in-out infinite"}}/>
+                    <span style={{display:"block",height:11,width:"58%",borderRadius:5,marginTop:6,background:"rgba(26,26,46,0.10)",animation:"sbTitlePulse 1.15s ease-in-out infinite"}}/>
+                  </span>
+                : v.title}
+            </div>
             <div style={{fontSize:11,color:textS,marginBottom:6}}>{[v.venue, v.fn, v.space].filter(Boolean).join(" · ") || "Untagged"}</div>
             {/* The style/palette chips and the "needs zone photos" strip both came off the card —
                 three stacked rows of metadata between the title and the buttons made the grid read
@@ -762,6 +772,10 @@ export default function StudioBrowse({ ctx }) {
   background-size:230% 100%;
   animation:sbSheen 30s ease-in-out infinite alternate}
 @keyframes sbSheen{from{background-position:0% 50%}to{background-position:100% 50%}}
+/* The title skeleton, shown while the YouTube titles are still loading — see titlePending in
+   StudioApp's browseVideosBase. Opacity only, so it cannot shift the card's layout. */
+@keyframes sbTitlePulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@media (prefers-reduced-motion: reduce){[style*="sbTitlePulse"]{animation:none !important}}
 /* Blurred hard, which is what turns five stroked paths into folds of light rather than five fat
    curves. Static, so the blur is rasterised once. An svg, not a span, so the blob rule above
    (which targets spans) does not also catch it. */

@@ -5537,6 +5537,16 @@ export default function StudioApp() {
       const price = hasZonePhotos ? calcFullEventCost(evForCost) : null;
       return {
         id: vidId,
+        // BUG-4. This said "Untitled video" whenever `vid` was missing — and on a cold Browse it is
+        // missing for EVERY card, because the two sources load at very different speeds: ytVideoTags
+        // arrives on app mount, while the YouTube details (allVideos, via loadAllYT) only start
+        // fetching when you reach Browse and take seconds on a cold cache. So a real thumbnail sat
+        // under a fabricated title until the fetch landed — the thumbnail has its own fallback built
+        // from the video id alone, which is why it looked fine while the title lied.
+        // titlePending distinguishes "not arrived yet" from "genuinely has no title": pending only
+        // while ytLoading is true, so once the fetch finishes a video that really is absent from
+        // YouTube still falls back to "Untitled video" rather than shimmering forever.
+        titlePending: !vid && ytLoading,
         title: vid?.title || "Untitled video",
         thumbnail: vid?.thumbnail || `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
         venue: tag.venue || "",
@@ -5567,7 +5577,10 @@ export default function StudioApp() {
     // without also breaking the restriction.
     const scope = isAdmin ? "all" : (userVenueScope || "all");
     return (scope === "inhouse" || scope === "outside") ? list.filter(v => groupOf(v) === scope) : list;
-  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, allInhouseVenueOrParentNames, isAdmin, userVenueScope]);
+    // ytLoading is listed because titlePending reads it — without it the flag would freeze at
+    // whatever loading state existed when this memo last rebuilt, which is the stale-closure version
+    // of the same bug.
+  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, allInhouseVenueOrParentNames, isAdmin, userVenueScope, ytLoading]);
 
   // Same favourite-first ordering browseVideos applies, with none of the optional filters — the
   // list a search reads from (see Browse's shownVideos), so favourites still lead but nothing else
