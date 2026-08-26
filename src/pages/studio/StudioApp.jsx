@@ -6040,8 +6040,10 @@ export default function StudioApp() {
       // Each save mints its own id, so a collapsed auto-draft does not overwrite the row it replaces
       // — it stands beside it. The array drops the one it replaced; the table has to as well, or it
       // would accumulate every 15s tick as its own entry in the history.
-      // Fire-and-forget, like every other caller on this path: the blob mirror in client_ledger
-      // carries this same save, so a failed write here costs sync, not data.
+      // Fire-and-forget, like every other caller on this path — but note what that now costs. The
+      // client_ledger blob used to carry this same save as a mirror, so a failed write here lost
+      // only sync. It doesn't any more: studio_sessions is the sole store, so a failure here IS lost
+      // work. Hence the loud error in the catch below rather than a swallowed one.
       const rowsForSnapshot = sessionToRows(client.id, snapshot);
       const replacedId = collapseInPlace ? (prevSessions[0]?.id || null) : null;
       // The draft this save replaced, plus anything the ten-session cut dropped.
@@ -6057,12 +6059,33 @@ export default function StudioApp() {
             const { error } = await supabase.from("studio_sessions")
               .upsert(rowsForSnapshot, { onConflict: "id" });
             if (error) throw error;
+            // ── THE CAP, ENFORCED ON THE TABLE ──
+            // dropIds alone could never hold the line. It is derived from prevSessions, and
+            // prevSessions comes from client.sessions — which rowsToSessions has ALREADY capped at
+            // ten on the way in. So the app can only ever see ten saves, and could only ever prune
+            // the eleventh; everything older was invisible to it and stayed in the table forever.
+            // Measured before writing this: one client had 366 session rows against a cap of ten.
+            // It never showed, because the read caps too — the rows just accumulated.
+            // Bounded by TIMESTAMP, not by a not-in list of ids: an id list that came out empty or
+            // short would delete rows we mean to keep, whereas "older than the oldest one we are
+            // keeping" cannot touch them by construction. Only runs when the history is actually at
+            // the cap, so a client with a handful of saves is never swept.
+            const keptStamps = (client.sessions || []).map((s) => Number(s?.savedAt) || 0).filter(Boolean);
+            if (keptStamps.length >= SESSION_KEEP) {
+              const oldestKept = Math.min(...keptStamps);
+              if (oldestKept > 0) {
+                const { error: pruneErr } = await supabase.from("studio_sessions")
+                  .delete().eq("client_id", client.id).lt("saved_at", oldestKept);
+                if (pruneErr) throw pruneErr;
+              }
+            }
           } catch (e) {
             // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
             // were lost in July (see the note on migration 023) — if these rows are not landing, the
-            // screen has to say so rather than look like it saved. The client_ledger mirror still
-            // holds the save either way, so this reports a sync problem, not lost work.
-            showMsg?.("Session rows not saved: " + (e?.message || e), "red");
+            // screen has to say so rather than look like it saved. This used to say the client_ledger
+            // mirror held the save either way, making it a sync problem — that is no longer true.
+            // studio_sessions is the only store now, so a failure here means the save did not happen.
+            showMsg?.("Session not saved — please try again: " + (e?.message || e), "red");
           }
         })();
       }
