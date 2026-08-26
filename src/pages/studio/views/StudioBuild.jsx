@@ -2404,6 +2404,20 @@ undefined
         </div>
       </div>;
     })()}
+    {/* ═══ UPLOAD, WITH NO REFERENCE ═══
+        Upload used to exist ONLY inside the two banners above, and both are gated on having a source
+        — sourceEvent for one, sourceVideo for the other. Build a deal without picking a reference (or
+        on a function that has none) and neither banner renders, so the upload button vanished with
+        the card. That is precisely when you most need it: no reference photos to work from means
+        client photos are the only thing to build on.
+        Same BANNER_UPLOAD control, so there is one upload button in the app, not a second
+        implementation to keep in step. The card is deliberately plain — it is not pretending to be a
+        reference banner, it is the one action that banner would have carried. */}
+    {!sourceEvent && !sourceVideo && (
+      <div style={{flexShrink:0, display:"flex", justifyContent:"flex-end"}}>
+        {BANNER_UPLOAD}
+      </div>
+    )}
             </div>{/* .bd-rail-scroll */}
           </div>
         : railTab("left","Photo filters",<IconSliders size={14}/>)}
