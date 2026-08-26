@@ -6049,11 +6049,20 @@ export default function StudioApp() {
       if (rowsForSnapshot.length) {
         (async () => {
           try {
-            // Delete first. Both can run in one save, and a delete landing after the upsert that
-            // replaced it would take the new rows out with the old.
-            for (const did of dropIds) {
-              await supabase.from("studio_sessions").delete().eq("session_id", did);
-            }
+            // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
+            // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
+            // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
+            // autosave collapsed OVER newer work with an older build and then deleted the newer
+            // session's rows via `replacedId` below.
+            // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
+            // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
+            // to collapse into one slot, so the ten fill with duplicates of one build and every save
+            // pushes a genuinely older save off the end and deletes it.
+            // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
+            // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
+            // can destroy another. Losing a salesperson's build is not a tidiness trade.
+            // dropIds is still computed above so the intended behaviour stays visible in the code.
+            void dropIds;
             const { error } = await supabase.from("studio_sessions")
               .upsert(rowsForSnapshot, { onConflict: "id" });
             if (error) throw error;
