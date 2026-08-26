@@ -9252,7 +9252,17 @@ export default function StudioApp() {
           size-matched (each renders at its own optical weight); the icons all share NAV_ICON.
           Type is on two tiers only: NAV_FS for everything clickable, META_FS for the uppercase
           micro-labels. The old header mixed 8/9/10/11/12/13px in one row. ═══ */}
-      {!bareEventInfo && <div className="sa-header" style={S.header}>
+      {/* Anything clicked in this bar closes Deal Check first. The overlay is deliberately z-index 45
+          starting below this bar (top:navH), so the navbar stays visible and clickable while Deal
+          Check is open — which meant you could switch step, function, mode or app and leave Deal
+          Check sitting open behind the new screen, still holding the previous client's draft.
+          onClickCapture, not onClick: the capture phase runs BEFORE the clicked control's own
+          handler, so the overlay closes and the thing you actually clicked still does its job. One
+          handler on the bar rather than a call added to every control in it, so a control added
+          later is covered without anyone remembering to.
+          closeDealCheck flushes the pending draft save before closing, so nothing is lost. */}
+      {!bareEventInfo && <div className="sa-header" style={S.header}
+        onClickCapture={() => { if (dcFullPageOpen) closeDealCheck(); }}>
         {/* The drifting sheen — see .sa-sheen. */}
         <div className="sa-sheen" aria-hidden="true" />
         {/* ── LEFT: brand, then the cross-app switcher. Both answer "where am I?", so they belong
