@@ -3,7 +3,7 @@ import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy
 // The SAME test the save path stamps `has_data` with. Asking the question a second way here is how
 // the card and the row drift apart, and a disagreement about "does this have a build" is what let an
 // empty auto-save erase a visible one once already.
-import { findLatestBuild } from "../../../lib/studio/sessionData";
+import { findLatestBuild, fnSnapHasBuild } from "../../../lib/studio/sessionData";
 import { IconClipboard, IconSliders } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
@@ -295,19 +295,21 @@ export default function StudioEventInfo({ ctx }) {
     // activeClient is ctx's own memo of exactly this lookup, so it is the same object Browse's
     // session card renders from — using it keeps the two reading one source rather than two.
     const c = activeClient || clientLedger.find((x) => x && x.id === activeClientId);
-    // TEMPORARY DIAGNOSTIC — remove once the resume path is confirmed working. It landed on Browse
-    // in testing and the cause is not yet known; this says which link is missing rather than
-    // inviting another guess.
-    console.info("[ambria] resume?", {
-      activeClientId,
-      foundClient: !!c,
-      ledgerSize: clientLedger.length,
-      sessions: c?.sessions?.length ?? null,
-      firstRows: c?.sessions?.[0]?._fnRows?.length ?? null,
-      firstHasData: c?.sessions?.[0]?._fnRows?.filter((r) => r?.has_data).length ?? null,
-      firstSnapKeys: Object.keys(c?.sessions?.[0]?.fnSnapshots || {}),
-      result: c ? findLatestBuild(c.sessions, activeFnIdx) : null,
-    });
+    // TEMPORARY DIAGNOSTIC — remove once the resume path is confirmed working. Flat string on
+    // purpose: logged as an object, DevTools collapses it and truncates at "…", which is exactly the
+    // per-session detail needed to tell an empty history from an unreadable one.
+    const dbg = (c?.sessions || []).map((s, i) => {
+      const rows = Array.isArray(s?._fnRows) ? s._fnRows : [];
+      const snaps = (s?.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};
+      const built = Object.keys(snaps).filter((k) => fnSnapHasBuild(snaps[k]));
+      return `#${i}(${s?.id}) rows=${rows.length} hasData=${rows.filter((r) => r?.has_data).length}`
+        + ` snaps=[${Object.keys(snaps).join(",")}] built=[${built.join(",")}] flat=${fnSnapHasBuild(s)}`
+        + ` total=${s?.total ?? "-"}`;
+    }).join("  ||  ");
+    const hit = c ? findLatestBuild(c.sessions, activeFnIdx) : null;
+    console.info(`[ambria] resume? client=${activeClientId} found=${!!c} fnIdx=${activeFnIdx}`
+      + ` sessions=${c?.sessions?.length ?? "-"} result=${hit ? `${hit.session.id}@fn${hit.fnIdx}` : "NULL"}`
+      + `\n${dbg}`);
     if (!c) return null;
     return findLatestBuild(c.sessions, activeFnIdx);
   };
