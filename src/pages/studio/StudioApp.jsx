@@ -1037,16 +1037,27 @@ function rowToClient(row) {
   if (!row) return null;
   const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
   const base = d ? { ...d, id: row.id } : { id: row.id, name: row.name, phone: row.phone, email: row.email, budget: row.budget };
-  return { ...base, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
+  // sessions defaults to [] because the blob no longer carries them (see clientToRow) — they are
+  // filled in from studio_sessions by the loader. Without this a freshly-read client would have
+  // `sessions: undefined` between the two steps, and every `c.sessions.length` in the app would
+  // throw rather than read as "no saves yet".
+  return { sessions: [], ...base, id: row.id, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
 }
 function clientToRow(c) {
   // _fnRows is the per-function rows a session was rebuilt FROM (see rowsToSessions) — it is a view
   // of studio_sessions, not part of the client. Left in, the blob mirror would carry a second copy of
   // every build in every session: the same data this migration exists to stop duplicating.
-  const data = Array.isArray(c?.sessions)
-    // eslint-disable-next-line no-unused-vars
-    ? { ...c, sessions: c.sessions.map(({ _fnRows, ...rest }) => rest) }
-    : c;
+  // SESSIONS DO NOT GO IN THE BLOB. They live in studio_sessions — one row per function per save,
+  // proper columns, which is what the architecture rule asks for and what makes a delete stick.
+  // This used to write the whole array in here as a mirror, and that mirror was the fallback the
+  // loader read when a client had no rows: delete a client's last session and it came straight back
+  // from this copy. The mirror is gone now that the backfill is complete and the loader reads the
+  // table unconditionally.
+  // Everything else about the client still belongs here — this strips one key, it does not change
+  // what a client is.
+  // eslint-disable-next-line no-unused-vars
+  const { sessions: _droppedSessions, ...withoutSessions } = (c && typeof c === "object") ? c : {};
+  const data = Array.isArray(c?.sessions) ? withoutSessions : c;
   return {
     id: c.id, name: c.name || "", phone: c.phone ?? null, email: c.email ?? null,
     status: c.status || "ongoing", budget: Number(c.budget) || 0, created_by: c.createdBy ?? null,
@@ -2530,9 +2541,19 @@ export default function StudioApp() {
                 if (!g) { g = []; byClient.set(r.client_id, g); }
                 g.push(r);
               }
+              // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows now gets an
+              // empty history, not the blob's copy.
+              // This used to be `if (mine && mine.length)`, which kept the blob for a client the table
+              // had nothing for. That was correct while the migration was mid-flight, but it is also
+              // exactly why a deleted session came back: deleting a client's last session leaves zero
+              // rows, the branch was skipped, and client_ledger.data.sessions — which still listed it —
+              // stood in. That is BUG-2's root cause.
+              // Safe to make unconditional because the backfill is complete: every session that existed
+              // only in a blob has been written into studio_sessions, verified as zero blob-only
+              // clients remaining before this line changed.
               for (const c of list) {
                 const mine = byClient.get(c.id);
-                if (mine && mine.length) c.sessions = rowsToSessions(mine);
+                c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
               }
             }
           } catch { /* table absent or unreadable — the blob history below stands */ }
@@ -6500,9 +6521,12 @@ export default function StudioApp() {
             if (!g) { g = []; byClient.set(r.client_id, g); }
             g.push(r);
           }
+          // Same change as the mount path above — the table is authoritative, so no rows means no
+          // sessions. Left as the old conditional, this retry would have quietly resurrected a
+          // deleted session that the mount path had correctly dropped.
           for (const c of list) {
             const mine = byClient.get(c.id);
-            if (mine && mine.length) c.sessions = rowsToSessions(mine);
+            c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
           }
         }
       } catch { /* table absent or unreadable — the blob history stands */ }

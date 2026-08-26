@@ -501,14 +501,14 @@ export default function StudioBrowse({ ctx }) {
       for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) return i; }
       return null;
     };
-    // BUG-2. This fired two writes and awaited neither, then announced success unconditionally.
-    // Both stores have to lose the session or it comes back: studio_sessions is what the next load
-    // reads, and client_ledger.data.sessions is the blob the load FALLS BACK to when a client has no
-    // rows left — which is exactly the case after deleting a client's last session. Racing them
-    // meant either could lose, and the green toast said "deleted" either way.
-    // Now: delete the rows FIRST and check the result, then write the blob and await it, and only
-    // then say so. Ordered deliberately — if the row delete fails there is no point rewriting the
-    // blob, because the next load would repopulate from the rows anyway.
+    // BUG-2. This fired two writes and awaited neither, then announced success unconditionally — so
+    // a delete that silently failed still showed a green "Session deleted" and the session came back
+    // on the next load.
+    // studio_sessions is now the ONLY store for sessions; the client_ledger blob no longer carries
+    // them (see clientToRow in StudioApp). The ledger write below therefore only updates the client's
+    // in-memory array and the row's typed columns — it is not a second copy of the history any more.
+    // Order still matters: delete the rows first and check the result, because if that fails there is
+    // nothing worth writing afterwards. Then await the ledger write, then report.
     const deleteSession = (sessionId) => {
       if (!activeClient) return;
       // BUG-2, the other half. Deleting the session you are CURRENTLY working in does not discard the
