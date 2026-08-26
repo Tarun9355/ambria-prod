@@ -1197,9 +1197,17 @@ export default function StudioApp() {
   // Auth comes from the app's context (route is already gated). authUser keeps the
   // reference's shape ({id,name,role,perms}). hasPerm/isAdmin derive from it verbatim.
   const { user, logout } = useAuth();
-  const authUser = user
+  // MEMOIZED for the same reason as showMsg below, and this is the more dangerous of the two: it was
+  // a fresh object literal on every render, and it is listed in the dependency array of the Deal
+  // Check autosave effect. An object literal in a dep array can never compare equal, so that effect
+  // re-ran on EVERY render — and its cleanup calls doSave(), which writes a snapshot stamped with
+  // `new Date().toISOString()`. Guaranteed state change → render → effect → cleanup → forever. That
+  // is React #185, the white screen on coming back from Deal Check.
+  // `user` comes from useAuth as plain useState, so it is stable between real sign-in changes and is
+  // the correct single dependency here.
+  const authUser = useMemo(() => (user
     ? { id: user.id || user.username || user.name, name: user.name || user.username || "User", role: user.role || "sales", perms: user.permissions || user.perms || {} }
-    : null;
+    : null), [user]);
 
   // ═══ APP MODE ═══
   // Remember the last open Studio view so toggling to IMS and back returns here.
@@ -2128,7 +2136,18 @@ export default function StudioApp() {
   const [teamData, setTeamData] = useState(DEFAULT_TEAM);
   const [saveError, setSaveError] = useState(null);
 
-  const showMsg = (msg, color) => { setToast({ msg, color }); setTimeout(() => setToast(null), 2000); };
+  // MEMOIZED, and it has to be. As a plain function this got a new identity on every render, and
+  // that identity is load-bearing: saveClientLedger is useCallback(..., [showMsg]), so it churned
+  // every render too — and the Deal Check autosave effect lists saveClientLedger in its deps, so
+  // THAT re-ran every render. Its cleanup calls doSave(), which writes setDcCache with a fresh
+  // `cachedAt: new Date().toISOString()` — a guaranteed state change, hence another render, another
+  // effect run, another cleanup. That was React error #185 ("maximum update depth exceeded"): the
+  // white screen on returning from Deal Check.
+  // It only bit there because the effect early-returns while dcCards is empty, so the cleanup that
+  // calls doSave is never registered until Deal Check has generated cards.
+  // setToast is a setState function and therefore stable, so [] is correct — nothing this closes
+  // over can go stale.
+  const showMsg = useCallback((msg, color) => { setToast({ msg, color }); setTimeout(() => setToast(null), 2000); }, []);
   // In-app confirm, so destructive actions ask in the app's own voice instead of a browser alert()
   // (which is unstyled, blocks the whole tab, and on some browsers offers "don't show again").
   // Deliberately does NOT auto-dismiss — an unanswered question must wait for an answer.
