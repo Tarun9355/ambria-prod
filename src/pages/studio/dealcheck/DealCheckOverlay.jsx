@@ -2350,6 +2350,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // Scoped to the selected function unless "All functions" is on — this used to
                   // always dump every function's trucks on screen no matter which one was selected.
                   const fns = dcShowAllFns ? allFns.map((fn,fi)=>({fn,fi})) : allFns.map((fn,fi)=>({fn,fi})).filter(x=>x.fi===(activeFnIdx||0));
+                  const DEPT_TRANSPORT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {fns.map(({fn, fi}) => {
@@ -2358,6 +2359,18 @@ export default function DealCheckOverlay({ ctx }) {
                         const truckTotal = Number(tr?.truckTotal) || 0;
                         const trucks = Number(tr?.trucks) || 0;
                         const rows = tr?.breakdown || [];
+                        // Group the truck-capacity rows (one per sub-category, e.g. "Chandelier",
+                        // "vedi", "Tenting Accessories") by department — the same Floral/Structure/
+                        // Furniture/Lighting/... classifier every other dept-facing screen in this
+                        // app already uses, so "vedi" lands in the same bucket here as it does in
+                        // Dept Ops. The buffer row isn't tied to a real category, so it gets its own
+                        // pseudo-group at the end rather than being forced into one.
+                        const deptGroupsMap = {};
+                        rows.forEach(r => {
+                          const dg = r.isBuffer ? "Buffer" : sharedCatToDept(r.label, dealCheckData?.categoryDepartments);
+                          (deptGroupsMap[dg] = deptGroupsMap[dg] || []).push(r);
+                        });
+                        const deptGroups = [...OPS_DEPTS, "Buffer"].filter(d => deptGroupsMap[d]?.length).map(d => ({ dept: d, rows: deptGroupsMap[d] }));
                         // Collapsible so "All functions" doesn't force scrolling past every other
                         // function's truck list to reach the one you actually want — expanded by
                         // default when one function is selected (nothing else to scroll past),
@@ -2377,26 +2390,49 @@ export default function DealCheckOverlay({ ctx }) {
                               </div>
                               <div style={{fontSize:15.5,fontWeight:800,color:"#1A1A2E",whiteSpace:"nowrap"}}>{truckTotal>0?`₹${Math.round(truckTotal).toLocaleString("en-IN")}`:"—"}</div>
                             </div>
-                            {isOpen && rows.length > 0 && (
-                              <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:9}}>
-                                {rows.map((r, ri) => (
-                                  <div key={ri} style={{display:"flex",flexDirection:"column",gap:4}}>
-                                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5}}>
-                                      <span style={{fontWeight:700,color:"#1A1A2E"}}>{r.isBuffer ? `🧯 Buffer${r.tierLabel?` — ${r.tierLabel}`:""}` : r.label}</span>
-                                      <span style={{color:"#1A1A2E"}}>{r.isBuffer ? "" : `${r.qty} ${r.unit} · `}{r.trucks.toFixed(2)} truck{r.trucks===1?"":"s"}</span>
-                                    </div>
-                                    {Array.isArray(r.items) && r.items.length > 0 && (
-                                      <div style={{marginLeft:14,display:"flex",flexDirection:"column",gap:2}}>
-                                        {r.items.map((it, ii) => (
-                                          <div key={ii} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:"#1A1A2E",opacity:0.75}}>
-                                            <span>{it.zoneKey ? `${it.zoneKey} · ` : ""}{it.name}</span>
-                                            <span>{Math.round((it.qty || 0) * 100) / 100} {r.unit}</span>
-                                          </div>
-                                        ))}
+                            {isOpen && deptGroups.length > 0 && (
+                              <div style={{padding:"8px 14px",display:"flex",flexDirection:"column",gap:6}}>
+                                {deptGroups.map(({dept, rows: gRows}) => {
+                                  const groupTrucks = gRows.reduce((s, r) => s + (Number(r.trucks) || 0), 0);
+                                  const groupKey = `transport:${fi}:dept:${dept}`;
+                                  // Open by default — the point of this grouping is to see at a glance
+                                  // what each department needs, not to hide it behind another click.
+                                  const groupOpen = dcCollapsedFnBlocks[groupKey] !== undefined ? dcCollapsedFnBlocks[groupKey] : true;
+                                  const toggleGroup = () => setDcCollapsedFnBlocks(prev => ({ ...prev, [groupKey]: !groupOpen }));
+                                  return (
+                                    <div key={dept} style={{borderRadius:7,background:"rgba(26,26,46,0.03)"}}>
+                                      <div onClick={toggleGroup} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",cursor:"pointer"}}>
+                                        <div style={{display:"flex",alignItems:"center",gap:5,fontSize:12,fontWeight:700,color:"#1A1A2E"}}>
+                                          <span style={{fontSize:10,opacity:0.6,transform:groupOpen?"rotate(90deg)":"none",transition:"transform 0.15s",display:"inline-block"}}>▸</span>
+                                          {dept === "Buffer" ? "🧯" : (DEPT_TRANSPORT_ICON[dept] || "📦")} {dept}
+                                        </div>
+                                        <span style={{fontSize:11.5,color:"#1A1A2E",opacity:0.7}}>{groupTrucks.toFixed(2)} truck{groupTrucks===1?"":"s"}</span>
                                       </div>
-                                    )}
-                                  </div>
-                                ))}
+                                      {groupOpen && (
+                                        <div style={{padding:"2px 8px 8px 26px",display:"flex",flexDirection:"column",gap:9}}>
+                                          {gRows.map((r, ri) => (
+                                            <div key={ri} style={{display:"flex",flexDirection:"column",gap:4}}>
+                                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5}}>
+                                                <span style={{fontWeight:700,color:"#1A1A2E"}}>{r.isBuffer ? `Buffer${r.tierLabel?` — ${r.tierLabel}`:""}` : r.label}</span>
+                                                <span style={{color:"#1A1A2E"}}>{r.isBuffer ? "" : `${r.qty} ${r.unit} · `}{r.trucks.toFixed(2)} truck{r.trucks===1?"":"s"}</span>
+                                              </div>
+                                              {Array.isArray(r.items) && r.items.length > 0 && (
+                                                <div style={{marginLeft:14,display:"flex",flexDirection:"column",gap:2}}>
+                                                  {r.items.map((it, ii) => (
+                                                    <div key={ii} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:"#1A1A2E",opacity:0.75}}>
+                                                      <span>{it.zoneKey ? `${it.zoneKey} · ` : ""}{it.name}</span>
+                                                      <span>{Math.round((it.qty || 0) * 100) / 100} {r.unit}</span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
