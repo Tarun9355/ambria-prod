@@ -2539,13 +2539,22 @@ undefined
         setCorrVenueGrp(allInhouseVenues.includes(mv) ? "inhouse" : (mv ? "outside" : ""));
         setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: JSON.parse(JSON.stringify(m.tags || {})) });
       };
-      let matchedPhotos = getMatchedPhotos(srcType).filter(ph => {
+      // BUG-7. The unfiltered pool is kept so the strip can say how many photos the filter is
+      // hiding. The zero case was already handled — an empty zone shows "No X photos match your
+      // filters" with a Clear button — but the PARTIAL case had nothing: filters seeded silently by
+      // "Customize" (pickAndLoad, from the clicked video's own tags) could cut a zone from thirty
+      // photos to three, and the strip just showed three with no indication anything was missing.
+      // The only hint was the 🔍(N) badge on the zone header, which is easy to miss and does not say
+      // how much it is costing you.
+      const unfilteredPhotos = getMatchedPhotos(srcType);
+      let matchedPhotos = unfilteredPhotos.filter(ph => {
         if (!zpHasFilters) return true;
         if (!ph.isLibrary || !ph.eventId) return true; // don't filter out event photos
         const li = libById.get(ph.eventId);
         if (!li) return true;
         return zpFilterPhoto(li);
       });
+      const hiddenByFilters = Math.max(0, unfilteredPhotos.length - matchedPhotos.length);
       // Venue ranks instead of filtering — picking one floats its photos to the front of the strip
       // and keeps the rest behind them, because there is rarely enough tagged per venue to build a
       // zone from on its own. Stable partition, so relevance order survives inside each group.
@@ -3126,6 +3135,13 @@ undefined
                   </button>
                   <span style={{fontSize:10.5,color:textS,marginLeft:4}}>{start+1}–{Math.min(start+perPage,matchedPhotos.length)} of {matchedPhotos.length}</span>
                 </div>}
+                {/* Sits OUTSIDE the pager block on purpose. A zone cut to three photos has one page,
+                    so anything inside `pageCount>1` would be hidden in exactly the case where the
+                    filter has bitten hardest. */}
+                {hiddenByFilters>0&&<span style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:10.5,color:"#B45309",background:isDark?"rgba(201,169,110,0.10)":"#FFFBEB",border:`1px solid ${accent}44`,borderRadius:8,padding:"3px 9px"}}>
+                  {hiddenByFilters} hidden by filters
+                  <span onClick={()=>setZpFilters({eventType:[],venueType:[],designStyle:[],colorPalette:[],timeSetting:[],venue:[],tier:[]})} style={{color:accent,fontWeight:700,cursor:"pointer",textDecoration:"underline"}}>Clear</span>
+                </span>}
                 {/* Update master used to sit here, at the far right under the photo strip. It has
                     moved up into the zone's header row, beside the grid toggle — see there. */}
               </div>
