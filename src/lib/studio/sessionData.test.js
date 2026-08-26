@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -110,5 +110,47 @@ describe("snapshotContentEqual", () => {
     const a = { fnSnapshots: { 0: { sourceVideo: { id: "vid_1", title: "X", tags: {} } } } };
     const b = { fnSnapshots: { 0: { sourceVideo: { id: "vid_2", title: "X", tags: {} } } } };
     expect(snapshotContentEqual(a, b)).toBe(false);
+  });
+});
+
+describe("findLatestBuild", () => {
+  const emptyDraft = (id) => ({ id, _fnRows: [{ fn_idx: 0, has_data: false }] });
+  const built = (id, fnIdx = 0) => ({ id, _fnRows: [{ fn_idx: fnIdx, has_data: true }] });
+
+  it("skips the empty auto-saves at the top and returns the first real build", () => {
+    // The whole point: sessions are newest-first and the newest is usually an empty tick.
+    const r = findLatestBuild([emptyDraft("s3"), emptyDraft("s2"), built("s1")]);
+    expect(r.session.id).toBe("s1");
+    expect(r.fnIdx).toBe(0);
+  });
+
+  it("returns null when nothing was ever built", () => {
+    expect(findLatestBuild([emptyDraft("s2"), emptyDraft("s1")])).toBe(null);
+    expect(findLatestBuild([])).toBe(null);
+    expect(findLatestBuild(null)).toBe(null);
+  });
+
+  it("prefers the function asked for, but only when that function has its own build", () => {
+    const s = { id: "s1", _fnRows: [{ fn_idx: 0, has_data: true }, { fn_idx: 2, has_data: true }] };
+    expect(findLatestBuild([s], 2).fnIdx).toBe(2);
+    expect(findLatestBuild([s], 0).fnIdx).toBe(0);
+    // Fn1 has nothing here — landing there would restore an empty canvas over a real build.
+    expect(findLatestBuild([s], 1).fnIdx).toBe(0);
+  });
+
+  it("falls back to fnSnapshots for a session that never came from the table", () => {
+    const s = { id: "s1", fnSnapshots: { 0: { enabledEls: {} }, 1: { zoneElements: { stage: ["truss"] } } } };
+    const r = findLatestBuild([s]);
+    expect(r.session.id).toBe("s1");
+    expect(r.fnIdx).toBe(1);
+  });
+
+  it("reads a pre-fnSnapshots session's flat build as Function 1's", () => {
+    expect(findLatestBuild([{ id: "s1", enabledEls: { stage: true } }]).fnIdx).toBe(0);
+  });
+
+  it("does not count a reference video on its own as a build", () => {
+    // fnSnapHasBuild deliberately excludes the video: it rides along to every function.
+    expect(findLatestBuild([{ id: "s1", fnSnapshots: { 0: { sourceVideo: { id: "v1" } } } }])).toBe(null);
   });
 });

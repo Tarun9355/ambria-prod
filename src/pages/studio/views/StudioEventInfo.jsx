@@ -3,7 +3,7 @@ import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy
 // The SAME test the save path stamps `has_data` with. Asking the question a second way here is how
 // the card and the row drift apart, and a disagreement about "does this have a build" is what let an
 // empty auto-save erase a visible one once already.
-import { fnSnapHasBuild } from "../../../lib/studio/sessionData";
+import { findLatestBuild } from "../../../lib/studio/sessionData";
 import { IconClipboard, IconSliders } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
@@ -292,30 +292,24 @@ export default function StudioEventInfo({ ctx }) {
   // for a first-time deal. An LMS lead needs no separate handling: its client either has a build,
   // and resuming into it is exactly the point, or it does not and Browse is still correct.
   const findResumableBuild = () => {
-    const c = clientLedger.find((x) => x && x.id === activeClientId);
-    if (!c || !Array.isArray(c.sessions)) return null;
-    for (const s of c.sessions) {
-      if (!s) continue;
-      // The table rows are authoritative wherever they exist: `has_data` was computed once, at save
-      // time, by the same fnSnapHasBuild used on the two fallbacks below.
-      const rows = Array.isArray(s._fnRows) ? s._fnRows.filter((r) => r && r.has_data) : null;
-      if (rows && rows.length) {
-        // The pill in hand, if it has a build of its own — otherwise whichever function does. Landing
-        // on a function the session has nothing for would restore an empty canvas over a real build.
-        const own = rows.find((r) => r.fn_idx === activeFnIdx) || rows[0];
-        return { session: s, fnIdx: own.fn_idx };
-      }
-      const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
-      if (snaps) {
-        const idx = Object.keys(snaps)
-          .filter((k) => /^\d+$/.test(k)).map(Number).sort((a, b) => a - b)
-          .find((i) => fnSnapHasBuild(snaps[i] ?? snaps[String(i)]));
-        if (idx != null) return { session: s, fnIdx: idx };
-      } else if (fnSnapHasBuild(s)) {
-        return { session: s, fnIdx: 0 };   // written before fnSnapshots existed — its build is Fn1's
-      }
-    }
-    return null;
+    // activeClient is ctx's own memo of exactly this lookup, so it is the same object Browse's
+    // session card renders from — using it keeps the two reading one source rather than two.
+    const c = activeClient || clientLedger.find((x) => x && x.id === activeClientId);
+    // TEMPORARY DIAGNOSTIC — remove once the resume path is confirmed working. It landed on Browse
+    // in testing and the cause is not yet known; this says which link is missing rather than
+    // inviting another guess.
+    console.info("[ambria] resume?", {
+      activeClientId,
+      foundClient: !!c,
+      ledgerSize: clientLedger.length,
+      sessions: c?.sessions?.length ?? null,
+      firstRows: c?.sessions?.[0]?._fnRows?.length ?? null,
+      firstHasData: c?.sessions?.[0]?._fnRows?.filter((r) => r?.has_data).length ?? null,
+      firstSnapKeys: Object.keys(c?.sessions?.[0]?.fnSnapshots || {}),
+      result: c ? findLatestBuild(c.sessions, activeFnIdx) : null,
+    });
+    if (!c) return null;
+    return findLatestBuild(c.sessions, activeFnIdx);
   };
 
   // ═══ TEXT COLOURS ═══ (declared first — the presentation tokens below consume them)

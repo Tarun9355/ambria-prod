@@ -109,7 +109,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
@@ -6761,9 +6761,19 @@ export default function StudioApp() {
     loadedClientIdentityRef.current = { name: client.name || "", phone: client.phone || "" };
     setLmsLeads([]);
     setLmsError(false);
-    const latestSession = (client.sessions && client.sessions.length > 0) ? client.sessions[0] : null;
+    // ── AN LMS LEAD WITH A BUILD OPENS ON THAT BUILD ──
+    // This used to land on Summary (step 3) with client.sessions[0]. Two problems with that pair.
+    // [0] is merely the NEWEST session, and auto-save mints one on a timer whether or not anything
+    // was built, so the newest is routinely an empty draft — Summary then read ₹0 for a deal that
+    // has a real estimate sitting one session further down. findLatestBuild walks to the first
+    // session that actually carries a build, which is what "restore last session" always meant.
+    // And Summary is the read-only end of the flow; someone opening a lead is coming back to WORK on
+    // it. Build is where that happens, and Summary stays one click along the step nav.
+    // Same helper the Event Info "Continue" button uses, so the two cannot answer differently.
+    const resumable = findLatestBuild(client.sessions, 0);
+    const latestSession = resumable ? resumable.session : null;
     if (latestSession) {
-      loadClientSession(client, latestSession, 3);
+      loadClientSession(client, latestSession, 2, { landingFnIdx: resumable.fnIdx });
       showMsg(existing?.status === "booked"
         ? `Loaded LMS lead #${lead.entryNo} — opened the existing BOOKED deal for this phone (₹${Math.round(latestSession.total || 0).toLocaleString("en-IN")} estimate)`
         : `Loaded LMS lead #${lead.entryNo} + restored last session`, "green");

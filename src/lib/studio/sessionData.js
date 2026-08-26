@@ -43,6 +43,51 @@ export function fnSnapHasBuild(snap) {
 }
 
 /**
+ * The newest session that actually CARRIES a build, and which function holds it.
+ *
+ * "Where I left off" is not the newest session. Auto-save mints one on a timer whether or not
+ * anything was built, so the top of the list is routinely an empty draft — landing on it restores a
+ * blank canvas over the work someone came back for. This walks down until it finds a session with a
+ * real build and reports the function index to land on.
+ *
+ * `sessions` must be newest-first, which is the order rowsToSessions returns.
+ *
+ * Table rows win wherever they exist: `has_data` was computed once, at save time, by fnSnapHasBuild
+ * below — so the two can never answer differently. The fnSnapshots and flat-session branches are
+ * for sessions that never came from the table.
+ *
+ * Lives here rather than in either caller because BOTH the Event Info "Continue" button and the LMS
+ * lead loader ask this question, and two copies of it would drift the first time one was tuned.
+ *
+ * @param {Array} sessions     the client's sessions, newest first
+ * @param {number} preferFnIdx land on this function if it has a build of its own; else whichever does
+ * @returns {{session: object, fnIdx: number}|null}
+ */
+export function findLatestBuild(sessions, preferFnIdx = 0) {
+  if (!Array.isArray(sessions)) return null;
+  for (const s of sessions) {
+    if (!s) continue;
+    const rows = Array.isArray(s._fnRows) ? s._fnRows.filter((r) => r && r.has_data) : null;
+    if (rows && rows.length) {
+      // Landing on a function this session holds nothing for would restore an empty canvas over a
+      // real build, so the preference only applies when that function has one.
+      const own = rows.find((r) => r.fn_idx === preferFnIdx) || rows[0];
+      return { session: s, fnIdx: own.fn_idx };
+    }
+    const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : null;
+    if (snaps && Object.keys(snaps).length) {
+      const idx = Object.keys(snaps)
+        .filter((k) => /^\d+$/.test(k)).map(Number).sort((a, b) => a - b)
+        .find((i) => fnSnapHasBuild(snaps[i] ?? snaps[String(i)]));
+      if (idx != null) return { session: s, fnIdx: idx };
+    } else if (fnSnapHasBuild(s)) {
+      return { session: s, fnIdx: 0 };   // written before fnSnapshots existed — its build is Fn1's
+    }
+  }
+  return null;
+}
+
+/**
  * A whole session — any function carrying data, or the legacy flat fields for sessions written
  * before fnSnapshots existed.
  */
