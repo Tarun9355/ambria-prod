@@ -180,7 +180,7 @@ export default function StudioEventInfo({ ctx }) {
     venue, setVenue, fn, setFn,
     clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
-    clientVenueOther, setClientVenueOther, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
+    clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
@@ -271,8 +271,13 @@ export default function StudioEventInfo({ ctx }) {
     client.pax = clientPax;
     // Commit 2 — multi-function: persist full functions array on the client record.
     // Function 1 mirrors the legacy top-level fields above; Functions 2+ come from extraFunctions.
+    // `palette` included deliberately. This whole array is REPLACED here, and saveSession writes the
+    // same Function 1 shape WITH the palette on it — so leaving it out meant whichever of the two
+    // wrote last decided whether the palette survived. Pressing Continue dropped it, loadClientSession
+    // then read `f0?.palette || "Custom"` and Function 1 came back on Custom having been set to
+    // something else. Functions 2+ never had the problem: their palette rides inside extraFunctions.
     client.functions = [
-      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax },
+      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
       ...extraFunctions
     ];
     client.createdBy = client.createdBy || authUser?.name || "—";
@@ -527,7 +532,7 @@ export default function StudioEventInfo({ ctx }) {
    than the drift does. They sit under the cards, which keep their own shadows and stay legible.
    Spans the WHOLE split, not just the form column: the panel's curve cuts into its own column, and
    whatever it gives back has to be washed cream like the rest. Scoped to the form column it left a
-   hard vertical seam down the page at x=500 — washed on one side, bare root cream on the other. */
+   hard vertical seam down the page at x=500 — washed on one side, bare root cream on the other.
    Smudged, not stacked: the layer carries the page colour itself and the fields sit on it in
    mix-blend-mode:multiply, so where two overlap they mix into a deeper pigment the way wet media
    would, instead of reading as two separate lights laid over each other. The blend needs a real

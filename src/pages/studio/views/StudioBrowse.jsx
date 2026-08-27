@@ -1009,7 +1009,7 @@ export default function StudioBrowse({ ctx }) {
    With border-box the gradient's coordinates are the element's own, so --sb-pw means the same
    distance to both the panel and the bar and the two edges meet exactly.
    Declared AFTER the shorthand on purpose: the background shorthand resets background-origin to
-   padding-box, so putting it first would have it wiped by the very line it exists to correct. */
+   padding-box, so putting it first would have it wiped by the very line it exists to correct.
    The cut starts 3px EARLY, at --sb-pw minus 3. The panel's edge is a curve and this cut is a
    straight line: by the bottom of the bar the curve has drawn in to about 99.4% of the panel width,
    so a straight cut at exactly --sb-pw left a ~2px strip where neither the panel nor the navy
