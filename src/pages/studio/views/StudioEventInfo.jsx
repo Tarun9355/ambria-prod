@@ -1399,7 +1399,33 @@ export default function StudioEventInfo({ ctx }) {
                   });
                   const matchesAfterRepFilter = showAllReps ? matchesBeforeRepFilter : matchesBeforeRepFilter.filter(c => mine(c.createdBy));
                   const hiddenClientCount = matchesBeforeRepFilter.length - matchesAfterRepFilter.length;
-                  const matches = matchesAfterRepFilter.slice(0, 5);
+                  // ── ONE ROW PER CLIENT, THE ONE THAT WAS WORKED ON LAST ──
+                  // The ledger can hold several records for the same guest — duplicates minted before
+                  // the Continue guard existed, which is why "Test 2 · 8800485327" listed twice with
+                  // ten sessions each. Listing them all asks the salesperson to guess which copy holds
+                  // the real work, and picking the wrong one starts a second history on a deal that
+                  // already has one. Same name and same number is the same person, so one row, and the
+                  // row is whichever record was touched most recently.
+                  // Display only. Nothing is deleted or merged here — every record is still in the
+                  // ledger and still loadable; the other copies simply stop competing for the click.
+                  // Newest by ACTUAL work, not by createdAt: a duplicate created later can easily be
+                  // the abandoned one, while the record people kept using is older.
+                  const clientKey = (c) => `${String(c?.name || "").trim().toLowerCase()}|${digits10(c?.phone)}`;
+                  const lastTouch = (c) => Math.max(
+                    Number(c?.sessions?.[0]?.savedAt) || 0,
+                    Number(c?.lastSavedAt) || 0,
+                    Number(c?.lastContactAt) || 0,
+                    Number(c?.createdAt) || 0,
+                  );
+                  const bestPerClient = new Map();
+                  for (const c of matchesAfterRepFilter) {
+                    const k = clientKey(c);
+                    const held = bestPerClient.get(k);
+                    if (!held || lastTouch(c) > lastTouch(held)) bestPerClient.set(k, c);
+                  }
+                  // Map keeps insertion order and a replacement keeps the original slot, so the list
+                  // stays in the order it was already in — only the extra copies drop out.
+                  const matches = Array.from(bestPerClient.values()).slice(0, 5);
                   if (!lmsBlock && matches.length === 0) {
                     // Everything found belongs to other salespeople — say so specifically (rather than
                     // "no matches", which would send someone covering a colleague's meeting hunting for a
