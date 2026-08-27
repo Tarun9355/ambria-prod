@@ -10,6 +10,19 @@
 import { Fragment, useState } from "react";
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass } from "../../../../lib/ims/flowerHelpers";
 
+// ═══ THE FLORAL GROUND ═══
+// Drop the artwork at src/assets/ambria-florals.(jpg|jpeg|png|webp) and this tab is drawn on it.
+// import.meta.glob rather than a plain import, the same reason DealCheckOverlay and StudioSummary use
+// it: a direct import of a file that is not there FAILS THE BUILD, so nobody could deploy until the
+// asset existed. A glob resolves to {} and the tab simply renders on its plain ground.
+//
+// NOT named "*-bg.*" on purpose. StudioSummary globs `assets/*-bg.{png,jpg,jpeg,webp}` and reads the
+// part before "-bg" as an EVENT TYPE for the deck renderer — a file called florals-bg.jpg would
+// silently invent an event type called "florals". Same naming as ambria-estimate/ambria-panel.
+const FLORAL_BG = Object.values(
+  import.meta.glob("../../../../assets/ambria-florals.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
+)[0] || null;
+
 export default function DCFloralsTab({ ctx }) {
   const [artFlowerSearch, setArtFlowerSearch] = useState(""); // search-by-name for the artificial flower colour picker (long list)
   const {
@@ -429,7 +442,19 @@ export default function DCFloralsTab({ ctx }) {
                   const fnArtAlloc = dcArtFlowerAlloc[fnIdx] || [];
                   const fnArtAllocTotal = fnArtAlloc.reduce((s, a) => s + (Number(a.qty) || 0), 0);
                   return (
-                    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                    // The artwork sits in a layer of its OWN rather than as a background on this
+                    // column, for two reasons: a background-image on a container as tall as a
+                    // four-function deal stretches the frame out of shape, and the cards below paint
+                    // opaque grounds anyway — so the decoration is only ever seen in the padding and
+                    // the gaps, which is exactly what a framed image wants. pointerEvents:none so it
+                    // can never sit between a click and the table underneath it.
+                    <div style={{position:"relative",display:"flex",flexDirection:"column",gap:14,
+                      ...(FLORAL_BG ? {padding:16,borderRadius:16} : {})}}>
+                      {FLORAL_BG && <div aria-hidden="true" style={{position:"absolute",inset:0,borderRadius:16,pointerEvents:"none",
+                        backgroundImage:`url(${FLORAL_BG})`,backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat"}}/>}
+                      {/* Everything below rides above the ground. One wrapper, so the children keep
+                          the exact flex layout they had. */}
+                      <div style={{position:"relative",zIndex:1,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary
                           Restyled to the supplied reference: the function name and date as an eyebrow,
                           the total as the one large figure, the real/artificial split as dotted legend
@@ -977,6 +1002,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                         );
                       })()}
+                      </div>{/* content layer */}
                     </div>
                   );
       })()}
