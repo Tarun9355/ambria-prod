@@ -247,9 +247,19 @@ export default function StudioEventInfo({ ctx }) {
   // advancing to Browse against a deal that was never written.
   const doSaveClient = () => {
     if (!clientName.trim()) return false;
-    let updated = [...clientLedger];
-    let client = updated.find(c => c.id === activeClientId);
-    if (!client) {
+    // ── NO WRITING INTO STATE ──
+    // This used to do `[...clientLedger]` — a SHALLOW copy — then assign onto the client it found,
+    // which is the very object React is still holding in state. It worked only because
+    // saveClientLedger replaces the whole array afterwards, so a re-render happened anyway. Anything
+    // memoised on a client OBJECT rather than the array would never have seen the edit, and the
+    // mutation also silently backdated the dirty-check baseline for every reader in between.
+    // Rebuilt as a new object instead. The spread is what makes this safe to change: EVERY existing
+    // field rides across untouched — sessions, lmsLeadId/lmsDept/lmsStatus, status, bookedAt/bookedBy,
+    // finalSession, createdAt — and only the form's own fields below are overwritten. Nothing this
+    // screen does not own can be dropped by it.
+    const existing = clientLedger.find((c) => c && c.id === activeClientId) || null;
+    let base = existing;
+    if (!base) {
       // Only on CREATE. Editing a loaded client into a collision is a judgement call a salesperson
       // is entitled to make; minting a second copy of a deal that already exists is not.
       const dupe = findDuplicateClient();
@@ -257,31 +267,38 @@ export default function StudioEventInfo({ ctx }) {
         showMsg(`⚠ Duplicate — ${dupe.name || "this deal"} already has this venue on this date. Use Load →`, "red");
         return false;
       }
-      client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: phoneDigits, sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
-      updated.push(client);
-      setActiveClientId(client.id);
+      base = { id: "CLI_" + Date.now().toString(36), sessions: [], createdAt: Date.now(), status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null };
     }
-    client.name = clientName.trim();
-    client.phone = phoneDigits;
-    client.eventDate = clientDate;
-    client.venue = venue;
-    client.fn = fn;
-    client.shift = clientShift;
-    client.brideGroom = clientBrideGroom.trim();
-    client.pax = clientPax;
-    // Commit 2 — multi-function: persist full functions array on the client record.
-    // Function 1 mirrors the legacy top-level fields above; Functions 2+ come from extraFunctions.
-    // `palette` included deliberately. This whole array is REPLACED here, and saveSession writes the
-    // same Function 1 shape WITH the palette on it — so leaving it out meant whichever of the two
-    // wrote last decided whether the palette survived. Pressing Continue dropped it, loadClientSession
-    // then read `f0?.palette || "Custom"` and Function 1 came back on Custom having been set to
-    // something else. Functions 2+ never had the problem: their palette rides inside extraFunctions.
-    client.functions = [
-      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
-      ...extraFunctions
-    ];
-    client.createdBy = client.createdBy || authUser?.name || "—";
-    client.lastContactAt = Date.now();
+    const client = {
+      ...base,
+      name: clientName.trim(),
+      phone: phoneDigits,
+      eventDate: clientDate,
+      venue,
+      fn,
+      shift: clientShift,
+      brideGroom: clientBrideGroom.trim(),
+      pax: clientPax,
+      // Commit 2 — multi-function: persist full functions array on the client record.
+      // Function 1 mirrors the legacy top-level fields above; Functions 2+ come from extraFunctions.
+      // `palette` included deliberately. This whole array is REPLACED here, and saveSession writes the
+      // same Function 1 shape WITH the palette on it — so leaving it out meant whichever of the two
+      // wrote last decided whether the palette survived. Pressing Continue dropped it, loadClientSession
+      // then read `f0?.palette || "Custom"` and Function 1 came back on Custom having been set to
+      // something else. Functions 2+ never had the problem: their palette rides inside extraFunctions.
+      functions: [
+        { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
+        ...extraFunctions
+      ],
+      createdBy: base.createdBy || authUser?.name || "—",
+      lastContactAt: Date.now(),
+    };
+    // Replace in place for an existing client — map keeps every other client's identity, so React
+    // re-renders only the one row that changed. Append for a new one, which is where it went before.
+    const updated = existing
+      ? clientLedger.map((c) => (c && c.id === client.id ? client : c))
+      : [...clientLedger, client];
+    if (!existing) setActiveClientId(client.id);
     saveClientLedger(updated.slice(0, 500));
     return true;
   };
