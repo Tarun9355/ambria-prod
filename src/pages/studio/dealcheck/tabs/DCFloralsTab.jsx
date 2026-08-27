@@ -430,14 +430,56 @@ export default function DCFloralsTab({ ctx }) {
                   const fnArtAllocTotal = fnArtAlloc.reduce((s, a) => s + (Number(a.qty) || 0), 0);
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                      {/* Header summary */}
-                      <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(236,72,153,0.06)",border:`1px solid rgba(236,72,153,0.20)`}}>
-                        <div style={{fontSize:13,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",fontWeight:700,marginBottom:6}}>{activeFn.fnType || `Function ${fnIdx+1}`} · {activeFn.fnDate || "—"}</div>
-                        <div style={{display:"flex",alignItems:"baseline",gap:14,flexWrap:"wrap"}}>
-                          <div><span style={{fontSize:13,color:"#1A1A2E"}}>Total Floral </span><span style={{fontSize:22,fontWeight:700,color:"#1A1A2E"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</span></div>
-                          <div><span style={{fontSize:12,color:"#10B981",fontWeight:600}}>● Real ₹{Math.round(totalReal).toLocaleString("en-IN")}</span></div>
-                          <div><span style={{fontSize:12,color:"#EC4899",fontWeight:600}}>● Artificial ₹{Math.round(totalArtificial).toLocaleString("en-IN")}</span></div>
-                          <div style={{marginLeft:"auto",fontSize:12,color:"#1A1A2E"}}>{overallRealPct}% real / {100-overallRealPct}% artificial overall</div>
+                      {/* Header summary
+                          Restyled to the supplied reference: the function name and date as an eyebrow,
+                          the total as the one large figure, the real/artificial split as dotted legend
+                          entries, and the percentage as a ring rather than a sentence.
+                          EVERY VALUE IS THE ONE THAT WAS HERE BEFORE — grandTotal, totalReal,
+                          totalArtificial, overallRealPct — and the artificial colour-split strip below
+                          is untouched. This is paint, not arithmetic. */}
+                      <div style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#FFF7FB 0%,#FFFFFF 100%)",border:`1px solid rgba(236,72,153,0.18)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 8px 20px -14px rgba(236,72,153,0.35)"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+                          {/* Icon tile — the reference leads with one, and it gives the eyebrow and the
+                              figure a left edge to sit against instead of floating on the card. */}
+                          <div aria-hidden="true" style={{width:44,height:44,flexShrink:0,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,background:"rgba(236,72,153,0.10)",border:"1px solid rgba(236,72,153,0.18)"}}>🌸</div>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:12.5,color:"#1A1A2E",letterSpacing:0.7,textTransform:"uppercase",fontWeight:700}}>{activeFn.fnType || `Function ${fnIdx+1}`} · {activeFn.fnDate || "—"}</div>
+                            <div style={{display:"flex",alignItems:"baseline",gap:16,flexWrap:"wrap",marginTop:4}}>
+                              <div>
+                                <div style={{fontSize:11.5,color:"#6B7280",fontWeight:600}}>Total Floral</div>
+                                <div style={{fontSize:28,fontWeight:700,color:"#1A1A2E",lineHeight:1.15,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</div>
+                              </div>
+                              <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",paddingBottom:2}}>
+                                <span style={{fontSize:12.5,color:"#10B981",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
+                                  <span style={{width:7,height:7,borderRadius:"50%",background:"#10B981",display:"inline-block"}}/>
+                                  Real ₹{Math.round(totalReal).toLocaleString("en-IN")}
+                                </span>
+                                <span style={{fontSize:12.5,color:"#EC4899",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
+                                  <span style={{width:7,height:7,borderRadius:"50%",background:"#EC4899",display:"inline-block"}}/>
+                                  Artificial ₹{Math.round(totalArtificial).toLocaleString("en-IN")}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          {/* The same overallRealPct, drawn. strokeDasharray on a circle of r=26 is
+                              circumference 2πr ≈ 163.4; the offset is the unfilled remainder.
+                              rotate(-90) starts the arc at twelve o'clock instead of three. */}
+                          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:12}}>
+                            <div style={{position:"relative",width:64,height:64,flexShrink:0}}>
+                              <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true">
+                                <circle cx="32" cy="32" r="26" fill="none" stroke="rgba(236,72,153,0.14)" strokeWidth="6"/>
+                                <circle cx="32" cy="32" r="26" fill="none" stroke="#C9A96E" strokeWidth="6" strokeLinecap="round"
+                                  strokeDasharray={2 * Math.PI * 26}
+                                  strokeDashoffset={(2 * Math.PI * 26) * (1 - Math.max(0, Math.min(100, overallRealPct)) / 100)}
+                                  transform="rotate(-90 32 32)"/>
+                              </svg>
+                              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{overallRealPct}%</div>
+                            </div>
+                            <div style={{lineHeight:1.35}}>
+                              <div style={{fontSize:12.5,fontWeight:700,color:"#1A1A2E"}}>Real / {100-overallRealPct}% Artificial</div>
+                              <div style={{fontSize:11.5,color:"#6B7280"}}>Overall</div>
+                            </div>
+                          </div>
                         </div>
                         {/* §26 — Artificial flower color allocation strip */}
                         {totalArtificial > 0 && <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid rgba(236,72,153,0.15)`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -450,49 +492,60 @@ export default function DCFloralsTab({ ctx }) {
                         </div>}
                       </div>
                       {/* Tier 2.1 — 📝 Floral preference note (per function, inline always-visible textarea) */}
-                      <div style={{padding:"10px 12px",borderRadius:10,background:"rgba(192,132,252,0.04)",border:`1px solid rgba(192,132,252,0.18)`}}>
-                        <div style={{fontSize:12,color:"#9333EA",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#FBF8FF 0%,#FFFFFF 100%)",border:`1px solid rgba(192,132,252,0.20)`,boxShadow:"0 1px 2px rgba(147,51,234,0.04), 0 8px 20px -14px rgba(147,51,234,0.28)"}}>
+                        <div style={{fontSize:12,color:"#9333EA",fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                           📝 Floral preference for {activeFn.fnType || `Function ${fnIdx+1}`}
                           {fnIdx !== activeFnIdx && <span style={{fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(26, 26, 46,0.06)",color:"#1A1A2E",fontWeight:400,letterSpacing:0.3}}>read-only · switch pill to edit</span>}
                         </div>
-                        <textarea
-                          value={fnOverrides.note || ""}
-                          placeholder="e.g. soft pastel tones, avoid bright reds, bride loves baby pink roses"
-                          readOnly={fnIdx !== activeFnIdx}
-                          onChange={e => {
-                            if (fnIdx !== activeFnIdx) return;
-                            const newNote = e.target.value;
-                            setFloralOverrides(prev => ({ note: newNote, rows: Array.isArray(prev?.rows) ? prev.rows : [] }));
-                          }}
-                          rows={2}
-                          style={{
-                            width:"100%",
-                            padding:"7px 10px",
-                            fontSize:13,
-                            color:"#1A1A2E",
-                            background:fnIdx===activeFnIdx?"rgba(0,0,0,0.20)":"rgba(0,0,0,0.10)",
-                            border:`1px solid ${border}`,
-                            borderRadius:6,
-                            outline:"none",
-                            resize:"vertical",
-                            fontFamily:"inherit",
-                            opacity:fnIdx===activeFnIdx?1:0.7,
-                            boxSizing:"border-box"
-                          }}
-                        />
-                        <div style={{marginTop:4,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>Purchase manager reads this when buying from mandi — colours, themes, must-haves/avoids.</div>
+                        {/* The pencil is a MARKER, not a control — the textarea has always been directly
+                            editable and still is. It sits in the corner the reference puts it in, and is
+                            pointer-events:none so it can never intercept a click meant for the field. */}
+                        <div style={{position:"relative"}}>
+                          <textarea
+                            value={fnOverrides.note || ""}
+                            placeholder="e.g. soft pastel tones, avoid bright reds, bride loves baby pink roses"
+                            readOnly={fnIdx !== activeFnIdx}
+                            onChange={e => {
+                              if (fnIdx !== activeFnIdx) return;
+                              const newNote = e.target.value;
+                              setFloralOverrides(prev => ({ note: newNote, rows: Array.isArray(prev?.rows) ? prev.rows : [] }));
+                            }}
+                            rows={2}
+                            style={{
+                              width:"100%",
+                              padding:"10px 34px 10px 12px",
+                              fontSize:13,
+                              color:"#1A1A2E",
+                              // Was a dark fill (rgba(0,0,0,0.20)) left over from the overlay's dark
+                              // era — on this light card it read as a hole punched in the sheet, and
+                              // the placeholder was barely legible against it.
+                              background:fnIdx===activeFnIdx?"#F6F5F8":"#F1F0F3",
+                              border:`1px solid rgba(192,132,252,0.22)`,
+                              borderRadius:9,
+                              outline:"none",
+                              resize:"vertical",
+                              fontFamily:"inherit",
+                              opacity:fnIdx===activeFnIdx?1:0.7,
+                              boxSizing:"border-box"
+                            }}
+                          />
+                          <span aria-hidden="true" style={{position:"absolute",top:10,right:11,fontSize:12,opacity:0.45,pointerEvents:"none"}}>✎</span>
+                        </div>
+                        <div style={{marginTop:6,fontSize:11.5,color:"#6B7280",fontStyle:"italic"}}>Purchase manager reads this when buying from mandi — colours, themes, must-haves/avoids.</div>
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
-                        <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(16,185,129,0.04)",border:`1px solid rgba(16,185,129,0.20)`}}>
-                          <div style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</div>
+                        <div style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#F6FDFA 0%,#FFFFFF 100%)",border:`1px solid rgba(16,185,129,0.20)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 8px 20px -14px rgba(16,185,129,0.30)"}}>
+                          <div style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase",marginBottom:10}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</div>
                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                            <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                              <th style={{textAlign:"left",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Flower</th>
-                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Qty</th>
-                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Rate</th>
-                              <th style={{textAlign:"right",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Total</th>
-                              <th style={{width:140,textAlign:"center",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Actions</th>
+                            {/* Column headers as quiet labels rather than body-weight text — the
+                                reference sets them back so the flower names carry the row. */}
+                            <thead><tr style={{borderBottom:`1px solid rgba(16,185,129,0.22)`}}>
+                              <th style={{textAlign:"left",padding:"7px 4px",fontWeight:600,color:"#6B7280",letterSpacing:0.4}}>Flower</th>
+                              <th style={{textAlign:"right",padding:"7px 4px",fontWeight:600,color:"#6B7280",letterSpacing:0.4}}>Qty</th>
+                              <th style={{textAlign:"right",padding:"7px 4px",fontWeight:600,color:"#6B7280",letterSpacing:0.4}}>Rate</th>
+                              <th style={{textAlign:"right",padding:"7px 4px",fontWeight:600,color:"#6B7280",letterSpacing:0.4}}>Total</th>
+                              <th style={{width:140,textAlign:"center",padding:"7px 4px",fontWeight:600,color:"#6B7280",letterSpacing:0.4}}>Actions</th>
                             </tr></thead>
                             <tbody>
                               {sortedAgg.map(f => {
@@ -501,7 +554,10 @@ export default function DCFloralsTab({ ctx }) {
                                 return (
                                 <Fragment key={f.flowerId||f.name}>
                                 <tr style={{borderBottom:open?"none":`1px solid ${border}33`}}>
-                                  <td style={{padding:"6px 4px",color:"#1A1A2E"}}>
+                                  <td style={{padding:"8px 4px",color:"#1A1A2E"}}>
+                                    {/* Row marker, matching the reference. Decorative — the flower is
+                                        still named in text right beside it. */}
+                                    <span aria-hidden="true" style={{width:6,height:6,borderRadius:"50%",background:"#10B981",display:"inline-block",marginRight:8,verticalAlign:"middle"}}/>
                                     {f.name}
                                     {f.realOnly && <span title="Real Only — always 100% regardless of element blend" style={{marginLeft:6,fontSize:11,color:"#F59E0B"}}>🔒</span>}
                                     {f._isSwapTarget && (
@@ -601,7 +657,7 @@ export default function DCFloralsTab({ ctx }) {
                                 )}
                                 </Fragment>
                               );})}
-                              <tr><td colSpan={3} style={{padding:"8px 4px",textAlign:"right",color:"#1A1A2E",fontWeight:600}}>Real Total</td><td style={{padding:"8px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</td><td></td></tr>
+                              <tr style={{borderTop:`1px solid rgba(16,185,129,0.22)`}}><td colSpan={3} style={{padding:"11px 4px 4px",textAlign:"right",color:"#1A1A2E",fontWeight:600}}>Real Total</td><td style={{padding:"11px 4px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</td><td></td></tr>
                             </tbody>
                           </table>
                         </div>
