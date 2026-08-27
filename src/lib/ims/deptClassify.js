@@ -14,7 +14,15 @@ export function catToDept(cat, categoryDepartmentsCfg) {
   const s = String(cat || "").toLowerCase().trim();
   if (!s) return "Structure";
   if (cfg[s] && DEPTS.includes(cfg[s])) return cfg[s];
-  if (s.includes("floral") || s.includes("flower")) return "Floral";
+  // "pedestal" is here because a pedestal is floral kit — it carries the arrangement, and the floral
+  // team owns it. Neither "pedestal" nor "pedestals" contained any stem below, so it fell all the way
+  // through to the Structure catch-all on line 25 and the Deal Check → Transport tab filed 6 Mosaic
+  // Pedestals under 🏛️ Structure. It was never classified AS Structure; it was simply unclassified.
+  // Singular stem on purpose, so it catches the sub-category "Pedestals" and a category "Pedestal"
+  // alike. NOTE this classifier is shared — Dept Income (Deal Check) and Dept Ops (IMS) read it too,
+  // so pedestal income is now attributed to Floral rather than Structure. That is the intended
+  // outcome, but it does move a figure between departments in reporting, not just a heading.
+  if (s.includes("floral") || s.includes("flower") || s.includes("pedestal")) return "Floral";
   if (s.includes("light") || s.includes("chandel") || s.includes("led")) return "Lighting";
   if (s.includes("truss")) return "Tenting";
   if (s.includes("mask") || s.includes("fabric") || s.includes("drap") || s.includes("ceiling") || s.includes("liza") || s.includes("curtain")) return "Fabric";
