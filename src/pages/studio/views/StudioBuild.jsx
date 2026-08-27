@@ -2342,17 +2342,12 @@ undefined
             {/* The running total lives in the Live Estimate rail, which is on screen the whole
                 time — repeating it here just gave the same number two homes. Only the tier chip
                 stays, since the rail states it once and this is where the reference is judged. */}
-            {/* One row across the full width of the card, not a stacked column: the tier chip on the
-                left and Upload hard against the right edge. flexBasis 100% is what drops it onto its
-                own line — the parent wraps — so the two sit on the card's own axis rather than being
-                squeezed into whatever the title left over.
-                justifyContent follows the chip: with pricing hidden there is no chip, and
-                space-between on a single child would park Upload at the LEFT. */}
-            <div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%",
-              justifyContent:showCosts?"space-between":"flex-end"}}>
-              {showCosts&&<span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>}
-              {BANNER_UPLOAD}
-            </div>
+            {/* Tier chip only. Upload used to sit on this row, hard against the right edge — it now
+                lives below the card (see UPLOAD, ALWAYS), because a control that belongs to the BUILD
+                should not be inside the card describing the reference. */}
+            {showCosts&&<div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%"}}>
+              <span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+            </div>}
           </div>
           {/* Description and tag chips dropped, matching the Browse cards. In a 258px rail they were
               three more stacked rows under a title that already names the reference, and they pushed
@@ -2394,30 +2389,29 @@ undefined
                   whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{title}</div>
                 {subLine&&<div style={{fontSize:11,color:textS,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subLine}</div>}
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%",
-                justifyContent:showCosts?"space-between":"flex-end"}}>
-                {showCosts&&<span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>}
-                {BANNER_UPLOAD}
-              </div>
+              {/* Tier chip only — Upload moved out of the card, see UPLOAD, ALWAYS below. */}
+              {showCosts&&<div style={{display:"flex",alignItems:"center",gap:8,flexBasis:"100%",width:"100%"}}>
+                <span style={{fontSize:9.5,padding:"2px 8px",borderRadius:8,background:cat.bg,color:cat.color,fontWeight:600}}>{cat.label}</span>
+              </div>}
             </div>
           </div>
         </div>
       </div>;
     })()}
-    {/* ═══ UPLOAD, WITH NO REFERENCE ═══
-        Upload used to exist ONLY inside the two banners above, and both are gated on having a source
-        — sourceEvent for one, sourceVideo for the other. Build a deal without picking a reference (or
-        on a function that has none) and neither banner renders, so the upload button vanished with
-        the card. That is precisely when you most need it: no reference photos to work from means
-        client photos are the only thing to build on.
-        Same BANNER_UPLOAD control, so there is one upload button in the app, not a second
-        implementation to keep in step. The card is deliberately plain — it is not pretending to be a
-        reference banner, it is the one action that banner would have carried. */}
-    {!sourceEvent && !sourceVideo && (
-      <div style={{flexShrink:0, display:"flex", justifyContent:"flex-end"}}>
-        {BANNER_UPLOAD}
-      </div>
-    )}
+    {/* ═══ UPLOAD, ALWAYS ═══
+        Upload lives HERE, below the reference card, and nowhere else.
+        It used to be rendered inside the two banners above — and both are gated on having a source
+        (sourceEvent for one, sourceVideo for the other), so building without a reference, or on a
+        function that has none, made the upload button vanish along with the card. That is precisely
+        when it is most needed: no reference to work from means client photos are all there is. The
+        first fix added this copy for the no-reference case only, which left the button in two places
+        and moving between them as the reference came and went.
+        One position, always. Uploading a client photo is an action on the BUILD, not a property of
+        the reference, so it does not belong inside a card that describes the reference — and a
+        control that stays put is one people can find without looking. */}
+    <div style={{flexShrink:0, display:"flex", justifyContent:"flex-end"}}>
+      {BANNER_UPLOAD}
+    </div>
             </div>{/* .bd-rail-scroll */}
           </div>
         : railTab("left","Photo filters",<IconSliders size={14}/>)}
