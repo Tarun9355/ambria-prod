@@ -1064,14 +1064,16 @@ export default function DealCheckOverlay({ ctx }) {
                 labels rather than things you can point at. */}
             <style>{`
 .dc-tab{transition:background .14s ease,color .14s ease,border-color .14s ease}
-/* Was rgba(26,26,46,0.05) — 5% black, which over the overlay's own artwork was invisible: you could
-   not tell a hovered tab from a cold one. Filled with the app's ink instead, label flipped to the
-   warm off-white the headings use, so the tab under the pointer is unmistakable. !important because
-   both properties are set inline on the button and would otherwise win. */
-.dc-tab[data-on="0"]:hover{background:#221C42 !important;color:#F5F1E7 !important;border-color:#221C42 !important}
-/* The selected tab darkens a step on hover too, rather than sitting inert — without this the one
-   tab you cannot "press" is also the only one that ignores the pointer. */
-.dc-tab[data-on="1"]:hover{background:#EADBB8 !important}
+/* Navy IS the selected state (see the inline style on the button), so hover must not also be navy —
+   two tabs reading as chosen at once is worse than no hover at all. A cold tab warms toward navy
+   instead: a pale ink wash with ink text, which says "this is where you are pointing" and still
+   leaves the filled tab as the only selected one.
+   Was rgba(26,26,46,0.05) — 5% black, invisible over the overlay's artwork. !important because both
+   properties are set inline on the button and would otherwise win. */
+.dc-tab[data-on="0"]:hover{background:#EAE7F2 !important;color:#221C42 !important;border-color:rgba(34,28,66,0.30) !important}
+/* The selected tab deepens a step rather than sitting inert — without this the one tab you cannot
+   press is also the only one that ignores the pointer entirely. */
+.dc-tab[data-on="1"]:hover{background:#171233 !important}
 .dc-chip{transition:background .14s ease,box-shadow .16s ease,transform .12s ease}
 .dc-chip:hover{background:rgba(26,26,46,0.09) !important;box-shadow:0 3px 10px -6px rgba(26,26,46,0.5);transform:translateY(-1px)}
 @media (prefers-reduced-motion: reduce){
@@ -1275,10 +1277,13 @@ export default function DealCheckOverlay({ ctx }) {
                 {/* OPAQUE, both states. These were `transparent` when cold and `${accent}1F` — 12%
                     gold — when selected, which was fine over a flat panel and is not over the
                     overlay's artwork: the flowers read straight through the row and the pills
-                    stopped looking like controls. Solid white when cold, solid gold tint when
-                    selected, with a hairline so a white pill still has an edge. */}
+                    stopped looking like controls.
+                    THE SELECTED TAB IS THE NAVY ONE. A filled dark pill against white ones is the
+                    strongest contrast available here, and it is the same ink the app's header and
+                    card headings already wear — so "where am I" is answered from across the room
+                    rather than by spotting which pill is a slightly warmer cream. */}
                 {TABS.map(t => (
-                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?`1px solid ${accent}77`:"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#F3E7CE":"#FFFFFF",color:dcActiveTab===t.id?"#1A1A2E":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
+                  <button key={t.id} className="dc-tab" data-on={dcActiveTab===t.id?"1":"0"} onClick={()=>setDcActiveTab(t.id)} style={{padding:"8px 13px",borderRadius:999,border:dcActiveTab===t.id?"1px solid #221C42":"1px solid rgba(26,26,46,0.10)",cursor:"pointer",fontSize:13,fontWeight:dcActiveTab===t.id?700:500,background:dcActiveTab===t.id?"#221C42":"#FFFFFF",color:dcActiveTab===t.id?"#F5F1E7":textS,whiteSpace:"nowrap",letterSpacing:0.2,position:"relative",display:"inline-flex",alignItems:"center",gap:6,lineHeight:1,flexShrink:0}}>
                     <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
                     {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
                   </button>
