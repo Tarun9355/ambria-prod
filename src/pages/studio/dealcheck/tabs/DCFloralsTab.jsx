@@ -45,6 +45,24 @@ export default function DCFloralsTab({ ctx }) {
 
   return (
     <>
+      {/* ═══ INTERACTION LAYER ═══
+          The Studio tree is inline styles, which cannot express :hover — so the hover states live in
+          one scoped sheet keyed off `.dcf-` classes, the same approach Browse and Event Info use.
+          !important is required on the card shadow because an inline style otherwise wins.
+          Cards lift by a single pixel. Any more and a column of them bounces as the pointer crosses
+          it; this is meant to say "this is a distinct block", not to animate. */}
+      <style>{`
+.dcf-card{transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease}
+.dcf-card:hover{transform:translateY(-1px);
+  box-shadow:0 2px 4px rgba(26,26,46,0.07), 0 16px 30px -18px rgba(26,26,46,0.45) !important}
+.dcf-row{transition:background .14s ease}
+.dcf-row:hover{background:rgba(236,72,153,0.05)}
+/* The row buttons (🎨 swap, 🧮 how, Split Colors) carry their own colour inline, so hover shifts
+   brightness rather than repainting them — one rule serves every tint. */
+.dcf-btn{transition:filter .14s ease, transform .14s ease}
+.dcf-btn:hover{filter:brightness(0.94);transform:translateY(-1px)}
+.dcf-btn:active{transform:translateY(0)}
+      `}</style>
       {(() => {
                   // ═══ FLORALS TAB BODY (Tier 1.6 Phase 2 · Deploy 2 §7.9.13) ═══
                   // Per-function flower breakdown:
@@ -474,7 +492,7 @@ export default function DCFloralsTab({ ctx }) {
                           blend this deal happens to use.
                           EVERY VALUE IS THE ONE THAT WAS ALWAYS HERE — grandTotal, totalReal,
                           totalArtificial, overallRealPct. This is paint, not arithmetic. */}
-                      <div style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#FFF7FB 0%,#FFFFFF 100%)",border:`1px solid rgba(236,72,153,0.18)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 8px 20px -14px rgba(236,72,153,0.35)"}}>
+                      <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#FFF7FB 0%,#FFFFFF 100%)",border:`1px solid rgba(236,72,153,0.18)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 8px 20px -14px rgba(236,72,153,0.35)"}}>
                         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                           {/* Icon tile — the reference leads with one, and it gives the eyebrow and the
                               figure a left edge to sit against instead of floating on the card. */}
@@ -514,7 +532,7 @@ export default function DCFloralsTab({ ctx }) {
                             the allocation are all unchanged. */}
                       </div>
                       {/* Tier 2.1 — 📝 Floral preference note (per function, inline always-visible textarea) */}
-                      <div style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#FBF8FF 0%,#FFFFFF 100%)",border:`1px solid rgba(192,132,252,0.20)`,boxShadow:"0 1px 2px rgba(147,51,234,0.04), 0 8px 20px -14px rgba(147,51,234,0.28)"}}>
+                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#FBF8FF 0%,#FFFFFF 100%)",border:`1px solid rgba(192,132,252,0.20)`,boxShadow:"0 1px 2px rgba(147,51,234,0.04), 0 8px 20px -14px rgba(147,51,234,0.28)"}}>
                         <div style={{fontSize:12,color:"#9333EA",fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                           📝 Floral preference for {activeFn.fnType || `Function ${fnIdx+1}`}
                           {fnIdx !== activeFnIdx && <span style={{fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(26, 26, 46,0.06)",color:"#1A1A2E",fontWeight:400,letterSpacing:0.3}}>read-only · switch pill to edit</span>}
@@ -557,7 +575,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
-                        <div style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#F6FDFA 0%,#FFFFFF 100%)",border:`1px solid rgba(16,185,129,0.20)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 8px 20px -14px rgba(16,185,129,0.30)"}}>
+                        <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#F6FDFA 0%,#FFFFFF 100%)",border:`1px solid rgba(16,185,129,0.20)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 8px 20px -14px rgba(16,185,129,0.30)"}}>
                           <div style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase",marginBottom:10}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</div>
                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                             {/* Column headers as quiet labels rather than body-weight text — the
@@ -575,7 +593,7 @@ export default function DCFloralsTab({ ctx }) {
                                 const open = !!dcFloralCalcOpen[fKey];
                                 return (
                                 <Fragment key={f.flowerId||f.name}>
-                                <tr style={{borderBottom:open?"none":`1px solid ${border}33`}}>
+                                <tr className="dcf-row" style={{borderBottom:open?"none":`1px solid ${border}33`}}>
                                   <td style={{padding:"8px 4px",color:"#1A1A2E"}}>
                                     {/* Row marker, matching the reference. Decorative — the flower is
                                         still named in text right beside it. */}
@@ -606,14 +624,14 @@ export default function DCFloralsTab({ ctx }) {
                                     <div style={{display:"flex",gap:4,justifyContent:"flex-end",flexWrap:"wrap"}}>
                                       {fnIdx === activeFnIdx && (
                                         <>
-                                          <button onClick={()=>setDcPrefModal({ fnIdx, flowerId: f.flowerId, flowerName: f.name })}
+                                          <button className="dcf-btn" onClick={()=>setDcPrefModal({ fnIdx, flowerId: f.flowerId, flowerName: f.name })}
                                             title="Pick colour + set preferences (top 3)"
                                             style={{fontSize:12,padding:"2px 6px",borderRadius:7,cursor:"pointer",
                                               border:(dcFloralColorPrefs[fnIdx]?.[f.flowerId]?.length>0)?"1px solid #C084FC":"1px solid rgba(192,132,252,0.40)",
                                               background:(dcFloralColorPrefs[fnIdx]?.[f.flowerId]?.length>0)?"rgba(192,132,252,0.20)":"rgba(192,132,252,0.06)",color:"#9333EA",fontWeight:500}}>
                                             🎨
                                           </button>
-                                          <button onClick={()=>setDcSwapModal({ fnIdx, parentId: f.flowerId, currentRow: f })}
+                                          <button className="dcf-btn" onClick={()=>setDcSwapModal({ fnIdx, parentId: f.flowerId, currentRow: f })}
                                             title="Swap flower"
                                             style={{fontSize:12,padding:"2px 6px",borderRadius:7,cursor:"pointer",
                                               border:"1px solid rgba(251,191,36,0.40)",
@@ -622,7 +640,7 @@ export default function DCFloralsTab({ ctx }) {
                                           </button>
                                         </>
                                       )}
-                                      <button onClick={()=>setDcFloralCalcOpen(p=>({...p,[fKey]:!p[fKey]}))}
+                                      <button className="dcf-btn" onClick={()=>setDcFloralCalcOpen(p=>({...p,[fKey]:!p[fKey]}))}
                                         style={{fontSize:12,padding:"2px 8px",borderRadius:7,cursor:"pointer",
                                           border:open?"1px solid #A78BFA":"1px solid rgba(167,139,250,0.40)",
                                           background:open?"rgba(124,58,237,0.20)":"rgba(124,58,237,0.08)",color:"#7C3AED",fontWeight:500}}>
@@ -713,7 +731,7 @@ export default function DCFloralsTab({ ctx }) {
                         }));
                         const mappedList = Object.values(mappedAgg);
                         return (
-                          <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(236,72,153,0.04)",border:`1px solid rgba(236,72,153,0.20)`}}>
+                          <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#FFF7FB 0%,#FFFFFF 100%)",border:`1px solid rgba(236,72,153,0.20)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 8px 20px -14px rgba(236,72,153,0.35)"}}>
                             <div style={{fontSize:13,fontWeight:700,color:"#EC4899",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>🌺 Artificial Bunches</div>
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:13}}>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(236,72,153,0.06)"}}>
@@ -750,7 +768,7 @@ export default function DCFloralsTab({ ctx }) {
                                 {fnArtAlloc.map((a, ai) => <span key={ai} style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{a.photo&&<img src={a.photo} alt="" style={{width:14,height:14,borderRadius:3,objectFit:"cover"}}/>}{a.colour} {a.qty}kg</span>)}
                                 {fnArtAllocTotal < totalArtKg && <span style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>{Math.round((totalArtKg - fnArtAllocTotal) * 10) / 10}kg unassigned</span>}
                               </> : <span style={{fontSize:11,color:"#1A1A2E"}}>No split — any color</span>}
-                              <button onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg })} style={{fontSize:11,padding:"4px 12px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.10)",color:"#EC4899",fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>🌸 Split Colors</button>
+                              <button className="dcf-btn" onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg })} style={{fontSize:11,padding:"4px 12px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.10)",color:"#EC4899",fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>🌸 Split Colors</button>
                             </div>
                             {missingRatios.size > 0 && (
                               <div style={{fontSize:11,color:"#F59E0B",marginTop:6,fontStyle:"italic"}}>⚠ Missing Art Bunches/Unit (or mapped item cost) on: {Array.from(missingRatios).join(", ")} — set in IMS Mandi tab</div>
@@ -782,7 +800,7 @@ export default function DCFloralsTab({ ctx }) {
                         if (invList.length === 0) return null;
                         const invTotal = invList.reduce((s, r) => s + r.cost, 0);
                         return (
-                          <div style={{marginTop:14,padding:"12px 14px",borderRadius:10,background:"rgba(59,130,246,0.05)",border:"1px solid rgba(59,130,246,0.22)"}}>
+                          <div className="dcf-card" style={{marginTop:14,padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#F5F9FF 0%,#FFFFFF 100%)",border:"1px solid rgba(59,130,246,0.22)",boxShadow:"0 1px 2px rgba(59,130,246,0.05), 0 8px 20px -14px rgba(59,130,246,0.35)"}}>
                             <div style={{fontSize:13,fontWeight:700,color:"#3B82F6",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📦 Direct from Inventory</div>
                             {invList.map((r, ri) => (
                               <div key={ri} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#1A1A2E",padding:"3px 0"}}>
@@ -810,7 +828,7 @@ export default function DCFloralsTab({ ctx }) {
                           mandi list or the real/artificial split. Shown so the count above cannot
                           quietly disagree with the build. */}
                       {uncosted.length > 0 && (
-                        <div style={{marginTop:14,padding:"11px 13px",borderRadius:10,border:"1px solid rgba(245,158,11,0.35)",background:"rgba(245,158,11,0.07)"}}>
+                        <div className="dcf-card" style={{marginTop:14,padding:"12px 14px",borderRadius:14,border:"1px solid rgba(245,158,11,0.35)",background:"linear-gradient(180deg,#FFFBF2 0%,#FFFFFF 100%)",boxShadow:"0 1px 2px rgba(245,158,11,0.06), 0 8px 20px -14px rgba(245,158,11,0.4)"}}>
                           <div style={{fontSize:13,fontWeight:700,color:"#F59E0B",marginBottom:6}}>
                             ⚠ {uncosted.length} element{uncosted.length===1?"":"s"} not costed as florals
                           </div>
@@ -850,7 +868,7 @@ export default function DCFloralsTab({ ctx }) {
                           g.entries.push({ ...eb, _origIdx: ebi });
                         });
                         return (
-                      <div style={{padding:"12px 14px",borderRadius:10,background:"rgba(26, 26, 46,0.02)",border:`1px solid ${border}`}}>
+                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 8px 20px -14px rgba(26,26,46,0.30)"}}>
                         <div style={{fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📋 Per-Element Breakdown ({merged.length} element{merged.length===1?"":"s"}{merged.length !== elementBreakdown.length ? ` · ${elementBreakdown.length} rows` : ""})</div>
                         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                           <thead><tr style={{borderBottom:`1px solid ${border}`}}>
@@ -869,7 +887,7 @@ export default function DCFloralsTab({ ctx }) {
                               const zoneLabel = [...new Set(mg.zones)].join(", ");
                               return (
                               <Fragment key={mgi}>
-                              <tr style={{borderBottom:open?"none":`1px solid ${border}33`}}>
+                              <tr className="dcf-row" style={{borderBottom:open?"none":`1px solid ${border}33`}}>
                                 <td style={{padding:"6px 4px",color:"#1A1A2E"}}>{mg.name}{!mg.hasPattern && <span title="No IMS pattern" style={{marginLeft:6,fontSize:11,color:"#F59E0B"}}>⚠</span>}{mg.zones.length > 1 && <div style={{fontSize:11,color:"#1A1A2E",marginTop:1}}>{zoneLabel}</div>}{mg.zones.length === 1 && <span style={{fontSize:11,color:"#1A1A2E",marginLeft:6}}>{zoneLabel}</span>}</td>
                                 <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.totalQty}</td>
                                 <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{mg.realPct}%</td>
@@ -885,7 +903,7 @@ export default function DCFloralsTab({ ctx }) {
                                 </td>
                                 <td style={{padding:"6px 4px",color:"#1A1A2E",textAlign:"right",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(mg.total).toLocaleString("en-IN")}</td>
                                 <td style={{padding:"6px 4px",textAlign:"right"}}>
-                                  <button onClick={()=>setDcFloralCalcOpen(p=>({...p,[eKey]:!p[eKey]}))}
+                                  <button className="dcf-btn" onClick={()=>setDcFloralCalcOpen(p=>({...p,[eKey]:!p[eKey]}))}
                                     style={{fontSize:12,padding:"2px 8px",borderRadius:7,cursor:"pointer",
                                       border:open?"1px solid #A78BFA":"1px solid rgba(167,139,250,0.40)",
                                       background:open?"rgba(124,58,237,0.20)":"rgba(124,58,237,0.08)",color:"#7C3AED",fontWeight:500}}>
@@ -1013,7 +1031,7 @@ export default function DCFloralsTab({ ctx }) {
         if (!parent) {
           return (
             <div onClick={()=>setDcColorModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Parent flower not found in mandi. <button onClick={()=>setDcColorModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
+              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Parent flower not found in mandi. <button className="dcf-btn" onClick={()=>setDcColorModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
             </div>
           );
         }
@@ -1048,7 +1066,7 @@ export default function DCFloralsTab({ ctx }) {
                   <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2}}>🎨 Pick colour for {parent.name}</div>
                   <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{variants.length} variant{variants.length===1?"":"s"} available · pick affects pricing only</div>
                 </div>
-                <button onClick={()=>setDcColorModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                <button className="dcf-btn" onClick={()=>setDcColorModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
               </div>
               <div style={{padding:"14px 18px",overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(150px, 1fr))",gap:10}}>
                 {/* None / lowest (default) */}
@@ -1089,7 +1107,7 @@ export default function DCFloralsTab({ ctx }) {
         if (!parent) {
           return (
             <div onClick={()=>setDcPrefModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Flower not found in mandi. <button onClick={()=>setDcPrefModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
+              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Flower not found in mandi. <button className="dcf-btn" onClick={()=>setDcPrefModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
             </div>
           );
         }
@@ -1122,7 +1140,7 @@ export default function DCFloralsTab({ ctx }) {
                   <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E"}}>🎨 Pick colours for {parent.name}</div>
                   <div style={{fontSize:12,color:"#1A1A2E",marginTop:2}}>Tap in order of preference (max 3). 1st choice = selected color + price.</div>
                 </div>
-                <button onClick={()=>setDcPrefModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer"}}>✕</button>
+                <button className="dcf-btn" onClick={()=>setDcPrefModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer"}}>✕</button>
               </div>
               {/* Current ranked preferences */}
               {prefs.length > 0 && (
@@ -1133,10 +1151,10 @@ export default function DCFloralsTab({ ctx }) {
                       {p.photoUrl && <img src={p.photoUrl} alt="" style={{width:20,height:20,borderRadius:4,objectFit:"cover"}}/>}
                       <span style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{p.label}</span>
                       <span style={{fontSize:11,color:"#1A1A2E"}}>₹{Math.round(p.rate)}</span>
-                      <button onClick={()=>togglePref({variantId:p.variantId})} style={{fontSize:12,color:"#EF4444",background:"none",border:"none",cursor:"pointer",padding:0,lineHeight:1}}>✕</button>
+                      <button className="dcf-btn" onClick={()=>togglePref({variantId:p.variantId})} style={{fontSize:12,color:"#EF4444",background:"none",border:"none",cursor:"pointer",padding:0,lineHeight:1}}>✕</button>
                     </div>
                   ))}
-                  <button onClick={clearAll} style={{fontSize:11,color:"#1A1A2E",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
+                  <button className="dcf-btn" onClick={clearAll} style={{fontSize:11,color:"#1A1A2E",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
                 </div>
               )}
               {/* Variant grid */}
@@ -1173,7 +1191,7 @@ export default function DCFloralsTab({ ctx }) {
               </div>
               <div style={{padding:"12px 18px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontSize:12,color:"#1A1A2E"}}>{prefs.length}/3 selected{prefs.length>0?` · Costing: ₹${Math.round(prefs[0].rate)}/${parent.unit||"unit"}`:""}</span>
-                <button onClick={()=>setDcPrefModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#9333EA",color:"#1A1A2E",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
+                <button className="dcf-btn" onClick={()=>setDcPrefModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#9333EA",color:"#1A1A2E",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
               </div>
             </div>
           </div>
@@ -1223,7 +1241,7 @@ export default function DCFloralsTab({ ctx }) {
                   <div style={{fontSize:15.5,fontWeight:700,color:"#1A1A2E"}}>🌸 Artificial Flower Color Split</div>
                   <div style={{fontSize:13,color:"#1A1A2E",marginTop:3}}>Total: <strong>{Math.round(totalKg * 10) / 10} kg</strong> · Allocated: <strong style={{color:remaining <= 0 ? "#10B981" : "#F59E0B"}}>{allocated} kg</strong> · Remaining: <strong>{remaining} kg</strong></div>
                 </div>
-                <button onClick={() => setDcArtFlowerModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer"}}>✕</button>
+                <button className="dcf-btn" onClick={() => setDcArtFlowerModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer"}}>✕</button>
               </div>
               {/* Current allocation */}
               <div style={{padding:"14px 20px",overflowY:"auto",flex:1}}>
@@ -1237,7 +1255,7 @@ export default function DCFloralsTab({ ctx }) {
                     </div>
                     <input type="number" value={a.qty} min={0} max={rowMax(idx)} step={0.5} onChange={e => setQty(idx, e.target.value)} style={{width:60,padding:"5px 6px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,fontWeight:700,textAlign:"center"}} />
                     <span style={{fontSize:12,color:"#1A1A2E"}}>kg</span>
-                    <button onClick={() => removeItem(idx)} style={{padding:"4px 8px",borderRadius:4,border:"none",background:"rgba(239,68,68,0.15)",color:"#EF4444",fontSize:13,cursor:"pointer",fontWeight:700}}>✕</button>
+                    <button className="dcf-btn" onClick={() => removeItem(idx)} style={{padding:"4px 8px",borderRadius:4,border:"none",background:"rgba(239,68,68,0.15)",color:"#EF4444",fontSize:13,cursor:"pointer",fontWeight:700}}>✕</button>
                   </div>)}
                 </div>}
                 {remaining > 0 && draft.length > 0 && <div style={{padding:"6px 12px",borderRadius:6,background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",fontSize:12,color:"#F59E0B",fontWeight:600,marginBottom:16,textAlign:"center"}}>{remaining} kg unassigned — add more colors or increase quantities</div>}
@@ -1268,8 +1286,8 @@ export default function DCFloralsTab({ ctx }) {
               </div>
               {/* Footer */}
               <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <button onClick={() => { updateDraft([]); }} style={{fontSize:13,color:"#1A1A2E",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
-                <button onClick={() => setDcArtFlowerModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#EC4899",color:"#1A1A2E",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
+                <button className="dcf-btn" onClick={() => { updateDraft([]); }} style={{fontSize:13,color:"#1A1A2E",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Clear all</button>
+                <button className="dcf-btn" onClick={() => setDcArtFlowerModal(null)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#EC4899",color:"#1A1A2E",fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Done</button>
               </div>
             </div>
           </div>
@@ -1286,7 +1304,7 @@ export default function DCFloralsTab({ ctx }) {
         if (!fromParent) {
           return (
             <div onClick={()=>setDcSwapModal(null)} style={{position:"fixed",inset:0,zIndex:9200,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Flower not found in mandi. <button onClick={()=>setDcSwapModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
+              <div onClick={e=>e.stopPropagation()} style={{padding:30,background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,color:"#1A1A2E",fontSize:13.5}}>Flower not found in mandi. <button className="dcf-btn" onClick={()=>setDcSwapModal(null)} style={{marginLeft:10,padding:"4px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer"}}>Close</button></div>
             </div>
           );
         }
@@ -1341,7 +1359,7 @@ export default function DCFloralsTab({ ctx }) {
                   <div style={{fontSize:14.5,fontWeight:700,color:"#1A1A2E",letterSpacing:0.2}}>🔄 Swap {fromParent.name}</div>
                   <div style={{fontSize:12,color:"#1A1A2E",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>{totalQty.toFixed(2)} {fromParent.unit||""} @ ₹{Math.round(fromRate)} · type-{fromType} · pick a replacement of same type</div>
                 </div>
-                <button onClick={()=>setDcSwapModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
+                <button className="dcf-btn" onClick={()=>setDcSwapModal(null)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:14.5,cursor:"pointer",lineHeight:1}}>✕</button>
               </div>
               <div style={{padding:"12px 18px",borderBottom:`1px solid ${border}`,display:"flex",gap:10,alignItems:"center"}}>
                 <input
@@ -1353,7 +1371,7 @@ export default function DCFloralsTab({ ctx }) {
                 />
                 <div style={{display:"flex",background:"rgba(26, 26, 46,0.06)",borderRadius:8,padding:3}}>
                   {["full","split"].map(m => (
-                    <button key={m} onClick={()=>setDcSwapMode(m)} style={{padding:"5px 12px",borderRadius:5,border:"none",cursor:"pointer",fontSize:13,fontWeight:dcSwapMode===m?700:500,background:dcSwapMode===m?"rgba(251,191,36,0.20)":"transparent",color:dcSwapMode===m?"#B45309":textS,letterSpacing:0.3,textTransform:"capitalize"}}>{m}</button>
+                    <button className="dcf-btn" key={m} onClick={()=>setDcSwapMode(m)} style={{padding:"5px 12px",borderRadius:5,border:"none",cursor:"pointer",fontSize:13,fontWeight:dcSwapMode===m?700:500,background:dcSwapMode===m?"rgba(251,191,36,0.20)":"transparent",color:dcSwapMode===m?"#B45309":textS,letterSpacing:0.3,textTransform:"capitalize"}}>{m}</button>
                   ))}
                 </div>
               </div>
@@ -1408,8 +1426,8 @@ export default function DCFloralsTab({ ctx }) {
                 </div>
               )}
               <div style={{padding:"10px 18px",borderTop:`1px solid ${border}`,display:"flex",gap:10,justifyContent:"flex-end"}}>
-                <button onClick={()=>setDcSwapModal(null)} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer",fontWeight:500}}>Cancel</button>
-                <button onClick={confirmSwap} disabled={!dcSwapPicked || swapQty <= 0}
+                <button className="dcf-btn" onClick={()=>setDcSwapModal(null)} style={{padding:"7px 14px",borderRadius:7,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:13,cursor:"pointer",fontWeight:500}}>Cancel</button>
+                <button className="dcf-btn" onClick={confirmSwap} disabled={!dcSwapPicked || swapQty <= 0}
                   style={{padding:"7px 14px",borderRadius:7,border:"none",background:(!dcSwapPicked || swapQty<=0)?"rgba(251,191,36,0.20)":"#B45309",color:(!dcSwapPicked || swapQty<=0)?textS:"#0F0F1A",fontSize:13,cursor:(!dcSwapPicked || swapQty<=0)?"not-allowed":"pointer",fontWeight:700,letterSpacing:0.3}}>Confirm swap</button>
               </div>
             </div>
