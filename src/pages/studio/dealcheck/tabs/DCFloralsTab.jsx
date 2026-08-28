@@ -448,73 +448,70 @@ export default function DCFloralsTab({ ctx }) {
                     // opaque grounds anyway — so the decoration is only ever seen in the padding and
                     // the gaps, which is exactly what a framed image wants. pointerEvents:none so it
                     // can never sit between a click and the table underneath it.
-                    <div style={{position:"relative",display:"flex",flexDirection:"column",gap:14,
+                    <div style={{position:"relative",
                       ...(FLORAL_BG ? {padding:16,borderRadius:16} : {})}}>
                       {FLORAL_BG && <div aria-hidden="true" style={{position:"absolute",inset:0,borderRadius:16,pointerEvents:"none",
                         backgroundImage:`url(${FLORAL_BG})`,backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat"}}/>}
-                      {/* Everything below rides above the ground. One wrapper, so the children keep
-                          the exact flex layout they had. */}
-                      <div style={{position:"relative",zIndex:1,display:"flex",flexDirection:"column",gap:14}}>
+                      {/* ── TWO COLUMNS ──
+                          What you buy on the left (the split, the note to the purchase manager, and the
+                          mandi list they shop from), what it is made of on the right (artificial
+                          bunches and the per-element derivation). The mandi list is the working
+                          document and the widest thing here, so it gets the room; the right column is
+                          reference material read alongside it rather than scrolled past to reach it.
+                          flexWrap, NOT a two-column grid: this overlay is opened on laptops and on
+                          tablets, and inline styles cannot carry a media query. Wrapping gives the
+                          same stacked layout below ~900px for free — the right column simply drops
+                          under the left instead of crushing the table into an unreadable width. */}
+                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14}}>
+                        <div style={{flex:"1 1 560px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary
-                          Restyled to the supplied reference: the function name and date as an eyebrow,
-                          the total as the one large figure, the real/artificial split as dotted legend
-                          entries, and the percentage as a ring rather than a sentence.
-                          EVERY VALUE IS THE ONE THAT WAS HERE BEFORE — grandTotal, totalReal,
-                          totalArtificial, overallRealPct — and the artificial colour-split strip below
-                          is untouched. This is paint, not arithmetic. */}
+                          The function name and date as an eyebrow, the total as the one large figure,
+                          the real/artificial split as dotted legend entries, and the percentage as a
+                          pill on the right.
+                          The percentage was briefly a ring; the second reference shows a pill and the
+                          pill is the better call anyway — a ring implies a target being filled, and
+                          this number has no target. 100% real is not "complete", it is simply the
+                          blend this deal happens to use.
+                          EVERY VALUE IS THE ONE THAT WAS ALWAYS HERE — grandTotal, totalReal,
+                          totalArtificial, overallRealPct. This is paint, not arithmetic. */}
                       <div style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#FFF7FB 0%,#FFFFFF 100%)",border:`1px solid rgba(236,72,153,0.18)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 8px 20px -14px rgba(236,72,153,0.35)"}}>
                         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                           {/* Icon tile — the reference leads with one, and it gives the eyebrow and the
                               figure a left edge to sit against instead of floating on the card. */}
                           <div aria-hidden="true" style={{width:44,height:44,flexShrink:0,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,background:"rgba(236,72,153,0.10)",border:"1px solid rgba(236,72,153,0.18)"}}>🌸</div>
-                          <div style={{minWidth:0}}>
+                          <div style={{minWidth:0,flex:"1 1 auto"}}>
                             <div style={{fontSize:12.5,color:"#1A1A2E",letterSpacing:0.7,textTransform:"uppercase",fontWeight:700}}>{activeFn.fnType || `Function ${fnIdx+1}`} · {activeFn.fnDate || "—"}</div>
-                            <div style={{display:"flex",alignItems:"baseline",gap:16,flexWrap:"wrap",marginTop:4}}>
-                              <div>
-                                <div style={{fontSize:11.5,color:"#6B7280",fontWeight:600}}>Total Floral</div>
-                                <div style={{fontSize:28,fontWeight:700,color:"#1A1A2E",lineHeight:1.15,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</div>
-                              </div>
-                              <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",paddingBottom:2}}>
-                                <span style={{fontSize:12.5,color:"#10B981",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
-                                  <span style={{width:7,height:7,borderRadius:"50%",background:"#10B981",display:"inline-block"}}/>
-                                  Real ₹{Math.round(totalReal).toLocaleString("en-IN")}
-                                </span>
-                                <span style={{fontSize:12.5,color:"#EC4899",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
-                                  <span style={{width:7,height:7,borderRadius:"50%",background:"#EC4899",display:"inline-block"}}/>
-                                  Artificial ₹{Math.round(totalArtificial).toLocaleString("en-IN")}
-                                </span>
-                              </div>
+                            {/* One baseline for the label, the figure and both legend entries, so the
+                                row reads left to right as a sentence rather than as stacked blocks. */}
+                            <div style={{display:"flex",alignItems:"baseline",gap:14,flexWrap:"wrap",marginTop:2}}>
+                              <span style={{fontSize:14,color:"#1A1A2E",fontWeight:600}}>Total Floral</span>
+                              <span style={{fontSize:26,fontWeight:700,color:"#1A1A2E",lineHeight:1.2,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</span>
+                              <span style={{fontSize:12.5,color:"#10B981",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
+                                <span style={{width:7,height:7,borderRadius:"50%",background:"#10B981",display:"inline-block"}}/>
+                                Real ₹{Math.round(totalReal).toLocaleString("en-IN")}
+                              </span>
+                              <span style={{fontSize:12.5,color:"#EC4899",fontWeight:600,display:"inline-flex",alignItems:"center",gap:6}}>
+                                <span style={{width:7,height:7,borderRadius:"50%",background:"#EC4899",display:"inline-block"}}/>
+                                Artificial ₹{Math.round(totalArtificial).toLocaleString("en-IN")}
+                              </span>
                             </div>
                           </div>
-                          {/* The same overallRealPct, drawn. strokeDasharray on a circle of r=26 is
-                              circumference 2πr ≈ 163.4; the offset is the unfilled remainder.
-                              rotate(-90) starts the arc at twelve o'clock instead of three. */}
-                          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:12}}>
-                            <div style={{position:"relative",width:64,height:64,flexShrink:0}}>
-                              <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true">
-                                <circle cx="32" cy="32" r="26" fill="none" stroke="rgba(236,72,153,0.14)" strokeWidth="6"/>
-                                <circle cx="32" cy="32" r="26" fill="none" stroke="#C9A96E" strokeWidth="6" strokeLinecap="round"
-                                  strokeDasharray={2 * Math.PI * 26}
-                                  strokeDashoffset={(2 * Math.PI * 26) * (1 - Math.max(0, Math.min(100, overallRealPct)) / 100)}
-                                  transform="rotate(-90 32 32)"/>
-                              </svg>
-                              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{overallRealPct}%</div>
-                            </div>
-                            <div style={{lineHeight:1.35}}>
-                              <div style={{fontSize:12.5,fontWeight:700,color:"#1A1A2E"}}>Real / {100-overallRealPct}% Artificial</div>
-                              <div style={{fontSize:11.5,color:"#6B7280"}}>Overall</div>
-                            </div>
+                          {/* The same sentence this always showed, set as a pill so it reads as a
+                              standing fact about the deal rather than a line of running text. */}
+                          <div style={{marginLeft:"auto",flexShrink:0,fontSize:12,fontWeight:600,color:"#1A1A2E",
+                            padding:"7px 14px",borderRadius:999,background:"#FFFFFF",border:"1px solid rgba(236,72,153,0.22)",
+                            boxShadow:"0 1px 2px rgba(236,72,153,0.06)",whiteSpace:"nowrap"}}>
+                            {overallRealPct}% real / {100-overallRealPct}% artificial overall
                           </div>
                         </div>
-                        {/* §26 — Artificial flower color allocation strip */}
-                        {totalArtificial > 0 && <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid rgba(236,72,153,0.15)`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <span style={{fontSize:12,color:"#EC4899",fontWeight:700}}>🌸 Artificial {totalArtKg > 0 ? `${Math.round(totalArtKg * 10) / 10} kg` : `₹${Math.round(totalArtificial).toLocaleString("en-IN")}`}</span>
-                          {fnArtAlloc.length > 0 ? <>
-                            {fnArtAlloc.map((a, i) => <span key={i} style={{fontSize:11,padding:"3px 8px",borderRadius:6,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:600}}>{a.colour} {a.qty}kg</span>)}
-                            {fnArtAllocTotal < totalArtKg && <span style={{fontSize:11,color:"#F59E0B",fontWeight:600}}>{Math.round((totalArtKg - fnArtAllocTotal) * 10) / 10}kg unassigned</span>}
-                          </> : <span style={{fontSize:11,color:"#1A1A2E"}}>No color split — any color</span>}
-                          <button onClick={() => setDcArtFlowerModal({ fnIdx, totalKg: totalArtKg || 0 })} style={{fontSize:11,padding:"3px 10px",borderRadius:6,border:`1px solid rgba(236,72,153,0.3)`,background:"rgba(236,72,153,0.08)",color:"#EC4899",fontWeight:600,cursor:"pointer",marginLeft:"auto"}}>🎨 Split Colors</button>
-                        </div>}
+                        {/* §26's colour-allocation strip USED to be repeated here as well as in the
+                            Artificial Bunches card. Two strips, two "Split Colors" buttons, both
+                            opening the same dcArtFlowerModal — and with the card now sitting in its
+                            own column beside this header, the pair were on screen together. The card's
+                            copy is the one kept: it is the richer of the two (its chips carry the
+                            colour photo) and it sits with the kg and rate figures the split is made
+                            against. Nothing is reachable only from here; the control, the modal and
+                            the allocation are all unchanged. */}
                       </div>
                       {/* Tier 2.1 — 📝 Floral preference note (per function, inline always-visible textarea) */}
                       <div style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#FBF8FF 0%,#FFFFFF 100%)",border:`1px solid rgba(192,132,252,0.20)`,boxShadow:"0 1px 2px rgba(147,51,234,0.04), 0 8px 20px -14px rgba(147,51,234,0.28)"}}>
@@ -687,6 +684,8 @@ export default function DCFloralsTab({ ctx }) {
                           </table>
                         </div>
                       )}
+                        </div>{/* ── left column ends ── */}
+                        <div style={{flex:"1 1 300px",minWidth:0,maxWidth:400,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Artificial cost summary — Tier 1.9 bunch model */}
                       {(() => {
                         const totalArtBunchesFlower = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
@@ -1002,6 +1001,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                         );
                       })()}
+                        </div>{/* ── right column ends ── */}
                       </div>{/* content layer */}
                     </div>
                   );
