@@ -56,7 +56,9 @@ export default function DCFloralsTab({ ctx }) {
 .dcf-card:hover{transform:translateY(-1px);
   box-shadow:0 2px 4px rgba(26,26,46,0.07), 0 16px 30px -18px rgba(26,26,46,0.45) !important}
 .dcf-row{transition:background .14s ease}
-.dcf-row:hover{background:rgba(236,72,153,0.05)}
+/* A neutral ink wash, not a pink one. The cards are white now, and a pink hover on white put the
+   tint straight back on the thing it was taken off. */
+.dcf-row:hover{background:rgba(26,26,46,0.045)}
 /* The row buttons (🎨 swap, 🧮 how, Split Colors) carry their own colour inline, so hover shifts
    brightness rather than repainting them — one rule serves every tint. */
 .dcf-btn{transition:filter .14s ease, transform .14s ease}
@@ -516,7 +518,7 @@ export default function DCFloralsTab({ ctx }) {
                           blend this deal happens to use.
                           EVERY VALUE IS THE ONE THAT WAS ALWAYS HERE — grandTotal, totalReal,
                           totalArtificial, overallRealPct. This is paint, not arithmetic. */}
-                      <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#FADFEC 0%,#FDF4F9 100%)",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
+                      <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
                         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                           {/* Icon tile — the reference leads with one, and it gives the eyebrow and the
                               figure a left edge to sit against instead of floating on the card. */}
@@ -556,7 +558,7 @@ export default function DCFloralsTab({ ctx }) {
                             the allocation are all unchanged. */}
                       </div>
                       {/* Tier 2.1 — 📝 Floral preference note (per function, inline always-visible textarea) */}
-                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#EFE4FB 0%,#FAF6FE 100%)",border:`1px solid rgba(192,132,252,0.32)`,boxShadow:"0 1px 2px rgba(147,51,234,0.04), 0 12px 26px -12px rgba(147,51,234,0.28)"}}>
+                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(192,132,252,0.32)`,boxShadow:"0 1px 2px rgba(147,51,234,0.04), 0 12px 26px -12px rgba(147,51,234,0.28)"}}>
                         <div style={{fontSize:12,color:"#9333EA",fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
                           📝 Floral preference for {activeFn.fnType || `Function ${fnIdx+1}`}
                           {fnIdx !== activeFnIdx && <span style={{fontSize:10,padding:"1px 5px",borderRadius:3,background:"rgba(26, 26, 46,0.06)",color:"#1A1A2E",fontWeight:400,letterSpacing:0.3}}>read-only · switch pill to edit</span>}
@@ -599,7 +601,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
-                        <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"linear-gradient(180deg,#DFF2E9 0%,#F5FBF8 100%)",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
+                        <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
                           <div style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase",marginBottom:10}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</div>
                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                             {/* Column headers as quiet labels rather than body-weight text — the
@@ -755,7 +757,7 @@ export default function DCFloralsTab({ ctx }) {
                         }));
                         const mappedList = Object.values(mappedAgg);
                         return (
-                          <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#FADFEC 0%,#FDF4F9 100%)",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
+                          <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
                             <div style={{fontSize:13,fontWeight:700,color:"#EC4899",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>🌺 Artificial Bunches</div>
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:13}}>
                               <div style={{padding:"8px 10px",borderRadius:7,background:"rgba(236,72,153,0.06)"}}>
@@ -824,7 +826,7 @@ export default function DCFloralsTab({ ctx }) {
                         if (invList.length === 0) return null;
                         const invTotal = invList.reduce((s, r) => s + r.cost, 0);
                         return (
-                          <div className="dcf-card" style={{marginTop:14,padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#E0EBFB 0%,#F4F9FE 100%)",border:"1px solid rgba(59,130,246,0.34)",boxShadow:"0 1px 2px rgba(59,130,246,0.05), 0 12px 26px -12px rgba(59,130,246,0.35)"}}>
+                          <div className="dcf-card" style={{marginTop:14,padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:"1px solid rgba(59,130,246,0.34)",boxShadow:"0 1px 2px rgba(59,130,246,0.05), 0 12px 26px -12px rgba(59,130,246,0.35)"}}>
                             <div style={{fontSize:13,fontWeight:700,color:"#3B82F6",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📦 Direct from Inventory</div>
                             {invList.map((r, ri) => (
                               <div key={ri} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#1A1A2E",padding:"3px 0"}}>
@@ -852,7 +854,7 @@ export default function DCFloralsTab({ ctx }) {
                           mandi list or the real/artificial split. Shown so the count above cannot
                           quietly disagree with the build. */}
                       {uncosted.length > 0 && (
-                        <div className="dcf-card" style={{marginTop:14,padding:"12px 14px",borderRadius:14,border:"1px solid rgba(245,158,11,0.35)",background:"linear-gradient(180deg,#F9EBD2 0%,#FDF8F0 100%)",boxShadow:"0 1px 2px rgba(245,158,11,0.06), 0 12px 26px -12px rgba(245,158,11,0.4)"}}>
+                        <div className="dcf-card" style={{marginTop:14,padding:"12px 14px",borderRadius:14,border:"1px solid rgba(245,158,11,0.35)",background:"#FFFFFF",boxShadow:"0 1px 2px rgba(245,158,11,0.06), 0 12px 26px -12px rgba(245,158,11,0.4)"}}>
                           <div style={{fontSize:13,fontWeight:700,color:"#F59E0B",marginBottom:6}}>
                             ⚠ {uncosted.length} element{uncosted.length===1?"":"s"} not costed as florals
                           </div>
@@ -892,7 +894,7 @@ export default function DCFloralsTab({ ctx }) {
                           g.entries.push({ ...eb, _origIdx: ebi });
                         });
                         return (
-                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"linear-gradient(180deg,#EFEEF4 0%,#FAFAFC 100%)",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
+                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
                         <div style={{fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📋 Per-Element Breakdown ({merged.length} element{merged.length===1?"":"s"}{merged.length !== elementBreakdown.length ? ` · ${elementBreakdown.length} rows` : ""})</div>
                         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                           <thead><tr style={{borderBottom:`1px solid ${border}`}}>
