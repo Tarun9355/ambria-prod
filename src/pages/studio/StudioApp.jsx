@@ -4618,7 +4618,17 @@ export default function StudioApp() {
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     // Every function's own date, not just the active one — see calcFunctionCost's matching comment.
     const fBlocksForDate = blocksByDate[fnData.fnDate];
-    const zones = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
+    // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
+    // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
+    // for THIS deal, not the admin's current order, and an old deal's order can predate a later
+    // reorder. A key not found in zoneKeys/customZones (deleted/renamed since) still sorts in, just
+    // at the end, so nothing that used to appear here can disappear — only the order changes.
+    const zoneOrderIndex = {};
+    zoneKeys.forEach((zk, i) => { zoneOrderIndex[zk] = i; });
+    fCustomZones.forEach((cz, i) => { zoneOrderIndex[cz.id] = zoneKeys.length + i; });
+    const orderedZoneKeys = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => k)
+      .sort((a, b) => (zoneOrderIndex[a] ?? Infinity) - (zoneOrderIndex[b] ?? Infinity));
+    const zones = orderedZoneKeys.map((k) => {
       // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
       // custom zone names showing blank in Summary's accordion and the PDF/PPT export.
       const customZoneMatch = fCustomZones.find(cz => cz.id === k);
@@ -4709,7 +4719,7 @@ export default function StudioApp() {
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
 
@@ -7680,7 +7690,21 @@ export default function StudioApp() {
     const fElTiers = fnData.elTiers || {};
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     const fVenue = fnData.fnVenue || "";
-    return Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
+    // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys, same order
+    // Build's own zone list renders in — see StudioBuild.jsx's `[...zoneKeys, ...customZones]`),
+    // not by Object.entries' insertion order. enabledEls is a per-deal record that gained its keys
+    // in whatever order each zone was first toggled on for THIS deal, which is unrelated to — and
+    // for an old deal, can predate — a later reorder in Settings. This exports/cost-sheets a zone
+    // list that used to silently follow that old per-deal order instead of the admin's current one.
+    // A zone key not found in either list (deleted/renamed since, or from data older than Zone
+    // Types existed) still gets included — just sorted to the end — so nothing that used to appear
+    // in the export can disappear from it; only the ORDER changes.
+    const zoneOrderIndex = {};
+    zoneKeys.forEach((zk, i) => { zoneOrderIndex[zk] = i; });
+    fCustomZones.forEach((cz, i) => { zoneOrderIndex[cz.id] = zoneKeys.length + i; });
+    const orderedZoneKeys = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => k)
+      .sort((a, b) => (zoneOrderIndex[a] ?? Infinity) - (zoneOrderIndex[b] ?? Infinity));
+    return orderedZoneKeys.map((k) => {
       // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
       // custom zone names showing blank in the PDF/PPT export.
       const customZoneMatch = fCustomZones.find(cz => cz.id === k);
@@ -7815,7 +7839,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
