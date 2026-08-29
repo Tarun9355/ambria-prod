@@ -515,8 +515,13 @@ export default function DCFloralsTab({ ctx }) {
                           get better past about 900px, they just get harder to scan.
                           The cap is on the ROW, so the two columns tighten together and stay a pair,
                           rather than the left one narrowing and leaving a hole beside it. */}
+                      {/* Left-aligned, not centred. Centring split the leftover width into two margins
+                          and pushed the whole tab inward, so the cards floated in the middle of the
+                          ground with a band of artwork down each side. Anchored left, the content
+                          starts where every other tab's content starts and the leftover collects on
+                          one side instead of being shared out. */}
                       <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14,
-                        maxWidth:1340,margin:"0 auto"}}>
+                        maxWidth:1340}}>
                         <div style={{flex:"1 1 520px",minWidth:0,maxWidth:900,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary
                           The function name and date as an eyebrow, the total as the one large figure,
