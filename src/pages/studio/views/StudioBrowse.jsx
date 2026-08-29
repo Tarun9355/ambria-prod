@@ -281,7 +281,17 @@ export default function StudioBrowse({ ctx }) {
             </div>}
           </div>
           <div style={{padding:"12px 14px",flex:1,display:"flex",flexDirection:"column"}}>
-            <div className="sb-title" style={{fontSize:15.5,fontWeight:600,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
+            {/* BUG-4: a skeleton while the YouTube titles are still in flight, rather than the
+                "Untitled video" placeholder that used to sit under a perfectly good thumbnail. Two
+                bars at the real line height, so the card does not resize when the title lands. */}
+            <div className="sb-title" style={{fontSize:15.5,fontWeight:600,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+              {v.titlePending
+                ? <span style={{display:"block"}} aria-label="Loading title">
+                    <span style={{display:"block",height:11,width:"92%",borderRadius:5,background:"rgba(26,26,46,0.10)",animation:"sbTitlePulse 1.15s ease-in-out infinite"}}/>
+                    <span style={{display:"block",height:11,width:"58%",borderRadius:5,marginTop:6,background:"rgba(26,26,46,0.10)",animation:"sbTitlePulse 1.15s ease-in-out infinite"}}/>
+                  </span>
+                : v.title}
+            </div>
             <div style={{fontSize:11,color:textS,marginBottom:6}}>{[v.venue, v.fn, v.space].filter(Boolean).join(" · ") || "Untagged"}</div>
             {/* The style/palette chips and the "needs zone photos" strip both came off the card —
                 three stacked rows of metadata between the title and the buttons made the grid read
@@ -491,16 +501,51 @@ export default function StudioBrowse({ ctx }) {
       for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) return i; }
       return null;
     };
+    // BUG-2. This fired two writes and awaited neither, then announced success unconditionally — so
+    // a delete that silently failed still showed a green "Session deleted" and the session came back
+    // on the next load.
+    // studio_sessions is now the ONLY store for sessions; the client_ledger blob no longer carries
+    // them (see clientToRow in StudioApp). The ledger write below therefore only updates the client's
+    // in-memory array and the row's typed columns — it is not a second copy of the history any more.
+    // Order still matters: delete the rows first and check the result, because if that fails there is
+    // nothing worth writing afterwards. Then await the ledger write, then report.
     const deleteSession = (sessionId) => {
       if (!activeClient) return;
-      askConfirm("Delete this saved session?", () => {
+      // BUG-2, the other half. Deleting the session you are CURRENTLY working in does not discard the
+      // build that is still loaded — and it shouldn't, because that is unsaved work sitting on screen.
+      // The autosave then writes it again a few seconds later under a fresh id, which reads as the
+      // deleted session coming back. It isn't the same session, but nothing on screen said so, which
+      // is why this looked like the delete had silently failed.
+      // Rather than destroy loaded work to make the list tidy, say what will happen. Same test
+      // bannerCurrentInSaved uses — does this session hold a row for THIS function built from THIS
+      // video — so "the one I'm working in" means the same thing in both places.
+      const target = (activeClient.sessions || []).find(sess => sess.id === sessionId);
+      const isLoadedBuild = !!bannerCurrentId && !!target && Array.isArray(target._fnRows)
+        && target._fnRows.some(r => r && r.fn_idx === activeFnIdx && r.source_video_id === bannerCurrentId);
+      askConfirm("Delete this saved session?", async () => {
+        const res = await (ctx.deleteSessionRows?.(sessionId) ?? Promise.resolve({ ok: true }));
+        if (!res?.ok) return;   // deleteSessionRows has already said why
         const nextSessions = (activeClient.sessions || []).filter(sess => sess.id !== sessionId);
-        saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
-        // The rows too. studio_sessions is what the next load reads, so removing this from the
-        // client's array alone would delete it for this tab and bring it straight back on refresh.
-        ctx.deleteSessionRows?.(sessionId);
-        showMsg("Session deleted", "green");
-      }, { yesLabel: "Delete", note: "This can't be undone." });
+        // Checks the RETURN value, not a throw: saveClientLedger catches its own errors and reports
+        // them with its own toast, so awaiting it in a try/catch would have been dead code. It now
+        // returns false on failure for exactly this caller.
+        const blobOk = await saveClientLedger(clientLedger.map(c => c.id === activeClient.id ? { ...c, sessions: nextSessions } : c));
+        if (!blobOk) {
+          // The rows are gone but the blob mirror still lists it, and the blob is what the next load
+          // falls back to for a client with no rows left. Say so — a silent failure here is precisely
+          // how a deleted session reappears with no explanation.
+          showMsg("Session removed, but its history entry didn't clear — refresh and try again", "orange");
+          return;
+        }
+        showMsg(isLoadedBuild
+          ? "Saved session deleted — your open build is still here and will save as a new entry"
+          : "Session deleted", "green");
+      }, {
+        yesLabel: "Delete",
+        note: isLoadedBuild
+          ? "This is the build you have open. Deleting the saved copy won't discard your open work — it stays on screen and will be saved again as a new entry. To throw the build away, switch off its zones first."
+          : "This can't be undone.",
+      });
     };
 
     // ═══ FILTER PANEL PRESENTATION ═══
@@ -762,6 +807,10 @@ export default function StudioBrowse({ ctx }) {
   background-size:230% 100%;
   animation:sbSheen 30s ease-in-out infinite alternate}
 @keyframes sbSheen{from{background-position:0% 50%}to{background-position:100% 50%}}
+/* The title skeleton, shown while the YouTube titles are still loading — see titlePending in
+   StudioApp's browseVideosBase. Opacity only, so it cannot shift the card's layout. */
+@keyframes sbTitlePulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@media (prefers-reduced-motion: reduce){[style*="sbTitlePulse"]{animation:none !important}}
 /* Blurred hard, which is what turns five stroked paths into folds of light rather than five fat
    curves. Static, so the blur is rasterised once. An svg, not a span, so the blob rule above
    (which targets spans) does not also catch it. */
@@ -960,7 +1009,7 @@ export default function StudioBrowse({ ctx }) {
    With border-box the gradient's coordinates are the element's own, so --sb-pw means the same
    distance to both the panel and the bar and the two edges meet exactly.
    Declared AFTER the shorthand on purpose: the background shorthand resets background-origin to
-   padding-box, so putting it first would have it wiped by the very line it exists to correct. */
+   padding-box, so putting it first would have it wiped by the very line it exists to correct.
    The cut starts 3px EARLY, at --sb-pw minus 3. The panel's edge is a curve and this cut is a
    straight line: by the bottom of the bar the curve has drawn in to about 99.4% of the panel width,
    so a straight cut at exactly --sb-pw left a ~2px strip where neither the panel nor the navy

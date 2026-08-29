@@ -6,6 +6,19 @@
     <title>Ambria</title>
     <meta name="description" content="Wedding & Event Décor Management" />
     <!--
+      FAVICON. The app had none at all, so tabs showed the browser's blank page icon — and with
+      Studio and IMS routinely open side by side, neither tab was identifiable at a glance.
+      Files live in public/ and are referenced from the site root: Vite rewrites a leading "/" here
+      with the configured base ("/ambria-prod/"), so this resolves correctly on GitHub Pages without
+      the path being hardcoded.
+      Two files on purpose, and two SIZES. The source artwork was 1254px / 1.76MB — 23x the whole CSS
+      bundle, fetched by every visitor to draw a 16px tab icon. 48px covers the tab (browsers downscale
+      to 16/32); 180px is what iOS uses when
+      someone adds the app to a home screen, and without it iOS screenshots the page instead.
+    -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
       Fonts belong to the DOCUMENT, not to a component.
       This link used to live inside StudioApp's render. React reconciles whatever is in the tree, so
       every re-render put the stylesheet back in play — and with display=swap the browser drops to

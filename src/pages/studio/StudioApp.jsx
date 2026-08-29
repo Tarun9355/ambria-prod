@@ -109,7 +109,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 
@@ -1037,16 +1037,27 @@ function rowToClient(row) {
   if (!row) return null;
   const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
   const base = d ? { ...d, id: row.id } : { id: row.id, name: row.name, phone: row.phone, email: row.email, budget: row.budget };
-  return { ...base, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
+  // sessions defaults to [] because the blob no longer carries them (see clientToRow) — they are
+  // filled in from studio_sessions by the loader. Without this a freshly-read client would have
+  // `sessions: undefined` between the two steps, and every `c.sessions.length` in the app would
+  // throw rather than read as "no saves yet".
+  return { sessions: [], ...base, id: row.id, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
 }
 function clientToRow(c) {
   // _fnRows is the per-function rows a session was rebuilt FROM (see rowsToSessions) — it is a view
   // of studio_sessions, not part of the client. Left in, the blob mirror would carry a second copy of
   // every build in every session: the same data this migration exists to stop duplicating.
-  const data = Array.isArray(c?.sessions)
-    // eslint-disable-next-line no-unused-vars
-    ? { ...c, sessions: c.sessions.map(({ _fnRows, ...rest }) => rest) }
-    : c;
+  // SESSIONS DO NOT GO IN THE BLOB. They live in studio_sessions — one row per function per save,
+  // proper columns, which is what the architecture rule asks for and what makes a delete stick.
+  // This used to write the whole array in here as a mirror, and that mirror was the fallback the
+  // loader read when a client had no rows: delete a client's last session and it came straight back
+  // from this copy. The mirror is gone now that the backfill is complete and the loader reads the
+  // table unconditionally.
+  // Everything else about the client still belongs here — this strips one key, it does not change
+  // what a client is.
+  // eslint-disable-next-line no-unused-vars
+  const { sessions: _droppedSessions, ...withoutSessions } = (c && typeof c === "object") ? c : {};
+  const data = Array.isArray(c?.sessions) ? withoutSessions : c;
   return {
     id: c.id, name: c.name || "", phone: c.phone ?? null, email: c.email ?? null,
     status: c.status || "ongoing", budget: Number(c.budget) || 0, created_by: c.createdBy ?? null,
@@ -1068,51 +1079,8 @@ const SESSION_KEEP = 10;
 // prices, blank cards and "no longer in library" flips all came from.
 
 /** The rows one saved session becomes — one per function that has a snapshot. */
-function sessionToRows(clientId, s) {
-  if (!s || !s.id || !clientId) return [];
-  const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};
-  const keys = Object.keys(snaps).filter((k) => /^\d+$/.test(k));
-  // A session written before fnSnapshots existed carries its build in flat fields, and those belong
-  // to Fn1 — the same reading Browse has always given them.
-  const idxs = keys.length ? keys.map(Number).sort((a, b) => a - b) : [0];
-  return idxs.map((i) => {
-    const build = snaps[i] || snaps[String(i)] || null;
-    const b = build || s;
-    const isActive = keys.length ? s.savedActiveFnIdx === i : true;
-    // BUILT on, not merely referenced from. A picked video rides along to every function, so the
-    // looser test marked all of them as holding a build and one build showed up on every pill.
-    const built = fnSnapHasBuild(b);
-    const own = s.fnTotals && (s.fnTotals[i] || s.fnTotals[String(i)]);
-    // A price only belongs to a function that HAS a build. Carried forward onto an empty one it was
-    // a figure for something that is not there — which is how a ₹0 Wedding showed ₹6,90,091.
-    const ownTotal = built && own && Number(own.total) > 0 ? Number(own.total) : null;
-    return {
-      id: `${s.id}:${i}`,
-      session_id: s.id,
-      client_id: clientId,
-      fn_idx: i,
-      saved_at: Number(s.savedAt) || 0,
-      saved_by: s.savedBy || null,
-      auto: !!s.auto,
-      is_active_fn: !!isActive,
-      has_data: built,
-      fn_label: s.fn || null,
-      event_date: s.eventDate || null,
-      venue: s.venue || null,
-      source_video_id: b?.sourceVideo?.id || b?.sourceVideoId || null,
-      source_video_title: b?.sourceVideo?.title || b?.sourceVideoTitle || null,
-      source_event_id: b?.sourceEvent?.id || b?.sourceEventId || null,
-      source_event_name: b?.sourceEvent?.name || b?.sourceEventName || null,
-      // The figure for THIS function: its own, else the session-level one but ONLY when the session
-      // says that is where the number came from. Another function's price is not a fallback.
-      total: ownTotal != null ? ownTotal : (built && isActive && Number(s.total) > 0 ? Number(s.total) : null),
-      tier: ownTotal != null ? (own.tier || null) : (built && isActive ? (s.tier || null) : null),
-      decor_total: isActive && s.decorTotal != null ? Number(s.decorTotal) : null,
-      transport_total: isActive && s.transportTotal != null ? Number(s.transportTotal) : null,
-      build: build || null,
-    };
-  });
-}
+// sessionToRows now lives in lib/studio/sessionData.js (imported below) so the one-off
+// client_ledger→studio_sessions backfill can build rows with the SAME function the app writes with.
 
 /** Rows back into sessions, newest first — what client.sessions holds. */
 function rowsToSessions(rows) {
@@ -2573,9 +2541,19 @@ export default function StudioApp() {
                 if (!g) { g = []; byClient.set(r.client_id, g); }
                 g.push(r);
               }
+              // THE TABLE IS THE SOURCE OF TRUTH. Unconditionally — a client with no rows now gets an
+              // empty history, not the blob's copy.
+              // This used to be `if (mine && mine.length)`, which kept the blob for a client the table
+              // had nothing for. That was correct while the migration was mid-flight, but it is also
+              // exactly why a deleted session came back: deleting a client's last session leaves zero
+              // rows, the branch was skipped, and client_ledger.data.sessions — which still listed it —
+              // stood in. That is BUG-2's root cause.
+              // Safe to make unconditional because the backfill is complete: every session that existed
+              // only in a blob has been written into studio_sessions, verified as zero blob-only
+              // clients remaining before this line changed.
               for (const c of list) {
                 const mine = byClient.get(c.id);
-                if (mine && mine.length) c.sessions = rowsToSessions(mine);
+                c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
               }
             }
           } catch { /* table absent or unreadable — the blob history below stands */ }
@@ -2885,7 +2863,6 @@ export default function StudioApp() {
           // Our own stale upsert, echoed back before the delete landed, would otherwise re-add the
           // row to the list this tab is showing.
           if (deletedClientIdsRef.current.has(c.id)) return;
-          if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(c);
           // ── AN ECHO MUST NOT WIND THIS CLIENT BACK ──
           // Every save upserts the row and Supabase sends it straight back. Applying that blindly
           // means the newest local state can be replaced by an OLDER copy: the 15s autosave, the
@@ -2905,13 +2882,31 @@ export default function StudioApp() {
           // time, since neither touched sessions at all — whichever echo arrived second then won,
           // silently reverting the other's field moments after it was saved.
           const ledgerStamp = (x) => { let m = Number(x?.lastSavedAt) || 0; for (const s of (x?.sessions || [])) { const t = s?.savedAt || 0; if (t > m) m = t; } return m; };
+          // ── THE ROW CARRIES NO SESSIONS, SO THE ECHO MUST NOT CLEAR THEM ──
+          // Sessions moved out of the blob into studio_sessions, so rowToClient hands back
+          // `sessions: []` for every client — correct for the row, wrong as a replacement for one this
+          // tab has already filled in from the table. Swapping the whole object in therefore emptied
+          // the saved-session list on every client_ledger echo: the history showed, then vanished a
+          // moment later, and only a refresh (which re-reads studio_sessions) brought it back.
+          // Merging keeps the sessions this tab loaded and takes everything else from the row, which
+          // is exactly the split of ownership the migration created.
+          // It also makes the staleness check say what it should: both sides now hold the SAME
+          // sessions array, so that term cancels and the comparison comes down to lastSavedAt — the
+          // only thing this row still governs.
+          const keepSessions = (mine, incoming) => ({ ...incoming, sessions: mine.sessions || [] });
           setClientLedger((prev) => {
             const i = prev.findIndex((x) => x.id === c.id);
-            if (i < 0) return [...prev, c];
+            // Baseline tracks whatever ends up in state. Seeded from `c` for a client this tab has
+            // never seen, and from the winner below otherwise — a baseline that disagreed with state
+            // would read as a local edit on the next save and re-upsert the client every time.
+            const seed = (x) => { if (clientJsonRef.current) clientJsonRef.current[c.id] = JSON.stringify(x); };
+            if (i < 0) { seed(c); return [...prev, c]; }
             const mine = prev[i];
-            if (ledgerStamp(c) < ledgerStamp(mine)) return prev;
-            if (JSON.stringify(mine) === JSON.stringify(c)) return prev;
-            return prev.map((x) => (x.id === c.id ? c : x));
+            const merged = keepSessions(mine, c);
+            const winner = ledgerStamp(merged) < ledgerStamp(mine) ? mine : merged;
+            seed(winner);
+            if (JSON.stringify(mine) === JSON.stringify(winner)) return prev;
+            return prev.map((x) => (x.id === c.id ? winner : x));
           });
         }
       } catch { /* ignore */ }
@@ -3186,16 +3181,44 @@ export default function StudioApp() {
           if (error) throw error;
         }
       }
-    } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); }
+      // Returns whether the write actually landed. Added for the session delete in Browse, which has
+      // to know: it reports "Session deleted" to the user, and this function catches its own errors
+      // rather than throwing — so a caller awaiting it could not previously tell success from a
+      // silently-failed save. Every existing caller ignores the return value and is unaffected.
+      return true;
+    } catch (e) { showMsg?.("Client save failed: " + (e?.message || e), "red"); return false; }
   }, [showMsg]);
   // Deleting ONE saved session. Browse removes it from the client's array and saves the ledger; that
   // takes it out of the blob mirror, and this takes out the rows it became in studio_sessions. Both
   // are needed — the table is the source of truth on the next load, so a session deleted from the
   // array alone would come back.
+  // BUG-2 (part of it). This swallowed every failure. supabase-js RETURNS its errors in the result
+  // object — it does not throw — so the try/catch here caught nothing, and a delete that failed or
+  // matched zero rows looked exactly like a delete that worked. Browse then said "Session deleted"
+  // and the row came straight back on the next load.
+  // Now it reads { error, count } the way deleteRow in lib/supabase.js does, and RETURNS whether it
+  // actually removed anything, so the caller can tell the truth. count needs { count: "exact" };
+  // without it Supabase returns null and there is no way to distinguish "deleted" from "matched
+  // nothing".
   const deleteSessionRows = useCallback(async (sessionId) => {
-    if (!sessionId) return;
-    try { await supabase.from("studio_sessions").delete().eq("session_id", sessionId); }
-    catch (e) { showMsg?.("Session delete failed: " + (e?.message || e), "red"); }
+    if (!sessionId) return { ok: false, reason: "no session id" };
+    try {
+      const { error, count } = await supabase
+        .from("studio_sessions")
+        .delete({ count: "exact" })
+        .eq("session_id", sessionId);
+      if (error) {
+        showMsg?.("Session delete failed: " + (error.message || error), "red");
+        return { ok: false, reason: error.message || String(error) };
+      }
+      // Zero rows is not necessarily an error — a session saved before studio_sessions existed only
+      // lives in the client_ledger blob, and removing it from there is the caller's other write. So
+      // report it rather than treating it as failure.
+      return { ok: true, count: typeof count === "number" ? count : null };
+    } catch (e) {
+      showMsg?.("Session delete failed: " + (e?.message || e), "red");
+      return { ok: false, reason: e?.message || String(e) };
+    }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
   // Submit a last-minute amendment request to the department head. Re-reads the
@@ -5537,6 +5560,16 @@ export default function StudioApp() {
       const price = hasZonePhotos ? calcFullEventCost(evForCost) : null;
       return {
         id: vidId,
+        // BUG-4. This said "Untitled video" whenever `vid` was missing — and on a cold Browse it is
+        // missing for EVERY card, because the two sources load at very different speeds: ytVideoTags
+        // arrives on app mount, while the YouTube details (allVideos, via loadAllYT) only start
+        // fetching when you reach Browse and take seconds on a cold cache. So a real thumbnail sat
+        // under a fabricated title until the fetch landed — the thumbnail has its own fallback built
+        // from the video id alone, which is why it looked fine while the title lied.
+        // titlePending distinguishes "not arrived yet" from "genuinely has no title": pending only
+        // while ytLoading is true, so once the fetch finishes a video that really is absent from
+        // YouTube still falls back to "Untitled video" rather than shimmering forever.
+        titlePending: !vid && ytLoading,
         title: vid?.title || "Untitled video",
         thumbnail: vid?.thumbnail || `https://i.ytimg.com/vi/${vidId}/mqdefault.jpg`,
         venue: tag.venue || "",
@@ -5567,7 +5600,10 @@ export default function StudioApp() {
     // without also breaking the restriction.
     const scope = isAdmin ? "all" : (userVenueScope || "all");
     return (scope === "inhouse" || scope === "outside") ? list.filter(v => groupOf(v) === scope) : list;
-  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, allInhouseVenueOrParentNames, isAdmin, userVenueScope]);
+    // ytLoading is listed because titlePending reads it — without it the flag would freeze at
+    // whatever loading state existed when this memo last rebuilt, which is the stale-closure version
+    // of the same bug.
+  }, [ytVideoTags, hiddenVideos, allVideos, calcFullEventCost, allInhouseVenueOrParentNames, isAdmin, userVenueScope, ytLoading]);
 
   // Same favourite-first ordering browseVideos applies, with none of the optional filters — the
   // list a search reads from (see Browse's shownVideos), so favourites still lead but nothing else
@@ -6030,11 +6066,20 @@ export default function StudioApp() {
       if (rowsForSnapshot.length) {
         (async () => {
           try {
-            // Delete first. Both can run in one save, and a delete landing after the upsert that
-            // replaced it would take the new rows out with the old.
-            for (const did of dropIds) {
-              await supabase.from("studio_sessions").delete().eq("session_id", did);
-            }
+            // ── DELETION DISABLED. DO NOT RE-ENABLE UNTIL THE COLLAPSE IS FIXED. ──
+            // A confirmed case of real work being destroyed: a client had a ₹4,50,865 build saved at
+            // 15:16; by 15:22 that session had been deleted and replaced by a ₹2,61,861 one — an
+            // autosave collapsed OVER newer work with an older build and then deleted the newer
+            // session's rows via `replacedId` below.
+            // The same path also enforces the ten-session cap (`prunedIds`), which only makes sense
+            // if those ten are ten distinct saves. They are not: consecutive auto-drafts are failing
+            // to collapse into one slot, so the ten fill with duplicates of one build and every save
+            // pushes a genuinely older save off the end and deletes it.
+            // Until that is understood, this writes and never deletes. Rows accumulate — untidy, and
+            // rowsToSessions caps the history at ten on read so the UI is unaffected — but no save
+            // can destroy another. Losing a salesperson's build is not a tidiness trade.
+            // dropIds is still computed above so the intended behaviour stays visible in the code.
+            void dropIds;
             const { error } = await supabase.from("studio_sessions")
               .upsert(rowsForSnapshot, { onConflict: "id" });
             if (error) throw error;
@@ -6502,9 +6547,12 @@ export default function StudioApp() {
             if (!g) { g = []; byClient.set(r.client_id, g); }
             g.push(r);
           }
+          // Same change as the mount path above — the table is authoritative, so no rows means no
+          // sessions. Left as the old conditional, this retry would have quietly resurrected a
+          // deleted session that the mount path had correctly dropped.
           for (const c of list) {
             const mine = byClient.get(c.id);
-            if (mine && mine.length) c.sessions = rowsToSessions(mine);
+            c.sessions = (mine && mine.length) ? rowsToSessions(mine) : [];
           }
         }
       } catch { /* table absent or unreadable — the blob history stands */ }
@@ -6713,9 +6761,19 @@ export default function StudioApp() {
     loadedClientIdentityRef.current = { name: client.name || "", phone: client.phone || "" };
     setLmsLeads([]);
     setLmsError(false);
-    const latestSession = (client.sessions && client.sessions.length > 0) ? client.sessions[0] : null;
+    // ── AN LMS LEAD WITH A BUILD OPENS ON THAT BUILD ──
+    // This used to land on Summary (step 3) with client.sessions[0]. Two problems with that pair.
+    // [0] is merely the NEWEST session, and auto-save mints one on a timer whether or not anything
+    // was built, so the newest is routinely an empty draft — Summary then read ₹0 for a deal that
+    // has a real estimate sitting one session further down. findLatestBuild walks to the first
+    // session that actually carries a build, which is what "restore last session" always meant.
+    // And Summary is the read-only end of the flow; someone opening a lead is coming back to WORK on
+    // it. Build is where that happens, and Summary stays one click along the step nav.
+    // Same helper the Event Info "Continue" button uses, so the two cannot answer differently.
+    const resumable = findLatestBuild(client.sessions, 0);
+    const latestSession = resumable ? resumable.session : null;
     if (latestSession) {
-      loadClientSession(client, latestSession, 3);
+      loadClientSession(client, latestSession, 2, { landingFnIdx: resumable.fnIdx });
       showMsg(existing?.status === "booked"
         ? `Loaded LMS lead #${lead.entryNo} — opened the existing BOOKED deal for this phone (₹${Math.round(latestSession.total || 0).toLocaleString("en-IN")} estimate)`
         : `Loaded LMS lead #${lead.entryNo} + restored last session`, "green");

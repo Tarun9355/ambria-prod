@@ -1,5 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy";
+// The SAME test the save path stamps `has_data` with. Asking the question a second way here is how
+// the card and the row drift apart, and a disagreement about "does this have a build" is what let an
+// empty auto-save erase a visible one once already.
+import { findLatestBuild, fnSnapHasBuild } from "../../../lib/studio/sessionData";
 import { IconClipboard, IconSliders } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
@@ -176,11 +180,11 @@ export default function StudioEventInfo({ ctx }) {
     venue, setVenue, fn, setFn,
     clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
-    clientVenueOther, setClientVenueOther, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
+    clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch,
-    activeClient, loadClientSession, startNewDeal, askConfirm,
+    activeClient, loadClientSession, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
     refreshLmsSync, lmsSyncing,
@@ -209,32 +213,127 @@ export default function StudioEventInfo({ ctx }) {
   // Typed/pasted input is normalised then hard-capped at 10.
   const onPhoneChange = (e) => setClientPhone(digits10(e.target.value).slice(0, 10));
 
+  // ── THE SAME DEAL IS NOT A SECOND DEAL ──
+  // Six clients for one guest were created inside six minutes on 26 Aug 2026 (same number, same
+  // venue, same 13 Nov date), each then carrying its own session history. The cause is right below:
+  // Continue mints a fresh CLI_ whenever no existing client is loaded, and nothing compared what was
+  // being typed against the ledger first. The suggestion block further down DOES find the match by
+  // name/phone — but it only offers "Load →", so pressing Continue past it created the duplicate
+  // anyway.
+  // Phone AND venue AND date together is the test: any one alone is far too broad (a repeat guest,
+  // a busy venue, a popular muhurat), while all three matching means this is the deal being
+  // re-entered, not a new one.
+  // Functions are searched, not just the top-level mirror — a wedding's Sangeet lives in
+  // `functions`, so a client whose Fn2 is this venue on this date is still this client.
+  const findDuplicateClient = () => {
+    const phone = digits10(phoneDigits);
+    if (phone.length !== 10) return null;   // nothing dependable to match on — let it through
+    const dateKey  = String(clientDate || "").trim();
+    const venueKey = String(venue || "").trim().toLowerCase();
+    if (!dateKey || !venueKey) return null;
+    return clientLedger.find((c) => {
+      if (!c || c.id === activeClientId) return false;   // the open deal is never its own duplicate
+      if (digits10(c.phone) !== phone) return false;
+      // Legacy clients predate `functions`; their single function is the top-level mirror.
+      const slots = (Array.isArray(c.functions) && c.functions.length)
+        ? c.functions
+        : [{ date: c.eventDate, venue: c.venue }];
+      return slots.some((f) => String(f?.date || "").trim() === dateKey
+        && String(f?.venue || "").trim().toLowerCase() === venueKey);
+    }) || null;
+  };
+
+  // Returns whether the client was saved, so the caller can hold the user on this step instead of
+  // advancing to Browse against a deal that was never written.
   const doSaveClient = () => {
-    if (!clientName.trim()) return;
-    let updated = [...clientLedger];
-    let client = updated.find(c => c.id === activeClientId);
-    if (!client) {
-      client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: phoneDigits, sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
-      updated.push(client);
-      setActiveClientId(client.id);
+    if (!clientName.trim()) return false;
+    // ── NO WRITING INTO STATE ──
+    // This used to do `[...clientLedger]` — a SHALLOW copy — then assign onto the client it found,
+    // which is the very object React is still holding in state. It worked only because
+    // saveClientLedger replaces the whole array afterwards, so a re-render happened anyway. Anything
+    // memoised on a client OBJECT rather than the array would never have seen the edit, and the
+    // mutation also silently backdated the dirty-check baseline for every reader in between.
+    // Rebuilt as a new object instead. The spread is what makes this safe to change: EVERY existing
+    // field rides across untouched — sessions, lmsLeadId/lmsDept/lmsStatus, status, bookedAt/bookedBy,
+    // finalSession, createdAt — and only the form's own fields below are overwritten. Nothing this
+    // screen does not own can be dropped by it.
+    const existing = clientLedger.find((c) => c && c.id === activeClientId) || null;
+    let base = existing;
+    if (!base) {
+      // Only on CREATE. Editing a loaded client into a collision is a judgement call a salesperson
+      // is entitled to make; minting a second copy of a deal that already exists is not.
+      const dupe = findDuplicateClient();
+      if (dupe) {
+        showMsg(`⚠ Duplicate — ${dupe.name || "this deal"} already has this venue on this date. Use Load →`, "red");
+        return false;
+      }
+      base = { id: "CLI_" + Date.now().toString(36), sessions: [], createdAt: Date.now(), status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null };
     }
-    client.name = clientName.trim();
-    client.phone = phoneDigits;
-    client.eventDate = clientDate;
-    client.venue = venue;
-    client.fn = fn;
-    client.shift = clientShift;
-    client.brideGroom = clientBrideGroom.trim();
-    client.pax = clientPax;
-    // Commit 2 — multi-function: persist full functions array on the client record.
-    // Function 1 mirrors the legacy top-level fields above; Functions 2+ come from extraFunctions.
-    client.functions = [
-      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax },
-      ...extraFunctions
-    ];
-    client.createdBy = client.createdBy || authUser?.name || "—";
-    client.lastContactAt = Date.now();
+    const client = {
+      ...base,
+      name: clientName.trim(),
+      phone: phoneDigits,
+      eventDate: clientDate,
+      venue,
+      fn,
+      shift: clientShift,
+      brideGroom: clientBrideGroom.trim(),
+      pax: clientPax,
+      // Commit 2 — multi-function: persist full functions array on the client record.
+      // Function 1 mirrors the legacy top-level fields above; Functions 2+ come from extraFunctions.
+      // `palette` included deliberately. This whole array is REPLACED here, and saveSession writes the
+      // same Function 1 shape WITH the palette on it — so leaving it out meant whichever of the two
+      // wrote last decided whether the palette survived. Pressing Continue dropped it, loadClientSession
+      // then read `f0?.palette || "Custom"` and Function 1 came back on Custom having been set to
+      // something else. Functions 2+ never had the problem: their palette rides inside extraFunctions.
+      functions: [
+        { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
+        ...extraFunctions
+      ],
+      createdBy: base.createdBy || authUser?.name || "—",
+      lastContactAt: Date.now(),
+    };
+    // Replace in place for an existing client — map keeps every other client's identity, so React
+    // re-renders only the one row that changed. Append for a new one, which is where it went before.
+    const updated = existing
+      ? clientLedger.map((c) => (c && c.id === client.id ? client : c))
+      : [...clientLedger, client];
+    if (!existing) setActiveClientId(client.id);
     saveClientLedger(updated.slice(0, 500));
+    return true;
+  };
+
+  // ── A DEAL THAT ALREADY HAS A BUILD RESUMES INTO IT, INSTEAD OF STARTING AT BROWSE ──
+  // Browse is where a build BEGINS — it is the step for choosing the reference video. A client who
+  // already has a build has done that, so landing them there asks them to pick a video they picked
+  // days ago, and puts the work they came back for two steps away.
+  // Newest first, and the first session that actually CARRIES a build wins. Sessions are stored
+  // newest-first, but the newest is frequently an empty auto-save — a tick fires on a timer whether
+  // or not anything was built — and an empty draft is not what anyone means by "where I left off".
+  // Returns null for a brand-new client (no sessions at all), so the Browse path below is untouched
+  // for a first-time deal. An LMS lead needs no separate handling: its client either has a build,
+  // and resuming into it is exactly the point, or it does not and Browse is still correct.
+  const findResumableBuild = () => {
+    // activeClient is ctx's own memo of exactly this lookup, so it is the same object Browse's
+    // session card renders from — using it keeps the two reading one source rather than two.
+    const c = activeClient || clientLedger.find((x) => x && x.id === activeClientId);
+    // TEMPORARY DIAGNOSTIC — remove once the resume path is confirmed working. Flat string on
+    // purpose: logged as an object, DevTools collapses it and truncates at "…", which is exactly the
+    // per-session detail needed to tell an empty history from an unreadable one.
+    const dbg = (c?.sessions || []).map((s, i) => {
+      const rows = Array.isArray(s?._fnRows) ? s._fnRows : [];
+      const snaps = (s?.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};
+      const built = Object.keys(snaps).filter((k) => fnSnapHasBuild(snaps[k]));
+      return `#${i}(${s?.id}) rows=${rows.length} hasData=${rows.filter((r) => r?.has_data).length}`
+        + ` snaps=[${Object.keys(snaps).join(",")}] built=[${built.join(",")}] flat=${fnSnapHasBuild(s)}`
+        + ` total=${s?.total ?? "-"}`;
+    }).join("  ||  ");
+    const hit = c ? findLatestBuild(c.sessions, activeFnIdx) : null;
+    console.info(`[ambria] resume? client=${activeClientId} found=${!!c} fnIdx=${activeFnIdx}`
+      + ` sessions=${c?.sessions?.length ?? "-"} result=${hit ? `${hit.session.id}@fn${hit.fnIdx}` : "NULL"}`
+      + `\n${dbg}`);
+    if (!c) return null;
+    return findLatestBuild(c.sessions, activeFnIdx);
   };
 
   // ═══ TEXT COLOURS ═══ (declared first — the presentation tokens below consume them)
@@ -450,7 +549,7 @@ export default function StudioEventInfo({ ctx }) {
    than the drift does. They sit under the cards, which keep their own shadows and stay legible.
    Spans the WHOLE split, not just the form column: the panel's curve cuts into its own column, and
    whatever it gives back has to be washed cream like the rest. Scoped to the form column it left a
-   hard vertical seam down the page at x=500 — washed on one side, bare root cream on the other. */
+   hard vertical seam down the page at x=500 — washed on one side, bare root cream on the other.
    Smudged, not stacked: the layer carries the page colour itself and the fields sit on it in
    mix-blend-mode:multiply, so where two overlap they mix into a deeper pigment the way wet media
    would, instead of reading as two separate lights laid over each other. The blend needs a real
@@ -1011,7 +1110,33 @@ export default function StudioEventInfo({ ctx }) {
     title={canContinue ? undefined : `Missing — ${missing.join(" · ")}`}
     onClick={()=>{
     if (!canContinue) return; // defensive — `disabled` already blocks this
-    doSaveClient();
+    // Stay put when the save was refused as a duplicate. Advancing anyway would drop the user into
+    // Browse with no client behind the build — the exact silent-skip this gate was added to stop.
+    if (!doSaveClient()) return;
+    // Straight back into the existing build when there is one. resumeSavedSession is the SAME call
+    // Browse's own "Resume build →" makes, so this is a path already in daily use, not a new one —
+    // and unlike loadClientSession it restores only the build, leaving the details just typed on this
+    // screen exactly as they are. (loadClientSession re-applies the SESSION's own eventDate/venue/fn,
+    // which here would silently undo the edit that was being saved a line above.)
+    const resumable = findResumableBuild();
+    // Seed the Browse filters on BOTH paths, before the branch. Resuming lands on Build, but Browse
+    // is still one click away on the step nav, and leaving it unseeded there would show the whole
+    // 208-video library unfiltered on a deal whose venue and function are both known.
+    const startType = String(fn || "").trim();
+    const startVenue = String(venue || "").trim();
+    setFilterFn(startType ? [startType] : []);
+    if (startVenue && startVenue !== "Others") {
+      setBrowseVenues([startVenue]);
+      if (allInhouseVenues.includes(startVenue)) setVenueGroup("inhouse");
+      else if (allOutdoorDB.some(o => o.name === startVenue)) setVenueGroup("outside");
+      else setVenueGroup("all");
+    } else {
+      setBrowseVenues([]);
+    }
+    // resumeSavedSession sets the active function itself (to the one holding the build) and steps to
+    // Build, so the switchActiveFn(0) below must NOT run on this path — it would snapshot and flip
+    // to Function 1 underneath the restore.
+    if (resumable) { resumeSavedSession(resumable.session, resumable.fnIdx); return; }
     // Commit 3 hotfix — pre-seed Browse from Function 1 (the default active pill) only.
     // Previous Commit 2 polish pre-seeded ALL functions; that contradicts the new pill-is-write-target policy.
     // The sync useEffect handles subsequent pill switches.
@@ -1024,17 +1149,6 @@ export default function StudioEventInfo({ ctx }) {
     // build with it. switchActiveFn snapshots the current function's live state into fnBuilds first
     // and restores Function 1's own build before flipping the index, exactly like clicking its pill.
     if (activeFnIdx !== 0) switchActiveFn(0); else setActiveFnIdx(0);
-    const startType = String(fn || "").trim();
-    const startVenue = String(venue || "").trim();
-    setFilterFn(startType ? [startType] : []);
-    if (startVenue && startVenue !== "Others") {
-      setBrowseVenues([startVenue]);
-      if (allInhouseVenues.includes(startVenue)) setVenueGroup("inhouse");
-      else if (allOutdoorDB.some(o => o.name === startVenue)) setVenueGroup("outside");
-      else setVenueGroup("all");
-    } else {
-      setBrowseVenues([]);
-    }
     setStep(1);
   }} style={{fontSize:13.5,fontWeight:600,padding:"13px 30px",borderRadius:12,letterSpacing:0.2,whiteSpace:"nowrap",cursor:"pointer",
     // Ink fill with gold on it, the same pairing as the heading bars — S.btn's flat gold gradient
@@ -1285,7 +1399,33 @@ export default function StudioEventInfo({ ctx }) {
                   });
                   const matchesAfterRepFilter = showAllReps ? matchesBeforeRepFilter : matchesBeforeRepFilter.filter(c => mine(c.createdBy));
                   const hiddenClientCount = matchesBeforeRepFilter.length - matchesAfterRepFilter.length;
-                  const matches = matchesAfterRepFilter.slice(0, 5);
+                  // ── ONE ROW PER CLIENT, THE ONE THAT WAS WORKED ON LAST ──
+                  // The ledger can hold several records for the same guest — duplicates minted before
+                  // the Continue guard existed, which is why "Test 2 · 8800485327" listed twice with
+                  // ten sessions each. Listing them all asks the salesperson to guess which copy holds
+                  // the real work, and picking the wrong one starts a second history on a deal that
+                  // already has one. Same name and same number is the same person, so one row, and the
+                  // row is whichever record was touched most recently.
+                  // Display only. Nothing is deleted or merged here — every record is still in the
+                  // ledger and still loadable; the other copies simply stop competing for the click.
+                  // Newest by ACTUAL work, not by createdAt: a duplicate created later can easily be
+                  // the abandoned one, while the record people kept using is older.
+                  const clientKey = (c) => `${String(c?.name || "").trim().toLowerCase()}|${digits10(c?.phone)}`;
+                  const lastTouch = (c) => Math.max(
+                    Number(c?.sessions?.[0]?.savedAt) || 0,
+                    Number(c?.lastSavedAt) || 0,
+                    Number(c?.lastContactAt) || 0,
+                    Number(c?.createdAt) || 0,
+                  );
+                  const bestPerClient = new Map();
+                  for (const c of matchesAfterRepFilter) {
+                    const k = clientKey(c);
+                    const held = bestPerClient.get(k);
+                    if (!held || lastTouch(c) > lastTouch(held)) bestPerClient.set(k, c);
+                  }
+                  // Map keeps insertion order and a replacement keeps the original slot, so the list
+                  // stays in the order it was already in — only the extra copies drop out.
+                  const matches = Array.from(bestPerClient.values()).slice(0, 5);
                   if (!lmsBlock && matches.length === 0) {
                     // Everything found belongs to other salespeople — say so specifically (rather than
                     // "no matches", which would send someone covering a colleague's meeting hunting for a
