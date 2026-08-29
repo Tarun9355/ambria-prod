@@ -461,6 +461,15 @@ export default function DCFloralsTab({ ctx }) {
                   const totalArtKg = Math.round(((_artBunchesF / _bpkF) + (_artBunchesG / _bpkG)) * 100) / 100;
                   const fnArtAlloc = dcArtFlowerAlloc[fnIdx] || [];
                   const fnArtAllocTotal = fnArtAlloc.reduce((s, a) => s + (Number(a.qty) || 0), 0);
+                  // ── WHEN THE TWO COLLAPSIBLE BARS LINE UP ──
+                  // Only when BOTH are folded. Bottom-anchoring them unconditionally lined the bars up
+                  // beautifully while both were shut and looked broken the moment one opened: the tall
+                  // column stretched its neighbour, whose bar then hung at the foot of a column that
+                  // was mostly empty air. Folded, there is nothing below them to hold up, so dropping
+                  // them to the foot costs nothing and buys the alignment.
+                  const mandiListKey = `mandiList:${fnIdx}`;
+                  const elementListKey = `elementList:${fnIdx}`;
+                  const bothFolded = dcFloralCalcOpen[mandiListKey] === false && dcFloralCalcOpen[elementListKey] === false;
                   return (
                     // The artwork sits in a layer of its OWN rather than as a background on this
                     // column, for two reasons: a background-image on a container as tall as a
@@ -624,7 +633,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
-                        <div className="dcf-card" style={{marginTop:"auto",padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
+                        <div className="dcf-card" style={{marginTop:bothFolded?"auto":0,padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
                           {/* ── COLLAPSIBLE ──
                               Eight flowers is a long block to scroll past when all you want is the
                               figure, so the header carries the Real Total and the list folds away
@@ -957,7 +966,7 @@ export default function DCFloralsTab({ ctx }) {
                           g.entries.push({ ...eb, _origIdx: ebi });
                         });
                         return (
-                      <div className="dcf-card" style={{marginTop:"auto",padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
+                      <div className="dcf-card" style={{marginTop:bothFolded?"auto":0,padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
                         {/* Folds behind its total, same as the mandi list. The figure on the header is
                             grandTotal — real plus artificial — because that is what this table's own
                             Total column adds up to, and a header showing a different number from the
