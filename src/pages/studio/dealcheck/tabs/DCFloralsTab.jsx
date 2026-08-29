@@ -506,8 +506,18 @@ export default function DCFloralsTab({ ctx }) {
                           tablets, and inline styles cannot carry a media query. Wrapping gives the
                           same stacked layout below ~900px for free — the right column simply drops
                           under the left instead of crushing the table into an unreadable width. */}
-                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14}}>
-                        <div style={{flex:"1 1 560px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
+                      {/* CAPPED, AND CENTRED. On a 1920 screen this tab had the full width of the
+                          overlay to fill and filled it: the summary card stretched until its pill was
+                          stranded a hand's width from the figures it describes, the note became a
+                          very wide, very short letterbox, and the mandi table pushed Qty/Rate/Total so
+                          far apart that reading across a row took real effort. None of this content
+                          wants that much width — a table of eight flowers and a two-line note do not
+                          get better past about 900px, they just get harder to scan.
+                          The cap is on the ROW, so the two columns tighten together and stay a pair,
+                          rather than the left one narrowing and leaving a hole beside it. */}
+                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14,
+                        maxWidth:1340,margin:"0 auto"}}>
+                        <div style={{flex:"1 1 520px",minWidth:0,maxWidth:900,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary
                           The function name and date as an eyebrow, the total as the one large figure,
                           the real/artificial split as dotted legend entries, and the percentage as a
@@ -729,7 +739,9 @@ export default function DCFloralsTab({ ctx }) {
                         </div>
                       )}
                         </div>{/* ── left column ends ── */}
-                        <div style={{flex:"1 1 300px",minWidth:0,maxWidth:400,display:"flex",flexDirection:"column",gap:14}}>
+                        {/* 0 1 400px — takes its 400 and does not grow into leftover space. With the
+                            row capped, growing here would only reopen the gap the cap just closed. */}
+                        <div style={{flex:"0 1 400px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Artificial cost summary — Tier 1.9 bunch model */}
                       {(() => {
                         const totalArtBunchesFlower = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
