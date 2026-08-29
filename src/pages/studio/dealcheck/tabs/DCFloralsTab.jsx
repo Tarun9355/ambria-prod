@@ -523,7 +523,13 @@ export default function DCFloralsTab({ ctx }) {
                           no band of ground left over on either side. The left column keeps its own
                           900 cap, which is what actually stops the mandi table from over-stretching —
                           that was always the column's job, not the row's. */}
-                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14}}>
+                      {/* stretch, not flex-start: it makes both columns the same height, which is what
+                          lets the two collapsible bars — each pushed to the foot of its own column
+                          with marginTop:auto — sit on one line however much content is above them.
+                          Aligning them any other way would mean matching the height of the summary
+                          plus the note against the height of the artificial card, which no amount of
+                          padding will do reliably. */}
+                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"stretch",gap:14}}>
                         <div style={{flex:"1 1 520px",minWidth:0,maxWidth:900,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary
                           The function name and date as an eyebrow, the total as the one large figure,
@@ -618,7 +624,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
-                        <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
+                        <div className="dcf-card" style={{marginTop:"auto",padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
                           {/* ── COLLAPSIBLE ──
                               Eight flowers is a long block to scroll past when all you want is the
                               figure, so the header carries the Real Total and the list folds away
@@ -951,7 +957,7 @@ export default function DCFloralsTab({ ctx }) {
                           g.entries.push({ ...eb, _origIdx: ebi });
                         });
                         return (
-                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
+                      <div className="dcf-card" style={{marginTop:"auto",padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
                         {/* Folds behind its total, same as the mandi list. The figure on the header is
                             grandTotal — real plus artificial — because that is what this table's own
                             Total column adds up to, and a header showing a different number from the
