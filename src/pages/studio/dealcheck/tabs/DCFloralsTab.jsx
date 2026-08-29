@@ -517,11 +517,13 @@ export default function DCFloralsTab({ ctx }) {
                           rather than the left one narrowing and leaving a hole beside it. */}
                       {/* Left-aligned, not centred. Centring split the leftover width into two margins
                           and pushed the whole tab inward, so the cards floated in the middle of the
-                          ground with a band of artwork down each side. Anchored left, the content
-                          starts where every other tab's content starts and the leftover collects on
-                          one side instead of being shared out. */}
-                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14,
-                        maxWidth:1340}}>
+                          ground with a band of artwork down each side.
+                          No cap on the row any more either: the leftover it used to hold back is now
+                          taken by the right column below, so the pair runs edge to edge and there is
+                          no band of ground left over on either side. The left column keeps its own
+                          900 cap, which is what actually stops the mandi table from over-stretching —
+                          that was always the column's job, not the row's. */}
+                      <div style={{position:"relative",zIndex:1,display:"flex",flexWrap:"wrap",alignItems:"flex-start",gap:14}}>
                         <div style={{flex:"1 1 520px",minWidth:0,maxWidth:900,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Header summary
                           The function name and date as an eyebrow, the total as the one large figure,
@@ -744,13 +746,14 @@ export default function DCFloralsTab({ ctx }) {
                         </div>
                       )}
                         </div>{/* ── left column ends ── */}
-                        {/* 500, not 400. The per-element table carries six columns — Element, Qty,
-                            Real %, Real ₹, Artif ₹, Total — and at 400 the headers wrapped onto two
-                            lines each ("Real / %"), which cost more height than the extra width does
-                            and made a six-column table hard to read across.
-                            Fixed rather than growing (0 1, not 1 1): with the row capped, letting this
-                            grow would reopen the gap the cap closed. */}
-                        <div style={{flex:"0 1 500px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
+                        {/* GROWS, and takes everything the left column does not. 500 is the floor, not
+                            the width: the left column stops at 900, so whatever the screen has beyond
+                            that lands here and these cards run out to the right edge instead of
+                            leaving a strip of bare ground beside them.
+                            It earns the room — the per-element table carries six columns (Element,
+                            Qty, Real %, Real ₹, Artif ₹, Total) and at 400 every header wrapped onto
+                            two lines, which cost more height than the width was worth. */}
+                        <div style={{flex:"1 1 500px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Artificial cost summary — Tier 1.9 bunch model */}
                       {(() => {
                         const totalArtBunchesFlower = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
