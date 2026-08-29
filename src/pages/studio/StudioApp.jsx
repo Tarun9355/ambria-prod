@@ -6599,8 +6599,15 @@ export default function StudioApp() {
     return () => clearTimeout(t);
   }, [ledgerLoadError, clientLedger.length, retryLedgerLoad]);
 
+  // ── setFilterMood / setFilterPalette ARE NOT setSelectedMoods / setSelectedPalettes ── (BUG-20)
+  // Two similarly named pairs, and this reset cleared only the wrong one. selectedMoods/
+  // selectedPalettes belong to the BUILD; filterMood/filterPalette are what Browse's Design Style and
+  // Palette rail sections actually read (declared ~1329, applied to the video list ~5683/5686). So
+  // every Start New carried the previous client's Design Style and Palette into the next deal — chips
+  // showing as selected and the grid quietly narrowed for a client nobody had set them on. The other
+  // four filters here (cat/fn/space/venue) were always cleared, which is what made it look handled.
   const startNewDeal = useCallback(() => {
-    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");
+    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");
     loadedClientIdentityRef.current = { name: "", phone: "" };
   }, [userVenueScope]);
 
