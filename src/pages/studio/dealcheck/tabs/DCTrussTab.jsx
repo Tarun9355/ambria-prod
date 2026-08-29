@@ -45,20 +45,25 @@ export default function DCTrussTab({ ctx }) {
                     return Object.keys(zc).filter(zk => en[zk] && zc[zk]);
                   };
 
-                  // §23 Phase 3 — resolve reservation state for THIS client across all fn dates.
+                  // §23 Phase 3 — resolve reservation state for THIS client on the SELECTED fn date.
                   // States we render:
                   //   "free"        — no entry yet, will be created on next Generate
                   //   "soft-own"    — my soft hold present, expires at X
                   //   "soft-other"  — someone else's soft hold (read indicator only)
                   //   "hard"        — locked permanent block (post-SOLD)
                   //   "hard-amend"  — SOLD event being edited; diff vs current allocation
+                  // Active fn only. Every other section of this tab is already scoped to the
+                  // selected function (zone cards, cost total), so listing all three dates here
+                  // put two cards on screen that said nothing about the fn you had open, and the
+                  // Generate button they talk about only ever acts on the selected one.
                   const currentClientId = activeClientId || "";
                   const currentSalesperson = (typeof authUser !== "undefined" ? authUser?.name : "") || "—";
                   const reservationByDate = {};
                   const heldByOthersByDate = {};
-                  fns.forEach(fn => {
-                    const d = fn?.fnDate || clientDate || "";
-                    if (!d || reservationByDate[d]) return;
+                  const activeFnForRes = fns[activeFnIdx || 0] || fns[0];
+                  const activeResDate = activeFnForRes?.fnDate || clientDate || "";
+                  if (activeResDate) {
+                    const d = activeResDate;
                     const events = trussAlloc?.[d]?.events || [];
                     const ownEntry = events.find(ev => ev.clientId === currentClientId);
                     if (ownEntry) {
@@ -73,7 +78,7 @@ export default function DCTrussTab({ ctx }) {
                     // Always collect held-by-others for visibility
                     const others = events.filter(ev => ev.clientId !== currentClientId);
                     if (others.length > 0) heldByOthersByDate[d] = others;
-                  });
+                  }
 
                   // Tally totals across all fns
                   let grandActual = 0, grandU = 0, grandBox = 0, grandPillarRft = 0, grandBeamRft = 0, grandBattaRft = 0, anyShortage = false, anyDefault = false;
