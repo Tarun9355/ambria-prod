@@ -641,7 +641,10 @@ export default function DCFloralsTab({ ctx }) {
                                 title={listOpen ? "Hide the flower list" : "Show the flower list"}
                                 style={{width:"100%",display:"flex",alignItems:"center",gap:8,marginBottom:listOpen?10:0,
                                   padding:0,border:"none",background:"transparent",cursor:"pointer",textAlign:"left",font:"inherit"}}>
-                                <span style={{fontSize:10,color:"#10B981",display:"inline-block",flexShrink:0,
+                                {/* 14, not 10. At 10 the chevron was the smallest thing on the tab and
+                                    the only affordance saying the header is pressable — a control has
+                                    to be visible before it can be found. */}
+                                <span style={{fontSize:14,lineHeight:1,color:"#10B981",display:"inline-block",flexShrink:0,
                                   transform:listOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>▸</span>
                                 <span style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase"}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</span>
                                 <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</span>
