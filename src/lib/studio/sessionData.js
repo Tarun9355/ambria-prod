@@ -200,6 +200,16 @@ export function sessionToRows(clientId, s) {
   return idxs.map((i) => {
     const build = snaps[i] || snaps[String(i)] || null;
     const b = build || s;
+    // Production/Buying custom items (dcCustomItems in StudioApp.jsx) are a FLAT array across every
+    // function, disambiguated by their own `.fnIdx` — not part of any function's own snapshot, and
+    // there is no column for them on this table. Filtering to this row's function and folding them
+    // into the (already-JSONB) `build` blob is what makes them survive the row-per-function split;
+    // rowsToSessions reverses this by concatenating every row's `build.customItems` back into one
+    // flat array. Before this, a custom item added in Build vanished on the next reload — it was
+    // captured in the session-level `customItems` field saveSession writes, but that field had
+    // nowhere to go once sessions moved from one client_ledger blob into these per-function rows.
+    const rowCustomItems = (Array.isArray(s.customItems) ? s.customItems : []).filter((c) => c && Number(c.fnIdx) === i);
+    const buildOut = rowCustomItems.length ? { ...(build || {}), customItems: rowCustomItems } : build;
     const isActive = keys.length ? s.savedActiveFnIdx === i : true;
     // BUILT on, not merely referenced from. A picked video rides along to every function, so the
     // looser test marked all of them as holding a build and one build showed up on every pill.
@@ -231,7 +241,7 @@ export function sessionToRows(clientId, s) {
       tier: ownTotal != null ? (own.tier || null) : (built && isActive ? (s.tier || null) : null),
       decor_total: isActive && s.decorTotal != null ? Number(s.decorTotal) : null,
       transport_total: isActive && s.transportTotal != null ? Number(s.transportTotal) : null,
-      build: build || null,
+      build: buildOut || null,
     };
   });
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -152,5 +152,42 @@ describe("findLatestBuild", () => {
   it("does not count a reference video on its own as a build", () => {
     // fnSnapHasBuild deliberately excludes the video: it rides along to every function.
     expect(findLatestBuild([{ id: "s1", fnSnapshots: { 0: { sourceVideo: { id: "v1" } } } }])).toBe(null);
+  });
+});
+
+// The disappearing-custom-item bug: dcCustomItems is one FLAT array across every function
+// (disambiguated by its own .fnIdx), but studio_sessions stores one row PER function with no column
+// of its own for it — so it has to ride inside each row's `build` blob, filtered to that row's
+// function, or it has nowhere to be written at all and is silently dropped on the next reload.
+describe("sessionToRows — custom items", () => {
+  const item = (fnIdx, id) => ({ id, fnIdx, type: "production", qty: 1, finalPrice: 7000 });
+
+  it("puts each custom item on its own function's row, not every row", () => {
+    const s = { id: "SES_1", savedAt: 1, fnSnapshots: { 0: withZones, 1: withZones }, customItems: [item(0, "a"), item(1, "b")] };
+    const rows = sessionToRows("client_1", s);
+    const row0 = rows.find((r) => r.fn_idx === 0);
+    const row1 = rows.find((r) => r.fn_idx === 1);
+    expect(row0.build.customItems).toEqual([item(0, "a")]);
+    expect(row1.build.customItems).toEqual([item(1, "b")]);
+  });
+
+  it("leaves a row's build untouched when that function has no custom items", () => {
+    const s = { id: "SES_1", savedAt: 1, fnSnapshots: { 0: withZones }, customItems: [] };
+    const rows = sessionToRows("client_1", s);
+    expect(rows[0].build).toEqual(withZones);
+  });
+
+  it("still writes a build row for a function with a custom item but no snapshot of its own", () => {
+    const s = { id: "SES_1", savedAt: 1, fnSnapshots: { 0: withZones }, customItems: [item(0, "a")] };
+    const rows = sessionToRows("client_1", s);
+    expect(rows[0].build.customItems).toEqual([item(0, "a")]);
+    // The function's real build content is still there alongside it, not replaced.
+    expect(rows[0].build.zoneElements).toEqual(withZones.zoneElements);
+  });
+
+  it("does not choke on a session with no customItems field at all (pre-fix sessions)", () => {
+    const s = { id: "SES_1", savedAt: 1, fnSnapshots: { 0: withZones } };
+    expect(() => sessionToRows("client_1", s)).not.toThrow();
+    expect(sessionToRows("client_1", s)[0].build).toEqual(withZones);
   });
 });

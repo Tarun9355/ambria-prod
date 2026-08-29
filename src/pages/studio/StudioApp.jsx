@@ -1099,13 +1099,22 @@ function rowsToSessions(rows) {
     const active = group.find((r) => r.is_active_fn) || group[0];
     const fnSnapshots = {};
     const fnTotals = {};
+    // Production/Buying custom items — see sessionToRows in lib/studio/sessionData.js for why they
+    // ride inside each row's own `build.customItems` (filtered to that function) rather than a
+    // column of their own. Reassembled here into the one flat, all-functions array the rest of the
+    // app (dcCustomItems) has always expected.
+    const customItems = [];
     for (const r of group) {
-      if (r.build && typeof r.build === "object") fnSnapshots[r.fn_idx] = r.build;
+      if (r.build && typeof r.build === "object") {
+        fnSnapshots[r.fn_idx] = r.build;
+        if (Array.isArray(r.build.customItems)) customItems.push(...r.build.customItems);
+      }
       if (r.total != null && Number(r.total) > 0) fnTotals[r.fn_idx] = { total: Number(r.total), tier: r.tier || "" };
     }
     const base = (active.build && typeof active.build === "object") ? active.build : {};
     out.push({
       ...base,
+      customItems,
       id: sid,
       savedAt: Number(active.saved_at) || 0,
       savedBy: active.saved_by || "—",
@@ -4609,7 +4618,17 @@ export default function StudioApp() {
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     // Every function's own date, not just the active one — see calcFunctionCost's matching comment.
     const fBlocksForDate = blocksByDate[fnData.fnDate];
-    const zones = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
+    // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
+    // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
+    // for THIS deal, not the admin's current order, and an old deal's order can predate a later
+    // reorder. A key not found in zoneKeys/customZones (deleted/renamed since) still sorts in, just
+    // at the end, so nothing that used to appear here can disappear — only the order changes.
+    const zoneOrderIndex = {};
+    zoneKeys.forEach((zk, i) => { zoneOrderIndex[zk] = i; });
+    fCustomZones.forEach((cz, i) => { zoneOrderIndex[cz.id] = zoneKeys.length + i; });
+    const orderedZoneKeys = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => k)
+      .sort((a, b) => (zoneOrderIndex[a] ?? Infinity) - (zoneOrderIndex[b] ?? Infinity));
+    const zones = orderedZoneKeys.map((k) => {
       // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
       // custom zone names showing blank in Summary's accordion and the PDF/PPT export.
       const customZoneMatch = fCustomZones.find(cz => cz.id === k);
@@ -4700,7 +4719,7 @@ export default function StudioApp() {
         gensetCost: plan.gensetCost, gensetRate, gensetRate62, truckTotal };
     }
     return { zones, transport, decorTotal, transportTotal, grand: decorTotal + transportTotal };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData]);
 
   const cat = getCat(grandTotal);
 
@@ -7671,7 +7690,21 @@ export default function StudioApp() {
     const fElTiers = fnData.elTiers || {};
     const fFloralRatio = typeof fnData.floralRatio === "number" ? fnData.floralRatio : 70;
     const fVenue = fnData.fnVenue || "";
-    return Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => {
+    // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys, same order
+    // Build's own zone list renders in — see StudioBuild.jsx's `[...zoneKeys, ...customZones]`),
+    // not by Object.entries' insertion order. enabledEls is a per-deal record that gained its keys
+    // in whatever order each zone was first toggled on for THIS deal, which is unrelated to — and
+    // for an old deal, can predate — a later reorder in Settings. This exports/cost-sheets a zone
+    // list that used to silently follow that old per-deal order instead of the admin's current one.
+    // A zone key not found in either list (deleted/renamed since, or from data older than Zone
+    // Types existed) still gets included — just sorted to the end — so nothing that used to appear
+    // in the export can disappear from it; only the ORDER changes.
+    const zoneOrderIndex = {};
+    zoneKeys.forEach((zk, i) => { zoneOrderIndex[zk] = i; });
+    fCustomZones.forEach((cz, i) => { zoneOrderIndex[cz.id] = zoneKeys.length + i; });
+    const orderedZoneKeys = Object.entries(fEnabledEls).filter(([_, on]) => on).map(([k]) => k)
+      .sort((a, b) => (zoneOrderIndex[a] ?? Infinity) - (zoneOrderIndex[b] ?? Infinity));
+    return orderedZoneKeys.map((k) => {
       // Custom zones carry their name in `.name`, not `.label` — using the raw match here left
       // custom zone names showing blank in the PDF/PPT export.
       const customZoneMatch = fCustomZones.find(cz => cz.id === k);
@@ -7806,7 +7839,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
@@ -8876,7 +8909,17 @@ export default function StudioApp() {
   // moment you leave (Continue to Browse, or any other step), same as every step keeps the full
   // header except this one. Held back while `restoring`, because a refresh sits on step 0 for a
   // beat before snapping to the real step — hiding the bar then would read as a flash.
-  const bareEventInfo = mode === "studio" && step === 0 && !restoring;
+  // Also held back while Deal Check is open (dcFullPageOpen): it's an overlay, not gated by `step`,
+  // so it can still be mounted after navigating the page underneath it back to step 0 without
+  // closing it first. DealCheckOverlay measures `.sa-header` once on mount (its own `navH` effect)
+  // and never re-queries it — letting the header unmount out from under an already-open Deal Check
+  // put that effect's assumptions and Event Info's own per-render header-height remeasurement (see
+  // eiHdrH in StudioEventInfo.jsx) at odds with each other, and one of that pair went into a render
+  // loop (React error #185, "Maximum update depth exceeded") the moment that combination became
+  // reachable. Before this Deal Check (which requires activeClientId) and bareEventInfo used to be
+  // mutually exclusive, so this state never actually occurred until Event Info stopped requiring
+  // `!activeClientId` — restoring the mutual exclusion here is the fix, not reverting that behavior.
+  const bareEventInfo = mode === "studio" && step === 0 && !restoring && !dcFullPageOpen;
   const accent = "#C9A96E";
   const border = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const textS = isDark ? "#6B7280" : "#8b8fa3";
