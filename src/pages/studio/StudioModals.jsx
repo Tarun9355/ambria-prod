@@ -264,7 +264,14 @@ export default function StudioModals({ ctx }) {
               <div style={{fontSize:11,color:"#9CA3AF"}}>{videoModal.venue} · {videoModal.fn}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-              <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(getFullCost(videoModal))}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,background:getCat(getFullCost(videoModal)).bg,color:getCat(getFullCost(videoModal)).color,fontWeight:600}}>{getCat(getFullCost(videoModal)).label}</span></div>
+              {/* PRICE + TIER — HIDDEN FOR NOW, on the owner's instruction.
+                  The tier chip goes with the price rather than staying behind, because it is the
+                  same number in another form: getCat() buckets the very same getFullCost(), and
+                  getCat(0) returns "Silver" — so a video costing ₹0 was being labelled Silver.
+                  Leaving the chip would have kept publishing that figure with the number that
+                  explains it removed.
+                  <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(getFullCost(videoModal))}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,background:getCat(getFullCost(videoModal)).bg,color:getCat(getFullCost(videoModal)).color,fontWeight:600}}>{getCat(getFullCost(videoModal)).label}</span></div>
+              */}
               <button onClick={()=>{guardedPickAndLoad(videoModal,1,videoModal.video);}} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#C9A96E",color:"#0a0a14",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{"🎨"} Customize</button>
               {/* EXACT LOOK — HIDDEN FOR NOW, on the owner's instruction. Customize is the only way
                   into a build from this popup while this stands.
