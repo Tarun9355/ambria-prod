@@ -739,9 +739,13 @@ export default function DCFloralsTab({ ctx }) {
                         </div>
                       )}
                         </div>{/* ── left column ends ── */}
-                        {/* 0 1 400px — takes its 400 and does not grow into leftover space. With the
-                            row capped, growing here would only reopen the gap the cap just closed. */}
-                        <div style={{flex:"0 1 400px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
+                        {/* 500, not 400. The per-element table carries six columns — Element, Qty,
+                            Real %, Real ₹, Artif ₹, Total — and at 400 the headers wrapped onto two
+                            lines each ("Real / %"), which cost more height than the extra width does
+                            and made a six-column table hard to read across.
+                            Fixed rather than growing (0 1, not 1 1): with the row capped, letting this
+                            grow would reopen the gap the cap closed. */}
+                        <div style={{flex:"0 1 500px",minWidth:0,display:"flex",flexDirection:"column",gap:14}}>
                       {/* Artificial cost summary — Tier 1.9 bunch model */}
                       {(() => {
                         const totalArtBunchesFlower = elementBreakdown.reduce((s,e)=>s+(e.artBunchesFlower||0),0);
