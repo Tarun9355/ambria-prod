@@ -535,7 +535,7 @@ export default function DCFloralsTab({ ctx }) {
                           blend this deal happens to use.
                           EVERY VALUE IS THE ONE THAT WAS ALWAYS HERE — grandTotal, totalReal,
                           totalArtificial, overallRealPct. This is paint, not arithmetic. */}
-                      <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
+                      <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(236,72,153,0.30)`,boxShadow:"0 1px 2px rgba(236,72,153,0.05), 0 12px 26px -12px rgba(236,72,153,0.35)"}}>
                         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
                           {/* Icon tile — the reference leads with one, and it gives the eyebrow and the
                               figure a left edge to sit against instead of floating on the card. */}
@@ -618,7 +618,7 @@ export default function DCFloralsTab({ ctx }) {
                       </div>
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
-                        <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
+                        <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
                           {/* ── COLLAPSIBLE ──
                               Eight flowers is a long block to scroll past when all you want is the
                               figure, so the header carries the Real Total and the list folds away
@@ -911,7 +911,7 @@ export default function DCFloralsTab({ ctx }) {
                           mandi list or the real/artificial split. Shown so the count above cannot
                           quietly disagree with the build. */}
                       {uncosted.length > 0 && (
-                        <div className="dcf-card" style={{marginTop:14,padding:"12px 14px",borderRadius:14,border:"1px solid rgba(245,158,11,0.35)",background:"#FFFFFF",boxShadow:"0 1px 2px rgba(245,158,11,0.06), 0 12px 26px -12px rgba(245,158,11,0.4)"}}>
+                        <div className="dcf-card" style={{marginTop:14,padding:"14px 16px",borderRadius:14,border:"1px solid rgba(245,158,11,0.35)",background:"#FFFFFF",boxShadow:"0 1px 2px rgba(245,158,11,0.06), 0 12px 26px -12px rgba(245,158,11,0.4)"}}>
                           <div style={{fontSize:13,fontWeight:700,color:"#F59E0B",marginBottom:6}}>
                             ⚠ {uncosted.length} element{uncosted.length===1?"":"s"} not costed as florals
                           </div>
@@ -964,7 +964,7 @@ export default function DCFloralsTab({ ctx }) {
                               onClick={() => setDcFloralCalcOpen(p => ({ ...p, [elKey]: !elOpen }))}
                               aria-expanded={elOpen}
                               title={elOpen ? "Hide the element breakdown" : "Show the element breakdown"}
-                              style={{width:"100%",display:"flex",alignItems:"center",gap:8,marginBottom:elOpen?8:0,
+                              style={{width:"100%",display:"flex",alignItems:"center",gap:8,marginBottom:elOpen?10:0,
                                 padding:0,border:"none",background:"transparent",cursor:"pointer",textAlign:"left",font:"inherit"}}>
                               <span style={{fontSize:14,lineHeight:1,color:"#1A1A2E",display:"inline-block",flexShrink:0,
                                 transform:elOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>▸</span>
