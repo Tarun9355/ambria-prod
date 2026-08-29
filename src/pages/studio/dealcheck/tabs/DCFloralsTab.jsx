@@ -952,7 +952,28 @@ export default function DCFloralsTab({ ctx }) {
                         });
                         return (
                       <div className="dcf-card" style={{padding:"14px 16px",borderRadius:14,background:"#FFFFFF",border:`1px solid ${border}`,boxShadow:"0 1px 2px rgba(26,26,46,0.04), 0 12px 26px -12px rgba(26,26,46,0.30)"}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase",marginBottom:8}}>📋 Per-Element Breakdown ({merged.length} element{merged.length===1?"":"s"}{merged.length !== elementBreakdown.length ? ` · ${elementBreakdown.length} rows` : ""})</div>
+                        {/* Folds behind its total, same as the mandi list. The figure on the header is
+                            grandTotal — real plus artificial — because that is what this table's own
+                            Total column adds up to, and a header showing a different number from the
+                            rows it hides would be worse than showing none. */}
+                        {(() => {
+                          const elKey = `elementList:${fnIdx}`;
+                          const elOpen = dcFloralCalcOpen[elKey] !== false;
+                          return (
+                            <button type="button" className="dcf-btn"
+                              onClick={() => setDcFloralCalcOpen(p => ({ ...p, [elKey]: !elOpen }))}
+                              aria-expanded={elOpen}
+                              title={elOpen ? "Hide the element breakdown" : "Show the element breakdown"}
+                              style={{width:"100%",display:"flex",alignItems:"center",gap:8,marginBottom:elOpen?8:0,
+                                padding:0,border:"none",background:"transparent",cursor:"pointer",textAlign:"left",font:"inherit"}}>
+                              <span style={{fontSize:14,lineHeight:1,color:"#1A1A2E",display:"inline-block",flexShrink:0,
+                                transform:elOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>▸</span>
+                              <span style={{fontSize:13,fontWeight:700,color:"#1A1A2E",letterSpacing:0.6,textTransform:"uppercase"}}>📋 Per-Element Breakdown ({merged.length} element{merged.length===1?"":"s"}{merged.length !== elementBreakdown.length ? ` · ${elementBreakdown.length} rows` : ""})</span>
+                              <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(grandTotal).toLocaleString("en-IN")}</span>
+                            </button>
+                          );
+                        })()}
+                        {dcFloralCalcOpen[`elementList:${fnIdx}`] !== false && (
                         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                           <thead><tr style={{borderBottom:`1px solid ${border}`}}>
                             <th style={{textAlign:"left",padding:"6px 4px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4}}>Element</th>
@@ -1099,6 +1120,7 @@ export default function DCFloralsTab({ ctx }) {
                             );})}
                           </tbody>
                         </table>
+                        )}
                       </div>
                         );
                       })()}
