@@ -1099,13 +1099,22 @@ function rowsToSessions(rows) {
     const active = group.find((r) => r.is_active_fn) || group[0];
     const fnSnapshots = {};
     const fnTotals = {};
+    // Production/Buying custom items — see sessionToRows in lib/studio/sessionData.js for why they
+    // ride inside each row's own `build.customItems` (filtered to that function) rather than a
+    // column of their own. Reassembled here into the one flat, all-functions array the rest of the
+    // app (dcCustomItems) has always expected.
+    const customItems = [];
     for (const r of group) {
-      if (r.build && typeof r.build === "object") fnSnapshots[r.fn_idx] = r.build;
+      if (r.build && typeof r.build === "object") {
+        fnSnapshots[r.fn_idx] = r.build;
+        if (Array.isArray(r.build.customItems)) customItems.push(...r.build.customItems);
+      }
       if (r.total != null && Number(r.total) > 0) fnTotals[r.fn_idx] = { total: Number(r.total), tier: r.tier || "" };
     }
     const base = (active.build && typeof active.build === "object") ? active.build : {};
     out.push({
       ...base,
+      customItems,
       id: sid,
       savedAt: Number(active.saved_at) || 0,
       savedBy: active.saved_by || "—",
