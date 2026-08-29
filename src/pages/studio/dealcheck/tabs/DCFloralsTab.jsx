@@ -619,7 +619,36 @@ export default function DCFloralsTab({ ctx }) {
                       {/* Real flower mandi list */}
                       {sortedAgg.length > 0 && (
                         <div className="dcf-card" style={{padding:"16px 18px",borderRadius:14,background:"#FFFFFF",border:`1px solid rgba(16,185,129,0.32)`,boxShadow:"0 1px 2px rgba(16,185,129,0.04), 0 12px 26px -12px rgba(16,185,129,0.30)"}}>
-                          <div style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase",marginBottom:10}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</div>
+                          {/* ── COLLAPSIBLE ──
+                              Eight flowers is a long block to scroll past when all you want is the
+                              figure, so the header carries the Real Total and the list folds away
+                              behind it. Nothing is lost when it is shut: the number that matters is
+                              on the header, and the same total still sits at the foot of the table
+                              when it is open.
+                              Keyed into dcFloralCalcOpen, the map the per-flower "how" rows already
+                              use — one piece of state for "what is expanded on this tab" rather than
+                              a second one that could disagree with it. The key carries fnIdx so each
+                              function remembers its own, and `!== false` means OPEN is the default:
+                              this is the purchase manager's working document and it should not start
+                              hidden. */}
+                          {(() => {
+                            const listKey = `mandiList:${fnIdx}`;
+                            const listOpen = dcFloralCalcOpen[listKey] !== false;
+                            return (
+                              <button type="button" className="dcf-btn"
+                                onClick={() => setDcFloralCalcOpen(p => ({ ...p, [listKey]: !listOpen }))}
+                                aria-expanded={listOpen}
+                                title={listOpen ? "Hide the flower list" : "Show the flower list"}
+                                style={{width:"100%",display:"flex",alignItems:"center",gap:8,marginBottom:listOpen?10:0,
+                                  padding:0,border:"none",background:"transparent",cursor:"pointer",textAlign:"left",font:"inherit"}}>
+                                <span style={{fontSize:10,color:"#10B981",display:"inline-block",flexShrink:0,
+                                  transform:listOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>▸</span>
+                                <span style={{fontSize:13,fontWeight:700,color:"#10B981",letterSpacing:0.6,textTransform:"uppercase"}}>🌹 Real Flower Mandi List ({sortedAgg.length} flower{sortedAgg.length===1?"":"s"})</span>
+                                <span style={{marginLeft:"auto",fontSize:14,fontWeight:700,color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</span>
+                              </button>
+                            );
+                          })()}
+                          {dcFloralCalcOpen[`mandiList:${fnIdx}`] !== false && (
                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                             {/* Column headers as quiet labels rather than body-weight text — the
                                 reference sets them back so the flower names carry the row. */}
@@ -743,6 +772,7 @@ export default function DCFloralsTab({ ctx }) {
                               <tr style={{borderTop:`1px solid rgba(16,185,129,0.22)`}}><td colSpan={3} style={{padding:"11px 4px 4px",textAlign:"right",color:"#1A1A2E",fontWeight:600}}>Real Total</td><td style={{padding:"11px 4px 4px",textAlign:"right",color:"#10B981",fontWeight:700,fontSize:14,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(totalReal).toLocaleString("en-IN")}</td><td></td></tr>
                             </tbody>
                           </table>
+                          )}
                         </div>
                       )}
                         </div>{/* ── left column ends ── */}
