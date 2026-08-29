@@ -320,12 +320,18 @@ export default function StudioBrowse({ ctx }) {
                       display:"inline-flex",alignItems:"center",gap:6,letterSpacing:0.2}}>
                     Customize<span className="sb-vc-arrow" style={{display:"inline-block"}}>→</span>
                   </button>
-                  {!priceTBD&&<button className="sb-icb" disabled={ctx.isFnSwitching}
-                    onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("✓ Exact look loaded — review summary","green"));}}
-                    title={ctx.isFnSwitching?"Still loading this function…":"Exact Look — load this build as-is and jump straight to the summary"}
-                    style={{width:28,height:28,flexShrink:0,borderRadius:8,padding:0,border:`1px solid ${border}`,background:"transparent",color:textS,
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.45:1}}><IconClipboard size={13}/></button>}
+                  {/* EXACT LOOK — HIDDEN FOR NOW, on the owner's instruction. Customize is the only
+                      way into a build from a card while this stands.
+                      Left in place rather than deleted: the handler, the Platinum gate and the
+                      switching guard around it all still work, so restoring it is uncommenting this
+                      block. Deleting it would mean rebuilding the guard from scratch later.
+                      <button className="sb-icb" disabled={ctx.isFnSwitching}
+                        onClick={(e)=>{e.stopPropagation();guardedPickAndLoadFromVideo(v.id,2,()=>showMsg("Exact look loaded — review summary","green"));}}
+                        title={ctx.isFnSwitching?"Still loading this function…":"Exact Look — load this build as-is and jump straight to the summary"}
+                        style={{width:28,height:28,flexShrink:0,borderRadius:8,padding:0,border:`1px solid ${border}`,background:"transparent",color:textS,
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                          cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.45:1}}><IconClipboard size={13}/></button>
+                  */}
                 </Fragment>
               )}
             </div>
@@ -1447,7 +1453,18 @@ export default function StudioBrowse({ ctx }) {
                           {bannerFmtDate(s.savedAt)}{s.savedBy?` · ${s.savedBy}`:""}{hShown?` · ${fmt(hShown.total)}${hShown.tier?` ${hShown.tier}`:""}`:""}
                         </span>
                         <span style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                          <span onClick={()=>resumeSavedSession(s, hIdx ?? undefined)} style={{fontSize:9.5,fontWeight:700,color:accent,cursor:"pointer",whiteSpace:"nowrap"}}>↻ Resume</span>
+                          {/* Guarded like the primary Resume button above it (BUG-22). That button
+                              computes notReady from ctx.isFnSwitching, disables itself and returns
+                              early; this link called the same resumeSavedSession with nothing at all
+                              in front of it, so the one path with no protection was the small link
+                              rather than the big button. Mid-switch the build state is half-replaced,
+                              and restoring into it loses work — a wait that ends on its own, which is
+                              why this refuses rather than queuing. */}
+                          <span role="button" tabIndex={0}
+                            aria-disabled={ctx.isFnSwitching ? "true" : undefined}
+                            title={ctx.isFnSwitching ? "Still loading this function…" : "Resume this session"}
+                            onClick={()=>{ if (ctx.isFnSwitching) { showMsg("Still loading this function — try again in a moment", "red"); return; } resumeSavedSession(s, hIdx ?? undefined); }}
+                            style={{fontSize:9.5,fontWeight:700,color:accent,cursor:ctx.isFnSwitching?"progress":"pointer",opacity:ctx.isFnSwitching?0.5:1,whiteSpace:"nowrap"}}>↻ Resume</span>
                           {s.id && <span onClick={()=>deleteSession(s.id)} title="Delete this session" style={{fontSize:11,color:textS,cursor:"pointer",lineHeight:1}}>✕</span>}
                         </span>
                       </div>
