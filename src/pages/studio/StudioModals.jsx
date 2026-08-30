@@ -117,19 +117,20 @@ export default function StudioModals({ ctx }) {
         textS={textS}
         onClose={() => setDcCustomModal(null)}
         zonePhoto={elSelectedPhoto[dcCustomModal.zoneKey]?.src || ""}
-        openAvailModal={openAvailModal}
       />}
 
       {/* ── Per-element / per-reference stock availability modal — image + free count only, pick
-          one to book. Moved here from StudioBuild.jsx so it's reachable from any trigger — Build's
-          own 📦 icons AND the Add Production/Buying Item modal's 📦 above share this one instance.
-          zIndex sits above CustomItemModal's (9200) so it stacks correctly when opened from there.
+          one to book. Only Build's own 📦 icons open this now — the Add Production/Buying Item
+          modal above used to share it as an alternate "browse by availability" route to the same
+          reference-item state, but that only made sense when the item was chosen via category/
+          sub-category dropdowns; its own name search replaced the need for it (see
+          CustomItemModal.jsx's redesign note). zIndex still sits above CustomItemModal's (9200)
+          for whenever the two happen to be open at once.
           "🔀 Split" is a second mode on the same picker — instead of swapping the element to one
           different item, it divides its qty across 2+ chosen items (e.g. 18 booked as one arch
           design that isn't free splits into 9 of one design + 9 of another that are). Only offered
-          for the direct zoneElements path (not the onPick swap used by kit components / the
-          Production-Item reference picker — there's no "element with a qty" to divide there) and
-          only once the element actually has 2+ units to split. ── */}
+          for the direct zoneElements path (not the onPick swap used by kit components) and only
+          once the element actually has 2+ units to split. ── */}
       {availModal && (() => {
         const modalKey = `${availModal.zoneKey}:${availModal.idx}`;
         const original = !availModal.onPick ? (zoneElements[availModal.zoneKey] || [])[availModal.idx] : null;

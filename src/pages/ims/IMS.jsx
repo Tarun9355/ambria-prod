@@ -121,11 +121,19 @@ export default function IMS() {
   const navigate = useNavigate();
   // Remember the last open IMS tab so toggling to Studio and back returns here (not Dashboard).
   const [tab, setTab] = useState(() => {
+    const isValidTab = (id) => id === "approvals" || TABS.some((t) => t.id === id);
+    // A deep link (e.g. "🔗 Open IMS Inventory" in Build's Add Production/Buying Item modal, opened
+    // as `#/ims?tab=inventory` in a new tab) wins over the remembered last tab — asking for a
+    // SPECIFIC tab by URL is the whole point of a deep link, so it should not land on whatever this
+    // browser tab last happened to have open instead. HashRouter puts the query string after the
+    // hash too (`#/ims?tab=...`), not in location.search, so read it off location.hash directly.
+    const urlTab = new URLSearchParams(window.location.hash.split("?")[1] || "").get("tab");
+    if (urlTab && isValidTab(urlTab)) return urlTab;
     const saved = sessionStorage.getItem("ambria-ims-tab");
     // Guard against a stale value from a removed tab (e.g. the old "events" tab) — fall back to
     // dashboard instead of landing on the dead "this tab is being rebuilt" placeholder.
     // "approvals" is valid too even though it's added to the nav dynamically, not in TABS itself.
-    return saved && (saved === "approvals" || TABS.some((t) => t.id === saved)) ? saved : "dashboard";
+    return saved && isValidTab(saved) ? saved : "dashboard";
   });
   useEffect(() => { sessionStorage.setItem("ambria-ims-tab", tab); }, [tab]);
 
