@@ -1332,7 +1332,7 @@ export default function IMS() {
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
             onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
-            rcItems={studioRcItems} rcCats={studioRcCats}
+            rcItems={studioRcItems} rcCats={studioRcCats} authUser={user}
           />
         ) : tab === "supply" ? (
           <SupplyTab

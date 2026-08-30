@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge, Modal } from "../../components/ui";
 import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS } from "../../lib/ims/constants";
 import { callUserAdmin } from "../../lib/userAdmin";
+import RoleAccessModal from "./RoleAccessModal.jsx";
 
 // App-access default derived from role (the one addition to the reference).
 const defaultApps = (role) => role === "Admin" ? ["studio","ims"] : role === "Sales" ? ["studio"] : ["ims"];
@@ -100,91 +101,28 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     try{ navigator.clipboard.writeText(text); }catch{}
   }
 
-  // All main tabs + sub-tabs for the role editor
-  const ALL_TABS = [{id:"dashboard",label:"Dashboard"},{id:"inventory",label:"Inventory"},{id:"calendar",label:"Calendar"},{id:"planning",label:"Planning"},{id:"supply",label:"Supply"},{id:"flowers",label:"Flowers"},{id:"finance",label:"Finance"},{id:"admin",label:"Admin"}];
-  const ALL_SUBTABS = {
-    planning: [{id:"truss",label:"Truss"},{id:"paint",label:"Paint"},{id:"trussbatta",label:"Truss & Batta"},{id:"fabricstock",label:"Fabric Stock"}],
-    supply: [{id:"purchase",label:"Purchase"},{id:"production",label:"Production"}],
-    flowers: [{id:"mandi",label:"Mandi"},{id:"recipes",label:"Recipes"},{id:"planning",label:"Function Planning"},{id:"transfers",label:"Transfers"}],
-    finance: [{id:"pl",label:"Event P&L"},{id:"company_pl",label:"Company P&L"},{id:"overheads",label:"Overheads"}],
-    admin: [{id:"users",label:"Users"},{id:"vendors",label:"Vendors"},{id:"settings",label:"Settings"}],
-  };
-  // Studio app — tab/sub-tab access, modelled exactly like the IMS tabs above so this
-  // one screen drives both apps. Stored at roleTabs[role].studio.{tabs,subTabs}.
-  const STUDIO_TABS = [{id:"design",label:"🎨 Design Studio"},{id:"library",label:"📚 Library & content"},{id:"settings",label:"⚙️ Settings"}];
-  const STUDIO_SUBTABS = {
-    design: [{id:"dealcheck",label:"Deal Check"},{id:"viewpricing",label:"View Pricing & Costs"},{id:"export",label:"Export PDF/PPT"}],
-    library: [{id:"images",label:"Images"},{id:"videos",label:"Videos"},{id:"corrections",label:"Contributions"}],
-    settings: [{id:"venues",label:"Venues"},{id:"tags",label:"Tags"},{id:"clients",label:"Clients"},{id:"calendar",label:"Calendar"},{id:"zones",label:"Zones"},{id:"priority",label:"Photo Priority"},{id:"departments",label:"Departments"},{id:"transport",label:"Transport & Power"}],
-  };
-  const roleTabs = settings?.roleTabs || {};
-  const toggleRoleTab = (role, tabId) => {
-    if (role === "Admin") return; // Admin always has all
-    setSettings(s => {
-      const rt = {...(s.roleTabs || {})};
-      const cur = rt[role] || { tabs: [], subTabs: {} };
-      const has = (cur.tabs || []).includes(tabId);
-      rt[role] = { ...cur, tabs: has ? cur.tabs.filter(t=>t!==tabId) : [...(cur.tabs||[]), tabId] };
-      return { ...s, roleTabs: rt };
-    });
-  };
-  const toggleRoleSubTab = (role, parentTab, subId) => {
-    if (role === "Admin") return;
-    setSettings(s => {
-      const rt = {...(s.roleTabs || {})};
-      const cur = rt[role] || { tabs: [], subTabs: {} };
-      const curSubs = cur.subTabs?.[parentTab] || [];
-      const has = curSubs.includes(subId);
-      const newSubs = has ? curSubs.filter(s=>s!==subId) : [...curSubs, subId];
-      rt[role] = { ...cur, subTabs: { ...(cur.subTabs||{}), [parentTab]: newSubs.length > 0 ? newSubs : undefined } };
-      // Clean up undefined entries
-      if (!rt[role].subTabs[parentTab]) delete rt[role].subTabs[parentTab];
-      return { ...s, roleTabs: rt };
-    });
-  };
-  // Studio app access for a role: studio.enabled + studio.areas[] (mirrors IMS tab access).
-  const toggleRoleStudioTab = (role, tabId) => {
-    if (role === "Admin") return;
-    setSettings(s => {
-      const rt = {...(s.roleTabs || {})};
-      const cur = rt[role] || { tabs: [], subTabs: {} };
-      const st = cur.studio || { tabs: [], subTabs: {} };
-      const has = (st.tabs || []).includes(tabId);
-      rt[role] = { ...cur, studio: { ...st, tabs: has ? (st.tabs||[]).filter(t=>t!==tabId) : [...(st.tabs||[]), tabId] } };
-      return { ...s, roleTabs: rt };
-    });
-  };
-  const toggleRoleStudioSub = (role, parentTab, subId) => {
-    if (role === "Admin") return;
-    setSettings(s => {
-      const rt = {...(s.roleTabs || {})};
-      const cur = rt[role] || { tabs: [], subTabs: {} };
-      const st = cur.studio || { tabs: [], subTabs: {} };
-      const curSubs = st.subTabs?.[parentTab] || [];
-      const has = curSubs.includes(subId);
-      rt[role] = { ...cur, studio: { ...st, subTabs: { ...(st.subTabs||{}), [parentTab]: has ? curSubs.filter(x=>x!==subId) : [...curSubs, subId] } } };
-      return { ...s, roleTabs: rt };
-    });
-  };
-
   return (
     <div className="space-y-4">
-      {/* Role Summary — click to edit tab access */}
+      {/* Role Summary — each card opens a dedicated Edit Access modal instead of expanding inline
+          below the grid (the old inline panel got bulky once Admin's real depth — Settings, then
+          Master Data inside it — needed room too). */}
       <div className="grid grid-cols-4 gap-3">
         {dynamicRoles.map(r=>(
-          <div key={r} className={"bg-white border rounded-xl p-4 text-center cursor-pointer transition-all relative group "+(roleEditor===r?"ring-2 ring-indigo-500":"hover:border-indigo-300")}>
+          <div key={r} className="bg-white border rounded-xl p-4 text-center relative group hover:border-indigo-300 transition-all">
             {r !== "Admin" && <button onClick={(e)=>{e.stopPropagation(); if(!window.confirm(`Delete role "${r}"? ${roleCounts[r]||0} users will need reassignment.`)) return; setSettings(s=>({...s, rolesList:(s.rolesList||ROLES).filter(x=>x!==r)})); if(roleEditor===r) setRoleEditor(null);}} className="absolute top-1 right-2 text-gray-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100">✕</button>}
-            <div onClick={()=>setRoleEditor(roleEditor===r ? null : r)}>
-              <p className="text-2xl font-bold text-indigo-700">{roleCounts[r]||0}</p>
-              {renameRole?.old === r ? (
-                <div className="flex items-center gap-1 mt-1" onClick={e=>e.stopPropagation()}>
-                  <input value={renameRole.draft} onChange={e=>setRenameRole({...renameRole, draft:e.target.value})} className="border rounded px-2 py-0.5 text-xs w-full" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&renameRole.draft.trim()){const old=renameRole.old,nw=renameRole.draft.trim(); setSettings(s=>{const rt={...(s.roleTabs||{})}; rt[nw]=rt[old]; delete rt[old]; return {...s,rolesList:(s.rolesList||ROLES).map(x=>x===old?nw:x),roleTabs:rt};}); setUsers(prev=>prev.map(u=>u.role===old?{...u,role:nw}:u)); setRenameRole(null); if(roleEditor===old) setRoleEditor(nw);}}} />
-                  <button onClick={()=>setRenameRole(null)} className="text-xs text-gray-400">✕</button>
-                </div>
-              ) : (
-                <p className="text-xs text-gray-500 mt-1" onDoubleClick={(e)=>{e.stopPropagation();if(r!=="Admin")setRenameRole({old:r,draft:r});}}>{r}</p>
-              )}
-              <p className="text-[9px] text-indigo-400 mt-1">{roleEditor===r ? "▼ editing" : "tap to edit · dbl-tap to rename"}</p>
+            <p className="text-2xl font-bold text-indigo-700">{roleCounts[r]||0}</p>
+            {renameRole?.old === r ? (
+              <div className="flex items-center gap-1 mt-1">
+                <input value={renameRole.draft} onChange={e=>setRenameRole({...renameRole, draft:e.target.value})} className="border rounded px-2 py-0.5 text-xs w-full" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&renameRole.draft.trim()){const old=renameRole.old,nw=renameRole.draft.trim(); setSettings(s=>{const rt={...(s.roleTabs||{})}; rt[nw]=rt[old]; delete rt[old]; return {...s,rolesList:(s.rolesList||ROLES).map(x=>x===old?nw:x),roleTabs:rt};}); setUsers(prev=>prev.map(u=>u.role===old?{...u,role:nw}:u)); setRenameRole(null); if(roleEditor===old) setRoleEditor(nw);}}} />
+                <button onClick={()=>setRenameRole(null)} className="text-xs text-gray-400">✕</button>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1 cursor-pointer" onDoubleClick={()=>{if(r!=="Admin")setRenameRole({old:r,draft:r});}}>{r}</p>
+            )}
+            <div className="flex items-center gap-1.5 mt-2.5 pt-2 border-t">
+              <button onClick={()=>setRoleEditor(r)} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100">
+                🔐 Manage Access
+              </button>
             </div>
           </div>
         ))}
@@ -194,81 +132,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
         </div>
       </div>
 
-      {/* Role tab-access editor — shown when a role card is tapped */}
-      {roleEditor && (
-        <div className="bg-white border-2 border-indigo-200 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="font-bold text-indigo-900">{roleEditor} — Tab Access</p>
-              <p className="text-xs text-gray-500">{roleEditor==="Admin" ? "Admin always has full access (not editable)" : "Toggle which tabs and sub-tabs this role can see"}</p>
-            </div>
-            <button onClick={()=>setRoleEditor(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
-          </div>
-          <div className="space-y-2">
-            {ALL_TABS.map(tab => {
-              const rc = roleTabs[roleEditor] || { tabs: [] };
-              const hasTab = roleEditor==="Admin" || (rc.tabs||[]).includes(tab.id);
-              const subs = ALL_SUBTABS[tab.id];
-              const rcSubs = rc.subTabs?.[tab.id] || [];
-              return (
-                <div key={tab.id} className="border rounded-lg overflow-hidden">
-                  <div className={"flex items-center gap-3 px-3 py-2 cursor-pointer "+(hasTab?"bg-indigo-50":"bg-gray-50")} onClick={()=>toggleRoleTab(roleEditor, tab.id)}>
-                    <div className={"w-5 h-5 rounded border-2 flex items-center justify-center text-xs "+(hasTab?"bg-indigo-600 border-indigo-600 text-white":"border-gray-300")}>{hasTab?"✓":""}</div>
-                    <span className={"text-sm font-medium "+(hasTab?"text-indigo-900":"text-gray-500")}>{tab.label}</span>
-                  </div>
-                  {hasTab && subs && (
-                    <div className="flex flex-wrap gap-2 px-4 py-2 bg-white border-t">
-                      {subs.map(st => {
-                        const hasSub = roleEditor==="Admin" || rcSubs.length === 0 || rcSubs.includes(st.id);
-                        return (
-                          <button key={st.id} onClick={()=>toggleRoleSubTab(roleEditor, tab.id, st.id)}
-                            className={"px-3 py-1 rounded-full text-xs font-medium transition-all "+(hasSub?"bg-indigo-100 text-indigo-700":"bg-gray-100 text-gray-400")}>
-                            {hasSub?"✓ ":""}{st.label}
-                          </button>
-                        );
-                      })}
-                      {rcSubs.length === 0 && roleEditor !== "Admin" && <span className="text-[10px] text-gray-400 italic">All sub-tabs visible (no restrictions)</span>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {/* ── Studio app (cross-app access from the same screen) ── */}
-            <div className="pt-2 mt-1 border-t border-dashed">
-              <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5 mt-1">🎨 Studio App <span className="text-gray-400 normal-case font-normal">· deal builder is included with Studio access; tick areas to grant more</span></p>
-              <div className="space-y-2">
-                {STUDIO_TABS.map(tab => {
-                  const st = roleTabs[roleEditor]?.studio || {};
-                  const hasTab = roleEditor==="Admin" || (st.tabs||[]).includes(tab.id);
-                  const subs = STUDIO_SUBTABS[tab.id];
-                  const rcSubs = st.subTabs?.[tab.id] || [];
-                  return (
-                    <div key={tab.id} className="border rounded-lg overflow-hidden">
-                      <div className={"flex items-center gap-3 px-3 py-2 cursor-pointer "+(hasTab?"bg-amber-50":"bg-gray-50")} onClick={()=>toggleRoleStudioTab(roleEditor, tab.id)}>
-                        <div className={"w-5 h-5 rounded border-2 flex items-center justify-center text-xs "+(hasTab?"bg-amber-500 border-amber-500 text-white":"border-gray-300")}>{hasTab?"✓":""}</div>
-                        <span className={"text-sm font-medium "+(hasTab?"text-amber-900":"text-gray-500")}>{tab.label}</span>
-                      </div>
-                      {hasTab && subs && (
-                        <div className="flex flex-wrap gap-2 px-4 py-2 bg-white border-t">
-                          {subs.map(sb => {
-                            const on = roleEditor==="Admin" || rcSubs.includes(sb.id);
-                            return (
-                              <button key={sb.id} onClick={()=>toggleRoleStudioSub(roleEditor, tab.id, sb.id)}
-                                className={"px-3 py-1 rounded-full text-xs font-medium transition-all "+(on?"bg-amber-100 text-amber-700":"bg-gray-100 text-gray-400")}>
-                                {on?"✓ ":""}{sb.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {roleEditor && <RoleAccessModal key={roleEditor} role={roleEditor} settings={settings} setSettings={setSettings} onClose={()=>setRoleEditor(null)} />}
 
       <div className="flex justify-end">
         <button onClick={openAdd} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm">+ Add User</button>

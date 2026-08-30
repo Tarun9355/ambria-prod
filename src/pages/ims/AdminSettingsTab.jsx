@@ -39,7 +39,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [] }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser }) {
   const studioSubcats = studio?.subcats || [];
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
@@ -200,7 +200,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const [recipeImgUploading, setRecipeImgUploading] = useState({}); // { [studioItem.id+":"+sz]: true } — per-size reference photo upload
 
   const forcedMode = !!mode;
-  const [panel, setPanel] = useState(forcedMode ? mode : "supervisors");
 
   // The catalogues and rate tables that everything else prices against. Grouped behind one tab
   // because the flat strip had grown to thirteen and wrapped onto two rows — the rate panels were
@@ -219,12 +218,6 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "transport", label: "🚛 Transport & Power" },
     { id: "departments", label: "🏦 Departments" },
   ];
-  const [masterPanel, setMasterPanel] = useState(MASTER_DATA[0].id);
-
-  // `forcedMode` still addresses a panel by its own id (FlowersTab mounts this component with
-  // mode="recipes"), so grouping must not change how those are reached — hence the group resolves
-  // to its selected child rather than becoming a panel id of its own.
-  const activePanel = forcedMode ? mode : (panel === "masterdata" ? masterPanel : panel);
 
   const panels = forcedMode ? [] : [
     { id: "labourtiers", label: "👷 Workforce" },
@@ -236,6 +229,31 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
     { id: "masterdata", label: "🗂️ Master Data" },
     { id: "canva", label: "🎨 Canva" },
   ];
+
+  // Only reached via Admin → Settings (forcedMode is a different caller — FlowersTab/PlanningTab
+  // mounting one specific panel directly, which was never gated by tab access and stays that way).
+  // "Settings" and "Master Data" are role-restrictable exactly like every other tab's sub-tabs —
+  // same subTabs map on the SAME roleTabs[role] shape (UsersTab.jsx), just two more keys on it
+  // ("settings" for these 8 panels, "masterdata" for the 7 below) rather than a new data shape.
+  // Same fallback rule as every other tab: no restriction recorded (or an empty result) means
+  // everything shows, so a role saved before this existed is unaffected.
+  const roleConfig = (settings?.roleTabs || {})[authUser?.role];
+  const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  const allowedPanels = isAdmin || !roleConfig?.subTabs?.settings ? panels : panels.filter((p) => roleConfig.subTabs.settings.includes(p.id));
+  const panelsShown = allowedPanels.length > 0 ? allowedPanels : panels;
+  const allowedMasterData = isAdmin || !roleConfig?.subTabs?.masterdata ? MASTER_DATA : MASTER_DATA.filter((m) => roleConfig.subTabs.masterdata.includes(m.id));
+  const masterDataShown = allowedMasterData.length > 0 ? allowedMasterData : MASTER_DATA;
+
+  // "Supervisors" was always the default landing panel regardless of array order — keep that for
+  // any role that still has it (unrestricted roles, i.e. almost everyone), only redirecting away
+  // for a role deliberately restricted to not include it.
+  const [panel, setPanel] = useState(forcedMode ? mode : (panelsShown.some((p) => p.id === "supervisors") ? "supervisors" : (panelsShown[0]?.id || "supervisors")));
+  const [masterPanel, setMasterPanel] = useState(masterDataShown[0]?.id || MASTER_DATA[0].id);
+
+  // `forcedMode` still addresses a panel by its own id (FlowersTab mounts this component with
+  // mode="recipes"), so grouping must not change how those are reached — hence the group resolves
+  // to its selected child rather than becoming a panel id of its own.
+  const activePanel = forcedMode ? mode : (panel === "masterdata" ? masterPanel : panel);
 
   // Canva connect status — one shared account authorizes the integration for the whole team, so
   // this just reports whether that's been done, and re-checks whenever this panel opens (e.g.
@@ -331,10 +349,10 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
   return (
     <div className="space-y-4">
-      {!forcedMode && <Tabs tabs={panels} active={panel} onChange={setPanel} />}
+      {!forcedMode && <Tabs tabs={panelsShown} active={panel} onChange={setPanel} />}
       {!forcedMode && panel === "masterdata" && (
         <div className="pl-1">
-          <Tabs tabs={MASTER_DATA} active={masterPanel} onChange={setMasterPanel} />
+          <Tabs tabs={masterDataShown} active={masterPanel} onChange={setMasterPanel} />
         </div>
       )}
 
