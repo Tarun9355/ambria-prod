@@ -91,6 +91,20 @@ export default function StudioModals({ ctx }) {
   // merging, so customizing off a new reference while the active function already has a build going
   // silently switches its zones off with no confirmation.
   const guardedPickAndLoad = (ev, targetStep, videoUrl, onLoaded) => {
+    // ── NOTHING WHILE A FUNCTION IS STILL LOADING ── (BUG-21)
+    // The comment above claimed parity with Browse's card buttons, and the body delivered only half
+    // of it: the overwrite confirm was here, this check was not. So the popup — the OTHER way into
+    // pickAndLoad — was the one path that could fire mid-switch.
+    // It has to come FIRST, before the confirm below, and for the reason the confirm cannot cover:
+    // that confirm asks "does this function already hold work?" of the LIVE state, and mid-switch
+    // that state has been cleared while the incoming one has not landed. The test answers no, the
+    // confirm never appears, the load goes through, and the rolling autosave then writes the
+    // near-empty build over the session it came from. Refusing is the only safe answer, because
+    // mid-switch there is genuinely nothing to judge.
+    if (ctx.isFnSwitching) {
+      showMsg("Still loading this function — try again in a moment", "red");
+      return;
+    }
     const liveSnap = { elSelectedPhoto, zoneElements, enabledEls, sourceVideo, sourceEvent };
     const proceed = () => { pickAndLoad(ev, targetStep, videoUrl); if (onLoaded) onLoaded(); };
     if (fnSnapHasData(liveSnap)) {
@@ -231,7 +245,11 @@ export default function StudioModals({ ctx }) {
                   <div style={{display:"flex",gap:10,marginTop:12}}>
                     <button onClick={(e)=>{e.stopPropagation();setVideoOverlay(false);setVideoPlaying(true);}} style={{padding:"12px 28px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.3)",background:"transparent",color:"#fff",fontSize:14,fontWeight:500,cursor:"pointer"}}>{"↺"} Replay</button>
                     <button onClick={(e)=>{e.stopPropagation();guardedPickAndLoad(videoModal,1,videoModal.video);}} style={{padding:"12px 28px",borderRadius:10,border:"none",background:"#C9A96E",color:"#0a0a14",fontSize:14,fontWeight:600,cursor:"pointer"}}>{"🎨"} Customize</button>
-                    <button onClick={(e)=>{e.stopPropagation();guardedPickAndLoad(videoModal,2,videoModal.video,()=>showMsg("✓ Exact look loaded","green"));}} style={{padding:"12px 28px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.3)",background:"transparent",color:"#fff",fontSize:14,fontWeight:500,cursor:"pointer"}}>{"📋"} Exact Look</button>
+                    {/* EXACT LOOK — HIDDEN FOR NOW (end-of-video overlay). See the note on the other
+                        copy in the bar below; both are hidden together so the popup never offers the
+                        action in one place and not the other.
+                        <button onClick={(e)=>{e.stopPropagation();guardedPickAndLoad(videoModal,2,videoModal.video,()=>showMsg("Exact look loaded","green"));}} style={{padding:"12px 28px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.3)",background:"transparent",color:"#fff",fontSize:14,fontWeight:500,cursor:"pointer"}}>{"📋"} Exact Look</button>
+                    */}
                   </div>
                   <button onClick={(e)=>{e.stopPropagation();setVideoModal(null);setVideoPlaying(false);setVideoOverlay(false);}} style={{padding:"8px 20px",borderRadius:8,border:"1px solid rgba(255,255,255,0.15)",background:"transparent",color:"rgba(255,255,255,0.5)",fontSize:12,cursor:"pointer",marginTop:6}}>Close</button>
                 </div>
@@ -247,9 +265,23 @@ export default function StudioModals({ ctx }) {
               <div style={{fontSize:11,color:"#9CA3AF"}}>{videoModal.venue} · {videoModal.fn}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-              <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(getFullCost(videoModal))}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,background:getCat(getFullCost(videoModal)).bg,color:getCat(getFullCost(videoModal)).color,fontWeight:600}}>{getCat(getFullCost(videoModal)).label}</span></div>
+              {/* PRICE + TIER — HIDDEN FOR NOW, on the owner's instruction.
+                  The tier chip goes with the price rather than staying behind, because it is the
+                  same number in another form: getCat() buckets the very same getFullCost(), and
+                  getCat(0) returns "Silver" — so a video costing ₹0 was being labelled Silver.
+                  Leaving the chip would have kept publishing that figure with the number that
+                  explains it removed.
+                  <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:700,color:"#C9A96E"}}>{fmt(getFullCost(videoModal))}</div><span style={{fontSize:10,padding:"2px 8px",borderRadius:8,background:getCat(getFullCost(videoModal)).bg,color:getCat(getFullCost(videoModal)).color,fontWeight:600}}>{getCat(getFullCost(videoModal)).label}</span></div>
+              */}
               <button onClick={()=>{guardedPickAndLoad(videoModal,1,videoModal.video);}} style={{padding:"8px 18px",borderRadius:8,border:"none",background:"#C9A96E",color:"#0a0a14",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{"🎨"} Customize</button>
-              <button onClick={()=>{guardedPickAndLoad(videoModal,2,videoModal.video,()=>showMsg("✓ Exact look loaded","green"));}} style={{padding:"8px 18px",borderRadius:8,border:`1.5px solid #C9A96E`,background:"transparent",color:"#C9A96E",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{"📋"} Exact Look</button>
+              {/* EXACT LOOK — HIDDEN FOR NOW, on the owner's instruction. Customize is the only way
+                  into a build from this popup while this stands.
+                  Commented rather than deleted: the handler and its guards are unchanged, so
+                  bringing it back is uncommenting this. targetStep 2 is what makes Exact Look
+                  different from Customize — it lands on Summary rather than Build — and that is the
+                  detail most easily lost if the button were rewritten from memory later.
+                  <button onClick={()=>{guardedPickAndLoad(videoModal,2,videoModal.video,()=>showMsg("Exact look loaded","green"));}} style={{padding:"8px 18px",borderRadius:8,border:`1.5px solid #C9A96E`,background:"transparent",color:"#C9A96E",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>{"📋"} Exact Look</button>
+              */}
             </div>
           </div>}
         </div>
