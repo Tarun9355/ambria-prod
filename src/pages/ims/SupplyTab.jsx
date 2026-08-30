@@ -15,7 +15,7 @@ export default function SupplyTab({ purchase, setPurchase, inventory, setInvento
     <div className="space-y-4">
       <Tabs tabs={tabs} active={sub} onChange={setSub} />
       {sub === "purchase" && <PurchaseTab purchase={purchase} setPurchase={setPurchase} inventory={inventory} setInventory={setInventory} projects={projects} functions={functions} studio={studio} />}
-      {sub === "production" && <ProductionTab prodRequests={prodRequests} setProdRequests={setProdRequests} inventory={inventory} setInventory={setInventory} projects={projects} functions={functions} purchase={purchase} setPurchase={setPurchase} />}
+      {sub === "production" && <ProductionTab prodRequests={prodRequests} setProdRequests={setProdRequests} inventory={inventory} setInventory={setInventory} projects={projects} functions={functions} purchase={purchase} setPurchase={setPurchase} authUser={authUser} />}
     </div>
   );
 }

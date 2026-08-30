@@ -2,15 +2,21 @@ import { useState } from "react";
 import { Badge, Modal } from "../../components/ui";
 import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS } from "../../lib/ims/constants";
 import { callUserAdmin } from "../../lib/userAdmin";
+import { DEPTS, userDepartments } from "../../lib/ims/deptClassify";
 import RoleAccessModal from "./RoleAccessModal.jsx";
 
 // App-access default derived from role (the one addition to the reference).
 const defaultApps = (role) => role === "Admin" ? ["studio","ims"] : role === "Sales" ? ["studio"] : ["ims"];
+// Department default derived from role — same inference Dept Ops has always used (a role name
+// containing one of the 7 departments implies that one), just surfaced here so it's editable
+// instead of only ever guessed at read time. userDepartments returns null when unrestricted
+// (most roles); the form field itself always wants a real array to render checkboxes against.
+const defaultDepartments = (role) => userDepartments({ role }) || [];
 
 export default function UsersTab({ users, setUsers, addUser, settings, setSettings }){
   const [modal, setModal]=useState(false);
   const [editUser, setEditUser]=useState(null);
-  const [form, setForm]=useState({ name:"", email:"", phone:"", role:"Sales", permissions:ROLE_DEFAULTS.Sales, active:true, password:"" });
+  const [form, setForm]=useState({ name:"", email:"", phone:"", role:"Sales", permissions:ROLE_DEFAULTS.Sales, active:true, password:"", departments:defaultDepartments("Sales") });
   const [credsShown, setCredsShown]=useState(null);
   const [resetFor, setResetFor]=useState(null);
   const [resetPw, setResetPw]=useState("");
@@ -36,11 +42,12 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     return `${prefix.charAt(0).toUpperCase() + prefix.slice(1).toLowerCase()}-${suffix}`;
   };
 
-  function openAdd(){ setEditUser(null); setForm({ name:"", email:"", phone:"", role:"Sales", permissions:[...(ROLE_DEFAULTS.Sales||[])], active:true, password:"", apps:defaultApps("Sales") }); setShowPw(false); setModal(true); }
-  function openEdit(u){ setEditUser(u); setForm({ ...u, permissions:[...(u.permissions||[])], password:"", apps:u.apps || defaultApps(u.role) }); setShowPw(false); setModal(true); }
-  function setRole(role){ setForm(f=>({...f, role, permissions:[...(ROLE_DEFAULTS[role]||[])], apps:defaultApps(role)})); }
+  function openAdd(){ setEditUser(null); setForm({ name:"", email:"", phone:"", role:"Sales", permissions:[...(ROLE_DEFAULTS.Sales||[])], active:true, password:"", apps:defaultApps("Sales"), departments:defaultDepartments("Sales") }); setShowPw(false); setModal(true); }
+  function openEdit(u){ setEditUser(u); setForm({ ...u, permissions:[...(u.permissions||[])], password:"", apps:u.apps || defaultApps(u.role), departments:[...(u.departments || defaultDepartments(u.role))] }); setShowPw(false); setModal(true); }
+  function setRole(role){ setForm(f=>({...f, role, permissions:[...(ROLE_DEFAULTS[role]||[])], apps:defaultApps(role), departments:defaultDepartments(role)})); }
   function togglePerm(p){ setForm(f=>({ ...f, permissions:(f.permissions||[]).includes(p)?(f.permissions||[]).filter(x=>x!==p):[...(f.permissions||[]),p] })); }
   function toggleApp(a){ setForm(f=>{ const cur=f.apps || defaultApps(f.role); return { ...f, apps:cur.includes(a)?cur.filter(x=>x!==a):[...cur,a] }; }); }
+  function toggleDept(d){ setForm(f=>{ const cur=f.departments || []; return { ...f, departments:cur.includes(d)?cur.filter(x=>x!==d):[...cur,d] }; }); }
 
   const [busy, setBusy] = useState(false);
   async function save(){
@@ -66,7 +73,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     let newId = mint(); while (taken.has(newId)) newId = mint();
     // Create the Supabase Auth account + profile row server-side (service role, admin-gated).
     // The new row arrives via realtime; we just confirm the credentials.
-    const profile = { id: newId, name: form.name.trim(), username, role: form.role, permissions: form.permissions || [], apps: form.apps || defaultApps(form.role), phone: form.phone || "", email: form.email || "", active: form.active ?? true };
+    const profile = { id: newId, name: form.name.trim(), username, role: form.role, permissions: form.permissions || [], apps: form.apps || defaultApps(form.role), departments: form.departments || defaultDepartments(form.role), phone: form.phone || "", email: form.email || "", active: form.active ?? true };
     setBusy(true);
     try { await callUserAdmin("createUser", { user: profile, password: form.password.trim() }); }
     catch(e){ setBusy(false); alert("Create user failed: " + e.message); return; }
@@ -225,6 +232,25 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
                     <button key={id} type="button" onClick={()=>toggleApp(id)}
                       className={"px-3 py-1.5 rounded-full text-xs font-medium border transition-all "+(on?"bg-indigo-100 border-indigo-300 text-indigo-700":"bg-gray-50 border-gray-200 text-gray-400")}>
                       {on?"✓ ":""}{label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Department access — which of the 7 ops departments this user's data views (Inventory,
+                Production, Dept Ops) are scoped to. Empty = unrestricted (sees every department),
+                the same as every user before this field existed. Pre-ticked from the role name
+                (setRole/openEdit's defaultDepartments) but freely editable — this is the "explicitly
+                assign a user multiple departments" path. */}
+            <div>
+              <label className="text-xs text-gray-500">Department access <span className="text-gray-400">(none ticked = sees every department)</span></label>
+              <div className="flex gap-2 mt-1 flex-wrap">
+                {DEPTS.map((d) => {
+                  const on = (form.departments || []).includes(d);
+                  return (
+                    <button key={d} type="button" onClick={()=>toggleDept(d)}
+                      className={"px-3 py-1.5 rounded-full text-xs font-medium border transition-all "+(on?"bg-emerald-100 border-emerald-300 text-emerald-700":"bg-gray-50 border-gray-200 text-gray-400")}>
+                      {on?"✓ ":""}{d}
                     </button>
                   );
                 })}

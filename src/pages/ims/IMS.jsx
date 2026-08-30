@@ -1319,7 +1319,7 @@ export default function IMS() {
             functions={functions} setFunctions={setFunctions}
             categories={categories} setCategories={setCategories}
             settings={settings} studio={studio}
-            rateCardCategories={rateCardCategories}
+            rateCardCategories={rateCardCategories} authUser={user}
           />
         ) : tab === "admin" ? (
           <AdminTab

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { catToDept, DEPTS } from "./deptClassify";
+import { catToDept, DEPTS, userDepartments, canSeeDept, canSeeProdDept } from "./deptClassify";
 
 // This classifier decides which department EARNS a category's income (Deal Check → Dept Income,
 // IMS → Dept Ops) as well as which heading a row files under in Deal Check → Transport. A silent
@@ -54,5 +54,78 @@ describe("catToDept", () => {
     ["Pedestals", "Truss", "Chandelier", "Sofa", "Draping", "Mystery", ""].forEach((c) => {
       expect(DEPTS).toContain(catToDept(c));
     });
+  });
+});
+
+// The department-access gate this session added: does a user see a given department's data, and
+// which departments a user "belongs to" at all. Every existing user (no `departments` field yet)
+// must resolve exactly as Dept Ops' original role-name inference already did, or an upgrade
+// silently locks someone out of data they could see yesterday.
+describe("userDepartments", () => {
+  it("infers a single department from a role name containing one, same as Dept Ops always did", () => {
+    expect(userDepartments({ role: "Dept Head - Lighting" })).toEqual(["Lighting"]);
+    expect(userDepartments({ role: "Dept Head - Furniture" })).toEqual(["Furniture"]);
+  });
+
+  it("is unrestricted (null) for a role that names no department", () => {
+    expect(userDepartments({ role: "Admin" })).toBe(null);
+    expect(userDepartments({ role: "Sales" })).toBe(null);
+    expect(userDepartments({ role: "Purchase Manager" })).toBe(null);
+    // "Painter" isn't one of the 7 DEPTS — same gap Dept Ops already had, not a new one.
+    expect(userDepartments({ role: "Dept Head - Painter" })).toBe(null);
+  });
+
+  it("prefers an explicit departments array over the role-name guess", () => {
+    expect(userDepartments({ role: "Dept Head - Lighting", departments: ["Lighting", "Fabric"] })).toEqual(["Lighting", "Fabric"]);
+  });
+
+  it("falls back to role inference when departments is missing or empty (every pre-existing user)", () => {
+    expect(userDepartments({ role: "Dept Head - Floral", departments: [] })).toEqual(["Floral"]);
+    expect(userDepartments({ role: "Dept Head - Floral", departments: undefined })).toEqual(["Floral"]);
+  });
+});
+
+describe("canSeeDept", () => {
+  it("lets Admin see every department regardless of anything else", () => {
+    expect(canSeeDept({ role: "Admin", departments: ["Furniture"] }, "Lighting")).toBe(true);
+    expect(canSeeDept({ id: "u_admin", role: "whatever" }, "Lighting")).toBe(true);
+  });
+
+  it("blocks a department-scoped user from a department they are not assigned", () => {
+    expect(canSeeDept({ role: "Dept Head - Furniture" }, "Lighting")).toBe(false);
+    expect(canSeeDept({ role: "Dept Head - Furniture" }, "Furniture")).toBe(true);
+  });
+
+  it("lets a multi-department user see every department they were explicitly granted", () => {
+    const u = { role: "Dept Head - Furniture", departments: ["Furniture", "Lighting"] };
+    expect(canSeeDept(u, "Furniture")).toBe(true);
+    expect(canSeeDept(u, "Lighting")).toBe(true);
+    expect(canSeeDept(u, "Fabric")).toBe(false);
+  });
+
+  it("lets an unrestricted user (Sales, Admin, an unmatched role) see everything", () => {
+    expect(canSeeDept({ role: "Sales" }, "Lighting")).toBe(true);
+    expect(canSeeDept({ role: "Purchase Manager" }, "Structure")).toBe(true);
+  });
+
+  it("never hides a row over a missing/unknown department — that's a data gap, not a restriction", () => {
+    expect(canSeeDept({ role: "Dept Head - Furniture" }, null)).toBe(true);
+    expect(canSeeDept({ role: "Dept Head - Furniture" }, "")).toBe(true);
+  });
+});
+
+describe("canSeeProdDept", () => {
+  it("maps a PROD_DEPTS spelling onto the canonical department a user is scoped to", () => {
+    const u = { role: "Dept Head - Lighting" };
+    expect(canSeeProdDept(u, "Lighting")).toBe(true);
+    expect(canSeeProdDept(u, "Structural")).toBe(false); // maps to canonical "Structure"
+    expect(canSeeProdDept({ role: "Dept Head - Structure" }, "Structural")).toBe(true);
+    expect(canSeeProdDept({ role: "Dept Head - Structure" }, "Props")).toBe(true); // Props -> Structure too
+  });
+
+  it("never hides the departments with no canonical equivalent", () => {
+    const u = { role: "Dept Head - Furniture" };
+    expect(canSeeProdDept(u, "Painter & Production")).toBe(true);
+    expect(canSeeProdDept(u, "Other")).toBe(true);
   });
 });

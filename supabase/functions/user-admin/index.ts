@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
       const row = {
         id: u.id, name: u.name ?? null, username: u.username, role: u.role ?? "Sales",
         permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null,
-        email: u.email ?? null, apps: u.apps ?? null, auth_id: made.user.id,
+        email: u.email ?? null, apps: u.apps ?? null, departments: u.departments ?? null, auth_id: made.user.id,
       };
       const { error: insErr } = await svc.from("users").insert(row);
       if (insErr) { await svc.auth.admin.deleteUser(made.user.id); return json({ error: insErr.message }, 400); }

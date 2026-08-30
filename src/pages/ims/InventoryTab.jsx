@@ -9,9 +9,10 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown } from "../../lib/ims/fixedVenues";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { itemDimsText } from "../../lib/ims/helpers";
+import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 
-export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [] }) {
+export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser }) {
   const studioLoading = !!studio?.loading;
   // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
   // small, stable set still sourced from Studio's live Rate-Card categories — only the
@@ -306,7 +307,14 @@ Rules:
     const matchAvail = !availDate || availOnly === "all"
       || (availOnly === "blocked" && blockedOf(i) > 0)
       || (availOnly === "free" && blockedOf(i) === 0);
-    return matchSearch && matchCat && matchType && matchSubCat && matchReview && matchAvail;
+    // Department gate — a Furniture-only Dept Head shouldn't see Lighting inventory unless
+    // explicitly granted more departments (userDepartments/canSeeDept, lib/ims/deptClassify.js).
+    // Unrestricted for everyone until a user actually has a scoped department, same as before this
+    // existed. catToDept is a keyword guess, not a stored fact — the admin override map (IMS ->
+    // Admin -> Settings -> Master Data -> Sub-Categories -> Departments) is the fix path for a
+    // miscategorised item, same override this already leans on for reporting elsewhere.
+    const matchDept = canSeeDept(authUser, catToDept(i.cat, settings?.categoryDepartments));
+    return matchSearch && matchCat && matchType && matchSubCat && matchReview && matchAvail && matchDept;
   });
   const totalPages = Math.ceil(filtered.length / INV_PAGE_SIZE);
   const safePage = Math.min(invPage, Math.max(0, totalPages - 1));

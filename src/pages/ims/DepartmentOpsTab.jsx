@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost } from "../../lib/ims/helpers";
 import { uploadAudioToStorage } from "../../lib/storage";
-import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
+import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments } from "../../lib/ims/deptClassify";
 import ManpowerFactorPills from "../../components/shared/ManpowerFactorPills.jsx";
 
 // Small in-browser voice-note recorder → uploads to Cloudinary, hands the URL back via onSave.
@@ -78,10 +78,15 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const dihari = settings?.dihariSchemes || {};
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
-  // Department-head role → department (role name contains a department, e.g. "Tenting Head").
-  const roleDept = useMemo(() => { const r = String(authUser?.role || "").toLowerCase(); return DEPTS.find(d => r.includes(d.toLowerCase())) || null; }, [authUser]);
+  // This user's allowed departments — an explicit grant (user.departments, set in Admin -> Users &
+  // Roles) if present, else the same role-name inference this screen always used (e.g. "Dept Head
+  // - Tenting" -> Tenting). null = unrestricted (sees every department), same as before this
+  // existed for Admin/Sales/any role that doesn't name one.
+  const myDepts = useMemo(() => userDepartments(authUser), [authUser]);
+  const roleDept = myDepts && myDepts.length === 1 ? myDepts[0] : null; // the common single-dept case — locks the picker to a badge, same as before
+  const deptOptions = isAdmin || !myDepts ? DEPTS : DEPTS.filter((d) => myDepts.includes(d));
 
-  const [dept, setDept] = useState(roleDept || "Floral");
+  const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
   const [search, setSearch] = useState("");
   const [selId, setSelId] = useState(null);
   const [zoomImg, setZoomImg] = useState(null); // click-to-enlarge lightbox (ops needs a clear big photo)
@@ -791,7 +796,7 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             <div className="mt-1 px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 text-sm font-semibold">{DEPT_ICON[roleDept]} {roleDept}</div>
           ) : (
             <select value={dept} onChange={e => setDept(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2 text-sm">
-              {DEPTS.map(d => <option key={d} value={d}>{DEPT_ICON[d]} {d}</option>)}
+              {deptOptions.map(d => <option key={d} value={d}>{DEPT_ICON[d]} {d}</option>)}
             </select>
           )}
         </div>
@@ -1428,7 +1433,10 @@ export default function DepartmentOpsTab({ eventOrders, setEventOrders, inventor
             {/* Department chips — the on-site ops manager runs the WHOLE function; tap a dept to see
                 its receiving + dismantle list (with photos). Only depts that have inventory show. */}
             {(() => {
-              const deptsWithItems = DEPTS.filter(d => (sel.deptInventory?.[d]?.length || 0) > 0);
+              // Same department lock as the planning sidebar above — this chip row used to ignore
+              // it entirely, letting a department-scoped head click through to any department's
+              // on-site/dismantle list regardless of the badge shown there.
+              const deptsWithItems = DEPTS.filter(d => (sel.deptInventory?.[d]?.length || 0) > 0 && (isAdmin || !myDepts || myDepts.includes(d)));
               if (deptsWithItems.length <= 1) return null;
               return (
                 <div className="flex flex-wrap gap-1.5 -mt-1">

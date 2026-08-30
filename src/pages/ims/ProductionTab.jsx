@@ -2,13 +2,19 @@ import { useState, useEffect } from "react";
 import { Badge, Modal, Tabs } from "../../components/ui";
 import { callClaudeStreaming } from "../../lib/ai";
 import { PROD_STATUSES, PROD_DEPTS, DIM_UNITS } from "../../lib/ims/constants";
+import { canSeeProdDept } from "../../lib/ims/deptClassify";
 
 // Faithful rebuild of the reference IMS ProductionTab (Supply → Production sub-tab).
 // Kanban board (drag & drop), Confirm & Add to Inventory (with AI photo comparison),
 // History, plus the New Request / Confirm / Purchase modals and image lightbox.
-export default function ProductionTab({ prodRequests, setProdRequests, inventory, setInventory, projects, functions, purchase, setPurchase }) {
+export default function ProductionTab({ prodRequests, setProdRequests, inventory, setInventory, projects, functions, purchase, setPurchase, authUser }) {
   const [subTab, setSubTab] = useState("board");
   const [deptFilter, setDeptFilter] = useState("All");
+  // Department gate — same as Inventory (lib/ims/deptClassify.js): a department-scoped user only
+  // sees/files requests for departments they're assigned to (PROD_DEPTS -> canonical DEPTS via
+  // canSeeProdDept, since Production tags requests with its own, separately-drifted department
+  // spelling). Unrestricted for everyone until a user actually has a scoped department.
+  const myProdDepts = PROD_DEPTS.filter((d) => canSeeProdDept(authUser, d));
   const [newModal, setNewModal] = useState(false);
   const [confirmModal, setConfirmModal] = useState(null); // prodRequest id
   const [dragId, setDragId] = useState(null);
@@ -36,13 +42,13 @@ export default function ProductionTab({ prodRequests, setProdRequests, inventory
 
   const blankForm = () => ({
     name: "", description: "", dimensions: { l: "", w: "", h: "", unit: "ft" },
-    qty: 1, refImg: null, projectId: "", functionId: "", dept: "Floral",
+    qty: 1, refImg: null, projectId: "", functionId: "", dept: myProdDepts.includes("Floral") ? "Floral" : (myProdDepts[0] || "Floral"),
     buildType: "function", notes: "",
   });
   const [form, setForm] = useState(blankForm());
   const [confirmForm, setConfirmForm] = useState({ finishedImg: null, finishedQty: 1, notes: "" });
 
-  const filtered = prodRequests.filter(r => deptFilter === "All" || r.dept === deptFilter);
+  const filtered = prodRequests.filter(r => canSeeProdDept(authUser, r.dept) && (deptFilter === "All" || r.dept === deptFilter));
   const byStatus = {};
   PROD_STATUSES.forEach(s => { byStatus[s] = filtered.filter(r => r.status === s); });
 
@@ -226,9 +232,9 @@ Compare the two and return ONLY JSON:
         )}
       </div>
 
-      {/* Dept filter pills */}
+      {/* Dept filter pills — only departments this user can see */}
       <div className="flex flex-wrap gap-2">
-        {["All", ...PROD_DEPTS].map(d => (
+        {["All", ...myProdDepts].map(d => (
           <button key={d} onClick={() => setDeptFilter(d)}
             className={"px-3 py-1 rounded-full text-xs font-medium transition-all " + (deptFilter === d ? "bg-indigo-600 text-white" : "bg-white border text-gray-600 hover:border-indigo-300 hover:text-indigo-600")}>
             {d} {d !== "All" && <span className="opacity-60">({prodRequests.filter(r => r.dept === d && r.status !== "Added to Inventory").length})</span>}
@@ -491,7 +497,7 @@ Compare the two and return ONLY JSON:
             <label className="text-xs text-gray-500">Department</label>
             <select value={form.dept} onChange={e => setForm({ ...form, dept: e.target.value })}
               className="mt-1 w-full border rounded-lg px-3 py-2 text-sm bg-white">
-              {PROD_DEPTS.map(d => <option key={d}>{d}</option>)}
+              {myProdDepts.map(d => <option key={d}>{d}</option>)}
             </select>
           </div>
           {/* Project + Function */}
