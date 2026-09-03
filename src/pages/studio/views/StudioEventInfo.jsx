@@ -3,7 +3,7 @@ import { taxOr, FUNCTIONS, CLIENT_SHIFTS_DD } from "../../../lib/studio/taxonomy
 // The SAME test the save path stamps `has_data` with. Asking the question a second way here is how
 // the card and the row drift apart, and a disagreement about "does this have a build" is what let an
 // empty auto-save erase a visible one once already.
-import { findLatestBuild, fnSnapHasBuild } from "../../../lib/studio/sessionData";
+import { findLatestBuild, fnSnapHasBuild, compareClientsByWork } from "../../../lib/studio/sessionData";
 import { IconClipboard, IconSliders } from "../../../components/icons.jsx";
 import { WASH_BANDS as BANDS } from "../../../lib/studio/pageWash";
 import AppSwitcher from "../../../components/AppSwitcher.jsx";
@@ -241,6 +241,25 @@ export default function StudioEventInfo({ ctx }) {
       return slots.some((f) => String(f?.date || "").trim() === dateKey
         && String(f?.venue || "").trim().toLowerCase() === venueKey);
     }) || null;
+  };
+
+  // ── SAME PHONE, DIFFERENT DATE ──
+  // findDuplicateClient above needs phone AND venue AND date together, which is the right test for
+  // a hard block. It is also exactly how "Pushpanjali STD" came to exist twice: same guest, same
+  // venue, same number, dates one day apart — 12 Nov and 13 Nov. All three did not match, so
+  // nothing stopped the second record. It started empty, and being the newer one it sorted above
+  // the copy carrying ten sessions and ₹5,62,529, so the next person to open that guest saw an
+  // empty deal and concluded their build had been lost.
+  // A repeat guest booking a genuinely different date is legitimate work, so this cannot block. It
+  // asks once, shows what the existing record actually holds so the choice is informed, and
+  // remembers the answer for that number.
+  const nearDupeAckRef = useRef("");
+  const findPhoneMatches = () => {
+    const phone = digits10(phoneDigits);
+    if (phone.length !== 10) return [];
+    return clientLedger
+      .filter((c) => c && c.id !== activeClientId && digits10(c.phone) === phone)
+      .sort(compareClientsByWork);
   };
 
   // Returns whether the client was saved, so the caller can hold the user on this step instead of
@@ -1110,6 +1129,7 @@ export default function StudioEventInfo({ ctx }) {
     title={canContinue ? undefined : `Missing — ${missing.join(" · ")}`}
     onClick={()=>{
     if (!canContinue) return; // defensive — `disabled` already blocks this
+    const go = () => {
     // Stay put when the save was refused as a duplicate. Advancing anyway would drop the user into
     // Browse with no client behind the build — the exact silent-skip this gate was added to stop.
     if (!doSaveClient()) return;
@@ -1150,6 +1170,32 @@ export default function StudioEventInfo({ ctx }) {
     // and restores Function 1's own build before flipping the index, exactly like clicking its pill.
     if (activeFnIdx !== 0) switchActiveFn(0); else setActiveFnIdx(0);
     setStep(1);
+    };
+    // Ask before minting a SECOND deal for a number that already has one. Only on create —
+    // editing a loaded deal is not making a copy — and only when the hard guard above would not
+    // already refuse it, so the two never both fire on the same press.
+    const isCreate = !clientLedger.some((c) => c && c.id === activeClientId);
+    const phoneKey = digits10(phoneDigits);
+    const near = (isCreate && nearDupeAckRef.current !== phoneKey && !findDuplicateClient())
+      ? findPhoneMatches() : [];
+    if (near.length > 0) {
+      const best = near[0];
+      const n = best.sessions?.length || 0;
+      const tot = best.sessions?.find((s) => Number(s?.total) > 0)?.total || 0;
+      askConfirm(
+        `${phoneKey} already has a deal — start a second one?`,
+        () => { nearDupeAckRef.current = phoneKey; go(); },
+        {
+          yesLabel: "Create anyway",
+          note: `${best.name || "Existing deal"} · ${best.eventDate || "—"} · ${best.venue || "—"} · ${best.createdBy || "—"}`
+            + (n ? ` — ${n}${n >= 10 ? "+" : ""} saved session${n === 1 ? "" : "s"}${tot ? `, ${fmt(tot)}` : ""}.` : " — no build saved yet.")
+            + (near.length > 1 ? ` ${near.length - 1} more record${near.length === 2 ? "" : "s"} on this number.` : "")
+            + " If this is the same event, cancel and load it from the matches above — starting again gives you a second empty copy.",
+        },
+      );
+      return;
+    }
+    go();
   }} style={{fontSize:13.5,fontWeight:600,padding:"13px 30px",borderRadius:12,letterSpacing:0.2,whiteSpace:"nowrap",cursor:"pointer",
     // Ink fill with gold on it, the same pairing as the heading bars — S.btn's flat gold gradient
     // was the last thing on the page still using the old palette, and next to an ink heading it
@@ -1410,18 +1456,18 @@ export default function StudioEventInfo({ ctx }) {
                   // ledger and still loadable; the other copies simply stop competing for the click.
                   // Newest by ACTUAL work, not by createdAt: a duplicate created later can easily be
                   // the abandoned one, while the record people kept using is older.
+                  // Recency alone was not enough. The empty "Pushpanjali STD" copy was created the
+                  // same morning its twin was last saved, so the two tied on last-touch and the
+                  // winner came down to ledger order — the empty one won, and the salesperson who
+                  // clicked it saw no sessions and thought a ₹5,62,529 build had vanished.
+                  // compareClientsByWork asks "does it hold work" FIRST and only then "how recent",
+                  // so a record with sessions can no longer lose to an empty one.
                   const clientKey = (c) => `${String(c?.name || "").trim().toLowerCase()}|${digits10(c?.phone)}`;
-                  const lastTouch = (c) => Math.max(
-                    Number(c?.sessions?.[0]?.savedAt) || 0,
-                    Number(c?.lastSavedAt) || 0,
-                    Number(c?.lastContactAt) || 0,
-                    Number(c?.createdAt) || 0,
-                  );
                   const bestPerClient = new Map();
                   for (const c of matchesAfterRepFilter) {
                     const k = clientKey(c);
                     const held = bestPerClient.get(k);
-                    if (!held || lastTouch(c) > lastTouch(held)) bestPerClient.set(k, c);
+                    if (!held || compareClientsByWork(c, held) < 0) bestPerClient.set(k, c);
                   }
                   // Map keeps insertion order and a replacement keeps the original slot, so the list
                   // stays in the order it was already in — only the extra copies drop out.
