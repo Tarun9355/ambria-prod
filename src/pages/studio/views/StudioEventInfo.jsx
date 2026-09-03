@@ -1416,6 +1416,28 @@ export default function StudioEventInfo({ ctx }) {
                                   {lead.status && <> · {lead.status}</>}
                                 </>;
                               })()}
+                              {/* Amount inline on the meta line, same as the Studio client row
+                                  ("10 sessions · Last: Tarun 28m ago · ₹7,00,344"). Contract total
+                                  when LMS has one, else the decor lumpsum summed over the lead's
+                                  functions — the two fields the IMS Calendar already shows as
+                                  "Total" and "Decor".
+                                  totalAmt is tried FIRST because plenty of decor contracts carry a
+                                  total with every decorLumpsum still at 0 (#00127 Mohit Sharma,
+                                  ₹2,00,000 / lumpsum 0) — reading the lumpsum first would hide the
+                                  figure on exactly those.
+                                  Hidden at zero rather than printed: an uncosted lead (#01290 Test
+                                  amrit, no total and no functions) would otherwise show ₹0, which
+                                  next to a live PLATINUM badge reads as "worth nothing" instead of
+                                  "not costed yet". Payment status is deliberately absent —
+                                  collection is LMS's business, not part of a quote. */}
+                              {(() => {
+                                const decorSum = (Array.isArray(lead.functions) ? lead.functions : [])
+                                  .reduce((s, f) => s + (Number(f?.decorLumpsum) || 0), 0);
+                                const amt = Number(lead.totalAmt) || decorSum;
+                                if (!(amt > 0)) return null;
+                                return <span title={[`LMS contract total ${fmt(Number(lead.totalAmt) || 0)}`,
+                                                     decorSum > 0 ? `decor ${fmt(decorSum)}` : null].filter(Boolean).join(" · ")}> · {fmt(amt)}</span>;
+                              })()}
                             </div>
                           </div>
                           <button className="ei-btn ei-solid" onClick={() => loadLmsLead(lead)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:"#15803D",color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
