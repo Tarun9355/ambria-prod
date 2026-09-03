@@ -1369,7 +1369,45 @@ export default function StudioEventInfo({ ctx }) {
                   // all" is the one way to see it, same as anyone else's leads. Rows synced before that
                   // fix still lack an owner until the next LMS sync re-pulls them.
                   const mine = (name) => String(name || "").toLowerCase() === String(authUser?.name || "").toLowerCase();
-                  const rawLmsLeads = lmsLeads || [];
+                  // ── STUDIO ALREADY HAS THIS DEAL ──
+                  // Same number AND same function date means the lead and the Studio client are the
+                  // same job at two stages, not two options. Offering both asks the salesperson to
+                  // choose between "the lead" and "the deal with the work in it" — and the lead is
+                  // never the right pick there: it carries no sessions and no build.
+                  // Phone AND date together, deliberately. Phone alone would hide a repeat guest's
+                  // genuinely new enquiry just because they have an older Studio deal; date alone
+                  // would hide every lead sharing a popular muhurat. Both matching is the same test
+                  // the Continue duplicate guard uses, minus venue — LMS venue names don't line up
+                  // with Studio's (that is BUG-1), so requiring venue would never match.
+                  // Every function is checked on both sides: a wedding's Sangeet lives in
+                  // `functions`, so a lead whose Fn2 date is already in Studio is still this deal.
+                  // EXACTLY ONE of the pair is shown, never zero. The Studio block below hides any
+                  // client carrying an lmsLeadId, so suppressing the lead as well would have made a
+                  // linked deal vanish from both lists — unreachable. So that rule is now
+                  // conditional: it hides the Studio card only while its lead is actually on screen.
+                  const lmsDealAlreadyInStudio = (lead) => {
+                    const ph = digits10(lead?.phone);
+                    const leadDates = new Set(
+                      (Array.isArray(lead?.functions) ? lead.functions : [])
+                        .map(f => String(f?.fnDate || "").slice(0, 10)).filter(Boolean)
+                    );
+                    if (ph.length !== 10 || leadDates.size === 0) return false;  // nothing dependable to match on
+                    return (clientLedger || []).some(c => {
+                      if (!c) return false;
+                      if (digits10(c.phone) !== ph) return false;
+                      // Phone AND date, and nothing else. An earlier version also treated "already
+                      // linked by a previous Load" (c.lmsLeadId === lead.entryNo) as a match — which
+                      // suppressed a linked lead whatever its dates were, and emptied the whole LMS
+                      // block for a guest with any Studio history at all. A linked lead on a
+                      // DIFFERENT date is a different job and still belongs on screen.
+                      // Legacy clients predate `functions`; their single function is the top-level mirror.
+                      const slots = (Array.isArray(c.functions) && c.functions.length)
+                        ? c.functions : [{ date: c.eventDate }];
+                      return slots.some(f => leadDates.has(String(f?.date || "").slice(0, 10)));
+                    });
+                  };
+                  const rawLmsLeads = (lmsLeads || []).filter(l => !lmsDealAlreadyInStudio(l));
+                  const dupLmsCount = (lmsLeads || []).length - rawLmsLeads.length;
                   const visibleLmsLeads = showAllReps ? rawLmsLeads : rawLmsLeads.filter(l => mine(l.entryByName));
                   const hiddenLmsCount = rawLmsLeads.length - visibleLmsLeads.length;
                   const timeAgo = (ts) => {
@@ -1393,7 +1431,9 @@ export default function StudioEventInfo({ ctx }) {
                   // ── LMS results block (shown ALONGSIDE matching Studio clients, not instead of them) ──
                   const lmsBlock = (visibleLmsLeads.length > 0) ? (<div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(34,197,94,0.06)":"rgba(34,197,94,0.04)",border:`1px solid ${isDark?"rgba(34,197,94,0.25)":"rgba(34,197,94,0.2)"}`}}>
                       <div style={{fontSize:11,fontWeight:600,color:C.green,marginBottom:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                        <span>📥</span><span>{visibleLmsLeads.length} LMS lead{visibleLmsLeads.length>1?"s":""} found{hiddenLmsCount>0?` (+${hiddenLmsCount} from others)`:""} — load to capture full lead context</span>
+                        {/* dupLmsCount is said out loud rather than left as a silent filter — a lead
+                            that vanishes with no explanation reads as LMS being down. */}
+                        <span>📥</span><span>{visibleLmsLeads.length} LMS lead{visibleLmsLeads.length>1?"s":""} found{hiddenLmsCount>0?` (+${hiddenLmsCount} from others)`:""}{dupLmsCount>0?` · ${dupLmsCount} already open in Studio below`:""} — load to capture full lead context</span>
                         {lmsFilling && <span style={{fontSize:10,fontWeight:600,color:C.amber,display:"inline-flex",alignItems:"center",gap:4,marginLeft:"auto"}}>
                           <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:"#F59E0B",animation:"pulse 1.5s infinite"}}></span>
                           more loading…
@@ -1471,18 +1511,18 @@ export default function StudioEventInfo({ ctx }) {
                     const nameMatch = qName.length >= 2 && c.name.toLowerCase().includes(qName);
                     const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
                     if (!(nameMatch || phoneMatch)) return false;
-                    // A client already linked to an LMS entry (the "LMS #01234" tag on its card) has
-                    // an LMS counterpart, full stop — suppress it here regardless of whether that
-                    // specific lead happens to be sitting in today's decor-only search results.
-                    // This used to only suppress when the linked lead was ALSO visible in
-                    // visibleLmsLeads right now, which quietly broke the moment Studio's LMS search
-                    // stopped returning Venue leads (searchLmsLeads, lib/ims/lms.js): a client linked
-                    // to a Venue entry can never have its lead show up in a decor-only search again,
-                    // so the "is it visible right now" check could never suppress it — the Studio
-                    // card resurfaced as a permanent duplicate of a lead this screen simply doesn't
-                    // display any more. Only a client with NO lmsLeadId at all — never linked to
-                    // anything in LMS — belongs in this section.
-                    if (c.lmsLeadId) return false;
+                    // ── ONE ROW PER DEAL, AND STUDIO IS THE ONE THAT WINS ──
+                    // A linked client used to be suppressed here unconditionally, so the LMS card
+                    // was the only way to reach the deal. That is now inverted: the LMS side hides
+                    // any lead Studio already holds (lmsDealAlreadyInStudio, above), because the
+                    // Studio record is the one carrying the sessions and the build — the lead has
+                    // neither, and picking it is what starts a second history on a live deal.
+                    // So this test asks whether the lead is STILL ON SCREEN, and only steps aside
+                    // then. If the lead was suppressed — or was never in these results at all,
+                    // which is permanently true of a Venue-linked client since Studio's search went
+                    // decor-only — the Studio card shows instead of the deal disappearing from both
+                    // lists. Exactly one of the pair renders, never zero.
+                    if (c.lmsLeadId && rawLmsLeads.some(l => String(l?.entryNo) === String(c.lmsLeadId))) return false;
                     return true;
                   });
                   const matchesAfterRepFilter = showAllReps ? matchesBeforeRepFilter : matchesBeforeRepFilter.filter(c => mine(c.createdBy));
@@ -1549,12 +1589,29 @@ export default function StudioEventInfo({ ctx }) {
                       const sessionCount = c.sessions?.length || 0;
                       return <div key={c.id} className="ei-row" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"8px 10px",marginBottom:4,borderRadius:8,background:isDark?"rgba(255,255,255,0.03)":"#fff",border:`1px solid ${border}`}}>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:12,fontWeight:600,color:textP}}>
-                            {c.name}
-                            {c.phone && <span style={{color:textM,fontWeight:400,marginLeft:8}}>· {c.phone}</span>}
-                            {c.status === "booked" && <span style={{marginLeft:8,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:C.emerald}}>BOOKED</span>}
-                            {c.status === "dead" && <span style={{marginLeft:8,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(239,68,68,0.14)",color:"#EF4444"}}>DEAD</span>}
-                            {c.lmsLeadId && <span style={{marginLeft:8,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(34,197,94,0.15)",color:C.green}}>📥 LMS #{c.lmsLeadId}</span>}
+                          <div style={{fontSize:12,fontWeight:600,color:textP,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                            <span>{c.name}</span>
+                            {c.phone && <span style={{color:textM,fontWeight:400}}>· {c.phone}</span>}
+                            {/* ── WHICH EVENT THIS IS, NOT JUST WHOSE ──
+                                Name and number alone don't separate two records for the same guest,
+                                and they're exactly what a returning client shares across deals. The
+                                LMS card beside this one already shows function, date and venue, so
+                                a Studio match showed strictly less about the event than a lead did.
+                                Colour-coded rather than run into one grey line: these are three
+                                different facts and the eye should be able to pick out the one it
+                                came for. Function 1 is the top-level mirror; a multi-function deal
+                                gets a count chip, same as the LMS card's "N FUNCTIONS". */}
+                            {c.fn && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(168,85,247,0.15)",color:C.purple}}>{String(c.fn).toUpperCase()}</span>}
+                            {c.eventDate && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(99,102,241,0.15)",color:C.indigo,fontVariantNumeric:"tabular-nums"}}>
+                              {(() => { try { return new Date(c.eventDate + "T00:00:00").toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch { return c.eventDate; } })()}
+                            </span>}
+                            {c.venue && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(29,78,216,0.13)",color:C.blue}}>📍 {c.venue}</span>}
+                            {Array.isArray(c.functions) && c.functions.length > 1 && (
+                              <span title={`${c.functions.length} functions on this deal`} style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(168,85,247,0.15)",color:C.purple}}>+{c.functions.length - 1} FN</span>
+                            )}
+                            {c.status === "booked" && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(16,185,129,0.15)",color:C.emerald}}>BOOKED</span>}
+                            {c.status === "dead" && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(239,68,68,0.14)",color:"#EF4444"}}>DEAD</span>}
+                            {c.lmsLeadId && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(34,197,94,0.15)",color:C.green}}>📥 LMS #{c.lmsLeadId}</span>}
                           </div>
                           <div style={{fontSize:10,color:textM,marginTop:2}}>
                             {sessionCount > 0
