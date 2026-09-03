@@ -111,7 +111,7 @@ export default function DealCheckOverlay({ ctx }) {
     setDcResolved, setDcCards, setDcZoneState, setDcPhotoOverrides, setDcSkipped, setDcProductionAccepted,
     dealCheckData, imsPaletteCatalogue, softHolds, imsPrintMaterials, imsCarpetMaterials,
     // build / fn state
-    activeFnIdx, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
+    activeFnIdx: activeFnIdxCommitted, fnPending, switchActiveFn, dcShowAllFns, setDcShowAllFns, dcCollapsedFnBlocks, setDcCollapsedFnBlocks,
     // pricing helpers
     collectAllFunctionData, calcFnFloralSourcingCost, calcFunctionBreakdown, calcFunctionCost,
     calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan, imsField,
@@ -133,6 +133,27 @@ export default function DealCheckOverlay({ ctx }) {
   // equalled base + parts. IMS does set it that way on save, but nothing rewrites it when a
   // component's rental later changes — 31 of 74 kits had drifted, by up to ₹700 a unit in both
   // directions. Recomputing means changing a component's rental in IMS re-prices every kit at once.
+  // ── WHICH FUNCTION THIS OVERLAY IS SHOWING ── (BUG-11)
+  // Clicking a function card in the sidebar did nothing on a multi-function deal. switchActiveFn
+  // fires correctly, but it commits setActiveFnIdx inside a useTransition — a low-priority,
+  // interruptible update. Build's pill nav has always read `fnPending ?? activeFnIdx` so the pill
+  // lights up on the click itself; this overlay was never handed `fnPending`, so its sidebar
+  // highlight AND its panels hung entirely on the deferred value landing. Deal Check is ~2,900
+  // lines that recompute full cost rollups every render, and the 1.5s debounced plus 15s periodic
+  // autosaves keep interrupting while it is open — so the transition can be restarted repeatedly
+  // and the commit the overlay was waiting on may never arrive.
+  //
+  // Reading the pending index is SAFE for the data too, not just the highlight, because of how
+  // collectAllFunctionData resolves a function: `idx === activeFnIdx` takes the LIVE build state,
+  // anything else takes `fnBuilds[idx]`. Mid-switch the committed index is still the old function,
+  // so the clicked one is served from fnBuilds — which already holds its build, because it was the
+  // non-active function a moment ago. The figures therefore do not change when the transition
+  // finally lands: restoreBuildState restores that same snapshot.
+  //
+  // Shadowing the name rather than patching each read: there are seven, all display/selection, and
+  // one missed would leave the sidebar and the panel disagreeing about which function is open.
+  const activeFnIdx = fnPending ?? activeFnIdxCommitted;
+
   const effKitRental = (item, fnIdx, cardKey) => {
     if (!item || !Array.isArray(item.subItems) || !item.subItems.length) return imsField.rentalCost(item);
     const edited = dcKitEdits?.[fnIdx]?.[cardKey];

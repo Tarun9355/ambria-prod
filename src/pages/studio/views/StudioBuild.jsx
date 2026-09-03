@@ -3402,7 +3402,6 @@ undefined
                       ) : (
                         <>
                           <button onClick={()=>{
-                            const elems=[...(zoneElements[k]||[])];
                             const nextQty = Math.max(0,(el.qty||0)-1);
                             // §23 Phase 2.9d — block qty reduction below paint allocation total
                             const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
@@ -3413,11 +3412,22 @@ undefined
                               showMsg(`Cannot reduce qty below ${allocTotal} — paint allocation is set. Open the paint picker to adjust the allocation first.`, "red");
                               return;
                             }
-                            elems[idx]=applyQty(k,elems[idx],nextQty);
-                            setZoneElements(p=>({...p,[k]:elems}));
+                            // ── DECREMENT FROM THE COMMITTED QTY, NOT THE RENDERED ONE ── (BUG-16)
+                            // `elems` above is a copy of this render's zoneElements[k], so writing it
+                            // back through the updater discards anything committed since — two quick
+                            // clicks both start from the same displayed qty and the second undoes the
+                            // first, so the number and its price appear to bounce instead of stepping.
+                            // The read has to happen inside the updater, against `p`.
+                            setZoneElements(p=>{
+                              const cur=[...(p[k]||[])];
+                              if(!cur[idx]) return p;
+                              const q=Math.max(0,(cur[idx].qty||0)-1);
+                              if(allocTotal>0&&q<allocTotal) return p;   // same guard, re-checked against committed qty
+                              cur[idx]=applyQty(k,cur[idx],q);
+                              return {...p,[k]:cur};
+                            });
                           }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>{"−"}</button>
                           <input type="number" min="0" value={el.qty||0} onChange={e=>{
-                            const elems=[...(zoneElements[k]||[])];
                             const nextQty = Math.max(0,parseInt(e.target.value)||0);
                             // §23 Phase 2.9d — same guard for direct typing
                             const invItem = el.invId ? (dealCheckData?.inventory || []).find(i => i.id === el.invId) : (dealCheckData?.inventory || []).find(i => i.name === el.name);
@@ -3428,10 +3438,25 @@ undefined
                               showMsg(`Cannot set qty below ${allocTotal} — paint allocation is set. Open the paint picker first.`, "red");
                               return;
                             }
-                            elems[idx]=applyQty(k,elems[idx],nextQty);
-                            setZoneElements(p=>({...p,[k]:elems}));
+                            // Typed qty is absolute, so the value itself is safe — but the ARRAY still
+                            // has to come from `p`, or this write reverts every other element edited
+                            // since this render (BUG-16).
+                            setZoneElements(p=>{
+                              const cur=[...(p[k]||[])];
+                              if(!cur[idx]) return p;
+                              cur[idx]=applyQty(k,cur[idx],nextQty);
+                              return {...p,[k]:cur};
+                            });
                           }} onFocus={e=>e.target.select()} style={{width:46,padding:"3px 4px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:(el.qty||0)>0?textP:textS,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit",MozAppearance:"textfield"}}/>
-                          <button onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]=applyQty(k,elems[idx],(el.qty||0)+1);setZoneElements(p=>({...p,[k]:elems}));}} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                          <button onClick={()=>{
+                            // Increment off the committed qty — see the − button's comment (BUG-16).
+                            setZoneElements(p=>{
+                              const cur=[...(p[k]||[])];
+                              if(!cur[idx]) return p;
+                              cur[idx]=applyQty(k,cur[idx],(cur[idx].qty||0)+1);
+                              return {...p,[k]:cur};
+                            });
+                          }} style={{width:26,height:26,borderRadius:6,border:`1px solid ${border}`,background:cardBg,cursor:"pointer",fontSize:14,fontWeight:600,color:textS,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
                         </>
                       )}
                       </div>

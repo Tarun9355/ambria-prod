@@ -288,10 +288,30 @@ export default function StudioEventInfo({ ctx }) {
       }
       base = { id: "CLI_" + Date.now().toString(36), sessions: [], createdAt: Date.now(), status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null };
     }
+    // ── AN UNCONFIRMED RENAME IS NOT A RENAME ── (BUG-18)
+    // saveSession already holds identity back for exactly this case (its
+    // `pendingUnconfirmedIdentity`), but Continue came through here, which wrote name/phone
+    // unconditionally — so the banner said "this edit won't be saved until you confirm" and then
+    // Continue saved it anyway. Reproduced live: renamed a test client, never clicked Confirm,
+    // clicked Continue, and the client came back under the new name.
+    // Same test the banner itself renders on, so the two can never disagree about whether a rename
+    // is pending. `existing` is the already-active-deal check — a brand-new client has no prior
+    // identity to protect, and whatever is typed IS its deliberate name.
+    // Only name and phone are held back; every other field on the form saves as normal.
+    const identityUnconfirmed = !!existing && !!loadedClientIdentityRef?.current?.name
+      && (clientName.trim() !== loadedClientIdentityRef.current.name
+          || clientPhone.trim() !== loadedClientIdentityRef.current.phone);
+    if (identityUnconfirmed) {
+      // Say so, because Continue leaves this screen — the banner that explained it goes with it,
+      // and silently discarding what someone just typed is its own kind of wrong.
+      // "red", not "amber": showMsg only styles red/green and anything else falls through to grey,
+      // and this is a refusal to save — same register as the duplicate refusal just above.
+      showMsg(`Name/phone change not saved — use "✓ Confirm rename" on Event Info to apply it`, "red");
+    }
     const client = {
       ...base,
-      name: clientName.trim(),
-      phone: phoneDigits,
+      name: identityUnconfirmed ? base.name : clientName.trim(),
+      phone: identityUnconfirmed ? base.phone : phoneDigits,
       eventDate: clientDate,
       venue,
       fn,

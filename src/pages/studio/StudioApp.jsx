@@ -10,7 +10,7 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
-import { Fragment, useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
@@ -505,7 +505,20 @@ function lookupFloralMapping(rcCode, rcName, hardPropMap) {
   if (/couple\s*couch|couch\s*flow/.test(n)) return map["F11"] || FLORAL_HARDPROP_DEFAULT["F11"];
   if (/centerp|round\s*table/.test(n)) return map["F09"] || FLORAL_HARDPROP_DEFAULT["F09"];
   if (/flower\s*pot|flower\s*planter/.test(n)) return map["F05"] || FLORAL_HARDPROP_DEFAULT["F05"];
-  if (/floral\s*reet|garland|petals?|flower\s*garden/.test(n)) return [];
+  // Returning [] means "this floral has NO hard prop, so there is nothing to reserve" — and
+  // getCardSpecsForZone drops those elements outright, which removes them from availability
+  // checks, Calendar Conflicts, Cross-Function Reuse and Deal Check's own card list all at once.
+  // That is a heavy claim to make from a NAME SUBSTRING, and "flower\s*garden" made it wrongly:
+  // "Flower Garden RFT" is a real costed item — 35 RFT in two functions in the DC-16 test, the
+  // highest-value line in it — and it vanished from Deal Check entirely, so it was never flagged
+  // short and never earned its reuse saving (BUG-12).
+  // Reet, garland and petals stay: those genuinely are loose flowers with no prop behind them.
+  // A "flower garden" is an area/structure, and whether it has something physical to reserve is a
+  // question IMS matching answers per item, not something its name settles. It now falls through
+  // to the ordinary element card below — the same treatment this function already gives an
+  // unrecognised floral, and for the same stated reason: appearing is recoverable, being dropped
+  // silently is not.
+  if (/floral\s*reet|garland|petals?/.test(n)) return [];
   return null;
 }
 
@@ -608,9 +621,10 @@ function getCardSpecsForZone(zoneElems, zoneKey, photoUrl, hardPropMap, rcItems,
     const cat = String(rc?.cat || "").toLowerCase();
     const isFloral = cat === "florals" || /^F\d+$/.test(rcCode);
     // ── null and [] ARE NOT THE SAME ANSWER ──
-    // lookupFloralMapping returns [] for a floral it KNOWS has no hard prop (reet, garland, petals,
-    // flower garden — those really are just flowers, and there is nothing to reserve). It returns
-    // null when it does not recognise the floral at all.
+    // lookupFloralMapping returns [] for a floral it KNOWS has no hard prop (reet, garland, petals
+    // — those really are just flowers, and there is nothing to reserve). It returns null when it
+    // does not recognise the floral at all. "flower garden" used to be on that [] list and should
+    // not have been — see BUG-12 in lookupFloralMapping.
     // Both used to be dropped by the same guard, so any floral outside the six mapped names vanished
     // from Deal Check entirely and silently — "Wisteria Hanging SQFT 2.5ft" among them. Unknown is
     // not the same claim as "definitely has no prop", and guessing the stricter one loses work.
@@ -2012,7 +2026,10 @@ export default function StudioApp() {
   const sessionBoundaryRef = useRef(false);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
-  useEffect(() => { snapshotFnRef.current = snapshotBuildState; });
+  // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
+  // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
+  // reading the latest commit rather than whatever was current before the last paint.
+  useLayoutEffect(() => { snapshotFnRef.current = snapshotBuildState; });
 
   // Rebuilding a function's whole canvas is heavy enough to block for a moment. Marked as a
   // transition so React keeps the page interactive while it renders and tells us it's working
@@ -2054,7 +2071,23 @@ export default function StudioApp() {
   // above has already cleared the flag long before this fires, so this changes nothing.
   useEffect(() => {
     if (!fnBusy) return;
-    const t = setTimeout(() => { fnBusyStartRef.current = 0; setFnBusy(false); }, 3000);
+    const t = setTimeout(() => {
+      fnBusyStartRef.current = 0;
+      setFnBusy(false);
+      // ── AND RELEASE THE AUTOSAVE ── (BUG-13)
+      // This backstop was built for fnBusy alone, but switchingRef is set true by switchActiveFn on
+      // the same click and released ONLY by the effect keyed on activeFnIdx — the very commit that,
+      // in the case this backstop exists for, never arrives. So the UI recovered after three
+      // seconds while switchingRef stayed true for the rest of the session, and it gates BOTH
+      // savers: autoSaveBuild returns immediately on it, and the flush AppSwitcher awaits before
+      // navigating to IMS does nothing. Every edit after that point was silently never written —
+      // add a Production/Buying item, go to IMS, come back, and it is gone, because no save was
+      // ever attempted. Not a lost race: no save at all.
+      // Released here on exactly the reasoning the fnBusy release already uses — a switch that has
+      // not landed in three seconds is not one that is still working. In the normal case the
+      // activeFnIdx effect cleared it long before this fires, so this changes nothing.
+      switchingRef.current = false;
+    }, 3000);
     return () => clearTimeout(t);
   }, [fnBusy]);
   const isFnSwitching = fnBusy || isPendingFnRender;
@@ -4221,7 +4254,8 @@ export default function StudioApp() {
     }
     return all;
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
-  useEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
+  // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
+  useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
 
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
@@ -4636,6 +4670,7 @@ export default function StudioApp() {
       const t = fElTiers[k] || "simple";
       const ze = fZoneElements[k];
       let ic = 0, itemCount = 0;
+      const elemLines = [];   // per-element lineCost, index-aligned with `ze` — see BUG-10 below
       if (ze && ze.length > 0) {
         (ze || []).forEach(el2 => {
           // `priceInfo.rc` is only ever set for a legacy Rate-Card name match — every IMS
@@ -4649,6 +4684,16 @@ export default function StudioApp() {
           // oversubscribed, for whichever function's zone this is, not just the active tab's.
           const priceInfo = getElPriceForFn(el2, fZoneConfig[k], fFloralRatio, true, fVenue, fBlocksForDate);
           ic += priceInfo.lineCost;
+          // ── THE LINE ITEMS MUST BE THE SAME NUMBERS THAT MADE THE TOTAL ── (BUG-10)
+          // Summary's accordion used to re-price each element itself with checkAvail=false and no
+          // blocksForDate, so an oversubscribed item showed its full undiscounted rental on the
+          // line while `ic` above had already billed the short portion at cost% — "Entry & Passage"
+          // headed ₹92,554 over eight lines summing to ₹95,554, the ₹3,000 gap being one
+          // Paper globe (S) ×40 whose IMS `cost` is unset and therefore contributed ₹0.
+          // Kept per element rather than re-derived so the two can never diverge again: there is
+          // now exactly one getElPriceForFn call per element per function, and the display reads
+          // its result instead of guessing at the arguments.
+          elemLines.push(priceInfo.lineCost);
           itemCount += (el2.qty || 0);
         });
       }
@@ -4658,7 +4703,7 @@ export default function StudioApp() {
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
       return { k, label: el.label, icon: el.icon, tier: t, ic, zl, customCost, tot: ic + zl.total + customCost, itemCount,
         note: "", selPh: fElSelectedPhoto[k] || null, zc: fZoneConfig[k] || null,
-        useElementCard: !!ze, elems: ze || [] };
+        useElementCard: !!ze, elems: ze || [], elemLines };
     });
     let transport = null;
     let transportTotal = 0;
@@ -6150,7 +6195,14 @@ export default function StudioApp() {
   // Refs hold the latest saveSession + a "has data" guard so the interval/listeners call the current
   // closure without re-subscribing (and never overwrite good data with an empty snapshot).
   const saveSessionRef = useRef(saveSession);
-  useEffect(() => { saveSessionRef.current = saveSession; });
+  // Layout, not passive. A latest-callback ref read from synchronous save paths should be current
+  // the instant a commit lands, not after the next paint; the old comment on
+  // setDcCustomItemsAndFlush was relying on MessageChannel beating setTimeout's clamp, which is
+  // scheduler behaviour rather than a guarantee. Hardening only — measured, a discrete click
+  // already had the ref current by both the microtask and setTimeout(0), so this was NOT the cause
+  // of BUG-13 (that was switchingRef never being released — see its backstop above).
+  // A bare ref assignment reads no layout, so the layout phase costs nothing here.
+  useLayoutEffect(() => { saveSessionRef.current = saveSession; });
   // Populated once runDealCheckGenerate is declared further down (ref-sync effect right after its
   // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
   const runDealCheckGenerateRef = useRef(null);
@@ -7725,7 +7777,19 @@ export default function StudioApp() {
           const rc = priceInfo.rc;
           const up = priceInfo.unitPrice;
           const lt = priceInfo.lineCost;
-          if (lt > 0) items.push({ name: el2.name, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
+          // ── THE LIVE IMS NAME, THE SAME WAY BUILD RESOLVES IT ── (BUG-17)
+          // This used to push el2.name — the name captured when the element was ADDED — while Build
+          // renders `invItem?.name || el.name`, looking el.invId up in IMS every render. Rename an
+          // item in IMS after it is already in a zone and the two part company permanently: Build
+          // said "Small .golden. jhumar", every export said "Medium golden chandelier", same 9 ×
+          // ₹3,000 = ₹27,000. Only the label was wrong, which is why the money tests never caught it
+          // — and SM-P1/P4/P5 compared exports against EACH OTHER, and all of them read this same
+          // stale field, so they agreed perfectly while all three disagreed with Build.
+          // Falls back to el2.name when there is no invId or no live match, so a Rate-Card-only or
+          // deleted-from-IMS element keeps the name it was saved with rather than going blank.
+          const liveInv = el2.invId ? (imsInventory || []).find(i => i.id === el2.invId) : null;
+          const displayName = liveInv?.name || el2.name;
+          if (lt > 0) items.push({ name: displayName, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: up, total: lt, isFloral: rc && (rc.cat || "").toLowerCase() === "florals" });
           if (el2.qty > 0) {
             const imsInv = dealCheckData?.inventory || [];
             const invItem = imsInv.find(i => i.name === el2.name);
@@ -7738,7 +7802,7 @@ export default function StudioApp() {
               const subTotal = paintCost * a.qty;
               if (subTotal > 0) {
                 items.push({
-                  name: `🖌 Paint: ${el2.name} (${baseColour} → ${a.colour})`,
+                  name: `🖌 Paint: ${displayName} (${baseColour} → ${a.colour})`,   // live name too — see BUG-17 above
                   size: "",
                   qty: a.qty,
                   unit: "item",
@@ -7846,7 +7910,7 @@ export default function StudioApp() {
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
     }).filter(z => z.items.length > 0 || z.structItems.length > 0);
-  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates]);
+  }, [getElPriceForFn, zoneLabelsD, zoneMeta, zoneKeys, dealCheckData, imsDefaultPaintCost, dcCustomItems, structRates, imsInventory]);
 
   const buildCombinedCostSheetData = useCallback(() => {
     const all = collectAllFunctionData();
@@ -8049,7 +8113,18 @@ export default function StudioApp() {
       const target = String(subcat).toLowerCase().trim();
       const items = (inventory || [])
         .filter(it => String(it.subCat || it.subcategory || "").toLowerCase().trim() === target)
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
+        // Two callers, two different right answers, and this list only ever gave one. A normal zone
+        // element opens this to swap to a different in-stock item, so RENTAL is what it will be
+        // charged. CustomItemModal opens it (and is the only caller that passes onPick) to pick a
+        // reference for something being made or bought outright, where the rental rate is
+        // meaningless — its own handleAvailPick already throws the shown price away and re-reads
+        // `cost`. So the browser showed "Grand panel ₹5,000" and the number jumped to ₹8,000 the
+        // moment it was picked, with nothing on screen explaining why. Real rows: Grand panel
+        // price 2,500 / cost 8,000, Louvers entry gate 2D price 3,000 / cost 15,000.
+        // The money was never wrong — only the figure shown while browsing. Branching on onPick is
+        // the same distinction this modal already draws to disable split-quantity for this caller.
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: onPick ? (Number(it.cost) || 0) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
@@ -9050,6 +9125,10 @@ export default function StudioApp() {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
+    // The optimistic index — which function was CLICKED, before the switch commits. Build's own
+    // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
+    // nothing to render from but the deferred value (BUG-11).
+    fnPending,
     // True only while there WAS an in-progress deal (sessionStorage remembers one) that hasn't been
     // restored yet AND the last client_ledger fetch actually failed — not "still loading", a real
     // error. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
