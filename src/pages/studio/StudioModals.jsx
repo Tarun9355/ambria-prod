@@ -148,8 +148,22 @@ export default function StudioModals({ ctx }) {
       {availModal && (() => {
         const modalKey = `${availModal.zoneKey}:${availModal.idx}`;
         const original = !availModal.onPick ? (zoneElements[availModal.zoneKey] || [])[availModal.idx] : null;
-        const origQty = Number(original?.qty) || 0;
-        const splitEligible = !availModal.onPick && origQty >= 2;
+        // Two sources for "how many units are we dividing". Build's zoneElements path reads the
+        // element it is about to replace; a caller that owns its own storage — Deal Check, whose
+        // quantity lives on the card, not in zoneElements — declares it as opts.splitQty.
+        const origQty = Number(original?.qty) || Number(availModal.splitQty) || 0;
+        // Two separate questions, kept separate on purpose.
+        // CAPABLE — is there anywhere to commit a split? The zoneElements path, or an explicit
+        // onSplit. This used to be tested as `!onPick`, which stood in for "a real zone element"
+        // and only held while CustomItemModal was the sole onPick caller; Deal Check must pass
+        // onPick or its pick lands in Build's state, and splits perfectly well. A kit-component
+        // swap supplies neither and is still declined outright.
+        const splitCapable = !availModal.onPick || !!availModal.onSplit;
+        // ELIGIBLE — is there more than one unit to divide?
+        // Split is now shown whenever it is CAPABLE, and merely disabled when a single unit means
+        // there is nothing to divide. Hiding it on qty 1 read as the feature being missing or
+        // broken rather than as not applying here — asked about twice before this note existed.
+        const splitEligible = splitCapable && origQty >= 2;
         const inSplit = splitEligible && availSplit?.key === modalKey;
         const splitIds = inSplit ? availSplit.ids : [];
         const toggleSplitId = (id) => setAvailSplit(s => {
@@ -180,11 +194,17 @@ export default function StudioModals({ ctx }) {
                 </div>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-                {splitEligible && (
+                {splitCapable && (
                   <button
-                    onClick={() => setAvailSplit(inSplit ? null : { key: modalKey, ids: [] })}
-                    title={inSplit ? "Back to picking a single replacement item" : `Divide this element's ${origQty} across 2 or more items instead of swapping to just one`}
-                    style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${inSplit?accent:border}`,background:inSplit?`${accent}18`:"transparent",color:inSplit?accent:textS,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}
+                    disabled={!splitEligible}
+                    onClick={() => { if (!splitEligible) return; setAvailSplit(inSplit ? null : { key: modalKey, ids: [] }); }}
+                    title={!splitEligible
+                      ? `Splitting needs 2 or more units — this one is ${origQty || 1}. Raise its qty in Build to divide it across items.`
+                      : inSplit ? "Back to picking a single replacement item" : `Divide this element's ${origQty} across 2 or more items instead of swapping to just one`}
+                    style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${inSplit?accent:border}`,background:inSplit?`${accent}18`:"transparent",color:inSplit?accent:textS,fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+                      // Reads as unavailable rather than as broken: dimmed, not-allowed, and the
+                      // title says why and what to do about it.
+                      opacity:splitEligible?1:0.42,cursor:splitEligible?"pointer":"not-allowed"}}
                   >🔀 {inSplit ? "Cancel split" : "Split"}</button>
                 )}
                 <span onClick={closeModal} style={{cursor:"pointer",fontSize:22,color:textS,lineHeight:1}}>×</span>
@@ -220,7 +240,7 @@ export default function StudioModals({ ctx }) {
               <span style={{fontSize:10,color:textS}}>
                 {inSplit
                   ? (splitPreview ? `${splitIds.length} items selected — splits ${origQty} into ${splitPreview}` : "Select 2 or more items to split into")
-                  : (availModal.onPick ? "Pick an item to swap this kit component to." : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."))}
+                  : (availModal.onPick ? (availModal.pickHint || "Pick an item to swap to.") : (availModal.selectedId ? "This item will be booked in Deal Check for this element." : "Pick an item to book it — or clear the current pin."))}
               </span>
               <div style={{display:"flex",gap:8}}>
                 <button onClick={closeModal} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Cancel</button>

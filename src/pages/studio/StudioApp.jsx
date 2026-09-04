@@ -8103,11 +8103,15 @@ export default function StudioApp() {
   // ═══ AVAILABILITY PICKER ═══ Moved here from StudioBuild.jsx so it's reachable from any view
   // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
   // being duplicated. Behaviour is unchanged — same subcat resolution, same free-sorted item list.
-  const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick) => {
+  const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick, opts) => {
     const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
     const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
     const date = activeFnMeta?.date || clientDate || "";
-    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null });
+    // splitQty / onSplit let a caller that isn't the zoneElements path still offer Split.
+    // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
+    // and onPick was the very flag that used to mean "no split here". So the capability is now
+    // declared rather than inferred — the same correction made for priceMode above.
+    setAvailModal({ zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "" });
     try {
       const { inventory, blocksForDate } = await loadAvailability(date);
       const target = String(subcat).toLowerCase().trim();
@@ -8116,15 +8120,18 @@ export default function StudioApp() {
         // ── PRICE THE WAY THE CALLER WILL USE IT ── (BUG-15)
         // Two callers, two different right answers, and this list only ever gave one. A normal zone
         // element opens this to swap to a different in-stock item, so RENTAL is what it will be
-        // charged. CustomItemModal opens it (and is the only caller that passes onPick) to pick a
-        // reference for something being made or bought outright, where the rental rate is
-        // meaningless — its own handleAvailPick already throws the shown price away and re-reads
+        // charged. CustomItemModal opens it to pick a reference for something being made or bought
+        // outright, where the rental rate is meaningless — its own handleAvailPick already throws
+        // the shown price away and re-reads
         // `cost`. So the browser showed "Grand panel ₹5,000" and the number jumped to ₹8,000 the
         // moment it was picked, with nothing on screen explaining why. Real rows: Grand panel
         // price 2,500 / cost 8,000, Louvers entry gate 2D price 3,000 / cost 15,000.
-        // The money was never wrong — only the figure shown while browsing. Branching on onPick is
-        // the same distinction this modal already draws to disable split-quantity for this caller.
-        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: onPick ? (Number(it.cost) || 0) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
+        // The money was never wrong — only the figure shown while browsing.
+        // Declared explicitly via opts.priceMode rather than inferred from `onPick`. onPick meant
+        // "cost" only while CustomItemModal was its sole user; Deal Check's availability control
+        // also needs onPick — to write the pick back to dcCards instead of Build's zoneElements —
+        // and it is renting, so inferring would have shown it production cost.
+        .map(it => ({ id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free: getStudioAvailable(it, blocksForDate), price: opts?.priceMode === "cost" ? (Number(it.cost) || 0) : priceForInvItem(it, rcFactorByKey, inventory), dims: itemDimsText(it) }))
         .sort((a, b) => b.free - a.free);
       setAvailModal(m => (m && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => m ? { ...m, loading: false } : m); }
@@ -8153,23 +8160,45 @@ export default function StudioApp() {
   // 7/7/6, not 6/6/6 dropping 2) lands on the first few lines so the total booked qty never drifts
   // from what was there before the split. Not offered when this modal was opened via onPick (kit
   // component swap / CustomItemModal reference pick) — there's no "element with a qty" to divide there.
+  // ── HOW A QTY DIVIDES ──
+  // floor, then hand the leftover units out one each to the first lines. Extracted because there
+  // are now two commit paths (Build's zoneElements and Deal Check's card.split), and a split that
+  // allocated differently depending on which screen opened the picker would be a bug nobody would
+  // think to look for.
+  const allocateSplit = useCallback((total, ids) => {
+    const n = ids.length;
+    const base = Math.floor(total / n);
+    const remainder = total - base * n;   // 0..n-1 leftover units
+    return ids.map((id, i) => ({ id, qty: base + (i < remainder ? 1 : 0) }));
+  }, []);
+
   const saveAvailSplit = useCallback((pickedIds) => {
-    if (!availModal || availModal.onPick || !Array.isArray(pickedIds) || pickedIds.length < 2) return;
+    if (!availModal || !Array.isArray(pickedIds) || pickedIds.length < 2) return;
     const { zoneKey, idx, items } = availModal;
+    // Deal Check owns its own storage (card.split), so it commits the allocation itself rather
+    // than having Build's zoneElements rewritten underneath it.
+    if (availModal.onSplit) {
+      const total = Number(availModal.splitQty) || 0;
+      if (total < 2) return;
+      availModal.onSplit(allocateSplit(total, pickedIds).map(a => ({
+        imsId: a.id,
+        qty: a.qty,
+        name: (items || []).find(it => it.id === a.id)?.name || "",
+      })));
+      setAvailModal(null);
+      return;
+    }
+    if (availModal.onPick) return;   // a kit-component swap has nothing to split
     setZoneElements(p => {
       const elems = [...(p[zoneKey] || [])];
       const original = elems[idx];
       if (!original) return p;
       const total = Number(original.qty) || 0;
-      const n = pickedIds.length;
-      const base = Math.floor(total / n);
-      const remainder = total - base * n; // 0..n-1 leftover units, handed one each to the first `remainder` lines
       // Same scale math as Build's own applyQty — a split line stays correctly proportioned the
       // next time this zone's Scale By changes, instead of freezing at whatever qty it was split at.
       const scale = Math.max(1, Math.round(Number(zoneConfig[zoneKey]?.scale) || 1));
-      const splitEls = pickedIds.map((id, i) => {
+      const splitEls = allocateSplit(total, pickedIds).map(({ id, qty }) => {
         const pick = (items || []).find((it) => it.id === id);
-        const qty = base + (i < remainder ? 1 : 0);
         return {
           ...original,
           invId: id, imsId: id,
@@ -8181,7 +8210,7 @@ export default function StudioApp() {
       return { ...p, [zoneKey]: elems };
     });
     setAvailModal(null);
-  }, [availModal, setZoneElements, zoneConfig]);
+  }, [availModal, setZoneElements, zoneConfig, allocateSplit]);
 
   // ═══ DEAL CHECK — open handler (fetches IMS data on demand from Supabase) ═══
   const openDealCheck = useCallback(async () => {
